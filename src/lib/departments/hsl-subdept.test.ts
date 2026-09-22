@@ -335,3 +335,20 @@ test('deptCellSatisfiesTarget requires EXACT cell for a sub-team target', () => 
   assert.ok(deptCellSatisfiesTarget('Callbacks', 'Callback Team'));
   assert.equal(deptCellSatisfiesTarget('Lead Gen', 'Callback Team'), false);
 });
+
+test('deptCellSatisfiesTarget: a DATA sub-team target demands the exact cell too (2026-09-22)', () => {
+  // Carla created hsl:healthcare_specialist from Payment Catalog. It is not a
+  // code team, so the old `isHslSubDeptLabel(to)` test let it read as the bare
+  // family and every hsl:* person "already satisfied" it — nobody could be
+  // moved in. Any namespaced target under a real department is exact-only.
+  assert.equal(deptCellSatisfiesTarget('hsl:intake_specialist', 'hsl:healthcare_specialist'), false);
+  assert.equal(deptCellSatisfiesTarget('HSL', 'hsl:healthcare_specialist'), false);
+  assert.ok(deptCellSatisfiesTarget('hsl:healthcare_specialist', 'hsl:healthcare_specialist'));
+  // A built-in sub-team target behaves the same way.
+  assert.equal(deptCellSatisfiesTarget('Lead Gen', 'lead_gen:nurture'), false);
+  assert.ok(deptCellSatisfiesTarget('lead_gen:nurture', 'lead_gen:nurture'));
+  // A data-team CELL still satisfies a plain-family target (never clobber back).
+  assert.ok(deptCellSatisfiesTarget('hsl:healthcare_specialist', 'HSL'));
+  // An unknown-parent namespaced string keeps the old family semantics.
+  assert.equal(deptCellSatisfiesTarget('Lead Gen', 'nonsense:thing'), false);
+});

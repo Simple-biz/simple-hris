@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import {
   listPayStructures,
   upsertPayStructure,
@@ -157,7 +158,10 @@ async function syncRateHistory(
     // Pay Structure rail lists the sub-teams, an individual rate can now be saved
     // while a sub-team is selected, and a bare `=== HOGAN_DEPT_KEY` test would
     // silently stop mirroring it to the Pay Plan sheet.
-    if (s.departmentKey === HOGAN_DEPT_KEY || isHslSubDeptLabel(s.departmentKey)) {
+    // Any HSL-family key — parent, code sub-team, or a DATA sub-team such as
+    // `hsl:healthcare_specialist` (2026-09-22). `isHslSubDeptLabel` alone knows
+    // only the code teams and would silently stop mirroring a data team's rate.
+    if (s.departmentKey === HOGAN_DEPT_KEY || normalizeDeptToKey(s.departmentKey) === HOGAN_DEPT_KEY) {
       void updateHslPayPlanRate({
         workEmail: email,
         regularRate: s.regularRate,

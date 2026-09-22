@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getBuiltinSubs } from "@/lib/departments/builtin-subs-db";
+import { placeableSubIndex } from "@/lib/departments/builtin-subs";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import {
@@ -110,7 +112,7 @@ export async function POST(
   // (including one inherited from `invite_department`, which is only asked for
   // pay-plan matching) is not a placement. See
   // docs/features/hsl-subdepartments.md.
-  if (isHslFamilyLabel(department) && !isPlaceableDeptLabel(department)) {
+  if (isHslFamilyLabel(department) && !isPlaceableDeptLabel(department, placeableSubIndex(await getBuiltinSubs().catch(() => ({}))))) {
     return NextResponse.json(
       { error: "Pick an HSL sub-department — it sets the base rate." },
       { status: 400 },

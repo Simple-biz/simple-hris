@@ -58,6 +58,13 @@ function deptStructure(
     const sub = index.byDeptKey.get(hslSubDeptLabel(subKey));
     if (sub) return sub;
   }
+  // A DATA sub-team (`hsl:healthcare_specialist`, `lead_gen:nurture`) is not a
+  // code key, so look the raw namespaced cell up verbatim — resolve-rate.ts does.
+  const rawCell = deptRaw.trim().toLowerCase();
+  if (rawCell.includes(':')) {
+    const sub = index.byDeptKey.get(rawCell);
+    if (sub) return sub;
+  }
   // Accept either a raw department name or an already-canonical key.
   const key = normalizeDeptToKey(deptRaw) ?? (index.byDeptKey.has(deptRaw) ? deptRaw : null);
   if (!key) return null;

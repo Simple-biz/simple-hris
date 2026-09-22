@@ -321,7 +321,13 @@ export function deptCellSatisfiesTarget(
   const to = (toRaw ?? '').trim().toLowerCase();
   if (!to || !cell) return false;
   if (cell === to) return true;
-  if (isHslSubDeptLabel(to)) return false;
+  // ANY namespaced target under a real department demands the exact cell —
+  // a code HSL team, a DATA team (`hsl:healthcare_specialist`, 2026-09-22) or a
+  // built-in sub (`lead_gen:nurture`). Asking only `isHslSubDeptLabel` made a
+  // data team read as the bare family, so every `hsl:*` person "already
+  // satisfied" it: the Transfer dialog hid the target and blocked Submit, and
+  // nobody could be moved into Carla's new team.
+  if (to.includes(':') && normalizeDeptToKey(to) !== null) return false;
   const tk = familyKey(to);
   return !!tk && familyKey(cell) === tk;
 }

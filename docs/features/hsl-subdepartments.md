@@ -194,10 +194,11 @@ so they cannot drift.
 | Surface | Behavior |
 |---|---|
 | **HR → Onboarding → Bypass** (writes master + Sheet) | `DepartmentSelect hslSubDepartment` — Verify/Add gated by `isPlaceableDeptLabel`; the route **400s** on a bare HSL |
+| *(all three HR rows, 2026-09-22)* | the sub-team picker lists code **and data** teams (`useBuiltinSubs` → `/api/departments.builtinSubs`), and both routes pass the map to `isPlaceableDeptLabel`, so a data team is accepted and a bare label of any department that has sub-teams is refused |
 | **HR → Onboarding → set work email** (stages the hire) | same selector; the route 400s on a bare HSL, including one inherited from `invite_department` |
 | **HR → Onboarding → bulk group** | same selector; a whole batch can't be set without a sub-team |
-| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target, both keyspaces (16 as of 2026-08-14); plain `HSL` is **not** an offered target; submit blocked on a bare HSL |
-| **Admin → Roles & permissions** | unchanged — sub-team **access grants** already come from `HSL_DEPT_KEYS`, not from `/api/departments` |
+| **Manager/HR transfer in** | a PARENT HSL grant expands to **every** labeled sub-team target — the 16 code teams **and, since 2026-09-22, every DATA team** from Payment Catalog → Departments → Edit (`builtinSubOptionsWithPinned`, map carried on `GET /api/manager/transfer-candidates`); an `hsl:<x>` grant, code or data, is that one target; plain `HSL` is **not** an offered target; submit blocked on a bare HSL client-side **and now 400s server-side** (`POST /api/department-transfers`, map-aware `isPlaceableDeptLabel`) |
+| **Admin → Roles & permissions → HSL sub-departments** | the 14 KPI code teams, the 2 placement-only teams **and every DATA team** are grantable chips (`hslGrantableSubs`, map from `/api/departments`); a grant is the raw `hsl:<key>` either way. Before 2026-09-22 only `HSL_DEPT_KEYS` rendered, so Carla's `hsl:healthcare_specialist` could not be given to a manager |
 
 Deliberately **left on the plain family label** — the department there selects a
 **pay-plan PDF** (matched by department + country), and a sub-key would match no pay
@@ -234,6 +235,14 @@ Two deliberate carve-outs:
 
 ## 6. Transfers
 
+- **A namespaced target demands the exact cell — always.** `deptCellSatisfiesTarget`
+  used to ask `isHslSubDeptLabel(to)`, which is true only for code teams, so a DATA
+  team target (`hsl:healthcare_specialist`) read as the bare family and every `hsl:*`
+  person "already satisfied" it: the Transfer dialog hid the target and blocked
+  Submit, and nobody could be moved into Carla's new team (2026-09-22). Now any
+  `<parent>:<sub>` under a real department is exact-only; bare targets keep family
+  semantics. Pinned in `hsl-subdept.test.ts`.
+
 - **Targets** come from the manager's grants **expanded**, never raw. `myDepartments`
   is the access-control keyspace; feeding it in directly is how `hsl:intake_specialist`
   got written into master `Department` cells and rendered as a department. A parent
@@ -242,7 +251,9 @@ Two deliberate carve-outs:
   remains.
 - **Release queues** use `managerOwnsSourceDept(grants, from_department)`: exact match
   first; a parent Hogan grant owns every family source; an `hsl:<sub>` grant owns
-  exactly its own sub-team — not siblings, not the family. A raw `Set.has` left
+  exactly its own sub-team — not siblings, not the family. **Any `hsl:<x>` grant counts as a sub-team grant** (2026-09-22) — matched on the raw
+  string, not on `hslSubKeyFromRaw`, which knows only the code teams; a data-team
+  TL's grant used to fall through to the parent branch and own the whole family. A raw `Set.has` left
   requests out of `hsl:*` with no owner at all, so nobody could release them.
 - **Within-family moves do not reset the weekend premium.** `buildHslTransferEffectiveMap`
   skips rows whose `from_department` is already HSL-family, so a plain→sub relabel or a

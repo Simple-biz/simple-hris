@@ -33,7 +33,9 @@ import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type FeatureViewKey } from '@/lib/rbac/feature-permissions';
-import { HSL_DEPTS, HSL_DEPT_KEYS, hslAccessKey, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { HSL_PLACEMENT_ONLY_SUB_KEYS, HSL_PLACEMENT_ONLY_SUB_TEAMS } from '@/lib/departments/hsl-subdept';
+import { builtinSubsFor, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
 import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 
@@ -210,6 +212,20 @@ export default function AdminRoles() {
   // either added manually here or surfaced from existing role assignments
   // pointing at off-roster addresses (founders, bots, contractors, etc.).
   const [customEmails, setCustomEmails] = useState<Set<string>>(new Set());
+  const [builtinSubs, setBuiltinSubs] = useState<BuiltinSubMap>({});
+  /** Every HSL sub-team a grant can name: the 14 KPI code teams, the 2
+   *  placement-only code teams, then the DATA teams. One list so the chip grid
+   *  and the "active" count agree. */
+  const hslGrantableSubs = useMemo(() => {
+    const out: Array<{ key: string; name: string; kind: 'kpi' | 'placement' | 'data' }> = [];
+    for (const key of HSL_DEPT_KEYS) out.push({ key, name: HSL_DEPTS[key].name, kind: 'kpi' });
+    for (const key of HSL_PLACEMENT_ONLY_SUB_KEYS) out.push({ key, name: HSL_PLACEMENT_ONLY_SUB_TEAMS[key].name, kind: 'placement' });
+    const seen = new Set(out.map((o) => o.key));
+    for (const s of builtinSubsFor(builtinSubs, 'hogan_smith_law')) {
+      if (!seen.has(s.key)) out.push({ key: s.key, name: s.name, kind: 'data' });
+    }
+    return out;
+  }, [builtinSubs]);
   const [customInputOpen, setCustomInputOpen] = useState(false);
   const [customInput, setCustomInput] = useState('');
 
@@ -224,9 +240,12 @@ export default function AdminRoles() {
         ]);
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[] };
         const rolesJson = (await rolesRes.json()) as { rows?: RoleRow[] };
-        const deptJson = (await deptRes.json()) as { departments?: string[] };
+        const deptJson = (await deptRes.json()) as { departments?: string[]; builtinSubs?: BuiltinSubMap };
         const mgrDeptJson = (await mgrDeptRes.json()) as { rows?: DepartmentManagerRow[] };
         setDepartments(deptJson.departments ?? []);
+        // Data sub-teams (Payment Catalog → Departments → Edit), so a team like
+        // Carla's `hsl:healthcare_specialist` is grantable the moment it exists.
+        if (deptJson.builtinSubs && typeof deptJson.builtinSubs === 'object') setBuiltinSubs(deptJson.builtinSubs);
         setDeptAssignments(mgrDeptJson.rows ?? []);
 
         // Directory is the Master List only (`/api/employees` → active_employees
@@ -530,15 +549,18 @@ export default function AdminRoles() {
   );
 
   const selectedHslSubDepts = useMemo(() => {
-    const out = new Set<HslDeptKey>();
+    // Any `hsl:<x>` grant this person holds that names a team we can show —
+    // code or data. An unknown/retired key is neither counted nor offered.
+    const known = new Set(hslGrantableSubs.map((o) => o.key));
+    const out = new Set<string>();
     selectedDeptAssignments.forEach((d) => {
       const k = d.department.trim().toLowerCase();
       if (!k.startsWith('hsl:')) return;
-      const sub = k.slice(4) as HslDeptKey;
-      if ((HSL_DEPT_KEYS as readonly string[]).includes(sub)) out.add(sub);
+      const sub = k.slice(4);
+      if (known.has(sub)) out.add(sub);
     });
     return out;
-  }, [selectedDeptAssignments]);
+  }, [selectedDeptAssignments, hslGrantableSubs]);
 
   async function refreshDeptAssignments() {
     try {
@@ -1294,9 +1316,9 @@ export default function AdminRoles() {
                       </Badge>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {HSL_DEPT_KEYS.map((key) => {
-                        const cfg = HSL_DEPTS[key];
-                        const grantStr = hslAccessKey(key);
+                      {hslGrantableSubs.map(({ key, name, kind }) => {
+                        const cfg = kind === 'kpi' ? HSL_DEPTS[key as HslDeptKey] : null;
+                        const grantStr = `hsl:${key}`;
                         const on = selectedHslSubDepts.has(key);
                         const busy = deptMutating === grantStr;
                         return (
@@ -1311,7 +1333,15 @@ export default function AdminRoles() {
                                 ? 'border-violet-500/60 bg-violet-500/15 text-violet-800 hover:bg-violet-500/20 dark:border-violet-500/50 dark:bg-violet-950/50 dark:text-violet-200'
                                 : 'border-zinc-200 bg-white text-zinc-600 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-800 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-violet-700/60 dark:hover:bg-violet-950/30 dark:hover:text-violet-200',
                             )}
-                            title={cfg.cadence === 'weekly' ? 'Weekly bonus' : 'Monthly bonus'}
+                            title={
+                              cfg
+                                ? cfg.cadence === 'weekly'
+                                  ? 'Weekly bonus'
+                                  : 'Monthly bonus'
+                                : kind === 'data'
+                                  ? 'Added in Payment Catalog — no KPI calculator of its own'
+                                  : 'Placement-only team — scored under another calculator'
+                            }
                           >
                             {busy ? (
                               <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -1320,7 +1350,7 @@ export default function AdminRoles() {
                             ) : (
                               <Plus className="h-3 w-3" aria-hidden />
                             )}
-                            {cfg.name}
+                            {name}
                           </button>
                         );
                       })}

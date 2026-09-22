@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getBuiltinSubs } from "@/lib/departments/builtin-subs-db";
+import { placeableSubIndex } from "@/lib/departments/builtin-subs";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { WORK_EMAIL_DOMAIN } from "@/lib/hr/work-email";
@@ -87,7 +89,7 @@ export async function POST(req: Request) {
   // place the hire on the parent fallback with nobody having chosen it, so this
   // route — which writes the master list AND the master Sheet — refuses it rather
   // than trusting the client to have shown the selector.
-  if (!isPlaceableDeptLabel(department)) {
+  if (!isPlaceableDeptLabel(department, placeableSubIndex(await getBuiltinSubs().catch(() => ({}))))) {
     return NextResponse.json(
       {
         error: isHslFamilyLabel(department)

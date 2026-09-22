@@ -613,11 +613,17 @@ HSL is in, with one exception to the convention and one boundary:
   `hsl-subdept.test.ts` that pinned the old slug display were re-pinned to the
   new one, with the retirement guards untouched.
 
-**Known gap, deliberately not widened into:** the manager Transfer dialog and
-the HR onboarding sub-team picker read `hslSubDeptOptions()` with no map, so a
-data HSL team is a destination from the Catalog's People step immediately and
-from those two surfaces only once they load the map. Both are manager/HR
-surfaces with their own governing docs.
+**Closed 2026-09-22** (Kane, on Carla's new `hsl:healthcare_specialist`: *"if
+initially I wasnt able to move people in there the transfers should work
+properly"* and *"Admin Dashboard – Role Assignments – HSL – Subdepartments did
+not catch it"*): the data-team map now reaches every surface that chooses or
+checks a sub-team — the manager Transfer dialog (via
+`/api/manager/transfer-candidates`), the transfer POST, both HR onboarding
+routes and the HR picker (via `/api/departments` + `useBuiltinSubs`), Admin →
+Roles' HSL grant chips, the Hogan pay-plan rate mirror, the accounting-transfers
+rate leg and `overview-metrics` display. The one predicate bug behind the
+transfer failure — `deptCellSatisfiesTarget` treating a data team as the bare
+family — is fixed and pinned. See `hsl-subdepartments.md` §4 and §6.
 
 #### What changed in the shared department functions
 

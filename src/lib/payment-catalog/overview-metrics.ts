@@ -211,7 +211,7 @@ const norm = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 // formatDeptLabel first ("HSL — Intake Specialist").
 const deptName = (key: string) =>
   DEPT_NAME.get(key) ??
-  (isHslSubDeptLabel(key)
+  (isHslSubDeptLabel(key) || key.includes(':')
     ? formatDeptLabel(key)
     : key.replace(/_+/g, ' ').replace(/(^|\s)[a-z]/g, (c) => c.toUpperCase()));
 

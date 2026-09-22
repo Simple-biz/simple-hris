@@ -5,6 +5,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
 import { listActiveMasterListPeople } from '@/lib/supabase/global-master-list-db';
 import { listRecentlyOffboardedPeople } from '@/lib/roster/recently-offboarded';
+import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -102,5 +103,9 @@ export async function GET(request: Request) {
     );
   });
 
-  return NextResponse.json({ people: filtered.slice(0, 200), departments, error: null });
+  // Data sub-teams (Payment Catalog → Departments → Edit) so a parent grant can
+  // expand to them as transfer targets. Best-effort: a failed read degrades to
+  // the code teams only, exactly the pre-2026-09-22 behaviour.
+  const builtinSubs = await getBuiltinSubs().catch(() => ({}));
+  return NextResponse.json({ people, builtinSubs: filtered.slice(0, 200), departments, error: null });
 }

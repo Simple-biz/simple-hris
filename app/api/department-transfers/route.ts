@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
+import { placeableSubIndex } from '@/lib/departments/builtin-subs';
+import { isPlaceableDeptLabel } from '@/lib/departments/hsl-subdept';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
@@ -209,6 +212,18 @@ export async function POST(request: Request) {
     }
     if (!ISO_DATE.test(proposed)) {
       return NextResponse.json({ error: 'A proposed effective date (YYYY-MM-DD) is required' }, { status: 400 });
+    }
+    // The target must be a PLACEMENT: a bare "HSL" (or the bare label of any
+    // department that has sub-teams) is not one — the sub-team carries the base
+    // rate. The dialog gates Submit on the same predicate; the route no longer
+    // trusts the client to have shown the selector. Data sub-teams come from
+    // the Payment Catalog map; a failed read degrades to code-teams-only.
+    const builtinSubs = await getBuiltinSubs().catch(() => ({}));
+    if (!isPlaceableDeptLabel(toDept, placeableSubIndex(builtinSubs))) {
+      return NextResponse.json(
+        { error: 'Pick the specific sub-team — it sets the base rate.' },
+        { status: 400 },
+      );
     }
 
     // A non-admin manager may only pull people INTO a department they manage,

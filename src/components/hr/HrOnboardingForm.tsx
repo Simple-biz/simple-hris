@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { builtinSubOptionsWithPinned } from '@/lib/departments/builtin-subs';
+import { useBuiltinSubs } from '@/lib/departments/use-builtin-subs';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -4892,7 +4894,8 @@ function DepartmentSelect({
   // composed `hsl:<key>` value would match no item in the list and would render
   // as an empty placeholder.
   const familyValue = hslSubDepartment ? collapseHslFamilyLabel(value) : value;
-  const subValue = hslSubDepartment && isHslSubDeptLabel(value) ? value : '';
+  // Any `hsl:<x>` — a code team or a data team — counts as a chosen sub-team.
+  const subValue = hslSubDepartment && value.trim().toLowerCase().startsWith('hsl:') ? value : '';
   const needsSubDept = hslSubDepartment && isHslFamilyLabel(familyValue) && !subValue;
 
   const pickDepartment = (v: string) => {
@@ -4904,8 +4907,8 @@ function DepartmentSelect({
     // Staying inside the HSL family keeps an already-chosen sub-team; arriving
     // fresh emits the bare family label so `needsSubDept` forces a real pick
     // rather than silently defaulting someone into a sub-team.
-    const keep = hslSubKeyFromRaw(value);
-    onChange(keep ? hslSubDeptLabel(keep) : HSL_FAMILY_DEPT_LABEL);
+    const keep = value.trim().toLowerCase().startsWith('hsl:') ? value.trim().toLowerCase() : null;
+    onChange(keep ?? HSL_FAMILY_DEPT_LABEL);
   };
 
   return (
@@ -5024,7 +5027,8 @@ function SubDepartmentSelect({
   needsPick: boolean;
   disabled: boolean;
 }) {
-  const options = useMemo(() => hslSubDeptOptions(), []);
+  const builtinSubs = useBuiltinSubs();
+  const options = useMemo(() => builtinSubOptionsWithPinned(builtinSubs, 'hogan_smith_law'), [builtinSubs]);
 
   return (
     <div className="flex flex-col gap-1">

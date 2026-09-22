@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireElevatedSession, deniedResponse } from '@/lib/auth/authorize-email';
 import { getDepartmentRegistry } from '@/lib/departments/registry-db';
+import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
 import { applyDeptOverrideToRawRow } from '@/lib/departments/dept-email-overrides';
 import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
@@ -81,5 +82,9 @@ export async function GET() {
   const departments = Array.from(set).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: 'base' }),
   );
-  return NextResponse.json({ departments, error: null });
+  // Data sub-teams of built-in departments (2026-09-22), so the HR sub-team
+  // picker can offer Carla's `hsl:healthcare_specialist` beside the 16 code
+  // teams. Best-effort, like the registry read above.
+  const builtinSubs = await getBuiltinSubs().catch(() => ({}));
+  return NextResponse.json({ departments, builtinSubs, error: null });
 }

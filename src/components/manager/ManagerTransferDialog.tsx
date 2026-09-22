@@ -15,6 +15,13 @@ import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
+import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import {
+  builtinSubOptions,
+  builtinSubOptionsWithPinned,
+  placeableSubIndex,
+  type BuiltinSubMap,
+} from '@/lib/departments/builtin-subs';
 import {
   deptCellSatisfiesTarget,
   formatDeptLabel,
@@ -57,6 +64,9 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
   const [deptFilter, setDeptFilter] = useState('');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
+  /** Data sub-teams from the candidates response (Payment Catalog → Departments). */
+  const [builtinSubs, setBuiltinSubs] = useState<BuiltinSubMap>({});
+  const placeableSubs = useMemo(() => placeableSubIndex(builtinSubs), [builtinSubs]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [toDept, setToDept] = useState('');
@@ -96,19 +106,31 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
     for (const grant of myDepartments) {
       const g = grant.trim();
       if (!g) continue;
-      const sub = hslSubKeyFromRaw(g);
-      if (sub) {
-        push(hslSubDeptLabel(sub), formatDeptLabel(hslSubDeptLabel(sub)));
+      // ANY `hsl:<x>` grant — a code team OR a data team such as
+      // `hsl:healthcare_specialist` — is that one sub-team, never the family.
+      // `hslSubKeyFromRaw` knows only the code teams, so a data-team TL used to
+      // fall through to the family branch and be offered all sixteen.
+      if (g.toLowerCase().startsWith('hsl:')) {
+        push(g.toLowerCase(), formatDeptLabel(g));
         continue;
       }
       if (isHslFamilyLabel(g)) {
-        for (const o of hslSubDeptOptions()) push(o.value, o.label);
+        // Code teams first, then the data teams from Payment Catalog.
+        for (const o of builtinSubOptionsWithPinned(builtinSubs, 'hogan_smith_law')) push(o.value, o.label);
+        continue;
+      }
+      // A non-HSL department that HAS sub-teams: offer its teams, not the bare
+      // label — the sub-team carries the base rate (same rule as HSL).
+      const key = normalizeDeptToKey(g);
+      const subs = key ? builtinSubOptions(builtinSubs, key) : [];
+      if (subs.length > 0) {
+        for (const o of subs) push(o.value, o.label);
         continue;
       }
       push(g, formatDeptLabel(g));
     }
     return out;
-  }, [myDepartments]);
+  }, [myDepartments, builtinSubs]);
 
   // Default the target ONLY when there is exactly one real choice. A parent-HSL
   // manager has every sub-team and must pick explicitly — no silent default.
@@ -139,10 +161,13 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
       if (deptFilter) params.set('department', deptFilter);
       fetch(`/api/manager/transfer-candidates?${params.toString()}`, { cache: 'no-store' })
         .then((r) => r.json())
-        .then((j: { people?: Candidate[]; departments?: string[] }) => {
+        .then((j: { people?: Candidate[]; departments?: string[]; builtinSubs?: BuiltinSubMap }) => {
           if (cancelled) return;
           setCandidates(j.people ?? []);
           if (j.departments) setDepartments(j.departments);
+          // Data sub-teams ride the same response so a parent grant can expand
+          // to them; absent (older server, failed read) keeps the code teams.
+          if (j.builtinSubs && typeof j.builtinSubs === 'object') setBuiltinSubs(j.builtinSubs);
         })
         .catch(() => {
           if (!cancelled) setCandidates([]);
@@ -171,7 +196,9 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
     !!selected &&
     !!toDept &&
     // A bare "HSL" target is not a placement — the sub-team carries the rate.
-    isPlaceableDeptLabel(toDept) &&
+    // With the map, a data team is placeable and a department that has
+    // sub-teams refuses its bare label.
+    isPlaceableDeptLabel(toDept, placeableSubs) &&
     // Already satisfying the target is a no-op, and an `hsl:*` cell satisfies a
     // plain-family target — so this also blocks clobbering a sub-team label back
     // to the generic one.
@@ -343,7 +370,7 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
                   ...targetOptions,
                 ]}
               />
-              {isHslFamilyLabel(toDept) && !isHslSubDeptLabel(toDept) && (
+              {isHslFamilyLabel(toDept) && !toDept.toLowerCase().startsWith('hsl:') && (
                 <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
                   Pick an HSL sub-department — it sets their base rate.
                 </p>

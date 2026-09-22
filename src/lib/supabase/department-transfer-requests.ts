@@ -205,16 +205,17 @@ export async function hasPendingTransferForEmployee(
 export function managerOwnsSourceDept(managedDepts: string[], fromDepartment: string): boolean {
   const from = (fromDepartment ?? '').trim().toLowerCase();
   if (!from) return false;
-  const fromSub = hslSubKeyFromRaw(from);
   const fromIsHslFamily = isHslFamilyLabel(from);
   for (const d of managedDepts) {
     const g = (d ?? '').trim().toLowerCase();
     if (!g) continue;
     if (g === from) return true;
-    const grantSub = hslSubKeyFromRaw(g);
-    if (grantSub) {
-      // Sub-team grant: only its own sub-team, whatever the label casing.
-      if (fromSub && grantSub === fromSub) return true;
+    // Sub-team grant: only its own sub-team, whatever the label casing. Matched
+    // on the raw `hsl:<x>` string, not on `hslSubKeyFromRaw`, which only knows
+    // the CODE teams — a DATA team's grant (`hsl:healthcare_specialist`) would
+    // otherwise fall through to the parent branch and own the whole family.
+    if (g.startsWith('hsl:')) {
+      if (from.startsWith('hsl:') && g === from) return true;
       continue;
     }
     // Parent grant (any alias of Hogan Smith Law that is not itself a sub grant).
