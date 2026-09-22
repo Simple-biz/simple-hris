@@ -535,6 +535,17 @@ still governs the numbers: cards hydrate **raw** from
 - **HSL table UX.** Pinned always-visible horizontal + vertical scrollbars,
   Additions-matching text size, and the **KPI Bonus column hidden by default**
   behind a Show/Hide dropdown in the toolbar.
+- **The HSL KPI Bonus column reads the RESOLVED amounts, never the raw map.**
+  `hslKpiAmounts` is keyed by `hsl_bonus_entries.employee_email` — the **work**
+  email since the 2026-07-21 re-key — while a wizard row is keyed by the person's
+  **Hubstaff** email. `resolvedHslKpi` exists to bridge the two (work → personal →
+  name tokens via `masterIndex`). Until 2026-09-22 the HSL tab's cell **and its
+  footer total** were the last two sites reading `hslKpiAmounts[em]` directly, so
+  anyone whose Hubstaff login differs from their work email showed **₱0 in a column
+  that was supposed to prove the KPI bonus was there** — while dispatch, the
+  Additions column and the eligibility list all read the resolved figure and paid
+  correctly. The column disagreed with the money, which is worse than being blank.
+  Every consumer now reads `resolvedHslKpi.amounts`; a new one must too.
 - **Orphanage PAB auto-coverage (temporary).** Orphanage-step hours can
   auto-forgive short PAB weekdays — see
   [orphanage-pab-coverage.md](./orphanage-pab-coverage.md).

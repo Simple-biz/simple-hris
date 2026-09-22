@@ -12166,7 +12166,14 @@ export default function PayrollWizard({
                             // Match dispatch: bonuses are zeroed for rows without a
                             // pay rate, so gate the KPI the same way here.
                             const hasRates = r.regularRate != null || r.otRate != null;
-                            const kpiBonus = hasRates ? (hslKpiAmounts[em] ?? 0) : 0;
+                            // `hslKpiAmounts` is keyed by `hsl_bonus_entries.employee_email` — the
+                            // WORK email since the 2026-07-21 re-key — while this row is keyed by
+                            // the person's HUBSTAFF email. Reading the raw map here showed ₱0 for
+                            // everyone whose Hubstaff login differs, which is the whole reason
+                            // `resolvedHslKpi` exists (see its comment). Dispatch, the Additions
+                            // column and the eligibility list all already read the resolved map;
+                            // this tab and its footer were the last two raw reads.
+                            const kpiBonus = hasRates ? (resolvedHslKpi.amounts[r.email] ?? 0) : 0;
                             // Same key resolution as the Additions column — an override
                             // sitting under the lowercased twin still shows here.
                             const adjKey = overrideKeyFor(r.email);
@@ -12416,7 +12423,9 @@ export default function PayrollWizard({
                             for (const r of visibleHslRows) {
                               const em = (r.email ?? '').toLowerCase();
                               totalInitialPay += r.initialPay ?? 0;
-                              totalKpi += (r.regularRate != null || r.otRate != null) ? (hslKpiAmounts[em] ?? 0) : 0;
+                              // Resolved, not raw — the footer must total the same figure the rows
+                              // print (see the KPI Bonus cell above).
+                              totalKpi += (r.regularRate != null || r.otRate != null) ? (resolvedHslKpi.amounts[r.email] ?? 0) : 0;
                               totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
