@@ -320,6 +320,15 @@ US Manager Bonus · USEE**.
     keyed off `HslDeptKey`, so it covered the 14 code teams only — not a
     sub-team an accountant had just created, which had no card at all. See
     `hsl-subdepartments.md` §5.5.
+  - **And it is actually PAID, since the second follow-up** (audit item 159,
+    `hsl-subdepartments.md` §5.5.1). Scoring a branch and paying it are separate
+    gates: the wizard's auto-dispatch set was also `HSL_DEPT_KEYS`, so a data
+    branch's `calculated_bonus` never reached dispatch, and the one `perEmployee`
+    branch (`hsl_managers`) discarded the stored figure and recomputed from
+    `spec.components` — which cannot see a `catalog:` key, so a Library bonus
+    assigned to `hsl:hsl_managers` was scored and then dropped. Both closed
+    **without** admitting any `hsl:` key to `WIZARD_PAYABLE_KPI_DEPT_KEYS`; the
+    double-pay guard above is untouched.
   - **How it READS on the card** *(2026-09-22, `impeccable clarify`)*. The
     first cut put the bonus name in the column head and left everything else
     unsaid: the head's second line was the word **"formula"** — a KIND, where

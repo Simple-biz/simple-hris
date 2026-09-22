@@ -159,3 +159,53 @@ test('email de-dup is case-insensitive', () => {
   );
   assert.equal(merged.length, 1);
 });
+
+// ── DATA sub-teams (Payment Catalog → Departments → Edit), 2026-09-22 ─────────
+// Without the key list the branch resolved NOBODY, so the KPI card Kane had just
+// been given had an empty roster and nothing could be scored on it.
+
+test('a DATA sub-team person is resolved only when its key is supplied', () => {
+  const p = gmlPerson({ department: 'hsl:healthcare_specialist' });
+  assert.equal(mergeHslRoster([], [p], null).length, 0, 'unknown key stays unknown');
+
+  const merged = mergeHslRoster([], [p], null, ['healthcare_specialist']);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]!.dept_key, 'healthcare_specialist');
+});
+
+test('the dept filter reaches a DATA branch, so its card gets its own people', () => {
+  const rows = mergeHslRoster(
+    [],
+    [
+      gmlPerson({ department: 'hsl:healthcare_specialist', work_email: 'a@simple.biz' }),
+      gmlPerson({ department: 'hsl:case_managers', work_email: 'b@simple.biz' }),
+    ],
+    'healthcare_specialist',
+    ['healthcare_specialist'],
+  );
+  assert.deepEqual(rows.map((r) => r.email), ['a@simple.biz']);
+});
+
+test('a DATA key is admitted ONLY namespaced — never from a bare display name', () => {
+  // An accountant can name a sub-team anything, including a real non-HSL
+  // department. Inferring HSL membership from a bare label is the 2026-08-19
+  // ruling's forbidden move, and widening for data teams must not reopen it.
+  const keys = ['healthcare specialist', 'accounting', 'healthcare_specialist'];
+  for (const label of ['Healthcare Specialist', 'healthcare_specialist', 'Accounting']) {
+    assert.equal(
+      mergeHslRoster([], [gmlPerson({ department: label })], null, keys).length,
+      0,
+      `bare "${label}" must not resolve`,
+    );
+  }
+});
+
+test('an unknown hsl:<x> still resolves nobody even with data keys supplied', () => {
+  const merged = mergeHslRoster(
+    [],
+    [gmlPerson({ department: 'hsl:lead_nurture' })],
+    null,
+    ['healthcare_specialist'],
+  );
+  assert.equal(merged.length, 0, 'a retired or mistyped key mints no branch');
+});

@@ -16,6 +16,69 @@ Last substantive update: **2026-09-09**.
 
 ---
 
+## 2026-09-22 — the wizard pays every HSL BRANCH, not just the 14 code teams
+
+> *"Are we absolutely sure that the new updates for the HSL Bonuses are updating
+> the Payroll Wizard?"* (Kane) — then *"please also check that the Reports step is
+> updated!"* The answer was no. Audit item 159.
+
+A DATA sub-team (Payment Catalog → Departments → Edit) had been given a KPI card
+the same day. It could be scored, marked ready and shown Ready in Payroll Notes →
+KPI Submissions, and it paid **₱0**: the wizard's auto-dispatch set was
+`HSL_DEPT_KEYS.filter(k => hslDeptAutoDispatches(HSL_DEPTS[k]))`, so the branch's
+`hsl_bonus_period_status` row was dropped before its entries were ever fetched.
+
+**Three key sets now span every branch**, built from `hslBranchKeys` /
+`hslBranchConfigs` (`src/lib/hsl-bonus/data-branch.ts`): the auto-dispatch set,
+the review step's period picker, and the HSL rail. A data branch is
+`cadence: 'weekly'`, so it enters the payable set on the **ordinary** rule — there
+is no data-branch special case, and a test pins that with no data sub-teams the
+set is byte-identical to the pre-change one. Manual-monthly code teams
+(Collections, Healthcare TL) stay off it and keep their Adjustment cards.
+
+**`HSL_DEPTS[key]` is `undefined` for a data branch.** Every lookup in the wizard
+goes through `hslBranchCfg(key)` / `hslBranchName(key)`; never index `HSL_DEPTS`
+directly here.
+
+**Managers Weekly no longer loses its Library bonus.** `hsl_managers` is the one
+`perEmployee` branch, and the wizard used to discard `calculated_bonus` and
+recompute it from `spec.components` — which meant a Bonus Library bonus assigned
+to `hsl:hsl_managers` was scored on the card and silently dropped at pay time.
+The recompute exists only to withhold `monthly` components outside the month's
+final payroll week, so it is now exactly that and nothing more
+(`managerWeekAmount`, `src/lib/hsl-bonus/manager-week-amount.ts`, 6 tests):
+
+```
+amount = stored − (month-inclusive spec total − this-week spec total)
+```
+
+In the final week the amount IS the stored figure. A stored figure *below* its own
+monthly components cannot have come from `scoreEntry`; the amount clamps to 0 and
+the wizard logs it, because a negative KPI bonus is a silent pay cut.
+
+**An unreadable sub-department map withholds the amounts.** The map is a pay input
+here, so `useBuiltinSubsState` is used rather than `useBuiltinSubs`: degrading a
+failed read to `{}` would pay the code teams and skip every data branch with
+nothing logged anywhere. On anything but `ready` the loader returns without
+publishing, leaving `hslKpiLoaded` null — the same block on the final-pay publisher
+an unreadable entries fetch already raises.
+
+**The double-pay guard is untouched.** No `hsl:` key entered
+`WIZARD_PAYABLE_KPI_DEPT_KEYS` ([bonus-catalog.md](./bonus-catalog.md) §3.1); the
+money rides `hsl_bonus_entries.calculated_bonus` on the loader HSL has always used.
+
+**The Reports step (9) needed no change.** It renders `dispatchData.rows` and both
+exports read `snap.employees` whole, so it carries whatever dispatch computed and
+the reconciliation identity is unchanged — the KPI bonus arrives through
+`addHslKpiBonuses` into the same bonuses total as a code team's. That is also why
+Reports was no help in finding this: the loss showed up as ₱0 and the export
+reconciled perfectly against a wrong number.
+
+Related: [hsl-subdepartments.md](./hsl-subdepartments.md) §5.5.1 (the roster half —
+a data branch's card had no PEOPLE on it either).
+
+---
+
 ## 2026-09-15 — Leavers are priced from the catalog, and a rate fix beside the wizard lands live
 
 Two small changes in the Step-2 rate index (`ratesByEmail`), both driven by the

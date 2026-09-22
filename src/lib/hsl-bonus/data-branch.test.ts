@@ -17,7 +17,7 @@ import {
   hslBranchKeys,
   isDataBranchKey,
 } from './data-branch';
-import { HSL_DEPTS, HSL_DEPT_KEYS, calcBonus } from './schema';
+import { HSL_DEPTS, HSL_DEPT_KEYS, calcBonus, hslDeptAutoDispatches } from './schema';
 import type { BonusAssignment, BonusDef } from '@/lib/bonus-catalog/types';
 
 const SUB = { key: 'healthcare_specialist', name: 'Healthcare Specialist' };
@@ -112,4 +112,42 @@ test('a MONTHLY bonus is not work outside its final payroll week', () => {
   const final = dataBranchHasWork({ subKey: 'healthcare_specialist', assignments, bonuses, periodStart: '2026-09-27' });
   const mid = dataBranchHasWork({ subKey: 'healthcare_specialist', assignments, bonuses, periodStart: '2026-09-06' });
   assert.notEqual(final, mid, 'exactly one of the two weeks may count it as work');
+});
+
+// ── The Payroll Wizard's payable set (2026-09-22, audit item 159) ────────────
+// The wizard built it as `HSL_DEPT_KEYS.filter(k => hslDeptAutoDispatches(HSL_DEPTS[k]))`,
+// so a data branch's entries were never fetched and it paid ₱0. It is now built
+// from the branch configs; these two tests pin both halves of that.
+
+const payableFrom = (subs: { key: string; name: string }[]) => {
+  const configs = hslBranchConfigs(subs);
+  return hslBranchKeys(subs).filter((k) => {
+    const cfg = configs[k];
+    return !!cfg && hslDeptAutoDispatches(cfg);
+  });
+};
+
+test('with NO data sub-teams the payable set is byte-identical to the old one', () => {
+  const before = HSL_DEPT_KEYS.filter((k) => hslDeptAutoDispatches(HSL_DEPTS[k]));
+  assert.deepEqual(payableFrom([]), [...before], 'todays production behaviour must not move');
+});
+
+test('a DATA branch IS payable — that is the whole bug', () => {
+  const payable = payableFrom([SUB]);
+  assert.equal(payable.includes('healthcare_specialist'), true);
+  // It qualifies on the ordinary weekly rule, not a special case.
+  assert.equal(hslDeptAutoDispatches(dataBranchConfig(SUB)), true);
+  // And it is ADDITIVE: no code team dropped out.
+  for (const k of HSL_DEPT_KEYS.filter((k) => hslDeptAutoDispatches(HSL_DEPTS[k]))) {
+    assert.equal(payable.includes(k), true, `${k} must still be payable`);
+  }
+});
+
+test('a MONTHLY code team stays OFF the payable set (manual Adjustment card)', () => {
+  const payable = payableFrom([SUB]);
+  const manualMonthly = HSL_DEPT_KEYS.filter((k) => !hslDeptAutoDispatches(HSL_DEPTS[k]));
+  assert.equal(manualMonthly.length > 0, true, 'the fixture needs at least one manual monthly dept');
+  for (const k of manualMonthly) {
+    assert.equal(payable.includes(k), false, `${k} is hand-keyed into Adjustment — auto-paying it is double-pay`);
+  }
 });

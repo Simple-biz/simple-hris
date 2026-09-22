@@ -1854,6 +1854,28 @@ the Payment Catalog (HR onboarding, Admin Roles). Cached per page load, one
 fetch for every consumer; a failed read yields `{}` so the caller falls back to
 the code teams. `invalidateBuiltinSubs()` drops the cache after an edit saves.
 
+`useBuiltinSubsState()` returns `{ map, status: 'loading' | 'ready' | 'error' }`.
+**A caller that spends money must use this one.** `useBuiltinSubs`'s degrade-to-`{}`
+is harmless for a picker and a silent UNDERPAY on a pay path — the Payroll Wizard
+would pay the 14 code teams and skip every data branch with nothing logged
+anywhere (2026-09-22, audit item 159). `ready` with an empty map genuinely means
+no sub-departments exist; `error` means unknown. A reply carrying no `builtinSubs`
+object counts as `error`, not as empty.
+
+### `src/lib/hsl-bonus/manager-week-amount.ts` *(client-safe)*
+
+`managerWeekAmount` — what the Payroll Wizard pays a **Managers Weekly**
+(`perEmployee`) person for one week. Every other HSL branch pays its stored
+`hsl_bonus_entries.calculated_bonus` verbatim; this branch used to be RECOMPUTED
+from `spec.components`, which silently discarded anything else the stored figure
+carried — as of 2026-09-22 a Bonus Library bonus on `hsl:hsl_managers`, scored on
+the card and dropped at pay time. It now starts from the stored figure and
+withholds ONLY the monthly components the week cannot pay:
+`stored − (month-inclusive spec total − this-week spec total)`. Returns
+`monthlyWithheld` and `inconsistent` — the latter meaning the stored figure was
+below its own monthly components (so nothing wrote it through `scoreEntry`); the
+amount clamps to 0 and the caller logs, because a negative KPI bonus is a pay cut.
+
 ### `src/lib/bonus-catalog/assignment-scope.ts` *(client-safe)*
 
 Sub-team-targeted bonus assignments. `assignmentParentKey` — the assignment

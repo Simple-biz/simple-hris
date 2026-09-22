@@ -3141,6 +3141,7 @@ feature doc and in no hand-written section here.**
 | `/api/hsl-bonus/period-status` | GET, POST | — **none found** | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) |
 | `/api/hsl-bonus/period-summary` | GET | — **none found** | [pre-release-security-readiness](../features/pre-release-security-readiness.md) |
 | `/api/hsl-bonus/team-members` | GET | `getServerSession` | [hsl-subdepartments](../features/hsl-subdepartments.md) |
+| ↳ | | | **503 when `?dept=` names a branch it cannot resolve** (2026-09-22). DATA sub-teams live in `app_settings`, so an unreadable map makes a data key indistinguishable from a typo — and the reply would be a confident empty roster, i.e. "this team has nobody in it". Code teams still resolve and still answer. |
 | `/api/hubstaff-hours` | GET, POST, PATCH, DELETE | `authorizeEmail` | [csv-imports](../features/csv-imports.md) · [employee-my-hours-calendar](../features/employee-my-hours-calendar.md) · *this file* |
 | `/api/import-daily-report` | POST | `requireElevatedSession` | [audit-log](../features/audit-log.md) · [pre-release-security-readiness](../features/pre-release-security-readiness.md) · *this file* |
 | `/api/kpi-results` | GET | `authorizeEmail` | — **no doc** |

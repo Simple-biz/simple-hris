@@ -6,6 +6,9 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { listActiveMasterListPeople, type ActiveMasterListPerson } from '@/lib/supabase/global-master-list-db';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { mergeHslRoster, type HslRosterRow } from '@/lib/hsl-bonus/roster-merge';
+import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
+import { builtinSubsFor } from '@/lib/departments/builtin-subs';
+import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -110,7 +113,29 @@ export async function GET(req: NextRequest) {
   );
   if (error) return NextResponse.json({ error }, { status: 500 });
 
+  // DATA sub-teams (Payment Catalog -> Departments -> Edit) live in app_settings,
+  // so `matchHslSubDeptKey` cannot know them without this read. Before it, a data
+  // branch's card fetched an EMPTY roster and had nobody to score.
+  let dataSubKeys: string[] | null = null;
+  try {
+    dataSubKeys = builtinSubsFor(await getBuiltinSubs(), 'hogan_smith_law').map((sub) => sub.key);
+  } catch (e) {
+    console.error('[hsl-bonus/team-members] builtin sub-departments unreadable:', e);
+  }
+
+  // A failed read degrades for the code teams (they resolve without the map) but
+  // must NOT answer for a branch it can no longer recognise: the reply would be a
+  // confident empty roster, indistinguishable from "this team has nobody in it".
+  // We cannot tell a data key from a typo without the map, so anything that is not
+  // a code team is unanswerable.
+  if (dataSubKeys === null && dept && !(HSL_DEPT_KEYS as readonly string[]).includes(dept)) {
+    return NextResponse.json(
+      { error: 'Sub-department list unavailable — cannot resolve this branch' },
+      { status: 503 },
+    );
+  }
+
   const gmlPeople = await getActiveMasterListPeopleCached();
-  const rows = mergeHslRoster(hslRows, gmlPeople, dept);
+  const rows = mergeHslRoster(hslRows, gmlPeople, dept, dataSubKeys ?? []);
   return NextResponse.json({ rows });
 }

@@ -54,6 +54,14 @@ export interface GmlRosterCandidate {
  * Do not "improve" this by trusting `matchHslSubDeptKey` alone, and do not
  * add the plain-name fallback to `normalizeDeptToKey` to make it agree.
  *
+ * `dataSubKeys` (2026-09-22) carries the DATA sub-teams stored in
+ * `app_settings` — they cannot be a compile-time constant, so the route reads
+ * them and passes them down. Without them `matchHslSubDeptKey` resolved only
+ * the 14 code teams and a data branch's card fetched an EMPTY roster: the
+ * branch had a KPI card and nobody on it. Only the namespaced `hsl:<key>` form
+ * is admitted for them, exactly as for a code team — the guard below is
+ * unchanged and still the thing that carries the 2026-08-19 ruling.
+ *
  * `deptFilter` mirrors the API's `?dept=` param. It is applied to the FINAL
  * merged result, after both loops (and the dept_key-null-fallback rule above)
  * have run — NOT as a mid-loop skip on the GML candidates, and callers should
@@ -70,11 +78,12 @@ export function mergeHslRoster(
   hslTeamMembers: HslRosterRow[],
   gmlPeople: GmlRosterCandidate[],
   deptFilter: string | null,
+  dataSubKeys: readonly string[] = [],
 ): HslRosterRow[] {
   const byEmail = new Map<string, HslRosterRow>();
 
   for (const p of gmlPeople) {
-    const key = matchHslSubDeptKey(p.department);
+    const key = matchHslSubDeptKey(p.department, dataSubKeys);
     if (!key) continue;
     // Only proceed if normalizeDeptToKey independently agrees this person is
     // Hogan Smith Law — which, per the ruling in the doc comment above, admits

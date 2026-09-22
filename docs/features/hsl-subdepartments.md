@@ -264,6 +264,48 @@ Texting shape with a card attached.
 - **Ordering**: code teams first in `HSL_DEPT_KEYS` declaration order, then data;
   the calculator then sorts by display name as it always has.
 
+### 5.5.1 Scoreable is not payable — the second half (same day, audit item 159)
+
+Kane: *"Are we absolutely sure that the new updates for the HSL Bonuses are
+updating the Payroll Wizard?"* They were not. §5.5 gave a data branch a card; it
+did not give it a roster or a payout. Four separate places still meant
+"the 14 code teams" when they said HSL:
+
+1. **The roster.** `matchHslSubDeptKey` resolved code teams only, so
+   `GET /api/hsl-bonus/team-members?dept=<dataKey>` returned **nobody** and the
+   new card had an empty table — the branch could not be scored at all. The route
+   now reads the stored map and passes the keys down (`mergeHslRoster`'s
+   `dataSubKeys`). The widening is **namespaced-only**: a data key is admitted
+   through the `hsl:` arm and never through the display-name loop, because an
+   accountant may name a sub-team anything — including a real non-HSL department
+   — and inferring HSL membership from a bare label is what the 2026-08-19 ruling
+   forbids. An unknown or retired `hsl:<x>` still resolves nobody.
+2. **The payout.** The wizard's auto-dispatch set was
+   `HSL_DEPT_KEYS.filter(k => hslDeptAutoDispatches(HSL_DEPTS[k]))`, so a data
+   branch's `hsl_bonus_period_status` row was discarded and its
+   `calculated_bonus` never reached `hslKpiAmounts`, the KPI Bonus column or
+   dispatch. It is now built from the branch configs. A data branch is
+   `cadence: 'weekly'`, so it qualifies on the **ordinary** rule — no special
+   case. A test pins that with no data sub-teams the set is byte-identical to the
+   old one, and that manual-monthly code teams stay off it.
+3. **The rail.** Both `HSL_DEPT_KEYS` sets in the review step bucketed a data
+   branch's people as "Unassigned" and gave the branch no rail entry.
+4. **The map's own load state.** `useBuiltinSubs` degrades a failed read to `{}`,
+   which on this path reads as "no data branches" and underpays in silence. The
+   wizard uses `useBuiltinSubsState` and, on anything but `ready`, withholds the
+   HSL KPI amounts entirely — leaving `hslKpiLoaded` null, which is what already
+   blocks the final-pay publisher when an entries fetch fails.
+
+**The double-pay guard is untouched.** No `hsl:` key entered
+`WIZARD_PAYABLE_KPI_DEPT_KEYS`; the money rides
+`hsl_bonus_entries.calculated_bonus` on the loader HSL has always used
+(`bonus-catalog.md` §3.1).
+
+**The Reports step (9) needed no change and got none** — it renders
+`dispatchData.rows` and both exports read `snap.employees` whole, so it carries
+whatever dispatch computed. That is also why it was no help in finding this: the
+loss arrived as ₱0 and the export reconciled perfectly against a wrong number.
+
 ## 6. Transfers
 
 - **A namespaced target demands the exact cell — always.** `deptCellSatisfiesTarget`
@@ -701,14 +743,18 @@ Payroll Wizard - Managers will get this" is actually about.
 | **Placement** | `global_master_list."Department"` + the Google Sheet | pricing, every picker, transfers, Payment Catalog |
 | **KPI roster** | `hsl_team_members.dept_key` | **the Payroll Wizard's HSL rail, and nothing else** |
 
-`PayrollWizard.tsx:14504` maps a row with
-`k = hslDeptByEmail[email]; return k && hslKeySet.has(k) ? k : 'unassigned'`,
-where `hslKeySet = new Set(HSL_DEPT_KEYS)`. So a person is bucketed **Unassigned**
-in the Wizard — and drops out of the manager-facing KPI Bonus Period cards — if
-*either*:
+The wizard maps a row with
+`k = hslDeptByEmail[email]; return k && hslKeySet.has(k) ? k : 'unassigned'`.
+So a person is bucketed **Unassigned** in the Wizard — and drops out of the
+manager-facing KPI Bonus Period cards — if *either*:
 
 - their `hsl_team_members` row is missing or has a NULL `dept_key`, **or**
-- their `dept_key` is not in `HSL_DEPT_KEYS`.
+- their `dept_key` is not a known branch key.
+
+> **`hslKeySet` was `new Set(HSL_DEPT_KEYS)` until 2026-09-22** and is now
+> `new Set(hslBranchKeys(dataSubs))` — code teams plus every DATA sub-team (§5.5.1).
+> The trap itself is unchanged: placement and roster are still two different
+> writes, and a cell resolving no branch still buckets Unassigned.
 
 Doing the placement write alone leaves them correctly priced and still
 Unassigned. The seed script does both, and reports loudly when a person has no

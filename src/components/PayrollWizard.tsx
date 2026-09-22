@@ -320,7 +320,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { HSL_DEPT_KEYS, HSL_DEPTS, calcManagerBonus, hslDeptAutoDispatches, type DeptConfig } from '@/lib/hsl-bonus/schema';
+import { hslDeptAutoDispatches, type DeptConfig } from '@/lib/hsl-bonus/schema';
+import { managerWeekAmount } from '@/lib/hsl-bonus/manager-week-amount';
+import { hslBranchConfigs, hslBranchKeys } from '@/lib/hsl-bonus/data-branch';
+import { useBuiltinSubsState } from '@/lib/departments/use-builtin-subs';
+import { builtinSubsFor } from '@/lib/departments/builtin-subs';
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
 import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
@@ -2843,6 +2847,33 @@ export default function PayrollWizard({
   // are intentionally excluded — they remain on the manual
   // Adjustment path, exactly as before. Feeds the Additions "KPI Bonus" toggle
   // and the step-5 review totals so what accounting sees is what dispatches.
+  /**
+   * Every HSL branch: the 14 CODE teams plus each DATA sub-team created from
+   * Payment Catalog -> Departments -> Edit (2026-09-22).
+   *
+   * Before this the wizard's three HSL key sets were all `HSL_DEPT_KEYS`, so a
+   * data branch was invisible to the money path AND to the rail: a manager could
+   * score it, mark it ready and watch Payroll Readiness call it Ready, and it
+   * paid ₱0. `hslSubsStatus` is load state, not emptiness — see the gate inside
+   * the KPI-amounts loader below; `{}` from a FAILED read would silently pay the
+   * code teams only.
+   */
+  const { map: builtinSubMap, status: hslSubsStatus } = useBuiltinSubsState();
+  const hslDataSubs = useMemo(() => builtinSubsFor(builtinSubMap, 'hogan_smith_law'), [builtinSubMap]);
+  const hslBranchCfgs = useMemo(() => hslBranchConfigs(hslDataSubs), [hslDataSubs]);
+  const hslAllBranchKeys = useMemo(() => hslBranchKeys(hslDataSubs), [hslDataSubs]);
+  /** Config for any branch key. `HSL_DEPTS[key]` is UNDEFINED for a data branch —
+   *  never index it directly in this component. */
+  const hslBranchCfg = useCallback(
+    (key: string): DeptConfig | undefined => hslBranchCfgs[key],
+    [hslBranchCfgs],
+  );
+  /** Display name for any branch key, falling back to the raw key. */
+  const hslBranchName = useCallback(
+    (key: string): string => hslBranchCfgs[key]?.name ?? key,
+    [hslBranchCfgs],
+  );
+
   const [hslKpiAmounts, setHslKpiAmounts] = useState<Record<string, number>>({});
   // Eligibility (who has a scored amount this week) is derived per wizard row in
   // `resolvedHslKpi` — which resolves Hubstaff email → master → work/personal email
@@ -3135,13 +3166,28 @@ export default function PayrollWizard({
           return;
         }
         const isFinalWeek = isFinalPayrollWeekOfMonth(hubstaffWeekStart);
-        // The set that auto-dispatches: every weekly sub-department, plus a monthly one
-        // flagged `monthlyAutoPay` (SSD Medical Records) — its once-a-month share pays
-        // in the week its period is keyed to (pinned below), summed with the person's
-        // weekly amounts (Carla, 2026-09-08). Other monthly depts (collections /
-        // healthcare TL / collections TL) stay manual via Adjustment.
+        // The sub-department map is a PAY INPUT here, so an unread one is unknown,
+        // never empty. Degrading to the code teams would drop every DATA branch's
+        // bonus with no error anywhere — the silent underpay this loader's other
+        // failure branches already refuse. Leaving `hslKpiLoaded` null blocks the
+        // final-pay publisher exactly as an unreadable entries fetch does.
+        if (hslSubsStatus !== 'ready') {
+          if (hslSubsStatus === 'error') {
+            console.error('[hslKpi] sub-department list unreadable — HSL KPI amounts withheld');
+          }
+          return;
+        }
+        // The set that auto-dispatches: every weekly branch — the 14 code teams AND
+        // every DATA sub-team (`cadence: 'weekly'`, so it qualifies on the same rule)
+        // — plus a monthly one flagged `monthlyAutoPay` (SSD Medical Records): its
+        // once-a-month share pays in the week its period is keyed to (pinned below),
+        // summed with the person's weekly amounts (Carla, 2026-09-08). Other monthly
+        // depts (collections / healthcare TL / collections TL) stay manual via Adjustment.
         const payableSet = new Set<string>(
-          HSL_DEPT_KEYS.filter((k) => hslDeptAutoDispatches(HSL_DEPTS[k])),
+          hslAllBranchKeys.filter((k) => {
+            const cfg = hslBranchCfgs[k];
+            return !!cfg && hslDeptAutoDispatches(cfg);
+          }),
         );
         const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
         const statusJson = (await statusRes.json()) as {
@@ -3190,13 +3236,35 @@ export default function PayrollWizard({
             const json = (await res.json()) as {
               rows?: { employee_email: string; calculated_bonus: number; kpi_data?: Record<string, unknown> }[];
             };
-            const perEmployee = (HSL_DEPTS as Record<string, { perEmployee?: boolean }>)[dept]?.perEmployee;
+            const perEmployee = hslBranchCfgs[dept]?.perEmployee;
             for (const e of json.rows ?? []) {
               const em = (e.employee_email ?? '').toLowerCase();
               if (!em || em === '__dept_meta__') continue;
-              const amt = perEmployee
-                ? calcManagerBonus(em, (e.kpi_data ?? {}) as Record<string, number | boolean>, { periodStart: info.period_start, includeMonthly: isFinalWeek })
-                : Math.round(e.calculated_bonus ?? 0);
+              let amt: number;
+              if (perEmployee) {
+                // Managers Weekly used to be RECOMPUTED from scratch here, which
+                // silently discarded everything `calculated_bonus` carried that
+                // `spec.components` does not define — as of 2026-09-22 that is a
+                // Bonus Library bonus on `hsl:hsl_managers`, scored on the card and
+                // dropped at pay time. Start from the stored figure like every other
+                // branch and withhold ONLY the monthly components this week cannot
+                // pay (`manager-week-amount.ts`).
+                const r = managerWeekAmount({
+                  storedBonus: e.calculated_bonus,
+                  email: em,
+                  kpiData: (e.kpi_data ?? {}) as Record<string, number | boolean>,
+                  periodStart: info.period_start,
+                  isFinalWeek,
+                });
+                if (r.inconsistent) {
+                  console.error(
+                    `[hslKpi] ${dept}/${em}: stored bonus ₱${e.calculated_bonus} is below its own monthly components (₱${r.monthlyWithheld}) — paying ₱0 rather than a negative`,
+                  );
+                }
+                amt = r.amount;
+              } else {
+                amt = Math.round(e.calculated_bonus ?? 0);
+              }
               amounts[em] = Math.round((amounts[em] ?? 0) + amt);
             }
           }),
@@ -3224,7 +3292,7 @@ export default function PayrollWizard({
     return () => {
       cancelled = true;
     };
-  }, [hubstaffWeekStart, hslRefreshKey]);
+  }, [hubstaffWeekStart, hslRefreshKey, hslSubsStatus, hslAllBranchKeys, hslBranchCfgs]);
 
   // ── Overtime settings from System Settings ──────────────────────────────────
   const [otGlobalSuspended, setOtGlobalSuspended] = useState(false);
@@ -5311,7 +5379,9 @@ export default function PayrollWizard({
     let cancelled = false;
     setHslStepLoading(true);
     setHslStepError(null);
-    const hslKeys = new Set<string>(HSL_DEPT_KEYS);
+    // Code teams AND data sub-teams — a data branch's period must be recognised
+    // here too, or its card and rail entry vanish (2026-09-22).
+    const hslKeys = new Set<string>(hslAllBranchKeys);
     (async () => {
       try {
         const [statusRes, membersRes] = await Promise.all([
@@ -5360,7 +5430,7 @@ export default function PayrollWizard({
         for (const row of statusJson.rows ?? []) {
           if (!hslKeys.has(row.department)) continue;
           if (row.status !== 'ready' && row.status !== 'locked') continue;
-          const cfg = (HSL_DEPTS as Record<string, { cadence?: string }>)[row.department];
+          const cfg = hslBranchCfgs[row.department];
           const isWeekly = cfg?.cadence === 'weekly';
           if (isWeekly && hubstaffWeekStart && row.period_start !== hubstaffWeekStart) continue;
           const rel: MonthlyPeriodRelation = isWeekly
@@ -5414,7 +5484,7 @@ export default function PayrollWizard({
     // and scopes monthly ones by its month. Omitted before, so switching the week
     // selector while sitting on this step never reloaded: every card, weekly ones
     // included, stayed on the previously-viewed week until the step was re-entered.
-  }, [currentStep, hslRefreshKey, hubstaffWeekStart]);
+  }, [currentStep, hslRefreshKey, hubstaffWeekStart, hslAllBranchKeys, hslBranchCfgs]);
 
   // Fetch all contractor invoices when on step 6 (Contractors)
   useEffect(() => {
@@ -11637,7 +11707,7 @@ export default function PayrollWizard({
         // into an "Unassigned" bucket. The rail drives BOTH the employee table and
         // the monthly-bonus cards — selecting a department shows only its people
         // and only its own monthly card.
-        const hslKeySet = new Set<string>(HSL_DEPT_KEYS);
+        const hslKeySet = new Set<string>(hslAllBranchKeys);
         const hslDeptOfRow = (email: string): string => {
           const k = hslDeptByEmail[(email ?? '').toLowerCase()];
           return k && hslKeySet.has(k) ? k : 'unassigned';
@@ -11665,21 +11735,20 @@ export default function PayrollWizard({
         // keyed to, so badging its card "manual" would have Accounting key it into
         // Adjustment on top of the auto-pay — double-pay.
         const autoDispatchedDept = (department: string) => {
-          const cfg = (HSL_DEPTS as Record<string, DeptConfig | undefined>)[department];
+          const cfg = hslBranchCfg(department);
           return !!cfg && hslDeptAutoDispatches(cfg);
         };
         const isManualMonthlyPeriod = (p: { department: string; period_type: string }) =>
           (p.period_type === 'monthly' ||
-            (HSL_DEPTS as Record<string, { cadence?: string }>)[p.department]?.cadence === 'monthly') &&
+            hslBranchCfg(p.department)?.cadence === 'monthly') &&
           !autoDispatchedDept(p.department);
         const hslMonthlyPeriods = hslStepPeriods.filter(isManualMonthlyPeriod);
         const hslPeriodDeptSet = new Set(hslMonthlyPeriods.map(p => p.department));
         // Rail lists depts alphabetically by display name ("All HSL" pinned first,
         // "Unassigned" last); a dept appears if it has people this cycle OR a
         // ready/locked KPI period.
-        const hslDeptName = (k: string) =>
-          (HSL_DEPTS as Record<string, { name?: string }>)[k]?.name ?? k;
-        const hslRailDeptKeys = HSL_DEPT_KEYS.filter(
+        const hslDeptName = (k: string) => hslBranchName(k);
+        const hslRailDeptKeys = hslAllBranchKeys.filter(
           k => (hslDeptCounts.get(k) ?? 0) > 0 || hslPeriodDeptSet.has(k),
         ).sort((a, b) => hslDeptName(a).localeCompare(hslDeptName(b), undefined, { sensitivity: 'base' }));
         const hslHasUnassigned = (hslDeptCounts.get('unassigned') ?? 0) > 0;
@@ -11699,7 +11768,7 @@ export default function PayrollWizard({
         // says so out loud, because there the absence is the actionable fact.
         const hslMonthlySelection =
           activeHslDeptSafe === 'all' ||
-          (HSL_DEPTS as Record<string, { cadence?: string }>)[activeHslDeptSafe]?.cadence === 'monthly';
+          hslBranchCfg(activeHslDeptSafe)?.cadence === 'monthly';
         const visibleHslPeriods = activeHslDeptSafe === 'all'
           ? hslMonthlyPeriods
           : hslMonthlyPeriods.filter(p => p.department === activeHslDeptSafe);
@@ -11707,7 +11776,7 @@ export default function PayrollWizard({
           ? 'All HSL Departments'
           : activeHslDeptSafe === 'unassigned'
             ? 'Unassigned'
-            : (HSL_DEPTS as Record<string, { name: string }>)[activeHslDeptSafe]?.name ?? activeHslDeptSafe;
+            : hslBranchName(activeHslDeptSafe);
 
         return (
           <div className="flex min-w-0 flex-col gap-5">
@@ -11726,9 +11795,9 @@ export default function PayrollWizard({
                     { key: 'all', name: 'All HSL', count: hslCalcRows.length },
                     ...hslRailDeptKeys.map(k => ({
                       key: k as string,
-                      name: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.name ?? k,
+                      name: hslBranchName(k),
                       count: hslDeptCounts.get(k) ?? 0,
-                      color: (HSL_DEPTS as Record<string, { name: string; color?: string }>)[k]?.color,
+                      color: hslBranchCfg(k)?.color,
                     })),
                     ...(hslHasUnassigned
                       ? [{ key: 'unassigned', name: 'Unassigned', count: hslDeptCounts.get('unassigned') ?? 0 }]
@@ -11811,7 +11880,7 @@ export default function PayrollWizard({
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {visibleHslPeriods.map(p => {
-                    const cfg = (HSL_DEPTS as Record<string, { name: string; color?: string }>)[p.department];
+                    const cfg = hslBranchCfg(p.department);
                     const deptColor = cfg?.color ?? '#6d28d9';
                     return (
                       <div
