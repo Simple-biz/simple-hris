@@ -34,15 +34,15 @@ The canonical employee directory. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEES
 **Avatar fallback chain** (in `EmployeeAvatar`): Google SSO photo → Supabase upload (`Profile Photo URL`) → Gravatar → initials. Each layer self-heals if the image fails to load.
 
 **Address & Google-photo migrations:**
-- `references/seed_global_master_list_addresses.sql` — `ALTER TABLE` + 1,025-row CTE backfill from `references/NEW Payroll Dashboard - All Dept.csv`. Recreates the `active_employees` view so the new columns surface to PostgREST.
-- `references/seed_global_master_list_google_photo.sql` — `ALTER TABLE` + view refresh. No backfill — populates organically as users sign in.
-- `references/add_alternate_work_emails_to_global_master_list.sql` *(2026-05-21)* — `ALTER TABLE` adds `"Alternate Work Email"` + `"Alternate Work Email 2"` + `CREATE OR REPLACE VIEW active_employees` so PostgREST exposes them. No backfill — populated by the next master-sheet sync. The sheet often heads both columns identically, which the name-based ingest can't disambiguate, so `resolveMasterColumnMapping` maps any header containing "alternate"+"email" to the two slots **positionally** (Nth sheet column → Nth DB slot).
+- `references/sql/seed/seed_global_master_list_addresses.sql` — `ALTER TABLE` + 1,025-row CTE backfill from `references/NEW Payroll Dashboard - All Dept.csv`. Recreates the `active_employees` view so the new columns surface to PostgREST.
+- `references/sql/seed/seed_global_master_list_google_photo.sql` — `ALTER TABLE` + view refresh. No backfill — populates organically as users sign in.
+- `references/sql/alter/add_alternate_work_emails_to_global_master_list.sql` *(2026-05-21)* — `ALTER TABLE` adds `"Alternate Work Email"` + `"Alternate Work Email 2"` + `CREATE OR REPLACE VIEW active_employees` so PostgREST exposes them. No backfill — populated by the next master-sheet sync. The sheet often heads both columns identically, which the name-based ingest can't disambiguate, so `resolveMasterColumnMapping` maps any header containing "alternate"+"email" to the two slots **positionally** (Nth sheet column → Nth DB slot).
 
 **Code-level robustness:** `fetchActiveEmployees` and `getEmployeeMasterRecord` both try the full select first and fall back to the base select if the new columns don't exist on the view yet (`/does not exist/i.test(error.message)` guard). The Profile page additionally always calls `/api/employee-master-record` as a parallel fetch and merges the address fields, so the Address panel surfaces even when the `active_employees` view is stale.
 
-**Tech Bonus start-date bridging *(2026-06-16)*:** `src/lib/payroll/current-pay.ts` `fetchMasterMin()` selects `Work Email`, `Personal Email`, `Alternate Work Email`, `Alternate Work Email 2`, `Start Date`, `Department`. The resulting `startDateByEmail` map indexes the primary work + personal emails **and both alternates** (primary always wins — alternates never overwrite). This lets an employee whose Hubstaff/rate rows key on an alias still satisfy the Tech Bonus 30-day-service gate (Global Master List is the identity source of truth). The wizard mirrors this in `PayrollWizard.tsx`. PENDING data fix `references/fix_sheen_gobalani_work_email.sql` promotes Sheen Gobalani's canonical work email; if the MASTERLIST Google Sheet still lists the old address, the next sheet sync could revert it.
+**Tech Bonus start-date bridging *(2026-06-16)*:** `src/lib/payroll/current-pay.ts` `fetchMasterMin()` selects `Work Email`, `Personal Email`, `Alternate Work Email`, `Alternate Work Email 2`, `Start Date`, `Department`. The resulting `startDateByEmail` map indexes the primary work + personal emails **and both alternates** (primary always wins — alternates never overwrite). This lets an employee whose Hubstaff/rate rows key on an alias still satisfy the Tech Bonus 30-day-service gate (Global Master List is the identity source of truth). The wizard mirrors this in `PayrollWizard.tsx`. PENDING data fix `references/sql/fix/fix_sheen_gobalani_work_email.sql` promotes Sheen Gobalani's canonical work email; if the MASTERLIST Google Sheet still lists the old address, the next sheet sync could revert it.
 
-**Primary key:** A surrogate `id` (`bigint`, identity) is recommended so bulk CSV replace can delete all existing rows in batches (see `references/supabase_global_master_list.sql`).
+**Primary key:** A surrogate `id` (`bigint`, identity) is recommended so bulk CSV replace can delete all existing rows in batches (see `references/sql/create/supabase_global_master_list.sql`).
 
 **Who reads it:**
 - `GET /api/employees` → `src/lib/supabase/employees.ts: getEmployees()`
@@ -96,7 +96,7 @@ Per-employee rate table. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RA
 - `indexHourlyRatesByEmail()` builds a `Map<normalizedEmail, row>` that indexes **both** work and personal emails. This is the lookup used by PayrollWizard Step 2 to find rates for each Hubstaff row.
 - `updateEmployeeRates()` prefers the service-role client (bypasses RLS) over anon.
 
-**Profile merge gotcha** *(fixed 2026-05-07)*: the Rates page (`src/components/Rates.tsx`) builds each card's data via `mergeSourcesDeduped([rates, master])` in `src/lib/supabase/employee-rate-profiles.ts`. That helper used to keep the **first** value per field key; the rates row has `Department: null` (the rates ingest never writes Department), so the master's actual `"Accounting Team"` was silently shadowed and the dept chip went missing on every card. Fix: `mergeSourcesDeduped` now skips `null` / empty-string / whitespace-only values so later sources fill gaps. Side benefit: same fix surfaces Phone, Address, Organization, etc. from the master row when the rates row has them blank. **60-second module-scoped cache** — restart `npm run dev` (or wait) before hard-refreshing to see the corrected output.
+**Profile merge gotcha** *(fixed 2026-05-07)*: the Rates page (`src/components/Rates.tsx` *(deleted — no file of this name exists in the tree, measured 2026-09-22)*) builds each card's data via `mergeSourcesDeduped([rates, master])` in `src/lib/supabase/employee-rate-profiles.ts`. That helper used to keep the **first** value per field key; the rates row has `Department: null` (the rates ingest never writes Department), so the master's actual `"Accounting Team"` was silently shadowed and the dept chip went missing on every card. Fix: `mergeSourcesDeduped` now skips `null` / empty-string / whitespace-only values so later sources fill gaps. Side benefit: same fix surfaces Phone, Address, Organization, etc. from the master row when the rates row has them blank. **60-second module-scoped cache** — restart `npm run dev` (or wait) before hard-refreshing to see the corrected output.
 
 ---
 
@@ -238,7 +238,7 @@ Flat analytic table — one row per (Hubstaff cycle, employee). Originally built
 
 Authoritative per-employee rate history. Powers mid-cycle rate prorating: when an accountant saves a rate change with `effectiveDate = 2026-05-21` (a Wednesday), the history table records the new pair effective that date, and the payroll compute path looks up the rate as-of *each calendar day* — Mon–Tue use the old row, Wed–Sat use the new one.
 
-**Migration:** `references/create_employee_rate_history.sql` (idempotent).
+**Migration:** `references/sql/create/create_employee_rate_history.sql` (idempotent).
 
 **Columns:**
 | Column | Type | Notes |
@@ -272,7 +272,7 @@ Authoritative per-employee rate history. Powers mid-cycle rate prorating: when a
 
 Per-employee message feed shown in the global `NotificationsPanel` (sidebar tab). Currently surfaces rate-change notifications; reserved for future promotion (`type='promotion'`) events that combine salary + title changes.
 
-**Migration:** `references/create_employee_notifications.sql`. Adds the table to the `supabase_realtime` publication so the panel can live-update via Realtime postgres_changes.
+**Migration:** `references/sql/create/create_employee_notifications.sql`. Adds the table to the `supabase_realtime` publication so the panel can live-update via Realtime postgres_changes.
 
 **Columns:**
 | Column | Type | Notes |
@@ -295,7 +295,7 @@ Per-employee message feed shown in the global `NotificationsPanel` (sidebar tab)
 
 Per-user, per-view, per-feature access overlay on top of the coarse `employee_roles` grants. Granting a role like `finance` gives access to a *view* (the whole Accounting shell). This table then says which **tabs** inside that view the user can see (`'view'`) or fully use (`'edit'`). A missing row means the tab is hidden — default deny.
 
-**Migration:** `references/create_employee_feature_permissions.sql`.
+**Migration:** `references/sql/create/create_employee_feature_permissions.sql`.
 
 **Columns:**
 | Column | Type | Notes |
@@ -402,7 +402,7 @@ The merge engine runs in six phases:
 
 ### 12. `payment_catalog_pay_structures` — authoritative rate source *(2026-06-16)*
 
-Source of truth for hourly rates. The table is persisted by the Payment Catalog → Pay Structure tab (`references/create_payment_catalog_pay_structures.sql`, migration #68); what changed this batch is that it became **authoritative for payroll math** via a *compute-time overlay* — nothing in the overlay writes back to the DB.
+Source of truth for hourly rates. The table is persisted by the Payment Catalog → Pay Structure tab (`references/sql/create/create_payment_catalog_pay_structures.sql`, migration #68); what changed this batch is that it became **authoritative for payroll math** via a *compute-time overlay* — nothing in the overlay writes back to the DB.
 
 **The overlay (`src/lib/payroll/resolve-rate.ts`):**
 - `buildCatalogRateIndex(structures)` → `CatalogRateIndex { byEmail, byDeptKey }` (employee-scoped structures indexed by normalized email; department-scoped by canonical dept key).
@@ -426,7 +426,7 @@ Source of truth for hourly rates. The table is persisted by the Payment Catalog 
 
 ### 13. `paystub_dispatch_queue` — per-employee paystub staging *(migration #72, PENDING)*
 
-> **PENDING:** `references/seed_paystub_dispatch_queue.sql` has not been confirmed run. The wizard's "Lock & Send" 500s until the table exists.
+> **PENDING:** `references/sql/seed/seed_paystub_dispatch_queue.sql` has not been confirmed run. The wizard's "Lock & Send" 500s until the table exists.
 
 One staged row per `(cycle, employee)` carrying the authoritative paystub payload the wizard computed (Adj./Orphanage/MESA/dept & KPI bonuses + manual overrides — none of which `current-pay.ts` can reproduce). Paystub emails are **no longer batch-sent** from the wizard; instead, when a person is marked Paid in Payment Dispatch the server looks up their one row and fires the n8n paystub webhook for just them. See [paystub-dispatch.md](../features/paystub-dispatch.md).
 
@@ -460,7 +460,7 @@ One staged row per `(cycle, employee)` carrying the authoritative paystub payloa
 
 ### 14. `hr_onboarding_submissions` — IP Assignment columns *(migration #73, PENDING)*
 
-> **PENDING:** `references/add_ip_assignment_to_onboarding.sql` has not been confirmed run. Required before the IP Assignment onboarding step works in production. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md).
+> **PENDING:** `references/sql/alter/add_ip_assignment_to_onboarding.sql` has not been confirmed run. Required before the IP Assignment onboarding step works in production. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md).
 
 Adds 6 columns to the existing `hr_onboarding_submissions` table for the new first-step "Intellectual Property Assignment, Talent Release, and Copyright Waiver" agreement (mirrors the W-8BEN flow):
 

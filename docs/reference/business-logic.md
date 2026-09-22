@@ -819,7 +819,7 @@ The previous synthetic D+1 forgiveness rule has been removed. Background:
 
 Why removed: the new manager-submitted dialog lets Alyson + Carla explicitly select every forgiven date. The implicit D+1 was a workaround for the old "employee files one row" flow — no longer needed and made it hard to audit which dates were *actually* on file.
 
-**Migration:** `references/backfill_orphanage_day_after_disputes.sql` is a one-time idempotent backfill that materialises every implicit D+1 entry as a real row at `status = 'accounting_approved'` with `created_by = 'system_backfill'`. **Run this after deploying the code change** so PAB months that previously relied on D+1 forgiveness don't silently regress. Tracked in `pending_sql.md` as item #21.
+**Migration:** `references/sql/fix/backfill_orphanage_day_after_disputes.sql` is a one-time idempotent backfill that materialises every implicit D+1 entry as a real row at `status = 'accounting_approved'` with `created_by = 'system_backfill'`. **Run this after deploying the code change** so PAB months that previously relied on D+1 forgiveness don't silently regress. Tracked in `pending_sql.md` as item #21.
 
 ### Editing decided disputes
 

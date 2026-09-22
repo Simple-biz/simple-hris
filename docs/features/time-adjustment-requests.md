@@ -178,8 +178,8 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
 
 Four one-time Supabase steps are required before the feature works end-to-end:
 
-1. **Run the base migration** (`references/time_adjustment_requests.sql`) — creates the `time_adjustment_requests` table with a unique index on `(work_email, adjust_date)`.
-2. **Run the manager approval migration** (`references/add_manager_approval_to_time_adjustments.sql`) — adds `manager_decided_by`, `manager_decided_at`, and `manager_decision_note` columns.
+1. **Run the base migration** (`references/sql/create/time_adjustment_requests.sql`) — creates the `time_adjustment_requests` table with a unique index on `(work_email, adjust_date)`.
+2. **Run the manager approval migration** (`references/sql/alter/add_manager_approval_to_time_adjustments.sql`) — adds `manager_decided_by`, `manager_decided_at`, and `manager_decision_note` columns.
 3. **Create a private Storage bucket** named `time-adjustment-evidence` (Dashboard → Storage → New bucket, **public = off**). Evidence images are served via short-lived signed URLs; they are never publicly accessible.
 4. **Run the second-approver migration** (`references/sql/alter/2026-08-19_time_adjustment_second_approver.sql`) — adds the `second_approver_*` / `second_decision*` / `manager_decision` columns and backfills `manager_decision` on already-decided rows. **PENDING as of 2026-08-19.** Ship it with the Node gate, which dry-runs by default and writes a SELECT backup to disk before the backfill:
    ```
@@ -775,8 +775,8 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 
 | Path | Change |
 |---|---|
-| `references/time_adjustment_requests.sql` | **New** — base DB migration |
-| `references/add_manager_approval_to_time_adjustments.sql` | **New** — adds manager decision columns |
+| `references/sql/create/time_adjustment_requests.sql` | **New** — base DB migration |
+| `references/sql/alter/add_manager_approval_to_time_adjustments.sql` | **New** — adds manager decision columns |
 | `src/lib/supabase/time-adjustments.ts` | **New/Edited** — `manager_approved`/`manager_denied` statuses, `managerDecideTimeAdjustment`, `deleteTimeAdjustment` (accounting-only, denied rows only); `decideTimeAdjustment` now requires `manager_approved` |
 | `app/api/time-adjustments/route.ts` | **New** — GET (list) + POST (create) |
 | `app/api/time-adjustments/upload/route.ts` | **New** — POST (image upload) |

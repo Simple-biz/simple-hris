@@ -1195,8 +1195,8 @@ A flat table where **one row = one (Hubstaff cycle, employee) pair**. This is th
 
 | Order | File | What it does |
 |---|---|---|
-| 1 | `references/seed_disbursement_records.sql` | CREATE TABLE + indexes + email-norm trigger + updated_at trigger; backfills via `INSERT … SELECT` joining `hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches` × `app_settings.usd_to_php_rate`. Idempotent (`ON CONFLICT (source_file, recipient_email) DO UPDATE`). |
-| 2 | `references/seed_disbursement_records_sync.sql` | Adds the four sync triggers above; one-time UPDATE backfill from any existing `payment_dispatches`. Idempotent. |
+| 1 | `references/sql/seed/seed_disbursement_records.sql` | CREATE TABLE + indexes + email-norm trigger + updated_at trigger; backfills via `INSERT … SELECT` joining `hubstaff_hours` × `employee_hourly_rates` × `payment_dispatches` × `app_settings.usd_to_php_rate`. Idempotent (`ON CONFLICT (source_file, recipient_email) DO UPDATE`). |
+| 2 | `references/sql/seed/seed_disbursement_records_sync.sql` | Adds the four sync triggers above; one-time UPDATE backfill from any existing `payment_dispatches`. Idempotent. |
 
 Both are wrapped in `BEGIN/COMMIT` and use `IF NOT EXISTS` / `OR REPLACE`. Run in Supabase SQL Editor. After they execute, re-running the seed any time you ingest a new Hubstaff CSV refreshes the rows in place.
 

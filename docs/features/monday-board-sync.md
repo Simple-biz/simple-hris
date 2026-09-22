@@ -601,7 +601,7 @@ committed". The tree state is what separates them, and it is free to check.
 
 Kane: *"if the Monday API Budget is exhausted we would store our SP and when I call to push it you
 will push our pending SP to Monday."* Built as `pending-sp.json` (tracked in git) plus
-`scripts/flush-pending.mts`.
+`.claude/skills/monday-board-sync/scripts/flush-pending.mts`.
 
 ### The hole it closes
 

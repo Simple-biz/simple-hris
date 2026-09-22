@@ -51,8 +51,8 @@ Covered by `src/lib/payroll/urgent-cycle.test.ts`.
 
 | Migration | Purpose |
 |---|---|
-| `references/add_mesa_requests.sql` | Creates `mesa_requests` (MESA opt-in/out/disbursement/return). |
-| `references/add_mesa_dispatched_at.sql` | Adds `mesa_requests.dispatched_at` + the urgent-queue index. |
+| `references/sql/create/add_mesa_requests.sql` | Creates `mesa_requests` (MESA opt-in/out/disbursement/return). |
+| `references/sql/alter/add_mesa_dispatched_at.sql` | Adds `mesa_requests.dispatched_at` + the urgent-queue index. |
 
 No new migration is needed for the orphanage budget-request integration — it reuses the existing `orphanage_budget_requests` and `orphanage_dispatches` tables. The weekly report's PHP→USD conversion reads `app_settings.usd_to_php_rate`.
 
@@ -296,8 +296,8 @@ The company match was **lowered from ₱400 to ₱300** (weekly total previously
 | `src/components/payroll-clerk/OrphanageQueue.tsx` | **Edited** — imports the extracted dialog; dropped the inlined copy |
 | `src/components/payroll-clerk/PayrollDispatch.tsx` | **Edited** — `'urgent'` tab + URGENT card above Kolan (`glowBorder`) + render branch + `urgentCount` |
 | `src/components/payroll-clerk/ProcessorCard.tsx` | **Edited** — opt-in `glowBorder` pulsing amber outer glow |
-| `src/components/payroll-clerk/DispatchReports.tsx` | **Edited** — removed flat urgent panel; urgent card styling; mark-all-paid hidden for urgent *(surface removed 2026-08-12)* |
+| `src/components/payroll-clerk/DispatchReports.tsx` *(deleted — no file of this name exists in the tree, measured 2026-09-22)* | **Edited** — removed flat urgent panel; urgent card styling; mark-all-paid hidden for urgent *(surface removed 2026-08-12)* |
 | `src/lib/payroll/disbursement-reports.ts` | **Edited** — `sundayWeekRange`, `loadUrgentDispatchRows` (MESA + synthetic orphanage budgets), `buildUrgentWeeklyReports`, urgent branch in `getDisbursementReportDetail` |
-| `src/lib/payroll/dispatch-export-csv.ts` | **Edited** — `buildDispatchExportRowsFromDispatches` fallback for record-less (urgent) reports *(file deleted 2026-08-12 with the Reports tab)* |
-| `app/api/payment-dispatches/reports/[cycleId]/export/route.ts` | **Edited** — uses the dispatches-only export builder when there are no `disbursement_records` *(surface removed 2026-08-12)* |
-| `references/add_mesa_dispatched_at.sql` | **Prereq** — `mesa_requests.dispatched_at` + urgent-queue index |
+| `src/lib/payroll/dispatch-export-csv.ts` *(deleted — no file of this name exists in the tree, measured 2026-09-22)* | **Edited** — `buildDispatchExportRowsFromDispatches` fallback for record-less (urgent) reports *(file deleted 2026-08-12 with the Reports tab)* |
+| `app/api/payment-dispatches/reports/[cycleId]/export/route.ts` *(deleted — `app/api/payment-dispatches/` holds only `route.ts`, `cycle-closeout`, `recent-paid`, `undo`, `undo-history`, measured 2026-09-22)* | **Edited** — uses the dispatches-only export builder when there are no `disbursement_records` *(surface removed 2026-08-12)* |
+| `references/sql/alter/add_mesa_dispatched_at.sql` | **Prereq** — `mesa_requests.dispatched_at` + urgent-queue index |

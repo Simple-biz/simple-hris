@@ -3,9 +3,13 @@
 This document covers UI components — what each renders, why it is designed that way, and all significant logic it contains.
 
 > **Coverage, measured 2026-09-22: 127 of the 265 `.tsx` files under `src/components/` are named here, and 2 of 33 hooks in `src/hooks/`.**
-> It claimed to cover *"every UI component"* until that count was taken. It also still describes `src/components/Rates.tsx`,
+> It claimed to cover *"every UI component"* until that count was taken. It also still describes `src/components/Rates.tsx` *(deleted — no file of this name exists in the tree, measured 2026-09-22)*,
 > **which does not exist anywhere in the tree** — as do `llm-context.md`, `system-architecture.md` and `data-sources.md`.
-> Absence from this file means **unknown**, not **not built**. Session log item 143; [[reference-docs-rot-silently]].
+> **Fixed for the index question: § *Component & hook index* at the foot of this file lists all 297 files**
+> (265 components + 32 hooks). A file absent from **that table** does not exist; a file absent from the prose above is
+> merely **undescribed**. By the index's broader match — path, `` `Name` `` or `<Name` rather than bare filename —
+> **140** are named somewhere above and **58** appear in no feature doc at all.
+> Session log item 146; [[reference-docs-rot-silently]].
 
 ---
 
@@ -382,7 +386,7 @@ A sliding pill toggle in the toolbar (right of the rate filter) switches between
 - `PAGE_SIZE = 12`
 - **Card view**: 1-column on mobile, 2-column at `sm`, 3-column at `xl`. Each card shows avatar + name + status pill, ID/department/organization chips, work email, Regular/OT rate tiles, and an action bar (View / Suspend·Unsuspend / Delete).
 - **Table view**: 8 columns — Employee (avatar + name + organization), ID, Department, Email, Regular, OT, Status (Complete / Master only / Rates blank / Suspended), Actions (View / Suspend·Unsuspend / Delete as ghost icon buttons). Sticky header with the orange-blue gradient; hover row tint; suspended rows dim to 75% opacity.
-- **Employee Avatar**: Each row shows an `<EmployeeAvatar>` beside the name — fallback chain is **Google SSO photo → uploaded photo → Gravatar → initials**. Photo URL, Google photo URL, and email extracted via `getAvatarInfoFromSummary()`. Google photos require migration `references/seed_global_master_list_google_photo.sql` and per-user sign-in to populate the `google_photo_url` column.
+- **Employee Avatar**: Each row shows an `<EmployeeAvatar>` beside the name — fallback chain is **Google SSO photo → uploaded photo → Gravatar → initials**. Photo URL, Google photo URL, and email extracted via `getAvatarInfoFromSummary()`. Google photos require migration `references/sql/seed/seed_global_master_list_google_photo.sql` and per-user sign-in to populate the `google_photo_url` column.
 - Search: filters across name, emails, department, employee ID
 - Rates formatted as `₱X,XXX.XX` using `en-PH` locale
 - Employee ID shown if found in the ID map; otherwise `—`
@@ -1237,7 +1241,7 @@ HR → MESA → FPU Classes, under the enrollment table, shown once a class's en
 
 Shared compact department-filter dropdown used across the Overview roster, Onboarding queue, and Offboarding tables. Generic over row type (takes `rows` + a `getDept` accessor) and **derives the unique sorted department list itself**. Empty-string value = "All departments". Built on raw Base-UI `Select` primitives (the shadcn wrapper's defaults fight an in-trigger icon).
 
-### `src/components/hr/AddPersonDialog.tsx`
+### `src/components/hr/AddPersonDialog.tsx` *(deleted — no file of this name exists in the tree, measured 2026-09-22)*
 
 Modal to stage a new hire into the Pending Hires queue. Sections: Identity (name "Last, First", phone, personal email [required], optional work email), Role (department, job title from `JOB_TITLES` with an "Other" custom field, location, source), Compensation (regular/OT rate, start date), Notes. The **department select** is populated from `GET /api/secondary/hubstaff-projects`; selecting a department auto-fills rates from `GET /api/hr/department-rates`. Submit: `POST /api/hr/pending-employees`.
 
@@ -1872,3 +1876,316 @@ department is deliberate rather than drift, and it is the only home for
 > the 16 CODE teams?"** — never "is this an HSL sub-team". They were used to mean
 > the latter at ten sites and every one broke on the first data team. Use
 > `startsWith('hsl:')` or `normalizeDeptToKey`.
+
+---
+
+## Component & hook index — everything under `src/components/` and `src/hooks/`
+
+**Generated 2026-09-22 by walking the tree; 297 files (265 components, 32 hooks).** The prose above
+covers 140 of them, so until now a component's absence from this file could not be told apart from a
+component that was never built. **A file missing from this table does not exist** — that is the only
+claim the table makes. It does not describe what anything renders; the sections above and the linked
+feature docs do that.
+
+**Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
+not a description. **58 files are named in no feature doc and nowhere above.**
+
+| File | Kind | Mentioned in |
+|---|---|---|
+| `src/components/AppFooter.tsx` | component | *this file* |
+| `src/components/ConnectionStatusBanner.tsx` | component | — **no doc** |
+| `src/components/LeaveRequestsPanel.tsx` | component | *this file* · [delete-authorization](../features/delete-authorization.md) |
+| `src/components/Overview.tsx` | component | *this file* · [accounting-total-payout](../features/accounting-total-payout.md) · [bonus-calculator](../features/bonus-calculator.md) |
+| `src/components/PayrollWizard.tsx` | component | *this file* · [bonus-calculator](../features/bonus-calculator.md) · [bonus-catalog](../features/bonus-catalog.md) |
+| `src/components/Sidebar.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [notification-alerts](../features/notification-alerts.md) |
+| `src/components/SystemDiagnostics.tsx` | component | *this file* · [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) · [diagnostics-service-maps](../features/diagnostics-service-maps.md) |
+| `src/components/SystemSettings.tsx` | component | *this file* |
+| `src/components/ThemeProvider.tsx` | component | *this file* |
+| `src/components/accounting/AccountingCollabLayer.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/accounting/AccountingDocuments.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [documents-tab](../features/documents-tab.md) |
+| `src/components/accounting/AccountingTransfers.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [department-transfers](../features/department-transfers.md) |
+| `src/components/accounting/BonusCatalog.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [bonus-catalog](../features/bonus-catalog.md) |
+| `src/components/accounting/DepartmentsTab.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
+| `src/components/accounting/DispatchPaidToasts.tsx` | component | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
+| `src/components/accounting/GenerateCoeDialog.tsx` | component | [documents-tab](../features/documents-tab.md) |
+| `src/components/accounting/HubstaffMasterMatchesModal.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) |
+| `src/components/accounting/PayProcessorsTab.tsx` | component | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) · [payment-catalog-pay-processors](../features/payment-catalog-pay-processors.md) |
+| `src/components/accounting/PaymentCatalogOverview.tsx` | component | [bonus-catalog](../features/bonus-catalog.md) |
+| `src/components/accounting/PayrollWizardNotesFab.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) · [hubstaff-zero-hours-gap](../features/hubstaff-zero-hours-gap.md) |
+| `src/components/accounting/SetBankDialog.tsx` | component | *this file* · [payroll-readiness](../features/payroll-readiness.md) · [people-offboarded-pay](../features/people-offboarded-pay.md) |
+| `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
+| `src/components/accounting/departments/EditDepartmentDialog.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
+| `src/components/accounting/departments/department-wizard-steps.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
+| `src/components/accounting/departments/staged-run.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
+| `src/components/accounting/hero-stat-row.tsx` | component | *this file* |
+| `src/components/accounting/interns/InternsPayrollView.tsx` | component | [orphanage-interns](../features/orphanage-interns.md) |
+| `src/components/accounting/kpi-stat-card.tsx` | component | [bank-preferred-routing](../features/bank-preferred-routing.md) |
+| `src/components/accounting/termination-docs/TerminationDocsPanel.tsx` | component | — **no doc** |
+| `src/components/accounting/termination-docs/TerminationDocsTabRow.tsx` | component | — **no doc** |
+| `src/components/admin/AdminApiKeys.tsx` | component | *this file* · [admin-api-keys](../features/admin-api-keys.md) |
+| `src/components/admin/AdminCsvImports.tsx` | component | *this file* · [csv-imports](../features/csv-imports.md) |
+| `src/components/admin/AdminDesignSpecs.tsx` | component | [monday-board-sync](../features/monday-board-sync.md) |
+| `src/components/admin/AdminExternalApiClients.tsx` | component | *this file* · [external-api-integrations](../features/external-api-integrations.md) |
+| `src/components/admin/AdminGlobalMasterList.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/admin/AdminOverview.tsx` | component | *this file* |
+| `src/components/admin/AdminPages.tsx` | component | *this file* |
+| `src/components/admin/AdminPennyConsole.tsx` | component | *this file* · [admin-penny-console](../features/admin-penny-console.md) |
+| `src/components/admin/AdminRoles.tsx` | component | *this file* · [hsl-subdepartments](../features/hsl-subdepartments.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/components/admin/AdminSidebar.tsx` | component | *this file* · [admin-api-keys](../features/admin-api-keys.md) · [admin-dashboard-cache](../features/admin-dashboard-cache.md) |
+| `src/components/admin/AdminSystemSettings.tsx` | component | — **no doc** |
+| `src/components/admin/AdminWebhooks.tsx` | component | *this file* · [gift-address-external-link](../features/gift-address-external-link.md) · [onboarding-calltools-username](../features/onboarding-calltools-username.md) |
+| `src/components/admin/AdminWorkspace.tsx` | component | *this file* |
+| `src/components/admin/HrPipelinePerformance.tsx` | component | *this file* · [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) |
+| `src/components/admin/PayrollCyclePerformance.tsx` | component | *this file* · [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) |
+| `src/components/admin/WebhookAutomationDialog.tsx` | component | [webhook-automations](../features/webhook-automations.md) |
+| `src/components/admin/performance-ui.tsx` | component | [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) |
+| `src/components/announcements/AnnouncementComposer.tsx` | component | *this file* |
+| `src/components/announcements/AnnouncementWall.tsx` | component | *this file* |
+| `src/components/audit/AuditLogPanel.tsx` | component | *this file* · [audit-log](../features/audit-log.md) · [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
+| `src/components/auth/ImpersonationBanner.tsx` | component | — **no doc** |
+| `src/components/auth/NextAuthProvider.tsx` | component | *this file* |
+| `src/components/auth/SessionInvalidationWatcher.tsx` | component | *this file* · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/components/banking/bank-card-deck.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) |
+| `src/components/banking/bank-card.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) · [people-bank-card](../features/people-bank-card.md) |
+| `src/components/ceo/BizAiBadge.tsx` | component | — **no doc** |
+| `src/components/ceo/BizAiTab.tsx` | component | [admin-penny-console](../features/admin-penny-console.md) |
+| `src/components/ceo/BizReportCard.tsx` | component | — **no doc** |
+| `src/components/ceo/CeoApp.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [ceo-assistant](../features/ceo-assistant.md) |
+| `src/components/ceo/CeoChatBubble.tsx` | component | [ceo-assistant](../features/ceo-assistant.md) · [employee-penny-ai](../features/employee-penny-ai.md) |
+| `src/components/ceo/CeoFinancialReports.tsx` | component | — **no doc** |
+| `src/components/ceo/CeoOverviewKpis.tsx` | component | *this file* |
+| `src/components/ceo/CeoPayrollLive.tsx` | component | — **no doc** |
+| `src/components/ceo/CeoSidebar.tsx` | component | *this file* |
+| `src/components/ceo/ceo-chat-message.tsx` | component | *this file* · [employee-penny-ai](../features/employee-penny-ai.md) |
+| `src/components/ceo/financial-chart.tsx` | component | [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) |
+| `src/components/ceo/penny-attachments.tsx` | component | *this file* · [admin-penny-console](../features/admin-penny-console.md) |
+| `src/components/collab/CobrowseChatWindow.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/collab/CobrowseSurface.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/collab/CollabLayer.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/common/CarlaSongToast.tsx` | component | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [login-carla-song](../features/login-carla-song.md) |
+| `src/components/common/CollapsibleSidebarShell.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/common/ConstructionBanner.tsx` | component | *this file* |
+| `src/components/common/ConstructionMark.tsx` | component | — **no doc** |
+| `src/components/common/DashboardSwitchLoader.tsx` | component | — **no doc** |
+| `src/components/common/DispatchPaidToastsGlobal.tsx` | component | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
+| `src/components/common/SidebarBrandMark.tsx` | component | [employee-penny-ai](../features/employee-penny-ai.md) |
+| `src/components/common/SidebarCollapseToggle.tsx` | component | *this file* |
+| `src/components/common/SidebarCollapsedDot.tsx` | component | *this file* |
+| `src/components/common/SidebarLogoHeader.tsx` | component | — **no doc** |
+| `src/components/common/SignaturePad.tsx` | component | *this file* · [documents-tab](../features/documents-tab.md) · [onboarding-ip-assignment](../features/onboarding-ip-assignment.md) |
+| `src/components/common/UnderConstruction.tsx` | component | *this file* |
+| `src/components/contractor/ContractorApp.tsx` | component | *this file* · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/components/contractor/ContractorInvoices.tsx` | component | *this file* |
+| `src/components/contractor/ContractorOverview.tsx` | component | *this file* |
+| `src/components/contractor/ContractorProfile.tsx` | component | *this file* |
+| `src/components/contractor/ContractorSidebar.tsx` | component | *this file* |
+| `src/components/contractor/InvoiceReceiptDialog.tsx` | component | — **no doc** |
+| `src/components/employee/CompensationSections.tsx` | component | [employee-profile](../features/employee-profile.md) |
+| `src/components/employee/DisputeDialog.tsx` | component | *this file* |
+| `src/components/employee/DocumentPreviewPanel.tsx` | component | — **no doc** |
+| `src/components/employee/EmployeeApp.tsx` | component | *this file* · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-penny-ai](../features/employee-penny-ai.md) |
+| `src/components/employee/EmployeeAvatar.tsx` | component | *this file* · [employee-id-card](../features/employee-id-card.md) |
+| `src/components/employee/EmployeeDashboard.tsx` | component | [bonus-calculator](../features/bonus-calculator.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) |
+| `src/components/employee/EmployeeFpu.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) |
+| `src/components/employee/EmployeeFpuGroup.tsx` | component | *this file* · [fpu-groups-attendance](../features/fpu-groups-attendance.md) |
+| `src/components/employee/EmployeeHelpMenu.tsx` | component | — **no doc** |
+| `src/components/employee/EmployeeIdCard.tsx` | component | [employee-id-card](../features/employee-id-card.md) · [employee-profile](../features/employee-profile.md) |
+| `src/components/employee/EmployeeKpiResults.tsx` | component | [kpi-scored-notification](../features/kpi-scored-notification.md) |
+| `src/components/employee/EmployeeLeaves.tsx` | component | *this file* |
+| `src/components/employee/EmployeeLogin.tsx` | component | *this file* |
+| `src/components/employee/EmployeeMesa.tsx` | component | *this file* · [mesa](../features/mesa.md) · [urgent-payments](../features/urgent-payments.md) |
+| `src/components/employee/EmployeeMyHours.tsx` | component | [bonus-catalog](../features/bonus-catalog.md) · [employee-my-hours-calendar](../features/employee-my-hours-calendar.md) |
+| `src/components/employee/EmployeePabCalendar.tsx` | component | *this file* · [orphanage-pab-coverage](../features/orphanage-pab-coverage.md) · [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
+| `src/components/employee/EmployeePolicies.tsx` | component | *this file* · [employee-team-directory](../features/employee-team-directory.md) |
+| `src/components/employee/EmployeeProfile.tsx` | component | [employee-id-card](../features/employee-id-card.md) · [employee-profile](../features/employee-profile.md) |
+| `src/components/employee/EmployeeReports.tsx` | component | *this file* |
+| `src/components/employee/EmployeeSecondApprovals.tsx` | component | [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/employee/EmployeeSettings.tsx` | component | — **no doc** |
+| `src/components/employee/EmployeeSidebar.tsx` | component | *this file* · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-team-directory](../features/employee-team-directory.md) |
+| `src/components/employee/EmployeeSupportChat.tsx` | component | [employee-support-chat](../features/employee-support-chat.md) |
+| `src/components/employee/EmployeeSupportTickets.tsx` | component | [employee-support](../features/employee-support.md) |
+| `src/components/employee/EmployeeTeam.tsx` | component | *this file* · [employee-team-directory](../features/employee-team-directory.md) |
+| `src/components/employee/GiftShippingCard.tsx` | component | *this file* · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · [gift-tracker-receipts](../features/gift-tracker-receipts.md) |
+| `src/components/employee/HiddenValue.tsx` | component | *this file* |
+| `src/components/employee/MesaReceiptDialog.tsx` | component | [mesa](../features/mesa.md) · [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/employee/MyDisputes.tsx` | component | [employee-penny-ai](../features/employee-penny-ai.md) · [orphanage-dispute-flow](../features/orphanage-dispute-flow.md) |
+| `src/components/employee/PabCalendarLoader.tsx` | component | — **no doc** |
+| `src/components/employee/PayrollLockBanner.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/components/employee/ProfileCompletionCard.tsx` | component | *this file* |
+| `src/components/employee/RequestDocumentsTab.tsx` | component | [documents-tab](../features/documents-tab.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
+| `src/components/employee/TimeAdjustmentDialog.tsx` | component | *this file* · [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/employee/employee-payout-fields.tsx` | component | *this file* |
+| `src/components/hr/DeptFilter.tsx` | component | *this file* |
+| `src/components/hr/FpuGroupsPanel.tsx` | component | *this file* · [fpu-groups-attendance](../features/fpu-groups-attendance.md) · [hr-dashboard-cache](../features/hr-dashboard-cache.md) |
+| `src/components/hr/HiringByRecruiterCard.tsx` | component | — **no doc** |
+| `src/components/hr/HiringSourcesCard.tsx` | component | — **no doc** |
+| `src/components/hr/HiringWeekOverviewSection.tsx` | component | — **no doc** |
+| `src/components/hr/HrApp.tsx` | component | *this file* · [notification-alerts](../features/notification-alerts.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/components/hr/HrCollabLayer.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/hr/HrFpuEnrollments.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) |
+| `src/components/hr/HrGlobalMasterList.tsx` | component | [hr-dashboard-cache](../features/hr-dashboard-cache.md) · [hr-global-master-list-export](../features/hr-global-master-list-export.md) |
+| `src/components/hr/HrMesa.tsx` | component | *this file* · [mesa](../features/mesa.md) |
+| `src/components/hr/HrNewHireChecklist.tsx` | component | [hr-dashboard-cache](../features/hr-dashboard-cache.md) · [hr-orientation-attendance](../features/hr-orientation-attendance.md) |
+| `src/components/hr/HrOffboardQueueProcessor.tsx` | component | — **no doc** |
+| `src/components/hr/HrOffboarding.tsx` | component | *this file* |
+| `src/components/hr/HrOnboarding.tsx` | component | *this file* · [hr-dashboard-cache](../features/hr-dashboard-cache.md) |
+| `src/components/hr/HrOnboardingForm.tsx` | component | *this file* · [hr-dashboard-cache](../features/hr-dashboard-cache.md) · [onboarding-calltools-username](../features/onboarding-calltools-username.md) |
+| `src/components/hr/HrOrientationAttendancePanel.tsx` | component | [hr-orientation-attendance](../features/hr-orientation-attendance.md) |
+| `src/components/hr/HrScreening.tsx` | component | [hr-dashboard-cache](../features/hr-dashboard-cache.md) |
+| `src/components/hr/HrSidebar.tsx` | component | *this file* |
+| `src/components/hr/HrTransfers.tsx` | component | *this file* · [department-transfers](../features/department-transfers.md) |
+| `src/components/hr/NewHireChecklistLockDialog.tsx` | component | — **no doc** |
+| `src/components/hr/NewHireQuickAddDialog.tsx` | component | [new-hire-checklist](../features/new-hire-checklist.md) |
+| `src/components/hr/OffboardingWeeklyPulse.tsx` | component | [offboarding-automation](../features/offboarding-automation.md) |
+| `src/components/hr/ReferralsWeekSection.tsx` | component | — **no doc** |
+| `src/components/hr/SmoothCombobox.tsx` | component | — **no doc** |
+| `src/components/manager/DeptBonusCalculator.tsx` | component | *this file* · [cop-country-payees](../features/cop-country-payees.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/HslBonusCalculator.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [hsl-subdepartments](../features/hsl-subdepartments.md) |
+| `src/components/manager/HslBonusEditModal.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/HslBonusReadyPreview.tsx` | component | *this file* |
+| `src/components/manager/KpiCalculatorLoading.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/ManagerApp.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/ManagerBonusHistory.tsx` | component | *this file* · [hsl-subdepartments](../features/hsl-subdepartments.md) · [payment-catalog-departments](../features/payment-catalog-departments.md) |
+| `src/components/manager/ManagerMemberDialog.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) · [manager-my-team](../features/manager-my-team.md) |
+| `src/components/manager/ManagerMemberHoursMini.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) · [manager-my-team](../features/manager-my-team.md) |
+| `src/components/manager/ManagerOffboardQueueDialog.tsx` | component | — **no doc** |
+| `src/components/manager/ManagerSidebar.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) |
+| `src/components/manager/ManagerTimeAdjustments.tsx` | component | *this file* · [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/manager/ManagerTransferDialog.tsx` | component | *this file* · [department-transfers](../features/department-transfers.md) · [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/manager/ManagerTransfers.tsx` | component | [department-transfers](../features/department-transfers.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) |
+| `src/components/manager/MedalRecognition.tsx` | component | *this file* · [manager-my-team](../features/manager-my-team.md) |
+| `src/components/manager/NewlyHiredPanel.tsx` | component | *this file* · [hr-orientation-attendance](../features/hr-orientation-attendance.md) · [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
+| `src/components/manager/OffboardedSuggestions.tsx` | component | — **no doc** |
+| `src/components/manager/OrientationAttendancePanel.tsx` | component | *this file* · [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
+| `src/components/manager/SchedulingPanel.tsx` | component | *this file* · [manager-scheduling](../features/manager-scheduling.md) |
+| `src/components/manager/kpi-calculator-switch.tsx` | component | — **no doc** |
+| `src/components/manager/kpi-readiness-chip.tsx` | component | — **no doc** |
+| `src/components/manager/kpi-status-chip.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/transfer-charts.tsx` | component | [department-transfers](../features/department-transfers.md) |
+| `src/components/mesa/bulk-selection.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) |
+| `src/components/notifications/NotificationToast.tsx` | component | [notification-alerts](../features/notification-alerts.md) |
+| `src/components/notifications/NotificationsPanel.tsx` | component | *this file* · [kpi-scored-notification](../features/kpi-scored-notification.md) |
+| `src/components/onboarding/agreement-texts.tsx` | component | *this file* · [onboarding-ip-assignment](../features/onboarding-ip-assignment.md) |
+| `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx` | component | *this file* |
+| `src/components/orphanage/GiftCatalog.tsx` | component | *this file* |
+| `src/components/orphanage/GiftPayments.tsx` | component | *this file* |
+| `src/components/orphanage/GiftTracker.tsx` | component | *this file* · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · [gift-tracker-receipts](../features/gift-tracker-receipts.md) |
+| `src/components/orphanage/OrphanageApp.tsx` | component | *this file* · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/components/orphanage/OrphanageBudgetForm.tsx` | component | *this file* |
+| `src/components/orphanage/OrphanageBudgetHistory.tsx` | component | *this file* |
+| `src/components/orphanage/OrphanagesPanel.tsx` | component | *this file* |
+| `src/components/orphanage/ThirdPartyVendorsPanel.tsx` | component | [third-party-vendors](../features/third-party-vendors.md) |
+| `src/components/orphanage/VendorDialog.tsx` | component | — **no doc** |
+| `src/components/orphanage/VendorInvoiceBuilderDialog.tsx` | component | [third-party-vendors](../features/third-party-vendors.md) |
+| `src/components/orphanage/VendorInvoiceDocument.tsx` | component | [third-party-vendors](../features/third-party-vendors.md) |
+| `src/components/orphanage/VendorInvoiceMarkPaidDialog.tsx` | component | [third-party-vendors](../features/third-party-vendors.md) |
+| `src/components/orphanage/interns/InternDialog.tsx` | component | — **no doc** |
+| `src/components/orphanage/interns/InternLockConfirmDialog.tsx` | component | — **no doc** |
+| `src/components/orphanage/interns/InternRateDialog.tsx` | component | — **no doc** |
+| `src/components/orphanage/interns/InternsProfilesPanel.tsx` | component | — **no doc** |
+| `src/components/orphanage/interns/InternsTab.tsx` | component | [orphanage-interns](../features/orphanage-interns.md) |
+| `src/components/orphanage/interns/InternsWizard.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/AnimatedNumber.tsx` | component | *this file* · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/components/payroll-clerk/AuditTrailPanel.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
+| `src/components/payroll-clerk/ContractorChip.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/ContractorInvoiceDialog.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/DeptChip.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/DispatchLoader.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/DoneQueue.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/ExcludedQueue.tsx` | component | *this file* |
+| `src/components/payroll-clerk/MarkPaidDialog.tsx` | component | *this file* · [bank-preferred-routing](../features/bank-preferred-routing.md) · [cop-country-payees](../features/cop-country-payees.md) |
+| `src/components/payroll-clerk/OneOffPaymentsSection.tsx` | component | [people-offboarded-pay](../features/people-offboarded-pay.md) |
+| `src/components/payroll-clerk/OrphanageMarkPaidDialog.tsx` | component | *this file* · [urgent-payments](../features/urgent-payments.md) |
+| `src/components/payroll-clerk/OrphanageQueue.tsx` | component | *this file* · [urgent-payments](../features/urgent-payments.md) |
+| `src/components/payroll-clerk/OrphanageWorkerPaymentDialog.tsx` | component | — **no doc** |
+| `src/components/payroll-clerk/PaidRecordsPanel.tsx` | component | [gift-alternate-recipient](../features/gift-alternate-recipient.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/components/payroll-clerk/PayrollClerkApp.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
+| `src/components/payroll-clerk/PayrollClerkSidebar.tsx` | component | *this file* |
+| `src/components/payroll-clerk/PayrollDispatch.tsx` | component | *this file* · [csv-imports](../features/csv-imports.md) · [cycle-closeout](../features/cycle-closeout.md) |
+| `src/components/payroll-clerk/ProcessorCard.tsx` | component | *this file* · [payment-dispatch](../features/payment-dispatch.md) · [urgent-payments](../features/urgent-payments.md) |
+| `src/components/payroll-clerk/ProcessorLogo.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) · [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) |
+| `src/components/payroll-clerk/ProcessorQueue.tsx` | component | *this file* · [cop-country-payees](../features/cop-country-payees.md) · [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
+| `src/components/payroll-clerk/QueuePagination.tsx` | component | *this file* |
+| `src/components/payroll-clerk/QueueSkeleton.tsx` | component | *this file* |
+| `src/components/payroll-clerk/SentPaymentsHistory.tsx` | component | *this file* |
+| `src/components/payroll-clerk/UndoHistoryPanel.tsx` | component | [payment-dispatch](../features/payment-dispatch.md) |
+| `src/components/payroll-clerk/UrgentPaymentsQueue.tsx` | component | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
+| `src/components/payroll-live/PayrollLivePublisher.tsx` | component | — **no doc** |
+| `src/components/payroll-wizard/tutorial/ProcessingNarrative.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
+| `src/components/payroll-wizard/tutorial/TutorialGuide.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
+| `src/components/payroll/AccountingMesa.tsx` | component | *this file* · [accounting-mesa-export](../features/accounting-mesa-export.md) · [mesa](../features/mesa.md) |
+| `src/components/payroll/LockToggleConfirmDialog.tsx` | component | *this file* · [cycle-closeout](../features/cycle-closeout.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/components/payroll/OrphanageClearConfirmDialog.tsx` | component | *this file* · [orphanage-pay-step](../features/orphanage-pay-step.md) |
+| `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
+| `src/components/payroll/OrphanageOmsPanel.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
+| `src/components/payroll/OrphanageVisits.tsx` | component | *this file* |
+| `src/components/payroll/PabDecisionConfirmDialog.tsx` | component | [orphanage-pay-step](../features/orphanage-pay-step.md) |
+| `src/components/payroll/PabDisputeQueue.tsx` | component | *this file* · [bank-preferred-routing](../features/bank-preferred-routing.md) · [delete-authorization](../features/delete-authorization.md) |
+| `src/components/payroll/PabDoneTable.tsx` | component | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
+| `src/components/payroll/PabIneligibleTable.tsx` | component | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
+| `src/components/payroll/PayrollProcessingLock.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/components/payroll/SettlementChip.tsx` | component | [cop-country-payees](../features/cop-country-payees.md) |
+| `src/components/payroll/StartProcessingBroadcastModal.tsx` | component | [start-processing-cue](../features/start-processing-cue.md) |
+| `src/components/payroll/TimeAdjustmentIssueRows.tsx` | component | *this file* · [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | component | *this file* · [time-adjustment-requests](../features/time-adjustment-requests.md) |
+| `src/components/payroll/ValidationBreakdownTable.tsx` | component | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
+| `src/components/payroll/ValidationFullScreen.tsx` | component | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
+| `src/components/payroll/WizardCursorOverlay.tsx` | component | — **no doc** |
+| `src/components/paystub/PayStubModal.tsx` | component | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
+| `src/components/paystub/PayStubStatement.tsx` | component | [cop-country-payees](../features/cop-country-payees.md) · [department-transfers](../features/department-transfers.md) |
+| `src/components/people/PeopleBankChanges.tsx` | component | — **no doc** |
+| `src/components/people/PeopleOffboarded.tsx` | component | [people-offboarded-pay](../features/people-offboarded-pay.md) |
+| `src/components/people/PeopleTab.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) |
+| `src/components/people/bank-change-detail.tsx` | component | — **no doc** |
+| `src/components/people/rail-mix-band.tsx` | component | [bank-preferred-routing](../features/bank-preferred-routing.md) |
+| `src/components/presence/CobrowseChatProvider.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/presence/CobrowseProvider.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/presence/GlobalPingListener.tsx` | component | *this file* |
+| `src/components/presence/PresenceProvider.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/qc/QCApp.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [qc-scoring](../features/qc-scoring.md) |
+| `src/components/qc/QCSidebar.tsx` | component | *this file* |
+| `src/components/rbac/ReadOnlyTab.tsx` | component | [bonus-catalog](../features/bonus-catalog.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/components/rbac/ViewSwitcher.tsx` | component | *this file* |
+| `src/components/swall/SWall.tsx` | component | *this file* |
+| `src/components/team/RankingsPane.tsx` | component | *this file* · [employee-team-directory](../features/employee-team-directory.md) · [manager-my-team](../features/manager-my-team.md) |
+| `src/components/team/team-ui.tsx` | component | — **no doc** |
+| `src/components/tickets/SupportChatTab.tsx` | component | [employee-support-chat](../features/employee-support-chat.md) |
+| `src/components/tickets/SupportTicketsTab.tsx` | component | [employee-support](../features/employee-support.md) |
+| `src/components/tickets/TicketCard.tsx` | component | — **no doc** |
+| `src/components/tickets/TicketDialog.tsx` | component | — **no doc** |
+| `src/components/tickets/TicketsBoard.tsx` | component | — **no doc** |
+| `src/components/tickets/TicketsOverview.tsx` | component | — **no doc** |
+| `src/components/tickets/TicketsSidebar.tsx` | component | [tickets-board](../features/tickets-board.md) |
+| `src/components/transfers/TransferToolbar.tsx` | component | — **no doc** |
+| `src/hooks/useAdminCachedState.ts` | hook | [admin-dashboard-cache](../features/admin-dashboard-cache.md) |
+| `src/hooks/useBankInfoRequest.ts` | hook | — **no doc** |
+| `src/hooks/useChecklistRoom.ts` | hook | [new-hire-checklist](../features/new-hire-checklist.md) |
+| `src/hooks/useCobrowse.ts` | hook | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/hooks/useCollabEnabled.ts` | hook | — **no doc** |
+| `src/hooks/useDebouncedValue.ts` | hook | [payment-dispatch](../features/payment-dispatch.md) |
+| `src/hooks/useDispatchLock.ts` | hook | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/hooks/useDispatchPaidToasts.ts` | hook | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
+| `src/hooks/useEmployeeCachedState.ts` | hook | [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-profile](../features/employee-profile.md) |
+| `src/hooks/useEmployeeNotificationsUnread.ts` | hook | *this file* · [notification-alerts](../features/notification-alerts.md) |
+| `src/hooks/useFeaturePermissions.ts` | hook | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/hooks/useFpuLive.ts` | hook | [fpu-enrollment](../features/fpu-enrollment.md) |
+| `src/hooks/useHrOrientationAttendance.ts` | hook | [hr-dashboard-cache](../features/hr-dashboard-cache.md) · [hr-orientation-attendance](../features/hr-orientation-attendance.md) |
+| `src/hooks/useKpiCacheIdentity.ts` | hook | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/hooks/useLiveCells.ts` | hook | [new-hire-checklist](../features/new-hire-checklist.md) |
+| `src/hooks/useLiveRefresh.ts` | hook | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/hooks/useManagerCachedState.ts` | hook | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [manager-overview](../features/manager-overview.md) |
+| `src/hooks/useMesaNewDeposits.ts` | hook | — **no doc** |
+| `src/hooks/useNotificationChime.ts` | hook | [hubstaff-zero-hours-gap](../features/hubstaff-zero-hours-gap.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) |
+| `src/hooks/useNotificationCountsByView.ts` | hook | — **no doc** |
+| `src/hooks/useOrientationHistory.ts` | hook | *this file* · [hr-orientation-attendance](../features/hr-orientation-attendance.md) · [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
+| `src/hooks/usePabPeriodSettings.ts` | hook | — **no doc** |
+| `src/hooks/usePagesVisibility.ts` | hook | *this file* |
+| `src/hooks/usePaymentsLive.ts` | hook | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `src/hooks/usePayrollLivePresence.ts` | hook | — **no doc** |
+| `src/hooks/useResilientResource.ts` | hook | — **no doc** |
+| `src/hooks/useSidebarCollapsed.ts` | hook | *this file* |
+| `src/hooks/useStartProcessingBroadcast.ts` | hook | [start-processing-cue](../features/start-processing-cue.md) |
+| `src/hooks/useTabDocumentTitle.ts` | hook | — **no doc** |
+| `src/hooks/useViewerProfilePhoto.ts` | hook | *this file* |
+| `src/hooks/useWizardDispatchLock.ts` | hook | [paystub-dispatch](../features/paystub-dispatch.md) |
+| `src/hooks/useWizardFollow.ts` | hook | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |

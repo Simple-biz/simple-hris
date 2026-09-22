@@ -126,7 +126,7 @@ The trigger case: Kyle Sheen "Sheen" Gobalani's master row carried a vestigial
 primary Work Email `shannong@simple.biz` while every operational system (Hubstaff
 hours, `employee_hourly_rates` rate row) keyed her on `sheeng@simple.biz`, which
 sat in her *Alternate* slot. The lookup fix above resolves her start date in code;
-`references/fix_sheen_gobalani_work_email.sql` (**PENDING**) makes the data itself
+`references/sql/fix/fix_sheen_gobalani_work_email.sql` (**PENDING**) makes the data itself
 canonical by swapping the two — `Work Email → sheeng@simple.biz`,
 `Alternate Work Email → shannong@simple.biz` — keyed on the old work email +
 Personal Email `gobalanik@gmail.com` + `Department = 'Accounting Team'`. It is

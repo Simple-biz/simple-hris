@@ -527,7 +527,7 @@ memory note, or a half-finished branch — can tell "removed on purpose" from "n
 | Was | Now | Changed |
 |---|---|---|
 | `Documentation/` folder held all docs (`SYSTEM_ARCHITECTURE.md`, `API_REFERENCE.md`, `COMPONENTS.md`, `DATA_SOURCES.md`) | `docs/` with `reference/`, `features/`, `audits/`, … ; filenames lowercased-kebab | deleted 2026-05-05 (`377c255`) |
-| Accounting **`rates` tab** + `src/components/Rates.tsx` | Folded into the **`people`** tab | deleted 2026-06-22 (`63add1b`) |
+| Accounting **`rates` tab** + `src/components/Rates.tsx` *(deleted — no file of this name exists in the tree, measured 2026-09-22)* | Folded into the **`people`** tab | deleted 2026-06-22 (`63add1b`) |
 | Profile-modal field stagger `delay: Math.min(i * 0.01, 0.28)` | Generic clamped row stagger (~`index * 0.04`, cap 0.28) on list surfaces | removed with `Rates.tsx`, `63add1b` |
 | Wizard step transition: `motion.div` `x: ±20` slide + `AnimatePresence` **direction key** | Opacity-only cross-fade, `mode="wait"` keyed on `currentStep`, `duration: 0.2` | — |
 | Employee IDs **derived at render** by `generateEmployeeIds()`, display-only, reshuffling on roster change | Persisted in `global_master_list.employee_id`; the function is now an *assigner* that never rewrites an existing ID (decision 5) | `references/sql/alter/add_employee_id_to_global_master_list.sql` |
@@ -543,7 +543,7 @@ memory note, or a half-finished branch — can tell "removed on purpose" from "n
 | `buildHubstaffDataFromParsedGrid()` fed wizard display state from the client-side re-parse | Display state comes only from `GET /api/hubstaff-hours`; the re-parse persists a fallback breakdown to `app_settings`. The function is **dead code** | — |
 | Two-pass Hubstaff column mapping, inline in `replaceHubstaffHoursFromCsvText()` | **Three** passes, extracted to `resolveColumnMapping()` (decision 8) | — |
 | Perfect Attendance detection on **Step 3** | Step **5 (Additions)**; step 3 is now Orphanage | — |
-| `references/seed_disbursement_records.sql` (flat path) | `references/sql/seed/seed_disbursement_records.sql` + `…_sync.sql` after the `references/` reorg | — |
+| `references/sql/seed/seed_disbursement_records.sql` (flat path) | `references/sql/seed/seed_disbursement_records.sql` + `…_sync.sql` after the `references/` reorg | — |
 | The **offboarded log was mirrored FROM** the Google Sheet's Offboarded tab by `sync-offboarded-from-sheet` | Intake retired; `offboarded_sheet` is an HRIS-owned ledger written by `/api/hr/offboard`. The cron route survives as a **410 tombstone**; writes *to* the sheet are unaffected | retired 2026-08-07 (`28cb65d`) |
 | `IMPLEMENTATION_PLAN_RBAC.md` (original RBAC plan at repo root) | **Moved and renamed**, not deleted: [implementation-plans/implementation-plan-rbac.md](../implementation-plans/implementation-plan-rbac.md). Surviving detail doc is [features/rbac-feature-permissions.md](../features/rbac-feature-permissions.md) | moved 2026-05-05 (`377c255`) |
 | `next-themes` configured to respect the OS preference | `enableSystem={false}`, `defaultTheme="light"`, manual toggle only; no `prefers-color-scheme` rule anywhere | — |
@@ -556,7 +556,7 @@ memory note, or a half-finished branch — can tell "removed on purpose" from "n
 | Payment Dispatch **Reports tab** + `/api/payment-dispatches/reports/*` | Deleted; `disbursement_records` survives for CEO reports, Penny, People history and the close-out cross-check (decision 11) | 2026-08-12 |
 | `hurupay` shown as "Hurupay" | Label **Kolan** — a rebrand of the same rail; id, sheet alias and routing unchanged | 2026-09 |
 
-Two things referenced by older docs **never existed in this repo**: `references/gen_dept_seed.js` (no commit ever added it) and the Employee portal `policies` / `settings` tabs.
+Two things referenced by older docs **never existed in this repo**: `references/gen_dept_seed.js` *(deleted — no file of this name exists in the tree, measured 2026-09-22)* (no commit ever added it) and the Employee portal `policies` / `settings` tabs.
 
 ---
 

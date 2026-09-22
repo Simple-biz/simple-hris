@@ -84,7 +84,7 @@ All routes are `runtime = "nodejs"`, `dynamic = "force-dynamic"`, and gated by t
 ## Delivery: the invite email (the live path)
 
 > **The plan ships with the onboarding INVITE, not on submission.** An earlier design
-> fired an `onboarding_pay_plan` webhook at submit time (`src/lib/onboarding/send-pay-plan.ts`);
+> fired an `onboarding_pay_plan` webhook at submit time (`src/lib/onboarding/send-pay-plan.ts` *(deleted — no file of this name exists in the tree, measured 2026-09-22)*);
 > both were **removed**. That stale path still shows up in a comment header inside
 > `create_onboarding_pay_plans.sql` — ignore it. The real path is below.
 

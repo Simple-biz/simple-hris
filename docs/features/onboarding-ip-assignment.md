@@ -250,7 +250,7 @@ file path; HR fetches a signed URL on demand.
 > **Migration #73 — APPLIED** (verified against production 2026-08-11 by
 > `scripts/audit-pending-migrations.mts`; the file now lives under
 > `references/sql/alter/`). It was, when written:
-> [`references/migrations/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql)
+> [`references/sql/alter/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql)
 > an `ALTER TABLE public.hr_onboarding_submissions ADD COLUMN IF NOT EXISTS` for
 > the six columns above.
 >
@@ -273,6 +273,6 @@ file path; HR fetches a signed URL on demand.
 | [`app/api/hr/onboarding-submissions/[id]/route.ts`](../../app/api/hr/onboarding-submissions/[id]/route.ts) | Signed IP/W-8BEN URLs for HR review |
 | [`src/lib/supabase/hr-onboarding-submissions.ts`](../../src/lib/supabase/hr-onboarding-submissions.ts) | Row type, upload + signed-URL helpers |
 | [`src/components/hr/HrOnboardingForm.tsx`](../../src/components/hr/HrOnboardingForm.tsx) | HR Summary block + IP Assignment tab + template link |
-| [`references/migrations/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql) | Migration #73 — **APPLIED** (verified 2026-08-11) |
+| [`references/sql/alter/add_ip_assignment_to_onboarding.sql`](../../references/migrations/add_ip_assignment_to_onboarding.sql) | Migration #73 — **APPLIED** (verified 2026-08-11) |
 </content>
 </invoke>

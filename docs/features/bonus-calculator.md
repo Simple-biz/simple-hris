@@ -105,6 +105,11 @@ Deduplicate **₱5,000** / **₱1,850** per [Documentation/problem.md](../notes/
 
 *(This refactor was not applied automatically while Cursor Plan mode restricted edits to markdown files.)*
 
+> **Still pending, re-measured 2026-09-22.** `src/lib/payroll/constants.ts` does not exist and both amounts are
+> still local `const`s — but **in `src/components/employee/EmployeeMyHours.tsx:89-90`**, not in
+> `EmployeeDashboard.tsx` as step 3 above says; the surface moved and this instruction did not follow it.
+> Step 3 is therefore wrong as written. Session log item 146.
+
 ---
 
 ## Diagram — bonus flow vs weekly payroll

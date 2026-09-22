@@ -33,13 +33,13 @@ Code: `src/components/accounting/BonusCatalog.tsx`,
 Pay Structures: `src/lib/payment-catalog/pay-structure.ts`,
 `src/lib/payroll/resolve-rate.ts`,
 `app/api/payment-catalog/pay-structures/route.ts`.
-Migration: `references/create_bonus_catalog.sql`.
+Migration: `references/sql/create/create_bonus_catalog.sql`.
 
 ---
 
 ## 1. Data model
 
-Two tables (see `references/create_bonus_catalog.sql`):
+Two tables (see `references/sql/create/create_bonus_catalog.sql`):
 
 **`bonus_catalog_bonuses`** -- the bonus definitions:
 
@@ -1083,7 +1083,7 @@ round-trips to native COP in the Payment Dispatch COP tab via `amount_cop`).
 ### Bonus Library star/highlight
 
 Each Bonus Library card has a **star** on the right (`BonusDef.starred`, column
-added by `references/add_bonus_catalog_starred.sql`). Starred bonuses float to
+added by `references/sql/alter/add_bonus_catalog_starred.sql`). Starred bonuses float to
 the top of the list and render with an amber star + ring. Display-only -- it
 does not affect payout.
 

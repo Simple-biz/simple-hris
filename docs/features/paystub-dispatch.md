@@ -43,7 +43,7 @@ inside `/api/payment-dispatches` forward through the shared `forwardPaystubDispa
 
 ### Staging table — `paystub_dispatch_queue`
 
-Migration #72: `references/seed_paystub_dispatch_queue.sql` (idempotent). **APPLIED** —
+Migration #72: `references/sql/seed/seed_paystub_dispatch_queue.sql` (idempotent). **APPLIED** —
 verified against production 2026-08-11 by `scripts/audit-pending-migrations.mts`
 (9,815 rows). One row per
 `UNIQUE (cycle_source_file, recipient_email)`:
@@ -1126,8 +1126,8 @@ launch disables the whole recovery path, this key included.
 ## References
 
 - Recovered snapshots: `src/lib/payroll/paystub-recovered.ts` · `paystub-recovery.ts` (`loadRecoveryForWeeks`) · `engine-week-memo.ts` · `scripts/backfill-paystub-recovered-snapshots.mts`.
-- Migration: `references/seed_paystub_dispatch_queue.sql` (`paystub_dispatch_queue` — **APPLIED**, migration #72, verified 2026-08-11).
-- Workflow JSON: `references/n8n_paystub_dispatch.json`.
+- Migration: `references/sql/seed/seed_paystub_dispatch_queue.sql` (`paystub_dispatch_queue` — **APPLIED**, migration #72, verified 2026-08-11).
+- Workflow JSON: `references/n8n/n8n_paystub_dispatch.json`.
 - Business rules: `Documentation/BUSINESS_LOGIC.md`.
 - Routes: `app/api/paystub-dispatch-queue/route.ts` (+ `arrears/`), `app/api/payment-dispatches/route.ts` (per-employee send on Mark Paid), `app/api/dispatch-paystubs/route.ts` (legacy batch, no callers).
 - Shared send helper: `src/lib/payroll/paystub-dispatch.ts` (`forwardPaystubDispatch`).
