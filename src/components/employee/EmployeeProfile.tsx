@@ -51,6 +51,10 @@ import {
   sectionSlideDirection,
 } from '@/lib/employee/compensation-sections';
 import { CompensationSections } from './CompensationSections';
+import {
+  CurrentPaycycle,
+  type CurrentPaycyclePayload,
+} from './CurrentPaycycle';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { buildIdCard } from '@/lib/employee/id-card';
 import { downloadIdCardPng, IdCardRenderError } from '@/lib/employee/id-card-render';
@@ -1267,6 +1271,77 @@ export default function EmployeeProfile({
       .catch(() => setPayStubsError('Could not load your pay stubs.'))
       .finally(() => setPayStubsLoading(false));
   }, [activeTab, activeCompensationSection]);
+
+  // ── Current Paycycle (Profile → Compensation → Current Paycycle) ──
+  // The in-flight pay week, disassembled, plus the eight-step payroll track.
+  // `GET /api/employee/current-paycycle`, session-scoped, no `?email=`.
+  //
+  // DELIBERATELY NOT CACHED, and deliberately NOT one-shot — the two things
+  // every other section here does.
+  //
+  //  • Not cached: `tab-cache.ts:75-83` names this exact hazard in its own
+  //    words — "a laptop lid closed on Friday and opened on Monday would
+  //    otherwise paint Friday's pay week as the current one". A cached payload
+  //    would paint LAST week's track as this week's, complete with green dots.
+  //    The Payout section is uncached for the same class of reason.
+  //  • Not one-shot: Kane asked for this to be live (2026-09-22, "Real Time").
+  //    `payStubsRequestedRef` exists because a paid week never changes; this
+  //    week changes all day. It refetches on an interval and on window focus,
+  //    the cadence the dashboard's Estimated Take-Home already ships.
+  //
+  // It is NOT a `postgres_changes` subscription: `app_settings` is RLS
+  // admin-only and the anon browser receives no row events (`useDispatchLock`
+  // subscribes and its binding never fires — the lock actually moves on its
+  // poll). True push would mean adding Broadcast to the wizard and dispatch
+  // write routes, which is a larger change than this pane.
+  const [paycycle, setPaycycle] = useState<CurrentPaycyclePayload | null>(null);
+  const [paycycleLoading, setPaycycleLoading] = useState(false);
+  const [paycycleError, setPaycycleError] = useState<string | null>(null);
+  const paycycleVisible = activeTab === 'compensation' && activeCompensationSection === 'currentPaycycle';
+
+  useEffect(() => {
+    if (!paycycleVisible) return;
+    let cancelled = false;
+
+    const load = async () => {
+      // Only the FIRST load shows a spinner. A refresh that repaints the pane
+      // as a skeleton every 60 seconds reads as a fault, not as liveness.
+      setPaycycleLoading((prev) => (paycycle ? prev : true));
+      try {
+        const r = await fetch('/api/employee/current-paycycle', { cache: 'no-store' });
+        const json = (await r.json()) as CurrentPaycyclePayload & { error?: string };
+        if (cancelled) return;
+        if (!r.ok) {
+          setPaycycleError(json.error || 'Could not load your current pay cycle.');
+          return;
+        }
+        setPaycycleError(null);
+        setPaycycle(json);
+      } catch {
+        // Transient — the next tick retries. An existing payload stays on
+        // screen rather than being replaced by an error the poll will clear.
+        if (!cancelled && !paycycle) {
+          setPaycycleError('Could not load your current pay cycle.');
+        }
+      } finally {
+        if (!cancelled) setPaycycleLoading(false);
+      }
+    };
+
+    void load();
+    const id = window.setInterval(() => void load(), 60_000);
+    const onFocus = () => void load();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+    // `paycycle` is read inside `load` only to decide whether to show a
+    // spinner, and must NOT be a dependency — it would tear down and rebuild
+    // the interval on every successful poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paycycleVisible]);
 
   // Reset the pager when the LIST ITSELF changes — the cached rows being
   // replaced by live ones, a refetch that adds this week's statement, a shorter
@@ -2739,6 +2814,21 @@ export default function EmployeeProfile({
                             </div>
                           )}
                         </>
+                      )}
+
+                      {activeCompensationSection === 'currentPaycycle' && (
+                        <Section
+                          title="Current Paycycle"
+                          description="The week being processed right now — your hours, your pay line by line, and where payroll has got to."
+                        >
+                          <div className="py-2">
+                            <CurrentPaycycle
+                              data={paycycle}
+                              loading={paycycleLoading}
+                              error={paycycleError}
+                            />
+                          </div>
+                        </Section>
                       )}
                     </motion.div>
                   </AnimatePresence>

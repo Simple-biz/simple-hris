@@ -5,6 +5,7 @@ export const COMPENSATION_SECTIONS: readonly { id: SectionId; label: string }[] 
   { id: 'rates', label: 'Rates' },
   { id: 'payStubs', label: 'Pay Stubs' },
   { id: 'payout', label: 'Payout' },
+  { id: 'currentPaycycle', label: 'Current Paycycle' },
 ];
 
 /**

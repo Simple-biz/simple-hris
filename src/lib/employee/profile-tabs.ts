@@ -20,7 +20,13 @@ export type TabId = 'overview' | 'compensation' | 'skills' | 'requestDocuments' 
  * resolution test proves each section is claimed exactly once, so a single flat
  * union cannot become ambiguous.
  */
-export type SectionId = 'rates' | 'payStubs' | 'payout' | 'skillSets' | 'commendations';
+export type SectionId =
+  | 'rates'
+  | 'payStubs'
+  | 'payout'
+  | 'currentPaycycle'
+  | 'skillSets'
+  | 'commendations';
 
 /**
  * What a nudge is ASKING FOR — never where it goes. Callers (the dashboard
@@ -42,7 +48,10 @@ export const PROFILE_TAB_IDS: readonly TabId[] = [
  */
 export const PROFILE_SECTIONS: Record<TabId, readonly SectionId[]> = {
   overview: [],
-  compensation: ['rates', 'payStubs', 'payout'],
+  // `currentPaycycle` is LAST on purpose: `resolveCompensationSection` lands on
+  // `available[0]`, so appending keeps Rates the default pane. Kane asked for it
+  // "beside Payout" (2026-09-22).
+  compensation: ['rates', 'payStubs', 'payout', 'currentPaycycle'],
   skills: ['skillSets', 'commendations'],
   requestDocuments: [],
   resign: [],
