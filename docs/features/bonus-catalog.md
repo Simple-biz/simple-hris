@@ -354,14 +354,22 @@ US Manager Bonus · USEE**.
     explicitly (`scripts/retire-filing-team-library-bonus.mts`).
   - **A branch may hand its whole programme to the Library** *(2026-09-22)*.
     The other resolution of the duplication below: instead of retiring the
-    bonus, retire the CODE. `intake_specialist` now carries `rules: []` +
-    `rulesFromCatalog: true` (`hsl-subdepartments.md` §7d) — a real card, a real
-    readiness row, every peso from its `hsl:<key>` assignment, and an accountant
-    can change the rule without an engineer. The flag is what stops `rules: []`
-    being read as "roster-only"; `noKpi` would hide the card and the Library
-    column with it. **Which way a duplication is resolved is a pay decision:**
-    Filing went one way (bands into code, assignment retired) and Intake the
-    other, both by ruling on the same day.
+    bonus, retire the CODE. **`intake_specialist` and `filing_specialist` both
+    took it on 2026-09-22** — `rules: []` + `rulesFromCatalog: true`
+    (`hsl-subdepartments.md` §7d): a real card, a real readiness row, every peso
+    from the branch's `hsl:<key>` assignment, and an accountant can change the
+    rule without an engineer. The flag is what stops `rules: []` being read as
+    "roster-only"; `noKpi` would hide the card and the Library column with it.
+    **Which way a duplication is resolved is a pay decision, and it can be ruled
+    twice:** Filing was first resolved the OTHER way (`b3dc6a98` moved the
+    formula's bands into code and was to retire the assignment), then reversed
+    within the hour once Carla — *"the hardcoded stuff is still visible"* — and
+    Alivia — *"we don't need the other 4 on the left"* — saw the card. The
+    retirement script written for the first ruling was **deleted**, because
+    running it would now wipe the branch's only pay rule.
+    **The cost, in both cases:** the rule leaves the test suite. It is a row in
+    `bonus_catalog_bonuses`, no unit test can reach it, and an edit reprices the
+    team with nothing red to stop it.
   - **A Library bonus must never re-express a programme that already exists in
     code** *(the invariant this section was missing, 2026-09-22)*. `scoreEntry`
     returns `calcBonus(schema rules) + calcHslCatalogTotal(catalog)` with **no
@@ -371,8 +379,12 @@ US Manager Bonus · USEE**.
     (`PPL*100`, `BBB*250`, `Referral_Leads*250` and its own Attested Cases
     ladder); a manager filling both sets of boxes would have paid every unit
     **twice**. Nothing warned, because nothing compares a formula's terms with the
-    branch's rules. Resolved by ruling: the formula's bands moved into
-    `schema.ts` and the assignment was retired, so the programme exists once.
+    branch's rules. Resolved by ruling — **and the ruling reversed the same
+    day**: the bands first moved into `schema.ts` (`b3dc6a98`), then the CODE
+    rules were deleted instead and the assignment kept (§7d). Either way the
+    programme exists once; which half survives is the pay decision, and the
+    script written to execute the first ruling was deleted when it became a way
+    to wipe the branch's only remaining pay rule.
     **When a Library formula and a code rule describe the same work, one of them
     has to go — and which one is a pay decision, never a cleanup.**
 

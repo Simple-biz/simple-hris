@@ -249,38 +249,34 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#f97316',
     headerBg: 'bg-orange-950/40',
     badgeCls: 'bg-orange-900/60 text-orange-300',
-    rules: [
-      { type: 'per_unit', key: 'portal_login',      label: 'Patient Portal Login', rate: 100 },
-      { type: 'per_unit', key: 'bbb_reviews',       label: 'BBB Reviews',        rate: 250 },
-      {
-        type: 'tiered',
-        key: 'attested_cases',
-        label: 'Attested Cases',
-        // Kane's ruling, 2026-09-22. He authored the branch's pay rule as a Bonus
-        // Library formula and assigned it to `hsl:filing_specialist`, which
-        // re-expressed this whole department — PPL, BBB, Referral Leads and these
-        // bands — a second time, ON TOP of these rules (`scoreEntry` sums both).
-        // Ruled: the formula's bands are the real ones, they move here, and the
-        // Library assignment is retired so the programme exists once.
-        //   Filed_Cases * IF(Filed_Cases>=40,100,IF(Filed_Cases>=30,75,IF(Filed_Cases>=20,50,0)))
-        // This CLOSES the "Kane has never confirmed" item that stood since
-        // 2026-07-27 — and it does NOT adopt attestation's 25/35/50. The two
-        // departments were divergent before and are divergent still; the
-        // divergence just moved. `hsl-catalog-migration.md` requires it be
-        // reproduced verbatim, never normalised.
-        // FORWARD-ONLY: 75 already-saved rows across 2026-06-14…2026-09-06 would
-        // score higher under these bands (₱68,825) and are deliberately NOT
-        // recalculated — a saved `calculated_bonus` is what was paid
-        // ([[payroll-rule-changes-forward-only]], session log item 151).
-        tiers: [
-          { min: 0,  max: 19, rate: 0 },
-          { min: 20, max: 29, rate: 50 },
-          { min: 30, max: 39, rate: 75 },
-          { min: 40, max: null, rate: 100 },
-        ],
-      },
-      { type: 'per_unit', key: 'converted_referral', label: 'Converted Referral', rate: 250 },
-    ],
+    // Kane, 2026-09-22, after Intake: *"Filing Specialist the Hard coded is still
+    // in there"* — Carla's *"the hardcoded stuff is still visible"* applies here
+    // too, and this is the branch Alivia meant by *"we don't need the other 4 on
+    // the left"*. All four rules move OUT of code; the branch is scored from its
+    // "Filing Team" Bonus Library assignment, which already expresses every one
+    // of them (`Filed_Cases * IF(>=40,100,IF(>=30,75,IF(>=20,50,0))) + PPL*100
+    // + (BBB + Referral_Leads) * 250`). §7d, same shape as intake_specialist.
+    //
+    // THIS REVERSES THE FIRST HALF OF b3dc6a98, which moved the formula's bands
+    // INTO these rules and was going to retire the assignment. Both directions
+    // resolve the same duplication; Kane ruled the other way once Carla and
+    // Alivia saw the card. The 20/30/40 bands that lived here for one commit are
+    // deleted along with the rest — the formula is the single source now, and
+    // `scripts/retire-filing-team-library-bonus.mts` was DELETED because running
+    // it would now wipe the branch's only pay rule.
+    //
+    // Cut over already, like Intake, which is what makes this safe: measured
+    // read-only 2026-09-22 (`scripts/probe-hsl-hardcoded-columns.mts --dept
+    // filing_specialist`), week 2026-09-13 is ₱99,275 with **₱0** from these
+    // rules and 41 rows carrying a `catalog:` key, while the 12 earlier weeks
+    // are 100 % these rules and no catalog at all (₱967,600).
+    //
+    // REOPEN EXPOSURE: rescoring one of those 12 weeks now yields ₱0 for these
+    // keys. 2026-06-28 and 2026-07-05 (₱117,925) carry no status row and are
+    // editable today; the rest are `ready`. Audit item 155. No money moves on
+    // its own — a stored `calculated_bonus` is what the wizard dispatched.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   intake_specialist: {
@@ -498,16 +494,36 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
  * (`hsl-subdepartments.md` §1). Keep this function's display-name matching
  * (it is what makes the namespaced/renamed cases legible), but never wire it
  * into a pay path as a membership test.
+ *
+ * `dataSubKeys` (2026-09-22) admits the DATA sub-teams created from Payment
+ * Catalog → Departments → Edit, which exist only in `app_settings` and so can
+ * never be a compile-time constant. Without it a data branch's card fetched an
+ * EMPTY roster — `/api/hsl-bonus/team-members?dept=<dataKey>` resolved nobody,
+ * so the branch that had just been given a KPI card had no one to score on it.
+ *
+ * The widening is deliberately **namespaced-only**: a data key is admitted
+ * through the `hsl:` arm and NEVER through the display-name loop. Inferring HSL
+ * membership from a bare label is the thing the 2026-08-19 ruling forbids
+ * (`"Callback Team"` and `"Executive Assistants"` are real non-HSL departments),
+ * and an accountant can name a sub-team anything at all — including an existing
+ * department. Caller-supplied keys are matched exactly, so an unknown or retired
+ * `hsl:<x>` still returns null rather than minting a branch from a string.
  */
-export function matchHslSubDeptKey(raw: string | null | undefined): HslDeptKey | null {
+export function matchHslSubDeptKey(
+  raw: string | null | undefined,
+  dataSubKeys: readonly string[] = [],
+): HslDeptKey | null {
   if (!raw) return null;
   const s = raw.trim().toLowerCase();
   if (!s) return null;
   if (s.startsWith('hsl:')) {
     const candidate = s.slice(4);
-    return (HSL_DEPT_KEYS as readonly string[]).includes(candidate)
-      ? (candidate as HslDeptKey)
-      : null;
+    if ((HSL_DEPT_KEYS as readonly string[]).includes(candidate)) return candidate as HslDeptKey;
+    // A data branch's key is just as real an address as a code one — the same
+    // cast/seam as `dataBranchConfig`. A code key can never arrive here twice:
+    // the check above wins, and `validateBuiltinSubsInput` refuses to store a
+    // data key that shadows one.
+    return dataSubKeys.includes(candidate) ? (candidate as HslDeptKey) : null;
   }
   for (const key of HSL_DEPT_KEYS) {
     if (HSL_DEPTS[key].name.trim().toLowerCase() === s) return key;

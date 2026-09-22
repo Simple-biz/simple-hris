@@ -333,7 +333,13 @@ Attestation tier guess mispriced 11 rows). For that shape, take §7a but set
 
 #### 7d-catalog-scored: the programme exists, it just isn't in code (`rulesFromCatalog`)
 
-Added 2026-09-22 for **Intake Specialist**. Kane: *"the signed up rep docs and 5
+Added 2026-09-22 for **Intake Specialist**, then **Filing Specialist** hours
+later — *"Filing Specialist the Hard coded is still in there"*. Filing had been
+ruled the OTHER way first (`b3dc6a98`: the Library formula's bands moved into
+`schema.ts`, assignment to be retired) and was reversed once Carla and Alivia
+saw the card still carrying both. The retirement script from that first ruling
+was **deleted** — with the code rules gone it would have wiped the branch's only
+pay rule. Kane: *"the signed up rep docs and 5
 star reviews columns are hard coded and not from the Payment catalog make sure we
 delete these columns"*, after Carla — *"the hardcoded stuff is still visible"* —
 and Alivia — *"better but we don't need the other 4 on the left"* — found the card
@@ -360,10 +366,24 @@ carries no flag: it is not in `HSL_DEPTS`, so the invariant does not reach it.
 **Deleting code rules does not move a peso, and does not protect the past
 either.** A stored `calculated_bonus` is frozen and is what the wizard dispatches.
 The exposure is a **reopen**: rescoring a week that was scored under the old rules
-now yields ₱0 for those keys. Measured for Intake on 2026-09-22
-(`scripts/probe-intake-hardcoded-columns.mts`): **1,367 rows across 13 weeks,
-₱3,440,500** — 4 weeks (₱558,450) carry no `hsl_bonus_period_status` row and are
-editable, 9 (₱2,882,050) are `ready` and need a deliberate *Mark as Unready*.
+now yields ₱0 for those keys. Measured on 2026-09-22 with
+`scripts/probe-hsl-hardcoded-columns.mts --dept <key>` — **run it before any
+such deletion, and read the split**: a branch whose live week is already 100 %
+`catalog:` and whose old weeks are 100 % code has cut over, which is the safe
+case. Both branches were in exactly that state.
+
+| branch | live week | reopen exposure | of which editable today |
+| --- | --- | --- | --- |
+| `intake_specialist` | 2026-09-13 · ₱282,700 · ₱0 from code · 76 catalog rows | ₱3,440,500 / 1,367 rows / 13 weeks | ₱558,450 (4 weeks, no status row) |
+| `filing_specialist` | 2026-09-13 · ₱99,275 · ₱0 from code · 41 catalog rows | ₱967,600 / 370 rows / 12 weeks | ₱117,925 (2026-06-28, 2026-07-05) |
+
+The `ready` remainder needs a deliberate *Mark as Unready* first.
+
+**And the rule leaves the test suite.** It becomes a row in
+`bonus_catalog_bonuses` that no unit test can reach, so an accountant's edit
+reprices the team with nothing red to stop it. That is the trade being made, not
+a defect: it is the same trade that lets Carla change the rule without an
+engineer.
 There is **no per-week rule versioning in this engine**; that is audit item 154,
 not something to invent inside a column deletion.
 

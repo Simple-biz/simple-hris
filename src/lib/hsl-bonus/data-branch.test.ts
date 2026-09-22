@@ -55,9 +55,12 @@ test('code vs data is decidable, and a data key can never shadow a code team', (
   assert.equal(configs.intake_specialist, HSL_DEPTS.intake_specialist, 'the code config survives, by identity');
   assert.equal(configs.intake_specialist!.rulesFromCatalog, true);
   // And a code team that DOES carry rules still keeps them.
-  const withRules = hslBranchConfigs([{ key: 'filing_specialist', name: 'Hijack' }, SUB]);
-  assert.equal(withRules.filing_specialist, HSL_DEPTS.filing_specialist);
-  assert.equal(withRules.filing_specialist!.rules.length > 0, true, 'the code rules survive');
+  // attestation, not filing_specialist: filing joined the catalog-scored shape
+  // hours after this line was written, which is exactly how the ORIGINAL witness
+  // went vacuous. Pick a dept whose rules are the point of its existence.
+  const withRules = hslBranchConfigs([{ key: 'attestation', name: 'Hijack' }, SUB]);
+  assert.equal(withRules.attestation, HSL_DEPTS.attestation);
+  assert.equal(withRules.attestation!.rules.length > 0, true, 'the code rules survive');
   assert.equal(configs.healthcare_specialist!.name, 'Healthcare Specialist');
 });
 
