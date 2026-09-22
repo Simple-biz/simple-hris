@@ -92,6 +92,15 @@
         ],
         "createdAt": "2026-09-17T07:37:52.374Z",
         "reason": "session 675a6e09: false positive — RowBtn danger tone pairs text-zinc-500 with hover:bg-rose-50 AND hover:text-rose-700, so gray never sits on the rose background"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/accounting/departments/EditBuiltinManagersDialog.tsx"
+        ],
+        "createdAt": "2026-09-21T20:46:58.458Z",
+        "reason": "Kane: hover:text-red-600 changes with hover:bg-red-50; the gray never lands on the colored background"
       }
     ]
   }
