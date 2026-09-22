@@ -2083,3 +2083,85 @@ five times over.
 
 Spot-checked with `verify-one.mts` (1 call each): status **Done**, Actual SP present and equal to the
 plan's, Completed Date as written, group and Sprint label unchanged at Sprint 28.
+
+## Pass 32 — 2026-09-22 — the Sprint 28 → 29 rollover, and why only 3 of 7 rows moved
+
+Kane: *"Monday skill all unfinished tasks from sprint 28 transfer it to 29 please."*
+
+Sprint 28 held **101 of our rows: 94 Done, 7 open (31 SP)**. Three moved. Four were held, and the
+holding is the whole content of this pass.
+
+### Only unstarted work rolls forward
+
+| Row | SP | Status | Code landed | Outcome |
+|---|---|---|---|---|
+| Google Sheet sync crons | 5 | Ready to Start | — no shas | **→ S29** |
+| Legacy rates-sheet → hurupay guard | 2 | Ready to Start | — no shas | **→ S29** |
+| Deletion cron vs live roster | 3 | Ready to Start | — no shas | **→ S29** |
+| Tickets board notifies requester | 5 | Pending Deploy | `90fb23fa` 2026-08-21 | held — and **belongs in S27** |
+| Paystub reissue / second copy | 8 | Pending Deploy | `4acceeb9` 2026-09-12 | held |
+| HSL Scheduling in department | 5 | Pending Deploy | `7cf94aa5` 2026-09-14 | held |
+| Lead Gen QC first-pass restore | 3 | Pending Deploy | `8307df6e` 2026-09-14 | held |
+
+### A PENDING DEPLOY ROW MUST NEVER BE ROLLED INTO THE NEXT SPRINT
+
+This is the rule the pass adds. A sprint label asserts a **date range**, and `selfcheck()` enforces
+it (`pass.mts:1030-1039`): a Completed Date outside its sprint's attribution is refused. The three
+windows here are **S27 Aug 18-31 · S28 Sep 1-14 · S29 Sep 15-25**.
+
+Every one of the four Pending Deploy rows has **already landed its code**, inside S28 or earlier.
+Move it to S29 and its true Completed Date — the commit date of its last sha — falls outside S29, so
+the row becomes **permanently unmarkable Done**. That is precisely the wall pass 30 hit on the
+tickets row, and rolling all seven would have built three more of them while looking like tidying up.
+
+**Pending Deploy is finished code awaiting a click-through, not unfinished work to reschedule.**
+Section 2b's *"only OPEN rows move forward"* means unstarted, not merely un-Done. The three rows that
+moved carry **no shas at all**, so nothing in git can contradict an S29 date.
+
+Author and committer dates were compared on all four — they **AGREE**, so no merge-date trap
+(the `4a15db2c` failure mode) is hiding in the derivation.
+
+### The tickets row was already mis-filed, and moving it would have hidden that
+
+Its work landed **2026-08-21 = Sprint 27**, and it sits in **Sprint 28**. It cannot go Done from
+either. The honest fix is a re-file to S27, not a push forward to S29 — raised for Kane, not taken.
+
+### The write path: a one-off, because the plan was moved first
+
+`scripts/tmp-move-s28-open.mts`, the same shape as the Kane-approved `tmp-move-s27-pending.mts`
+(2026-09-01): **Sprint label 105 + `move_item_to_group` only**. It never writes a status, an Actual
+SP, a Completed Date or a relation.
+
+`hris-plan.ts` was edited to `sprint: 'S29'` **before** the board write, which is what makes a
+corrector-side write of a reconciler-owned column safe here — plan and board agree the moment it
+runs, so a later full reconcile re-asserts S29 rather than dragging the rows back. `git diff
+--numstat` showed **15 added / 3 deleted**, i.e. the 3 edited rows plus 12 comment lines and
+**zero rows dropped** (the `[:-0]` lesson from pass 17).
+
+Guards, all of which had to pass before anything was written: plan row unique by name fragment ·
+plan sprint already `S29` · plan row not `done` · byte-exact board lookup returning **exactly one**
+id · that id equal to the one measured this session · the item still in the S28 group · status not
+Done · no Actual SP · no Completed Date.
+
+### Verified by re-read, not off the write log
+
+`verify-one.mts` on each of the three: **group `Sprint 29 · Sep 15-Sep 25` AND label `Sprint 29`**
+(both halves of the move landed — the group is what actually re-files a row), status still
+**Ready to Start**, **no** Actual SP, **no** Completed Date, epic relation intact.
+
+### Two findings the scoping turned up
+
+- **The full-reconcile bar has LIFTED.** All **37** plan epics are live with byte-exact parity
+  (0 absent, 0 orphans) and the **Q2 group `group_mm4menkt` is back**. Both reasons
+  `monday-epics-deleted-from-shared-board` gave for barring the full path are no longer true.
+  Not acted on — it rewrites both relation columns on ~290 rows and needs Kane to confirm the
+  restore is Abby's doing. It is also the only way to repair the standing relation debt
+  (90 rows pointing at a deleted epic; project relation 284/291).
+- **Pass 31 is still unwritten** — S29 holds 34 of our rows against 43 in the plan. Those 9 rows /
+  43 SP (5 Done / 20 SP on Kane's 09-21 answer) are still owed. Resuming needs a bumped `PASS_DATE`
+  and a fresh `review.mts` hash.
+
+### Budget
+
+Probed alive with one cheap `boardGroups` call at **15:09Z** before planning anything. The whole
+pass — probes, the S28 and S29 group pages, epic parity, 3 moves, 3 verifies — cost **~25 calls**.

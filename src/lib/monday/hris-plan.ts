@@ -425,7 +425,11 @@ export const PLAN_TASKS: PlanTask[] = [
   // Start, which the corrector clears in this same pass.
   // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close (Kane: pending rows with no Actual SP
   // move to 28 "and we will finish them from there"). Status untouched by the move.
-  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S28' },
+  // Rolled S28 → S29 on 2026-09-22: still UNSTARTED at sprint close, so it rolls forward (Kane
+  // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
+  // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
+  // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
+  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S29' },
   { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
   { epic: 'HRIS-14', name: 'Master-list sync race + orphaned-upload guard', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-14', name: 'Webhooks admin + bank-info-missing red-alarm notify email', type: 'Integration', sp: 2, done: true, sprint: 'S25' },
@@ -457,7 +461,11 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: 'Notification insert failures are swallowed into console.warn — make them observable', type: 'Chore', sp: 3, done: true, sprint: 'S27', priority: 'High' },
   { epic: 'HRIS-02b', name: 'PAB exclusions leave no audit trail while PAB disputes are fully audited', type: 'Feature', sp: 2, done: true, sprint: 'S27', priority: 'High' },
   // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Status untouched by the move.
-  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S28', priority: 'High' },
+  // Rolled S28 → S29 on 2026-09-22: still UNSTARTED at sprint close, so it rolls forward (Kane
+  // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
+  // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
+  // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
+  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S29', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
   // Grouped from 171 commits by feature, not by commit. SP scored against the
@@ -803,7 +811,11 @@ export const PLAN_TASKS: PlanTask[] = [
   // scheduled_deletion_at alone and never re-checks the live roster at fire time, so the guard its own
   // comment claims does not exist in code. A lone Done row would have read as "handled".
   // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Status untouched by the move.
-  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'Critical' },
+  // Rolled S28 → S29 on 2026-09-22: still UNSTARTED at sprint close, so it rolls forward (Kane
+  // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
+  // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
+  // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
+  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
   // 2 SP: both 2026-08-19 migrations had silently never applied because the password's `@` was not
   // percent-encoded in DATABASE_URL — an unencoded @ truncates the host instead of erroring.
   { epic: 'HRIS-15', name: 'Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
