@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isDeadBonusTargetKey } from '@/lib/bonus-catalog/assignment-scope';
 import {
   listBonusCatalog,
   upsertBonus,
@@ -90,6 +91,16 @@ export async function POST(request: Request) {
     }
     if (a.scope === 'employee' && !a.employeeEmail) {
       return NextResponse.json({ error: 'Employee assignment requires an email' }, { status: 400 });
+    }
+    // An HSL sub-team is a dead target: HSL bonuses are code rules, the HSL
+    // calculator never reads the catalog and the wizard excludes the HSL family
+    // from the catalog's payable set (audit item 139). Refuse it rather than
+    // save an assignment nothing will ever draw or pay.
+    if (isDeadBonusTargetKey(String(a.departmentKey))) {
+      return NextResponse.json(
+        { error: 'HSL sub-teams cannot take Bonus Library assignments — HSL bonuses are defined in the HSL KPI calculator.' },
+        { status: 400 },
+      );
     }
     const { row, error, historyError } = await addAssignment(a, actor, eff.iso);
     if (error) return NextResponse.json({ error }, { status: 500 });

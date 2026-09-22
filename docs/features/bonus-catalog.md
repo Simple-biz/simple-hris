@@ -282,23 +282,54 @@ US Manager Bonus · USEE**.
   `KNOWN_DISTINCT_DEPT_HOMONYMS` with a justification; an **undeclared** collision
   fails, which is the case that matters — a department retired from the calculator
   and later adopted into HSL otherwise re-enters the payable set silently.
-- **Built-in sub-teams are kept OFF the two target pickers** *(2026-09-21)*. Once
-  master-list departments gained data sub-teams (`payment-catalog-departments.md`
-  §7.4), `customDepartments` — the one seam the Pay Structure rail, Bonus
-  Assignments and System Bonuses all read — started carrying `lead_gen:<sub>` and
-  `hsl:<sub>` keys, and for one commit (`5bffa558`) they were **selectable as a
-  bonus target**. That is the namespaced vector this section is about: the KPI
-  calculator resolves an assignment by `normalizeDeptToKey(a.departmentKey)`
-  (`DeptBonusCalculator.tsx`, `commonByDept` / `sharedCommonByDept`), so a bonus
-  assigned to `lead_gen:nurture` would apply to **every** Lead Gen person, and a
-  namespaced key in a PAB/Tech allowlist would match **nobody**. `AssignmentsTab`
-  and `SystemBonusesTab` now receive `bonusTargetDepartments` =
-  `customDepartments` minus `isBuiltinSubTeamKey` (`builtin-subs.ts`, tested);
-  `PayStructureTab` keeps the full list because that is where a sub-team's base
-  rate is set. Sub-team-targeted bonuses are a real ask, not a bug to hide — the
-  build is a most-specific-first resolver in the calculator (person's raw cell
-  against the namespaced key first, parent second, the way `assignRosterToRail`
-  already homes people), after which the filter comes out.
+- **Sub-team-targeted assignments** *(2026-09-21, second pass the same day)*.
+  When master-list departments gained data sub-teams
+  (`payment-catalog-departments.md` §7.4), `customDepartments` — the seam that
+  feeds the Pay Structure rail, Bonus Assignments and System Bonuses — started
+  carrying `lead_gen:<sub>` keys, and for one commit (`5bffa558`) they were
+  selectable as a bonus target while the calculator collapsed them onto the
+  parent: an assignment to `lead_gen:nurture` would have applied to **every**
+  Lead Gen person. First fix hid them (`6077da7d`). Kane then asked for the
+  real thing (*"there is no way to view all subdepartments underneath
+  Assignments"*), so `src/lib/bonus-catalog/assignment-scope.ts` now resolves
+  it **per member**:
+  - `assignmentParentKey` — a sub-team assignment lands on its **parent card**
+    (the same `normalizeDeptToKey` collapse `commonByDept`, the scoring queue
+    and readiness already perform, none of which changed).
+  - `assignmentScopeCell` / `assignmentReachesMember` — the bonus reaches
+    **only members whose raw master cell is that sub-team**. **Additive, not
+    most-specific-wins**: a Nurture person gets Lead Gen's bonuses *and*
+    Nurture's. A manager-added external member has no cell and never qualifies
+    for a sub-team bonus (fail closed; they keep department-wide ones).
+  - `buildCommonScopeIndex` — bonusId → restricted cells per parent. A bonus
+    assigned to a sub-team **and** to the bare parent is department-wide; the
+    restriction is dropped rather than left to fight the wider assignment.
+  - The calculator applies it in **one chokepoint**, `applicableBonuses`
+    (`commonReaches`), which `memberTotal`, the column rollups and the save
+    rows all go through; the pre-apply seeding loop and the external-member
+    add mirror it; `deptScoringVar` skips restricted bonuses so a sub-team's
+    formula cannot become the department's appointment variable. A restricted
+    column shows a sky tag naming its sub-team(s).
+  - **Applied rows keep the PARENT key** (`saveDept` writes
+    `department: deptKey`), so `WIZARD_PAYABLE_KPI_DEPT_KEYS` is untouched and
+    the namespaced-is-the-vector rule above still holds: a namespaced key never
+    reaches `bonus_catalog_applied`.
+  - **Assignments rail nests sub-teams** under their department via
+    `buildDeptRail` (the Pay Structure grouping); a sub-team's exclusion pool
+    is the **exact-cell** roster, never the normalized parent. The Search
+    tab's person card (`person-comp.ts`) lists the person's own sub-team
+    assignments beside the department-wide ones and resolves **any**
+    namespaced sub-team base rate, not only `hsl:*`, so it keeps stating what
+    the engine pays.
+  - **HSL sub-teams are never offered and are refused server-side**
+    (`isDeadBonusTargetKey`, `POST /api/bonus-catalog`): HSL bonuses are code
+    rules in `hsl-bonus/schema.ts`, the HSL calculator never reads the catalog
+    and the HSL family is excluded from the payable set — nothing would draw
+    or pay it (audit item 139). The bare `hogan_smith_law` target is the same
+    dead end and predates this work; it is listed there, not fixed here.
+  - **System Bonuses (PAB/Tech) still cannot target a sub-team** —
+    `isDeptEligible` resolves on the bare parent key, so the strict
+    `bonusTargetDepartments` list stays on that tab.
 
   **Do not "fix" a homonym by removing the bare slug from the payable set** unless
   the two really are the same team; that narrows the set and stops paying weeks

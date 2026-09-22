@@ -677,15 +677,15 @@ as possible and pinned by tests.
   into a silent overwrite.
 - **A department that gains sub-teams drops out of the placement picker** in
   favour of its teams, because a bare placement is no longer valid for it.
-- **A sub-team is NOT a bonus target (yet).** Its people inherit the parent's
-  bonuses automatically — PAB/Tech eligibility, department-scoped library
-  bonuses and the parent's KPI card all resolve through `normalizeDeptToKey`,
-  which collapses `<parent>:<sub>` to the parent. That same collapse is why a
-  sub-team must not be *offered* as a target: an assignment to
-  `lead_gen:nurture` would apply to all of Lead Gen. `bonusTargetDepartments`
-  filters them out of Bonus Assignments and System Bonuses (`bonus-catalog.md`,
-  "Built-in sub-teams are kept OFF the two target pickers"). Targeting a
-  sub-team specifically needs a most-specific-first resolver in the calculator.
+- **A sub-team CAN be a bonus target** *(2026-09-21, later the same day)*. Its
+  people still inherit the parent's bonuses (PAB/Tech, department-scoped
+  library bonuses, the parent's KPI card — all via the `normalizeDeptToKey`
+  collapse), **and** a library bonus assigned to `lead_gen:nurture` now reaches
+  only the members whose cell is that sub-team, scored on the Lead Gen card.
+  Resolver + rules: `bonus-catalog.md` "Sub-team-targeted assignments"
+  (`src/lib/bonus-catalog/assignment-scope.ts`). Exceptions that stay: HSL
+  sub-teams (dead target — HSL bonuses are code) and System Bonuses (PAB/Tech
+  eligibility is parent-keyed).
 - **Review shows the sub-department diff** — added / renamed / removed, with the
   `<key>:<sub>` a new one will be placed under, and a warning the first time a
   flat department gains teams (new people must then be placed in one; everyone

@@ -70,6 +70,7 @@ import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { formatDeptLabel, hslSubDeptOptions } from '@/lib/departments/hsl-subdept';
 import { allBuiltinSubOptions, isBuiltinSubTeamKey, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
+import { assignmentScopeCell, isDeadBonusTargetKey } from '@/lib/bonus-catalog/assignment-scope';
 import {
   buildDeptRail,
   assignRosterToRail,
@@ -799,6 +800,18 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
     () => customDepartments.filter((d) => !isBuiltinSubTeamKey(d.key)),
     [customDepartments],
   );
+  /**
+   * Bonus ASSIGNMENTS may target a sub-team since 2026-09-21: the KPI
+   * calculator restricts such a bonus to the members whose cell is that
+   * sub-team (`assignment-scope.ts`). HSL sub-teams stay OUT -- nothing draws
+   * or pays a catalog bonus for HSL (audit item 139), so offering one would
+   * be offering a lie. System Bonuses keep the strict list above: PAB/Tech
+   * eligibility still resolves on the bare parent key.
+   */
+  const assignmentTargetDepartments = useMemo(
+    () => customDepartments.filter((d) => !isDeadBonusTargetKey(d.key)),
+    [customDepartments],
+  );
 
   // Live USD-anchored FX rates — used only to sort the Bonus Library's
   // "Amount (high-low)" by PHP-equivalent so a $100 bonus outranks a ₱500 one.
@@ -1496,7 +1509,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
                 bonuses={bonuses}
                 assignments={assignments}
                 roster={visibleRoster}
-                extraDepartments={bonusTargetDepartments}
+                extraDepartments={assignmentTargetDepartments}
                 onAdd={addAssignment}
                 onRemove={removeAssignment}
               />
@@ -4794,6 +4807,9 @@ function AssignmentsTab({
 
   const [selectedDept, setSelectedDept] = useState<string>(DEPARTMENTS[0]?.key ?? '');
   const [deptSearch, setDeptSearch] = useState('');
+  // Sub-teams nest under their department (2026-09-21), same grouping as the
+  // Pay Structure rail so the two cannot disagree about who the parent is.
+  const railGroups = useMemo(() => buildDeptRail(allDepts), [allDepts]);
 
   const bonusById = useMemo(() => {
     const m = new Map<string, BonusDef>();
@@ -4825,6 +4841,10 @@ function AssignmentsTab({
   // from. Custom (Department-tab) departments have no alias-map entry, so fall
   // back to the exact label match (same rule as the Pay Structure tab).
   const deptRoster = useMemo(() => {
+    // A SUB-TEAM's pool is exactly the people whose master cell IS that
+    // sub-team -- never the normalized match, which would be the whole parent.
+    const scopeCell = assignmentScopeCell(selectedDept);
+    if (scopeCell) return roster.filter((r) => r.department.trim().toLowerCase() === scopeCell);
     const nameKey = (dept?.name ?? '').trim().toLowerCase();
     return roster.filter(
       (r) =>
@@ -4864,18 +4884,28 @@ function AssignmentsTab({
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-          {filteredDepts.map((d) => (
+          {(deptSearch.trim()
+            ? filteredDepts.map((d) => ({ d, nested: false }))
+            : railGroups.flatMap((g) => [
+                { d: g.parent, nested: false },
+                ...g.children.map((c) => ({ d: c, nested: true })),
+              ])
+          ).map(({ d, nested }) => (
             <button
               key={d.key}
               type="button"
               onClick={() => setSelectedDept(d.key)}
-              className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
+              className={`flex w-full items-center justify-between rounded-md py-2 pr-2.5 text-left text-sm transition-colors ${
+                nested ? 'pl-6' : 'pl-2.5'
+              } ${
                 selectedDept === d.key
                   ? 'bg-orange-100 font-medium text-orange-900 dark:bg-blue-950/60 dark:text-white'
                   : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900'
               }`}
             >
-              <span className="truncate">{d.name}</span>
+              <span className="truncate">
+                {nested ? d.name.split(' — ').slice(1).join(' — ') || d.name : d.name}
+              </span>
               {countsByDept[d.key] ? (
                 <span className="ml-1 shrink-0 rounded-full bg-orange-200/70 px-1.5 text-[10px] font-bold text-orange-800 dark:bg-blue-900/60 dark:text-blue-200">
                   {countsByDept[d.key]}
@@ -4909,6 +4939,13 @@ function AssignmentsTab({
           >
             {dept?.name}
           </motion.h2>
+        {assignmentScopeCell(selectedDept) && (
+          <p className="-mt-3 mb-4 text-xs text-zinc-500 dark:text-zinc-400">
+            A bonus assigned here reaches only the people placed in this sub-team, on top of
+            everything the department already gives them. It is scored on the department&rsquo;s
+            KPI card.
+          </p>
+        )}
         </AnimatePresence>
 
         <div className="-mt-2 mb-4 flex flex-wrap items-center gap-3">

@@ -78,6 +78,7 @@ import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance
 import { useDepartedMembers, isDepartedMember } from '@/components/manager/useDepartedMembers';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { assignmentReachesMember, buildCommonScopeIndex } from '@/lib/bonus-catalog/assignment-scope';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { DEPARTMENTS, DEPT_DESCRIPTION, MANAGER_BONUS_DEPT_KEYS, isKpiCalculatorDeptKey } from '@/lib/payroll/department-bonus';
 import { catalogDeptColor as deptColor, humanizeDeptKey } from '@/lib/departments/dept-identity';
@@ -1318,6 +1319,38 @@ export default function DeptBonusCalculator({
   );
 
   // Common + per-employee catalog bonuses resolved per department key.
+  // Each member's RAW master cell, keyed by the same canonical identity the
+  // roster uses -- what a sub-team-scoped assignment is matched against. A
+  // manager-added external member is not on the roster and therefore has no
+  // cell: they receive department-wide bonuses and never sub-team ones.
+  const cellByEmail = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of teamMembers) {
+      const email = rowEmail(r);
+      if (!email) continue;
+      map.set(canonEmail(email), (r.department ?? '').trim().toLowerCase());
+    }
+    return map;
+  }, [teamMembers, canonEmail]);
+
+  // Sub-team-targeted assignments (2026-09-21). `commonByDept` below still
+  // collapses `lead_gen:nurture` onto the Lead Gen card -- this index records
+  // which members of that card the bonus is restricted to. Absent = everyone.
+  const commonScopeByDept = useMemo(() => buildCommonScopeIndex(assignments), [assignments]);
+
+  /** Does a common bonus of `deptKey` reach this member? True unless the bonus
+   *  is restricted to sub-teams the member's cell is not in. */
+  const commonReaches = useCallback(
+    (deptKey: string, bonusId: string, email: string): boolean => {
+      const cells = commonScopeByDept.get(deptKey)?.get(bonusId);
+      if (!cells) return true;
+      const cell = cellByEmail.get(canonEmail(email)) ?? cellByEmail.get(email.toLowerCase());
+      for (const c of cells) if (assignmentReachesMember(c, cell)) return true;
+      return false;
+    },
+    [commonScopeByDept, cellByEmail, canonEmail],
+  );
+
   const commonByDept = useMemo(() => {
     const map = new Map<string, BonusDef[]>();
     for (const a of assignments) {
@@ -1691,9 +1724,11 @@ export default function DeptBonusCalculator({
       const lower = email.toLowerCase();
       const seen = new Set<string>();
       const out: BonusDef[] = [];
-      // Common bonuses, minus anyone explicitly excluded from them.
+      // Common bonuses, minus anyone explicitly excluded from them, minus
+      // sub-team-scoped ones the member's cell is not in.
       for (const b of common) {
         if (excludedFor?.get(b.id)?.has(lower)) continue;
+        if (!commonReaches(deptKey, b.id, email)) continue;
         if (seen.has(b.id)) continue;
         seen.add(b.id);
         out.push(b);
@@ -1706,7 +1741,7 @@ export default function DeptBonusCalculator({
       }
       return out;
     },
-    [commonByDept, individualByDept, commonExclusionsByDept],
+    [commonByDept, individualByDept, commonExclusionsByDept, commonReaches],
   );
 
   // -- Load existing applied rows + status for a department ----------------------
@@ -1843,6 +1878,7 @@ export default function DeptBonusCalculator({
             for (const member of byEmail.values()) {
               const lower = member.email.toLowerCase();
               if (exMap?.get(b.id)?.has(lower)) continue;
+              if (!commonReaches(key, b.id, member.email)) continue;
               if (member.applied[b.id]) continue;
               member.applied[b.id] = { on: true, vars: {} };
               preApplied = true;
@@ -2583,6 +2619,8 @@ export default function DeptBonusCalculator({
       const sharedSet = sharedCommonByDept.get(deptKey);
       for (const b of commonByDept.get(deptKey) ?? []) {
         if (sharedSet?.has(b.id)) continue;
+        // A bonus restricted to one sub-team cannot be the DEPARTMENT's scoring variable.
+        if (commonScopeByDept.get(deptKey)?.has(b.id)) continue;
         const vars = bonusVariables(b);
         if (vars.length === 0) continue;
         const appt = vars.find((v) => /appt/i.test(v));
@@ -2591,7 +2629,7 @@ export default function DeptBonusCalculator({
       }
       return null;
     },
-    [commonByDept, sharedCommonByDept],
+    [commonByDept, sharedCommonByDept, commonScopeByDept],
   );
 
   /**
@@ -2934,6 +2972,8 @@ export default function DeptBonusCalculator({
       // person's roster email must still hold when they're added under a
       // different (e.g. Hubstaff) address.
       if (exMap?.get(b.id)?.has(email) || exMap?.get(b.id)?.has(folded)) continue;
+      // An external has no master cell, so a sub-team-scoped bonus cannot reach them.
+      if (!commonReaches(deptKey, b.id, email)) continue;
       applied[b.id] = { on: true, vars: {} };
     }
     const member: MemberState = { email, name: name.trim(), applied, external: true };
@@ -4343,6 +4383,16 @@ export default function DeptBonusCalculator({
                           <KindDot kind={b.kind} />
                         </div>
                         <BonusCurrencyTag bonus={b} fx={fx} />
+                        {commonScopeByDept.get(openId ?? '')?.get(b.id) && (
+                          <span
+                            className="w-fit rounded bg-sky-100 px-1 py-0.5 text-[8.5px] font-bold uppercase tracking-wide text-sky-800 dark:bg-sky-950/60 dark:text-sky-300"
+                            title={`Only for: ${[...(commonScopeByDept.get(openId ?? '')?.get(b.id) ?? [])].map((c) => formatDeptLabel(c)).join(', ')}`}
+                          >
+                            {[...(commonScopeByDept.get(openId ?? '')?.get(b.id) ?? [])]
+                              .map((c) => formatDeptLabel(c).split(' — ').slice(1).join(' — ') || c)
+                              .join(', ')}
+                          </span>
+                        )}
                         {b.cadence === 'monthly' && (
                           <span
                             className="w-fit rounded bg-amber-100 px-1 py-0.5 text-[8.5px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"

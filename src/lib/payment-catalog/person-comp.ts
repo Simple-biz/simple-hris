@@ -139,8 +139,12 @@ export function computePersonComp(person: PersonCompSubject, idx: PersonCompInde
   // `deptKey` deliberately stays the PARENT key: it also keys dept-scoped BONUS
   // assignments below, and HSL bonuses are assigned on `hogan_smith_law`.
   const subKey = hslSubKeyFromRaw(person.department);
+  // Any namespaced cell (`lead_gen:nurture`, a data `hsl:<sub>`) is looked up
+  // verbatim first -- resolve-rate.ts does exactly this before the collapse.
+  const rawCell = (person.department ?? '').trim().toLowerCase();
   const deptBase =
     (subKey ? idx.deptStructByKey.get(hslSubDeptLabel(subKey)) : undefined) ??
+    (rawCell.includes(':') ? idx.deptStructByKey.get(rawCell) : undefined) ??
     (deptKey ? idx.deptStructByKey.get(deptKey) : undefined);
 
   // Engine precedence (current-pay.ts): the individual catalog rate overrides
@@ -156,9 +160,16 @@ export function computePersonComp(person: PersonCompSubject, idx: PersonCompInde
   const employeeAssignments = idx.assignments.filter(
     (a) => a.scope === 'employee' && aliasSet.has((a.employeeEmail ?? '').toLowerCase()),
   );
+  // Department-wide assignments PLUS the ones targeted at this person's own
+  // sub-team (2026-09-21) -- the same additive rule the KPI calculator applies.
   const commonAssignments = (
     deptKey
-      ? idx.assignments.filter((a) => a.scope === 'department' && a.departmentKey === deptKey)
+      ? idx.assignments.filter(
+          (a) =>
+            a.scope === 'department' &&
+            (a.departmentKey === deptKey ||
+              (rawCell.includes(':') && a.departmentKey.trim().toLowerCase() === rawCell)),
+        )
       : []
   ).map((assignment) => ({
     assignment,
