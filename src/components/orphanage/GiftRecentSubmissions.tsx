@@ -21,6 +21,12 @@ import { milestoneLabel } from '@/lib/gift-milestones';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { GiftSubmissionChannel } from '@/lib/gift-tracker/gift-live';
 import type { RecentSubmission, RecentSummary } from '@/lib/gift-tracker/recent-submissions';
+import {
+  ORPHANAGE_TAB_CACHE_KEYS as OK,
+  getOrphanageTabCache,
+  isOrphanageTabCacheFresh,
+  setOrphanageTabCache,
+} from '@/lib/orphanage/tab-cache';
 import { useGiftShippingLive } from '@/hooks/useGiftShippingLive';
 
 /**
@@ -85,6 +91,13 @@ function whenLabel(iso: string): string {
   return new Date(t).toLocaleDateString();
 }
 
+/** Rows, summary and total as ONE cached unit — see the key's doc comment. */
+interface CachedFeed {
+  rows: RecentSubmission[];
+  summary: RecentSummary | null;
+  total: number | null;
+}
+
 export default function GiftRecentSubmissions() {
   const [rows, setRows] = useState<RecentSubmission[]>([]);
   const [summary, setSummary] = useState<RecentSummary | null>(null);
@@ -102,9 +115,15 @@ export default function GiftRecentSubmissions() {
       });
       const json = (await res.json()) as FeedResponse;
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not load submissions.');
-      setRows(json.rows ?? []);
-      setSummary(json.summary ?? null);
-      setTotal(json.totalSubmissions ?? null);
+      const feed: CachedFeed = {
+        rows: json.rows ?? [],
+        summary: json.summary ?? null,
+        total: json.totalSubmissions ?? null,
+      };
+      setRows(feed.rows);
+      setSummary(feed.summary);
+      setTotal(feed.total);
+      setOrphanageTabCache(OK.giftRecentSubmissions, feed);
       setError(null);
     } catch (e) {
       // The list is KEPT on a failed refresh — blanking it would turn a dropped
@@ -117,7 +136,26 @@ export default function GiftRecentSubmissions() {
     }
   }, []);
 
+  /**
+   * Mount: paint from cache, then decide whether the network is needed at all.
+   *
+   * The cache PAINTS; it never DECIDES. A warm entry seeds the feed so coming
+   * back to this tab — or to this dashboard — costs nothing, but only a FRESH
+   * entry (< 30s) suppresses the fetch. Anything older revalidates silently
+   * behind the rows already on screen. Collapsing those two questions into one
+   * is the regression `hr-dashboard-cache.md` exists to prevent.
+   */
   useEffect(() => {
+    const cached = getOrphanageTabCache<CachedFeed>(OK.giftRecentSubmissions);
+    if (cached) {
+      setRows(cached.rows);
+      setSummary(cached.summary);
+      setTotal(cached.total);
+      // Something to paint ⇒ no skeleton, whatever happens next.
+      setLoading(false);
+      setSettled(true);
+    }
+    if (isOrphanageTabCacheFresh(OK.giftRecentSubmissions)) return;
     void load();
   }, [load]);
 

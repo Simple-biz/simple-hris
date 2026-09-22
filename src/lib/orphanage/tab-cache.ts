@@ -136,4 +136,13 @@ export const ORPHANAGE_TAB_CACHE_KEYS = {
   giftNotes: 'orph:gift:notes',
   giftShipping: 'orph:gift:shipping',
   giftReceipts: 'orph:gift:receipts',
+  /** The "Recently filled / updated" feed: rows + summary + total, as ONE entry.
+   *  Three keys would let per-key eviction show a row count that disagrees with
+   *  the rows beside it. Same address class the gift rows above already hold. */
+  giftRecentSubmissions: 'orph:gift:recent-submissions',
+  /** `GET /api/gift-catalog` — the catalog payload as LOADED or SAVED, never as
+   *  edited. This tab is a form with a dirty check against `originalJson`; a
+   *  draft that came back from the cache would paint under a clean "Saved"
+   *  state. Same rule as the Admin store's `webhooks:entries`. */
+  giftCatalog: 'orph:gift:catalog',
 } as const;

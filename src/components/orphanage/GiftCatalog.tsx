@@ -12,6 +12,12 @@ import {
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  ORPHANAGE_TAB_CACHE_KEYS as OK,
+  getOrphanageTabCache,
+  isOrphanageTabCacheFresh,
+  setOrphanageTabCache,
+} from '@/lib/orphanage/tab-cache';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -108,8 +114,27 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  /**
+   * Mount: paint from cache, then decide whether the network is needed at all.
+   *
+   * What is cached is the catalog as LOADED or SAVED — never as edited. This tab
+   * is a form whose Save button is gated on `dirty` (a diff against
+   * `originalJson`), so seeding `payload` from a half-typed draft would paint
+   * unsaved edits under a clean, disabled Save. Both are therefore seeded from
+   * the SAME cached value, which is exactly what makes them agree.
+   *
+   * The cache PAINTS; it never DECIDES: only a FRESH entry (< 30s) suppresses
+   * the fetch, and anything older revalidates behind what is on screen.
+   */
   useEffect(() => {
     let cancelled = false;
+    const cached = getOrphanageTabCache<CatalogPayload>(OK.giftCatalog);
+    if (cached) {
+      setPayload(cached);
+      setOriginalJson(JSON.stringify(cached));
+      setLoading(false);
+    }
+    if (isOrphanageTabCacheFresh(OK.giftCatalog)) return;
     fetch('/api/gift-catalog', { cache: 'no-store' })
       .then((r) => r.json())
       .then((json: { catalog?: CatalogPayload; error?: string | null }) => {
@@ -125,6 +150,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
         };
         setPayload(next);
         setOriginalJson(JSON.stringify(next));
+        setOrphanageTabCache(OK.giftCatalog, next);
       })
       .catch(() => {
         if (!cancelled) {
@@ -153,6 +179,11 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
       const json = (await res.json()) as { error?: string };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
       setOriginalJson(JSON.stringify(payload));
+      // SAVED is the other state allowed into the cache — and only after the
+      // server accepted it. Caching on edit would let a draft come back under a
+      // clean Save button; caching before the PUT lands would cache a write that
+      // may still be refused.
+      setOrphanageTabCache(OK.giftCatalog, payload);
       toast.success('Catalog saved.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save catalog');
