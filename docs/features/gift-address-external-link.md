@@ -22,6 +22,13 @@ Built 2026-09-12 on Kane's approval of the posted blueprint.
 | Edge allowlist + host isolation | `proxy.ts` |
 | Page | `app/update-gift-address/page.tsx` |
 | Shared copy with the dashboard | `src/lib/gift-tracker/milestone-copy.ts` |
+| Recent-feed shaping (pure) | `src/lib/gift-tracker/recent-submissions.ts` + `.test.ts` |
+| Recent-feed route | `app/api/gift-tracker/recent-submissions/route.ts` |
+| The sub-tab | `src/components/orphanage/GiftRecentSubmissions.tsx` |
+| Live channel constants | `src/lib/gift-tracker/gift-live.ts` |
+| Live subscription | `src/hooks/useGiftShippingLive.ts` |
+| The HR alert | `src/lib/notifications/gift-shipping-submitted.ts` + `.test.ts` |
+| Notification type widen | `references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql` |
 
 Closest cousin, and the thing this was copied from rather than invented:
 **`/update-bank-info`** (`app/update-bank-info/page.tsx`,
@@ -191,6 +198,110 @@ normal HRIS domain is unaffected. The domain is cosmetic isolation, not security
 the OTP and the host filter are the protection, and both work on the default
 domain too.
 
+## Catching the people who use it — the "Recently filled / updated" sub-tab
+
+Built 2026-09-22 on Kane's approval of the posted blueprint. *"Lets also add a
+new tab called - recently filled / updated so we can catch people that are using
+the link."*
+
+The fourth Gift Tracker sub-tab (`GiftRecentSubmissions.tsx`, behind
+`GET /api/gift-tracker/recent-submissions`) lists every gift-address submission
+newest change first. Its shaping is pure and tested —
+`src/lib/gift-tracker/recent-submissions.ts`.
+
+**It is not a public-link feed.** Asked whether it should be, Kane ruled it
+covers a submission *"either from HRIS or the external link same way someone we
+catch from the update bank information"*. So all three surfaces appear and the
+**channel is shown rather than filtered**; a "Public link only" toggle narrows it
+when that is the question. A tab that listed only the link would make *did this
+person use the dashboard instead* unanswerable, which is the same mistake a fifth
+fulfilment radio would have been on the roster tab
+([gift-tracker-receipts.md](gift-tracker-receipts.md)).
+
+### The channel is READ, never inferred
+
+`employee_gift_shipping_details` has no source column and deliberately is not
+gaining one. Both write routes already stamp the channel into their own
+`audit_log` row, so it is answerable for every submission ever made with no
+migration and **no backfill** — which this table forbids anyway
+([gift-alternate-recipient.md](gift-alternate-recipient.md) § *Nothing is
+backfilled*).
+
+A row whose channel cannot be resolved renders **Unknown source**. It never
+guesses the likely one: the count of link users is the measurement the tab exists
+to produce, so a guess would corrupt the only number anybody reads off it.
+
+**The two audit families key differently, and that is the trap in this code:**
+
+| Action | `resource_id` | Milestones |
+| --- | --- | --- |
+| `gift_address.saved` | the **work** email | `details.milestones_saved[]` |
+| `employee_gift_shipping.submitted` | the **personal** email | `details.milestone_index` |
+
+The submission row is keyed on `personal_email`, so the public family goes
+through the roster bridge and the in-app family does not. An unbridgeable event
+is **dropped, not matched on the raw address** — two people sharing an address
+would otherwise take each other's channel. Get this backwards and every public
+submission reads "Unknown source", which reads as *nobody used the link*.
+
+### Filled vs updated comes off the row, not the audit window
+
+The table carries no edit counter, so first-write versus later-edit is derived
+from `created_at` against `updated_at` with a 2-second tolerance for the gap
+between two column defaults on one INSERT. Deliberately **not** derived by
+counting audit rows: that read is windowed (120 days max — an unbounded
+`audit_log` scan is both slow and silently truncated at PostgREST's 1000-row cap),
+so a row last touched before the window would quietly become "filled" again.
+
+### Off-roster submitters are flagged, never dropped
+
+Same rule the export already follows: a submitter matching no roster row is the
+likeliest mis-ship, so they are the one row you must not filter out of the list
+built to find them.
+
+## HR is told the moment somebody submits
+
+`gift_shipping.submitted` — one notification per submission, for all three
+channels. Kane ruled per-event over a digest and asked for it live.
+
+**The recipients are grant holders, not a role list.** Kane: *"HR Dashboard
+people with HR - Gift Tracker Access"*. `resolveGiftTrackerRecipients` reads
+`employee_feature_permissions` for `hr / gift_tracker` above `hidden`, unions the
+admins (who pass `requireFeatureAccess` without a grant row), and folds every
+alias onto the master row's primary work email so one human is one notification.
+Copying the usual `recipientsForRoles(['hr_coordinator','admin'])` would have
+rung the bell for coordinators who cannot open the tab and stayed silent for the
+delegated people who can.
+
+The type maps to `['hr']` in `notification-views.ts` so the chime, the badge and
+the panel agree ([notification-alerts.md](notification-alerts.md)). The details
+blob carries the channel, the milestones and a **boolean** for the alternate
+recipient — never the address, never the recipient's name or number, the same
+rule both write routes already follow for `audit_log`.
+
+**Best-effort, but never silent.** A notify failure must not fail somebody's
+address submission. What is not acceptable is the failure being invisible: the
+type is CHECK-constrained, so before the DDL runs every insert is rejected and
+looks exactly like *nobody submitted*. `kpi.scored` shipped that way for three
+days. Every failure goes through `recordNotifyFailure`, which writes
+`notification.insert_failed` into `audit_log`.
+
+### Live over Broadcast — NOT the bank feed's pulse key
+
+The tab refreshes over Supabase Realtime **Broadcast** from the routes that
+write, with a 20-second poll floor and a focus refresh, and the panel states
+whether it is Live or Polling rather than claiming freshness it lacks.
+
+Kane named the People → Bank changes feed as the precedent. That feed binds
+`postgres_changes` to an `app_settings` pulse key and its comment says the key
+"reliably reaches the anon client". The measured finding says otherwise:
+`app_settings` has RLS on with a single "Admins only" policy, verified against
+the live catalog on 2026-09-02 (`memory/supabase-realtime-anon-rls-dead`,
+restated in `src/lib/supabase/realtime-broadcast.ts`). Kane resolved the posted
+conflict with (a) — the memory stands — so this surface broadcasts instead.
+**That means the Bank changes feed is very likely running on its poll fallback
+today.** It was not measured and not changed here; it is an Open item.
+
 ## What is still open
 
 - **The submissions table keys on `personal_email`.** Until it keys on work
@@ -203,6 +314,16 @@ domain too.
 - **The page cannot help a leaver.** `findActiveEmployeeByEmail` is
   `active_employees`-only, so the 16 owed gifts sitting on offboarded people
   still have no collection path.
+- **The `gift_shipping.submitted` widen is PENDING Kane's `--apply`**
+  (`references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql`).
+  Until it runs the alert delivers nothing, and the only signal is a
+  `notification.insert_failed` row per attempt in `audit_log`.
+- **The People → Bank changes feed's Realtime pulse is probably inert.** Its
+  `postgres_changes` binding on an "Admins only" `app_settings` key cannot reach
+  an anon browser. Not measured, not changed — see the Broadcast section above.
+- **The channel is unresolvable past 120 days.** A submission older than the
+  audit window reads "Unknown source" forever. Correct, but it means the historic
+  split between the link and the dashboard is only knowable for recent rows.
 
 Siblings: [gift-tracker-receipts.md](gift-tracker-receipts.md) — the ledger this
 reads · [gift-tracker-shipping-export.md](gift-tracker-shipping-export.md) — the

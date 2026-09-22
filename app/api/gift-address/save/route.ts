@@ -15,6 +15,9 @@ import {
   validateAlternateRecipient,
 } from '@/lib/gift-tracker/alternate-recipient';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { notifyGiftShippingSubmitted } from '@/lib/notifications/gift-shipping-submitted';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { GIFT_LIVE_EVENT, GIFT_LIVE_TOPIC } from '@/lib/gift-tracker/gift-live';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -140,6 +143,10 @@ export async function POST(req: Request) {
   }
 
   const byIndex = new Map(ask.milestones.map((m) => [m.milestoneIndex, m]));
+  // Which milestones already had a row BEFORE this write, so the alert can say
+  // "updated" rather than "filled in". Read from the list already loaded above —
+  // a second query would be a second answer to the same question.
+  const submittedBefore = new Set(subs.map((s) => s.milestone_index));
   const saved: number[] = [];
   const refused: Array<{ milestoneIndex: number; error: string }> = [];
 
@@ -192,6 +199,29 @@ export async function POST(req: Request) {
       { status: 409 },
     );
   }
+
+  // Tell the Gift Tracker's people, and wake the "Recently filled / updated"
+  // sub-tab. Both are fire-and-forget by contract: a bell and a socket message
+  // must never be the thing that fails somebody's address submission. The notify
+  // helper records its own failures into `audit_log`, so the CHECK-constraint
+  // silence that killed `kpi.scored` for three days is visible here.
+  //
+  // Broadcast, NOT an `app_settings` pulse: the browser is `anon` and
+  // `app_settings` is RLS "Admins only", so a pulse would never arrive
+  // (memory/supabase-realtime-anon-rls-dead — Kane's ruling (a) on the brief).
+  void notifyGiftShippingSubmitted({
+    channel: 'external_link',
+    employeeName: person.name ?? null,
+    workEmail: person.workEmail,
+    milestones: saved,
+    hasAlternateRecipient: hasAlternateRecipient(alternateRecipientColumns(recipient.value)),
+    isUpdate: saved.some((i) => submittedBefore.has(i)),
+  });
+  void broadcastFromServer(GIFT_LIVE_TOPIC, GIFT_LIVE_EVENT, {
+    channel: 'external_link',
+    milestones: saved,
+    ts: Date.now(),
+  });
 
   return NextResponse.json({ saved, refused, name: person.name });
 }

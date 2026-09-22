@@ -73,6 +73,31 @@ absent, so introducing the scope did not re-ring everyone's existing backlog on
 first load. Leave that fallback in place; removing it costs every user one
 replayed alert.
 
+## HR's gift alert is scoped by GRANT, not by the map alone (2026-09-22)
+
+`gift_shipping.submitted` maps to `['hr']` — somebody filled in or updated their
+tenure-gift delivery details, through the public link, their Employee dashboard
+card, or a staff entry. One type for all three: same news, same readers, and the
+surface is a detail on the row rather than a different notification.
+
+The map is the **view** scope. The **recipient** list is narrower still, and the
+two do different jobs. Kane's ruling was *"HR Dashboard people with HR - Gift
+Tracker Access"*, so `resolveGiftTrackerRecipients`
+(`src/lib/notifications/gift-shipping-submitted.ts`) resolves holders of the
+`hr / gift_tracker` feature permission above `hidden`, unions the admins — who
+pass `requireFeatureAccess` with no grant row — and folds aliases onto the master
+row's primary work email so one human is one bell.
+
+**This is the first fan-out here keyed on a feature permission rather than a
+role.** Every other HR flow calls `recipientsForRoles(['hr_coordinator',
+'admin'])`. Copying that would have rung for coordinators who cannot open the
+Gift Tracker and stayed silent for the delegated people who can. Mapping to
+`['hr']` on top of that keeps the chime, the badge and the panel agreeing for the
+people who do receive it.
+
+It is not money, so it does not trip the rule above — and a test pins that it
+reaches the HR dashboard and **no other**.
+
 ## What looks like a bug but isn't
 
 - **The toast is teal on Accounting too.** It is the shared
@@ -96,8 +121,16 @@ replayed alert.
 
 ## Deploy notes
 
-**No migration.** No new notification type, no DDL, no env var, no n8n import.
-Client-only: two mounts and an additive `opts.view` on the hook.
+The 2026-08-17 scoping change was **client-only**: two mounts and an additive
+`opts.view` on the hook. No migration, no env var, no n8n import.
+
+**PENDING (2026-09-22):** `gift_shipping.submitted` needs
+`references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql` applied
+before it can deliver anything — `employee_notifications.type` is
+CHECK-constrained, and a rejected insert is indistinguishable from "nothing
+happened". Every failure is written to `audit_log` as
+`notification.insert_failed`, so the silence is at least visible. Stays PENDING
+until Kane confirms it landed.
 
 Cross-links: `docs/features/mesa.md` (money request routing) ·
 `docs/features/urgent-payments.md` (the URGENT rail these alerts point at) ·

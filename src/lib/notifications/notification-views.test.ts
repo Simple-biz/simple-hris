@@ -164,3 +164,37 @@ test('the chat-side widen and this map admit the same two support_chat.* types',
     addedTypes('references/sql/alter/2026-09-19_add_chat_notification_types.sql'),
   );
 });
+
+test('the gift widen and this map admit the same gift_shipping.* type', () => {
+  assert.deepEqual(
+    mappedFamily(/^gift_shipping\./),
+    addedTypes('references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql'),
+  );
+});
+
+// ── The gift submission alert is HR's, and only HR's (2026-09-22) ───────────
+// Kane: "HR Dashboard people with HR - Gift Tracker Access". The Gift Tracker
+// lives on the HR dashboard and so does the sub-tab this points at. Mapping it
+// anywhere else would ring a bell on a dashboard whose own panel hides the row —
+// the exact leak the view scoping at the top of this file exists to close.
+
+test('the gift submission alert reaches the HR dashboard', () => {
+  assert.deepEqual(viewsForNotificationType('gift_shipping.submitted'), ['hr']);
+  assert.ok(!hiddenTypesForView('hr').includes('gift_shipping.submitted'));
+});
+
+test('the gift submission alert reaches NO other dashboard', () => {
+  for (const view of ['accounting', 'admin', 'employee', 'manager', 'ceo', 'qc'] as const) {
+    assert.ok(
+      hiddenTypesForView(view).includes('gift_shipping.submitted'),
+      `gift_shipping.submitted must be hidden from the ${view} dashboard`,
+    );
+  }
+});
+
+test('the gift alert carries no money type into HR', () => {
+  // It names a home address and a milestone, never a rate, an amount or a bank
+  // detail — so it does not trip the money rule above. Pinned because a future
+  // "and their gift cost ₱X" field would quietly make it one.
+  assert.ok(!/^(people\.banking|bank_preferred|bank_info)\./.test('gift_shipping.submitted'));
+});

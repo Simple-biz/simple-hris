@@ -15,6 +15,10 @@ import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { clientIp } from '@/lib/audit/context';
+import { notifyGiftShippingSubmitted } from '@/lib/notifications/gift-shipping-submitted';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { GIFT_LIVE_EVENT, GIFT_LIVE_TOPIC } from '@/lib/gift-tracker/gift-live';
+import { classifyKind } from '@/lib/gift-tracker/recent-submissions';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -177,6 +181,33 @@ export async function PUT(req: NextRequest) {
       fields: required.map(String),
       has_alternate_recipient: hasAlternateRecipient(row),
     },
+  });
+
+  // Kane, 2026-09-22: the Gift Tracker catches a submission "either from HRIS or
+  // the external link", so this door announces itself exactly like the public
+  // one. Fire-and-forget by contract — a bell must never fail somebody's address
+  // submission, and the notify helper writes its own failures into `audit_log`
+  // so a missed DDL is visible rather than silent.
+  //
+  // `isUpdate` reuses `classifyKind` rather than re-deriving first-write-vs-edit
+  // here: the sub-tab already answers that question from these same two
+  // timestamps, and a second definition is how the bell and the list end up
+  // disagreeing about the same row.
+  void (async () => {
+    const { employee } = await getEmployeeMasterRecord(String(body.personal_email));
+    await notifyGiftShippingSubmitted({
+      channel: authz.channel,
+      employeeName: employee?.name ?? null,
+      workEmail: normEmail(employee?.work_email ?? null),
+      milestones: [body.milestone_index],
+      hasAlternateRecipient: hasAlternateRecipient(row),
+      isUpdate: classifyKind(row.created_at, row.updated_at) === 'updated',
+    });
+  })();
+  void broadcastFromServer(GIFT_LIVE_TOPIC, GIFT_LIVE_EVENT, {
+    channel: authz.channel,
+    milestones: [body.milestone_index],
+    ts: Date.now(),
   });
 
   return NextResponse.json({ row, error: null });

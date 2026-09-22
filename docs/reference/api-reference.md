@@ -2579,6 +2579,7 @@ gone — it was the one action that could not record itself.
 
 | Route | Now |
 |---|---|
+| `GET /api/gift-tracker/recent-submissions` | `requireFeatureAccess('hr','gift_tracker','view')` — the same grant the rest of the Gift Tracker requires. It returns home addresses and phone numbers, so it is never the looser of the two. Reads `audit_log` for each row's channel over a bounded 120-day window; an unresolvable channel reports `null`, never a guess. |
 | `GET` / `PUT /api/employee-gift-shipping` | `authorizeShippingAccess()` — the row's owner (matched through their master record, so a personal email resolves) or staff holding `hr / gift_tracker`; the un-scoped list is staff-only. `PUT` audits `employee_gift_shipping.submitted` with the `channel`. |
 | `POST /api/import-daily-report` | `requireElevatedSession()` + `daily_report.imported` — see §8. Dead endpoint; delete it. |
 
@@ -3092,6 +3093,7 @@ feature doc and in no hand-written section here.**
 | `/api/gift-address/verify-otp` | POST | — **none found** | — **no doc** |
 | `/api/gift-catalog` | GET, PUT | — **none found** | — **no doc** |
 | `/api/gift-payments` | GET, PUT | — **none found** | — **no doc** |
+| `/api/gift-tracker/recent-submissions` | GET | `requireFeatureAccess('hr','gift_tracker','view')` | [gift-address-external-link](../features/gift-address-external-link.md) |
 | `/api/gift-tracker-notes` | GET, PUT | — **none found** | — **no doc** |
 | `/api/global-master-list` | GET, POST | service-role only | [csv-imports](../features/csv-imports.md) · *this file* |
 | `/api/global-master-list/names` | GET | `requireElevatedSession` | — **no doc** |

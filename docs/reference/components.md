@@ -1697,9 +1697,13 @@ Editable catalog of giftable items, anniversary-tier mappings, and free-form sug
 
 Log vendor payment batches for gifts -- the actual purchase records behind the Gift History "Gifts" source (`GiftTracker` -> Payments sub-tab). Expandable payment cards with a nested Vendor profile (`banks: VendorBank[]`), an editable items table (qty x unit + shipping = grand total), and a Full payment block (txn id, dates, status `pending | sent | paid | cancelled`). Deeply nested immutable updaters; **re-fetches after save** so server ids/timestamps land. Data: `GET /api/gift-payments?email=`, `PUT /api/gift-payments`.
 
+### `src/components/orphanage/GiftRecentSubmissions.tsx`
+
+Gift Tracker -> **Recently filled / updated** sub-tab (2026-09-22). Every gift-address submission newest change first, with the surface it came from: **Public link** / **Employee dashboard** / **Entered by staff**, or **Unknown source** when it cannot be resolved -- the channel is READ from `audit_log`, never inferred, because the count of link users is the measurement the tab exists to produce. Four tiles (from the link / first filled / updated since / unknown source) that are each their own question and are **never summed**, a search box, and a "Public link only" toggle. Off-roster submitters are flagged and kept, never filtered out. Live over Broadcast via `useGiftShippingLive` with a 20s poll floor; the header pill says **Live** or **Polling** rather than implying freshness. A failed refresh KEEPS the last list -- blanking it would read as "nobody has submitted". Data: `GET /api/gift-tracker/recent-submissions?limit=100`.
+
 ### `src/components/orphanage/GiftTracker.tsx`
 
-The Gift module hub (Orphanage team). Computes every employee's 6-month tenure-gift milestones from their master-list start date, surfaces who is due soon, and is where shipping submissions are reviewed. Hosts the Catalog + Payments sub-tabs. 4-way sub-tab nav: **Roster** (stat tiles within 1 week/1 month/3 months, paginated table sorted by closest upcoming gift, per-row expand to milestone history + editable note + that employee's submissions), **Submissions** (flat list with status filter pills + inline Return / Approve&lock / Edit / Delete), **Catalog** (`GiftCatalog`), **Payments** (`GiftPayments`). **Approve = auto-derive gift, no manual picking:** `deriveGiftForMilestone(index)` maps `index*0.5` years -> an anniversary tier -> a catalog item by name; approval PATCHes status + gift fields and the result becomes a gift payment downstream.
+The Gift module hub (Orphanage team). Computes every employee's 6-month tenure-gift milestones from their master-list start date, surfaces who is due soon, and is where shipping submissions are reviewed. Hosts the Catalog + Payments sub-tabs. 5-way sub-tab nav: **Roster** (stat tiles within 1 week/1 month/3 months, paginated table sorted by closest upcoming gift, per-row expand to milestone history + editable note + that employee's submissions), **Submissions** (flat list with status filter pills + inline Return / Approve&lock / Edit / Delete), **Recently filled / updated** (`GiftRecentSubmissions`), **Catalog** (`GiftCatalog`), **Payments** (`GiftPayments`). **Approve = auto-derive gift, no manual picking:** `deriveGiftForMilestone(index)` maps `index*0.5` years -> an anniversary tier -> a catalog item by name; approval PATCHes status + gift fields and the result becomes a gift payment downstream.
 
 | Method | Endpoint |
 |---|---|
@@ -2095,6 +2099,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx` | component | *this file* |
 | `src/components/orphanage/GiftCatalog.tsx` | component | *this file* |
 | `src/components/orphanage/GiftPayments.tsx` | component | *this file* |
+| `src/components/orphanage/GiftRecentSubmissions.tsx` | component | [gift-address-external-link](../features/gift-address-external-link.md) · *this file* |
 | `src/components/orphanage/GiftTracker.tsx` | component | *this file* · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · [gift-tracker-receipts](../features/gift-tracker-receipts.md) |
 | `src/components/orphanage/OrphanageApp.tsx` | component | *this file* · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `src/components/orphanage/OrphanageBudgetForm.tsx` | component | *this file* |
@@ -2194,6 +2199,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/hooks/useEmployeeCachedState.ts` | hook | [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-profile](../features/employee-profile.md) |
 | `src/hooks/useEmployeeNotificationsUnread.ts` | hook | *this file* · [notification-alerts](../features/notification-alerts.md) |
 | `src/hooks/useFeaturePermissions.ts` | hook | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `src/hooks/useGiftShippingLive.ts` | hook | [gift-address-external-link](../features/gift-address-external-link.md) |
 | `src/hooks/useFpuLive.ts` | hook | [fpu-enrollment](../features/fpu-enrollment.md) |
 | `src/hooks/useHrOrientationAttendance.ts` | hook | [hr-dashboard-cache](../features/hr-dashboard-cache.md) · [hr-orientation-attendance](../features/hr-orientation-attendance.md) |
 | `src/hooks/useKpiCacheIdentity.ts` | hook | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |

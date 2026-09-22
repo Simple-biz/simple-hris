@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   FileText,
   Gift,
+  History,
   Loader2,
   Package,
   RefreshCw,
@@ -19,6 +20,7 @@ import {
   Users,
 } from 'lucide-react';
 import GiftCatalog from '@/components/orphanage/GiftCatalog';
+import GiftRecentSubmissions from '@/components/orphanage/GiftRecentSubmissions';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -307,10 +309,10 @@ function classifyDaysUntil(daysUntil: number | null): GiftStatus {
   return 'far';
 }
 
-export type SubTab = 'roster' | 'submissions' | 'catalog';
+export type SubTab = 'roster' | 'submissions' | 'recent' | 'catalog';
 
 /** Left-to-right order of the sub-tabs — the axis the panel transition travels. */
-const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'submissions', 'catalog'];
+const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'submissions', 'recent', 'catalog'];
 
 /**
  * How a sub-tab panel enters and leaves.
@@ -1237,6 +1239,12 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             }
           />
           <SubTabButton
+            active={subTab === 'recent'}
+            onClick={() => goToSubTab('recent')}
+            Icon={History}
+            label="Recently filled / updated"
+          />
+          <SubTabButton
             active={subTab === 'catalog'}
             onClick={() => goToSubTab('catalog')}
             Icon={Package}
@@ -1258,6 +1266,21 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             exit="exit"
           >
             <GiftCatalog viewerEmail={viewerEmail} />
+          </motion.div>
+        ) : subTab === 'recent' ? (
+          <motion.div
+            key="recent"
+            custom={subTabDir}
+            variants={panelVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+          >
+            {/* Its own fetch, deliberately: this panel reads `audit_log` for the
+                channel and is live over Broadcast, neither of which the roster's
+                one-shot load does. Mounted only while the sub-tab is open, so the
+                socket and the 20s poll do not run behind the other three. */}
+            <GiftRecentSubmissions />
           </motion.div>
         ) : subTab === 'submissions' ? (
           <motion.div

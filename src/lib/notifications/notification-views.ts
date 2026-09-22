@@ -116,6 +116,22 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // notification-views.test.ts holds the two files to each other.
   'support.replied': ['employee'],
   'support.answered': ['employee'],
+  // Somebody filled in or updated their tenure-gift delivery details — through
+  // the public /update-gift-address link, their Employee dashboard card, or a
+  // staff entry. HR ONLY (Kane, 2026-09-22: "HR Dashboard people with HR - Gift
+  // Tracker Access"), because the Gift Tracker lives on the HR dashboard and
+  // that is where the "Recently filled / updated" sub-tab it points at lives.
+  //
+  // ONE type for all three channels: same news, same readers, and which surface
+  // it came from is a detail on the row rather than a different notification.
+  //
+  // The MAP is the view scope; the RECIPIENT list is narrower still and is
+  // resolved from the `hr / gift_tracker` grant in
+  // `src/lib/notifications/gift-shipping-submitted.ts` — mapping to ['hr'] keeps
+  // the chime, the badge and the panel agreeing with each other for the people
+  // who do receive it. Changed together with
+  // references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql.
+  'gift_shipping.submitted': ['hr'],
   // The manager published (or changed) this employee's KPI bonus for a
   // dept-week — carries the peso amount. Fired on Mark Ready/Lock and on any
   // change landing on an already-published week. Employee-only, ungated.
