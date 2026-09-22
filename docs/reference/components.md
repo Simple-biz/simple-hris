@@ -1348,7 +1348,9 @@ The **Orientation** inner tab of My Team: weekly attendance cards and tally buil
 
 ### `src/components/manager/ManagerTransferDialog.tsx`
 
-Department-transfer request modal (opened from `ManagerTransfers.tsx`; no longer a My Team roster action). Target dept list from `GET /api/employee-rate-profiles/summary` (current dept excluded). **Send to HR** -> `POST /api/department-transfers`. Amber note reminds HR to also update the master Google Sheet so the next sync preserves the new department.
+Department-transfer request modal (opened from `ManagerTransfers.tsx`; no longer a My Team roster action). Candidates + the department filter + the **data sub-team map** come from `GET /api/manager/transfer-candidates`. **Send to HR** -> `POST /api/department-transfers`. Amber note reminds HR to also update the master Google Sheet so the next sync preserves the new department.
+
+**Targets are the manager's grants EXPANDED, never raw** (`myDepartments` is the access-control keyspace; feeding it in directly is how `hsl:intake_specialist` once got written into master `Department` cells). Since 2026-09-22: any `hsl:<x>` grant — code team **or** data team — is that ONE target; a parent-HSL grant expands to the 16 code teams **plus** every data team (`builtinSubOptionsWithPinned`); a non-HSL department that HAS sub-teams offers its teams, not its bare label. `soleDept` defaults only when exactly one real choice remains. Submit is gated on `isPlaceableDeptLabel(toDept, placeableSubIndex(map))` and the route now enforces the same rule.
 
 ---
 
@@ -1801,3 +1803,67 @@ Two tabs under one header, "Webhooks & Integrations": **Webhooks** (everything t
 Save, Open automation) and **Integrations** (`AdminExternalApiClients`). The header actions and the active count render only
 on Webhooks; the Webhooks tab shows an *unsaved* pill when the page is dirty. Sidebar id stays `webhooks`. The open section
 and the entries (as loaded/saved, never as edited) ride the Admin tab cache (`admin-dashboard-cache.md`).
+
+## Department sub-teams — the shared modules *(added 2026-09-21/22)*
+
+Master-list departments can carry **data sub-teams**. These four modules are the
+whole model; everything else consumes them. Feature docs:
+[payment-catalog-departments.md](../features/payment-catalog-departments.md) §7,
+[hsl-subdepartments.md](../features/hsl-subdepartments.md).
+
+### `src/lib/departments/builtin-subs.ts` *(client-safe)*
+
+The model. `builtinSubLabel(parent, sub)` — `<builtinKey>:<subKey>`, **except HSL
+→ `hsl:<subKey>`** (the `hsl:` branch is what keeps a cell in the HSL family).
+`pinnedSubDepartments` — HSL's 16 CODE teams, shown but never edited here,
+because 14 carry a KPI calculator and a Readiness row. `placeableSubIndex` — the
+shape `isPlaceableDeptLabel` takes. `builtinSubOptions` /
+`builtinSubOptionsWithPinned` — picker options (code first, then data).
+`builtinSubOccupancy` — how many roster people a removal would strand.
+`validateBuiltinSubsInput` — no colon in a sub key (`parentOfDeptKey` splits at
+the FIRST one), no shadowing a code team, no resurrecting the retired
+`lead_nurture`. `isBuiltinSubTeamKey` — keeps sub-team keys off the **System
+Bonuses** target picker (PAB/Tech eligibility is parent-keyed).
+
+### `src/lib/departments/builtin-subs-db.ts` *(server)*
+
+One JSON object in `app_settings` (`payment_catalog.departments.builtin_subs`) —
+no table, no migration, mirroring `registry-db.ts`. The read **throws** on
+failure (a transient error must never read as "no sub-departments", or a later
+save wipes every department's teams); an absent key is genuinely empty.
+`replaceBuiltinSubs` is compare-and-swap on the map's own revision → `conflict`,
+never a merge.
+
+### `src/lib/departments/use-builtin-subs.ts` *(client)*
+
+`useBuiltinSubs()` reads the map off `GET /api/departments` for pickers far from
+the Payment Catalog (HR onboarding, Admin Roles). Cached per page load, one
+fetch for every consumer; a failed read yields `{}` so the caller falls back to
+the code teams. `invalidateBuiltinSubs()` drops the cache after an edit saves.
+
+### `src/lib/bonus-catalog/assignment-scope.ts` *(client-safe)*
+
+Sub-team-targeted bonus assignments. `assignmentParentKey` — the assignment
+lands on the PARENT card (the same `normalizeDeptToKey` collapse `commonByDept`,
+the scoring queue and readiness already perform, none of which changed).
+`assignmentReachesMember` — it reaches only members whose raw master cell IS
+that sub-team; **additive, not most-specific-wins** (a Nurture person gets Lead
+Gen's bonuses *and* Nurture's), and an external member has no cell so never
+qualifies. `buildCommonScopeIndex` — a bonus assigned to a sub-team AND the bare
+parent is department-wide. `isDeadBonusTargetKey` — HSL sub-teams, refused
+client- and server-side. Applied in ONE chokepoint,
+`DeptBonusCalculator.applicableBonuses`.
+
+### `src/lib/transfers/direct-transfer.ts` *(server)*
+
+`applyDirectDepartmentMove` — the People step of the master-list Edit dialog.
+Master list (fatal on failure) → master Sheet (best-effort, never assumed) → an
+`applied` `department_transfer_requests` row. The row is deliberate, not
+bookkeeping: `hris-is-dept-source-of-truth` names it as the evidence the DB's
+department is deliberate rather than drift, and it is the only home for
+`sheet_synced` / `sheet_sync_error`, which drive Accounting's Retry badge.
+
+> **The trap.** `isHslSubDeptLabel` / `hslSubKeyFromRaw` mean **"is this one of
+> the 16 CODE teams?"** — never "is this an HSL sub-team". They were used to mean
+> the latter at ten sites and every one broke on the first data team. Use
+> `startsWith('hsl:')` or `normalizeDeptToKey`.

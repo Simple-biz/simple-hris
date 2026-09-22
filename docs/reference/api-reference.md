@@ -32,6 +32,7 @@ Complete documentation for all REST API endpoints. Base URL: `http://localhost:3
 17. [Penny AI (assistants)](#17-penny-ai-assistants-added-2026-09-12)
 18. [QC Compare sheet (shared)](#18-qc-compare-sheet-shared-added-2026-09-14)
 19. [Manager departed members, HSL scheduling and the QC assignments contract](#19-manager-departed-members-hsl-scheduling-and-the-qc-assignments-contract-added-2026-09-14)
+20. [Department sub-teams — the contract changes](#20-department-sub-teams--the-contract-changes-added-2026-09-2122)
 
 ---
 
@@ -2855,3 +2856,84 @@ per-client rate limit. `GET` / `DELETE` are `405`.
 
 No DELETE — `external_api_requests.client_id` is `ON DELETE RESTRICT`. Audit family `external_api.` (created / revoked /
 restored / rotated / updated), actor from `auditFrom`.
+
+---
+
+## 20. Department sub-teams — the contract changes *(added 2026-09-21/22)*
+
+Master-list (built-in) departments gained **data sub-teams**, stored as one JSON
+blob in `app_settings` under `payment_catalog.departments.builtin_subs` — no
+table, no migration. Feature docs:
+[payment-catalog-departments.md](../features/payment-catalog-departments.md) §7,
+[hsl-subdepartments.md](../features/hsl-subdepartments.md) §4/§6,
+[bonus-catalog.md](../features/bonus-catalog.md).
+
+**Key convention** `<builtinKey>:<subKey>` (`lead_gen:nurture`) — **except HSL**,
+whose data teams are `hsl:<subKey>`, because `normalizeDeptToKey`'s `hsl:` branch
+is what keeps a cell in the HSL family (week model, weekend premium, bonus
+matching). The generic form would drop the person out of HSL.
+
+> **The trap, if you read one line here.** `isHslSubDeptLabel` /
+> `hslSubKeyFromRaw` answer **"is this one of the 16 CODE teams?"** — they are
+> `false` / `null` for a data team. They were used at ten sites to mean "is this
+> an HSL sub-team", and every one of them broke on the first data team Carla
+> created. Use `startsWith('hsl:')` or `normalizeDeptToKey` for that question.
+
+### `GET /api/departments`
+
+Unchanged list semantics (roster labels ∪ registry names, HSL collapsed to one
+`HSL`). **Now also returns `builtinSubs`** — the data sub-team map — so every
+elevated picker can offer them without a second endpoint. Best-effort: a failed
+read yields `{}` and the caller falls back to the code teams. Client helper:
+`useBuiltinSubs()` (`src/lib/departments/use-builtin-subs.ts`), cached per page
+load.
+
+### `GET /api/manager/transfer-candidates`
+
+**Now also returns `builtinSubs`**, so the manager Transfer dialog can expand a
+parent-HSL grant to the code teams **and** the data teams.
+
+### `POST /api/department-transfers`
+
+**New 400 (2026-09-22): the target must be a PLACEMENT.** Previously there was
+no server-side check at all — the route trusted the dialog. It now runs
+`isPlaceableDeptLabel(toDept, placeableSubIndex(map))`, so a bare `HSL` (or the
+bare label of any department that has sub-teams) is refused with *"Pick the
+specific sub-team — it sets the base rate."*
+
+### `PATCH /api/payment-catalog/departments` — master-list branch
+
+Discriminated by a string `builtinKey`. Three stages, in this order, and the
+order is load-bearing: **sub-departments → managers → people**, because a
+sub-team added in the same save has to be a legal destination for a move in that
+same save (people are validated against the *prospective* map).
+
+| Payload | Effect |
+| --- | --- |
+| `scopes: [{ grantLabel, managers[] }]` | Manager access **per grant scope**. A flat built-in has ONE scope (its display name, claiming every alias spelling); **HSL has one per sub-team** (`hsl:<key>`, code + data), matched EXACTLY. A revoke is written inside its scope. Labels no scope claims (`"HSL"`, `"Hogan Smith Law"`) are reported and never written. |
+| `subDepartments: [{ key, name }]`, `expectedSubsRevision` | The FULL resulting DATA list for this department. CAS on the sub map's own `app_settings` revision → **409** on mismatch. HSL's 16 code teams are pinned: a data key that shadows one is refused, as is the retired `lead_nurture`. A sub key may not contain a colon. Removing a sub is refused while the **live** `global_master_list` still has people in it (the count **fails closed**), and its own `<key>:<sub>` rate row is deleted with it. |
+| `people: [{ workEmail, fromDepartment, toDepartment, … }]` | Moves as **real department transfers** — master list → master Sheet → an `applied` `department_transfer_requests` row (`applyDirectDepartmentMove`). Never registry member records. A bare family label is refused; a move must touch this department on one side. Per-person failures are collected, and a Sheet write that did not land is a warning, never swallowed. |
+
+### `POST /api/bonus-catalog` — assignment
+
+**New 400 (2026-09-21): an HSL sub-team is a dead target.** HSL bonuses are code
+rules in `hsl-bonus/schema.ts`, the HSL calculator never reads the catalog, and
+the wizard excludes the HSL family from the catalog's payable set — an
+assignment there would save and never be drawn or paid (audit item 139). A
+**non-HSL** sub-team (`lead_gen:nurture`) IS a valid target: it lands on the
+parent's KPI card and reaches only the members whose master cell is that
+sub-team (`src/lib/bonus-catalog/assignment-scope.ts`). Applied rows keep the
+**parent** key, so the payable set and the namespaced-double-pay rule are
+untouched.
+
+### HR routes — `POST /api/hr/onboarding-bypass`, `POST /api/hr/onboarding-submissions/[id]/set-work-email`
+
+Both already 400'd on a bare HSL; both now pass the data-team map to
+`isPlaceableDeptLabel`, so a data team is accepted and the bare label of any
+department that has sub-teams is refused.
+
+### `POST /api/payment-catalog/pay-structures`
+
+The Hogan pay-plan mirror now keys on `normalizeDeptToKey(key) === 'hogan_smith_law'`
+rather than `isHslSubDeptLabel`, which knew only the code teams and would have
+**silently stopped mirroring** a data team member's individual rate.
