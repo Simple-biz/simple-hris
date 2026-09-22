@@ -1,8 +1,16 @@
 # Simple HRIS: API Reference
 
-Complete documentation for all REST API endpoints. Base URL: `http://localhost:3000` (development).
+REST API endpoint documentation. Base URL: `http://localhost:3000` (development).
 
-> **Auth status** (as of 2026-04-21): most endpoints are still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](../implementation-plans/implementation-plan-rbac.md) and [AUDIT_2026-04-21.md](../audits/audit-2026-04-21.md) for the full picture.
+> **Coverage, measured 2026-09-22: this file documents 119 of the 325 `app/api/**/route.ts` files — 206 are absent.**
+> It said *"complete documentation for all REST API endpoints"* until that count was taken. 41 of the 206 appear in **no doc at all**;
+> the other 165 are described in a feature doc but never reached this index. Entire families are missing — `/api/hsl-bonus`,
+> `/api/support`, `/api/orphanage-interns`, `/api/swall`, `/api/presence`, `/api/screening` have **zero** mentions here.
+> Treat an endpoint's absence from this file as **unknown**, never as **does not exist**. Session log item 143; [[reference-docs-rot-silently]].
+
+> **Auth status — the 2026-04-21 text below is STALE and kept only for its still-live gaps.** RBAC shipped: `requireFeatureAccess` (`src/lib/auth/authorize-feature.ts`) gates **58** route files and `requireElevatedSession` **46**; **121 of 325** routes carry a recognised auth or cron gate and **204 do not** (measured 2026-09-22, by grep over the route files — a count of gates, **not** a security verdict: some of the 204 are public by design and some may gate in a helper this grep does not know). See [route-authorization.md](../features/route-authorization.md) (2026-06-23) and [rbac-feature-permissions.md](../features/rbac-feature-permissions.md), not the RBAC *plan* linked below. Original note follows.
+>
+> **Auth status** (as of 2026-04-21): most endpoints were then still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](../implementation-plans/implementation-plan-rbac.md) and [AUDIT_2026-04-21.md](../audits/audit-2026-04-21.md) for the full picture.
 
 > **Google Sheet sync endpoints** (`/api/cron/sync-master-from-sheet`, `/api/cron/sync-rates-from-sheet`) and the new **`?uploads=1`** GET shapes on the master + rates upload routes are documented inline below. For the full feature picture (Admin tab, env setup, ingest fixes, troubleshooting), see [csv-imports.md](../features/csv-imports.md).
 

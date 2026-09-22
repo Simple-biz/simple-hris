@@ -1,6 +1,11 @@
 # Simple HRIS: Component Reference
 
-This document covers every UI component — what it renders, why it is designed that way, and all significant logic it contains.
+This document covers UI components — what each renders, why it is designed that way, and all significant logic it contains.
+
+> **Coverage, measured 2026-09-22: 127 of the 265 `.tsx` files under `src/components/` are named here, and 2 of 33 hooks in `src/hooks/`.**
+> It claimed to cover *"every UI component"* until that count was taken. It also still describes `src/components/Rates.tsx`,
+> **which does not exist anywhere in the tree** — as do `llm-context.md`, `system-architecture.md` and `data-sources.md`.
+> Absence from this file means **unknown**, not **not built**. Session log item 143; [[reference-docs-rot-silently]].
 
 ---
 
