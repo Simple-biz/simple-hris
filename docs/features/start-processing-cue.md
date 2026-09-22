@@ -65,6 +65,16 @@ untracked, a short normalized clip is committed. The engine fetches the whole
 file before it can decode, so a multi-megabyte full track would leave the first
 press of the day silent while it downloaded. Keep the committed cut small.
 
+**The "stays untracked" half of that rule is not what the repo does — measured
+2026-09-22.** Both full tracks are committed at HEAD: `public/sounds/jellyfish
+jam.mp3` (3,637,008 bytes, added by `9c674472` on 2026-09-15, the same commit as
+the cut) and `public/sounds/ANRI - I Can't Stop The Loneliness.mp3` (6,330,964
+bytes); nothing in `.gitignore` covers `public/sounds/`. Neither path is read by
+any code (`STAGE_PREPPED_SRC` is the hyphenated cut, `carla-song.ts` its own
+cut), so **no fetch and no first-press latency is affected** — the cost is ~10MB
+in the repo and in every deploy bundle. The rule above stands; the repo is out
+of compliance with it. Open item 175.
+
 To swap the song: replace `public/sounds/jellyfish-jam.mp3`, or change
 `STAGE_PREPPED_SRC`. To change how long it plays: `STAGE_PREPPED_RUN_SECONDS`
 (and check invariant 5 still reads true). The retired synth V12 survives only as
