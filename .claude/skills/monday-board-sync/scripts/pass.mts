@@ -702,7 +702,7 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-21';
+export const PASS_DATE = '2026-09-22';
 export const AUDIT_RANGE = 'c58e0f6c..7c880535 (Sep 17 - Sep 21)';
 export const AUDIT_COMMITS = 22;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
@@ -863,7 +863,7 @@ export const ROWS: PassRow[] = [
     blockers: [
       'No recorded production click-through of the chat by anyone',
       'The five employee_support grants (Carla, Claire, Ainsley, Grace, Alivia) are a manual step with no confirmation — until they exist no agent can open the queue and the employee half talks to an empty room',
-      'UNVERIFIED: support_chat_queued / support_chat_replied appear in no readable webhook registry; the live webhooks.config app_setting was last measured 09-17, before these slugs existed',
+      'MEASURED 2026-09-22 read-only: the live webhooks.config app_setting holds 25 entries and NONE of the five support slugs  support_chat_queued and support_chat_replied are both ABSENT (controls ticket_replied and ticket_moved both PRESENT), so the n8n email leg of the chat resolves to nothing',
     ],
   },
   {
@@ -898,7 +898,7 @@ export const ROWS: PassRow[] = [
     blockers: [
       'No recorded click-through of the Help button in production',
       'The staff-only trial gate Carla signed is STILL only a comment in EmployeeHelpMenu.tsx — with the migrations applied the Help button is live to every employee, not to a trial group',
-      'The round trip does not close: a filed ticket is readable by its employee and by nobody on staff in the UI, because the staff tab body does not exist',
+      'MEASURED 2026-09-22: zero employee_support grants in employee_roles (208 rows) or employee_feature_permissions (1,464 rows, PAGED past the 1000 cap), so none of the five named answerers can open the queue and the employee half still talks to an empty room',
       'Manual deploy step with no script: the five holders were granted employee_support before the support_tickets key existed, so an admin must add the key by hand or re-grant',
     ],
   },
@@ -917,9 +917,9 @@ export const ROWS: PassRow[] = [
       'board "gets its API", and it does not — app/api/support/tickets/ holds route.ts ALONE, the plan\'s ' +
       '[id]/reply route does not exist, so no staff member can ANSWER a ticket through any API.',
     blockers: [
-      'DEAD CODE IN PRODUCTION: grep finds ZERO callers of api/support/tickets in src/ or app/, and no SupportTicketsTab component exists to call it',
-      'The reply/close/reopen route the plan specifies as task 7 does not exist, so the staff half of the round trip cannot be completed through the API',
-      'Doc rot, unfixed in the tree: docs/features/INDEX.md and employee-support.md both still say the routes are "a paused partial in the working tree", false since this commit',
+      'RE-MEASURED 2026-09-22 and NO LONGER DEAD: src/components/tickets/SupportTicketsTab.tsx exists and calls api/support/tickets at four sites. What holds this row now is only that nobody has recorded opening the board in production',
+      'RE-MEASURED 2026-09-22: app/api/support/tickets/[id]/reply/route.ts DOES exist now, so task 7 has landed  this blocker is retired, and the row is held only for want of a production click-through',
+      'Doc rot to re-check: INDEX.md and employee-support.md described the routes as a paused partial; the routes and the tab both exist as of 2026-09-22',
     ],
   },
   {
