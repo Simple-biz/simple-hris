@@ -12,7 +12,12 @@ Built 2026-07-17. All HSL bonus rules remain hardcoded in `schema.ts` — the
 `calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`; see `bonus-catalog.md`
 §3.1). The KPI programme itself is still code; what changed is that an
 accountant can now attach an ad-hoc award to one sub-team without an
-engineering change. Everything below describes the code rules — the
+engineering change. How that column reads — name + `flat`/`ƒ(x)` chip + the
+accountant's own formula in the head, a `Bonus Library` legend strip above the
+grid, one **labelled** field per formula variable, and the bonus's own peso
+under them (amber at ₱0) — is the presentation contract in `bonus-catalog.md`
+§3.1, written after Kane found four unlabelled boxes on the Filing Specialist
+card on 2026-09-22. Everything below describes the code rules — the
 single source of truth the calculator, PayrollWizard HSL step, Bonus History,
 and employee KPI results all read.
 

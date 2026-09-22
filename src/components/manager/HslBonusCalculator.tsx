@@ -65,6 +65,7 @@ import { useBuiltinSubs } from '@/lib/departments/use-builtin-subs';
 import { builtinSubsFor } from '@/lib/departments/builtin-subs';
 import { hslBranchConfigs, hslBranchKeys } from '@/lib/hsl-bonus/data-branch';
 import {
+  calcHslCatalogBonus,
   calcHslCatalogTotal,
   catalogBonusVariables,
   catalogOnKey,
@@ -2747,6 +2748,170 @@ function ExtChip({ email, offboardedEmails }: { email: string; offboardedEmails?
   );
 }
 
+/** What a Bonus Library bonus PAYS, in one line.
+ *
+ *  The column head used to read "formula" — which names a KIND where every
+ *  neighbouring column names a RULE (₱100.00, ₱250.00 flat). A manager reading
+ *  the row learned nothing from it. This returns the accountant's own
+ *  expression instead, so the rule is stated in the same place, and in the same
+ *  shape, as the code rules beside it.
+ */
+function catalogRuleText(bonus: BonusDef, scoreable: boolean): string {
+  if (!scoreable) return `${bonus.currency} — pays ₱0 here`;
+  const monthly = bonus.cadence === 'monthly' ? ' · monthly' : '';
+  if (bonus.kind === 'flat') return `${formatPeso(bonus.amount ?? 0)} flat${monthly}`;
+  const f = (bonus.formula ?? '').replace(/\s+/g, ' ').trim();
+  return `${f || 'formula'}${monthly}`;
+}
+
+/** Clip a rule to what a 9px column head can carry. The whole string still ships
+ *  in the `title` and in the legend above the grid, so nothing is lost — only
+ *  deferred. */
+function clipRule(rule: string, max = 26): string {
+  return rule.length <= max ? rule : `${rule.slice(0, max - 1)}…`;
+}
+
+/** `flat` / `ƒ(x)` tag on a Library column.
+ *
+ *  Sky-on-zinc was the ONLY thing separating an accountant-assigned Library
+ *  bonus from a coded KPI rule — a distinction carried by hue alone, which is
+ *  no distinction at all for anyone who cannot separate those two hues. The
+ *  general KPI calculator already states the kind in text (`KindDot`); this is
+ *  the same chip, so the two calculators read the same way.
+ */
+function CatalogKindChip({ kind }: { kind: BonusDef['kind'] }) {
+  return (
+    <span
+      className="shrink-0 rounded bg-sky-100 px-1 py-px font-mono text-[8px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-950/70 dark:text-sky-300"
+      title={kind === 'flat' ? 'Flat amount — no inputs' : 'Formula bonus — computed from the inputs below'}
+    >
+      {kind === 'flat' ? 'flat' : 'ƒ(x)'}
+    </span>
+  );
+}
+
+/** The inputs a Library formula bonus asks for, each under its own name.
+ *
+ *  Kane, 2026-09-22, pointing at four identical boxes on the Filing Specialist
+ *  card: *"There are no name on the bonus I just assigned, it's confusing."*
+ *  They carried a `title` tooltip and nothing else, so the only way to tell
+ *  which box was which was to hover them one at a time — and a tooltip is
+ *  unreachable by touch and by keyboard. The name now sits above the box, the
+ *  treatment the general KPI calculator has shipped all along (`VarFields`).
+ *
+ *  Zero renders as the placeholder rather than a typed "0", matching
+ *  `StepperInput` in the same row: an untouched field should not look like a
+ *  deliberate zero. That is display only — the stored value is unchanged.
+ */
+function CatalogVarFields({
+  bonus,
+  vars,
+  kpiData,
+  employeeName,
+  disabled,
+  onChange,
+}: {
+  bonus: BonusDef;
+  vars: string[];
+  kpiData: KpiData;
+  employeeName: string;
+  disabled?: boolean;
+  onChange: (key: string, val: number) => void;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <motion.div
+      className="flex max-w-[176px] flex-wrap justify-end gap-x-1.5 gap-y-1"
+      initial={reduce ? false : { opacity: 0, y: -3 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: COLLAPSE_EASE }}
+    >
+      {vars.map((v) => {
+        const raw = Number(kpiData[catalogVarKey(bonus.id, v)] ?? 0) || 0;
+        return (
+          <label key={v} className="group/varfield flex flex-col items-stretch gap-0.5">
+            <span
+              className="max-w-[80px] truncate pl-0.5 text-left font-mono text-[8.5px] font-semibold uppercase tracking-wider text-zinc-500 transition-colors group-focus-within/varfield:text-sky-700 dark:text-zinc-400 dark:group-focus-within/varfield:text-sky-300"
+              title={v}
+            >
+              {v}
+            </span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              disabled={disabled}
+              aria-label={`${v} — ${bonus.name} for ${employeeName}`}
+              value={raw === 0 ? '' : String(raw)}
+              placeholder="0"
+              onFocus={(ev) => ev.currentTarget.select()}
+              onChange={(ev) => onChange(catalogVarKey(bonus.id, v), Number(ev.target.value) || 0)}
+              className="h-7 w-[80px] rounded-md border border-zinc-300 bg-white px-1 text-center font-mono text-[11px] font-medium tabular-nums text-zinc-900 outline-none transition-colors focus:border-sky-400 focus:ring-1 focus:ring-sky-200 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-sky-500 dark:focus:ring-sky-900 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+          </label>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+/** The Library bonuses on this branch, named once above the grid.
+ *
+ *  A column head is nine pixels of uppercase mono and scrolls out of view; it
+ *  can carry a name and a clipped rule and nothing else. This strip carries the
+ *  rest — where the bonus came from (the Bonus Library, not the HSL programme),
+ *  the whole formula, the inputs it asks for, and the accountant's own
+ *  description in its tooltip. It sits and reads like the tiered-rate strip
+ *  above it, because it is doing the same job for a different kind of rule.
+ */
+function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200/80 bg-sky-50/60 px-3 py-2 dark:border-sky-900/50 dark:bg-sky-950/20">
+      <span className="font-mono text-[9px] uppercase tracking-[0.15em] text-sky-700 dark:text-sky-400">
+        Bonus Library
+      </span>
+      {cols.map(({ bonus, scoreable, individual }) => {
+        const vars = catalogBonusVariables(bonus);
+        return (
+          <span
+            key={bonus.id}
+            title={[
+              `${bonus.name} — assigned from the Bonus Library`,
+              bonus.description?.trim() || null,
+              bonus.kind === 'formula' ? `Formula: ${bonus.formula ?? ''}` : catalogRuleText(bonus, scoreable),
+              vars.length > 0 ? `Inputs: ${vars.join(', ')}` : null,
+              individual ? 'Assigned to one person on this branch, not the whole team.' : null,
+              scoreable ? null : `This card scores in pesos only, so a ${bonus.currency} bonus pays ₱0 here.`,
+            ]
+              .filter(Boolean)
+              .join('\n')}
+            className="inline-flex flex-wrap items-center gap-1.5 rounded border border-sky-200 bg-white px-1.5 py-0.5 dark:border-sky-900/60 dark:bg-zinc-900"
+          >
+            <CatalogKindChip kind={bonus.kind} />
+            <span className="text-[11px] font-medium text-zinc-800 dark:text-zinc-100">{bonus.name}</span>
+            <span
+              className={cn(
+                'font-mono text-[9px]',
+                scoreable ? 'text-zinc-500 dark:text-zinc-400' : 'text-amber-700 dark:text-amber-400',
+              )}
+            >
+              {catalogRuleText(bonus, scoreable)}
+            </span>
+            {vars.length > 0 && (
+              <span className="font-mono text-[9px] text-zinc-500 dark:text-zinc-400">inputs: {vars.join(' · ')}</span>
+            )}
+            {individual && (
+              <span className="rounded bg-zinc-100 px-1 py-px font-mono text-[8px] uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                1 person
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catalogFor, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
   // The catalog columns are the UNION across everyone on the page: a bonus
@@ -2765,195 +2930,252 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
   const finalWeekOfMonth = isFinalPayrollWeekOfMonth(periodStart);
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-      <table className="table-keep w-full min-w-[600px] text-xs">
-        <thead>
-          <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
-            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
-            <th className="px-2 py-2 text-center font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Mgr</th>
-            {rules.map((r) => (
-              <th key={r.key} className="px-2 py-2 text-right font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-500">
-                {r.label}
-                <span className="block font-normal text-zinc-400 dark:text-zinc-600">
-                  {r.type === 'per_unit' ? formatPeso(r.rate, r.currency) :
-                   r.type === 'flat' ? `${formatPeso(r.amount, r.currency)} flat${r.cadence === 'monthly' ? ' · monthly' : ''}` :
-                   r.type === 'manual' ? 'manual ₱' :
-                   'tiered'}
-                </span>
-              </th>
-            ))}
-            {catalogCols.map(({ bonus, scoreable }) => (
-              <th key={`cat-${bonus.id}`} className="px-2 py-2 text-right font-mono text-[9px] uppercase tracking-[0.12em] text-sky-600 dark:text-sky-400">
-                {bonus.name}
-                <span className="block font-normal text-sky-500/70 dark:text-sky-500/60">
-                  {!scoreable
-                    ? `${bonus.currency} — not scored here`
-                    : bonus.kind === 'flat'
-                      ? `${formatPeso(bonus.amount ?? 0)} flat${bonus.cadence === 'monthly' ? ' · monthly' : ''}`
-                      : 'formula'}
-                </span>
-              </th>
-            ))}
-            <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Bonus</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.length === 0 && (
-            <tr>
-              <td colSpan={rules.length + catalogCols.length + 3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
-                No employees on this page.
-              </td>
-            </tr>
-          )}
-          {entries.map((e) => {
-            const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
-            return (
-            <tr key={e.employee_email} className="border-b border-zinc-100 hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40">
-              <td className="px-3 py-2">
-                <div className="flex items-center gap-1.5">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
-                      <span className="truncate">{e.employee_name}</span>
-                      {isExternal && <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />}
-                    </div>
-                    <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
-                  </div>
-                  {isExternal && onRemoveMember && !isLocked && (
-                    <button
-                      type="button"
-                      onClick={() => onRemoveMember(e.employee_email)}
-                      title="Remove external member"
-                      aria-label={`Remove ${e.employee_name}`}
-                      className="ml-auto shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  )}
-                </div>
-              </td>
-              <td className="px-2 py-2 text-center">
-                <input
-                  type="checkbox"
-                  className="accent-blue-600"
-                  checked={e.is_manager}
-                  disabled={isLocked}
-                  onChange={() => onToggleManager(e.employee_email)}
-                />
-              </td>
+    <div className="space-y-2">
+      {/* What the Library bonuses on this branch ARE, said once and in full —
+          the column heads below only have room for a name and a clipped rule. */}
+      {catalogCols.length > 0 && <BonusLibraryLegend cols={catalogCols} />}
+      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table className="table-keep w-full min-w-[600px] text-xs">
+          <thead>
+            <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
+              <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
+              <th className="px-2 py-2 text-center font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Mgr</th>
               {rules.map((r) => (
-                <td key={r.key} className="px-2 py-2 text-right">
-                  {r.type === 'flat' ? (
-                    r.managerOnly && !e.is_manager ? (
-                      <span className="text-zinc-300 dark:text-zinc-700">n/a</span>
-                    ) : r.cadence === 'monthly' && !finalWeekOfMonth ? (
-                      <span
-                        className="font-mono text-[9px] uppercase tracking-wider text-zinc-300 dark:text-zinc-700"
-                        title={`${r.label} is a monthly bonus — tick it in the last payroll week of the month`}
-                      >
-                        final wk
-                      </span>
-                    ) : (
-                      <input
-                        type="checkbox"
-                        className="accent-amber-500"
-                        checked={Boolean(e.kpi_data[r.key])}
-                        disabled={isLocked}
-                        aria-label={`${r.label} for ${e.employee_name}`}
-                        onChange={(ev) => onKpiChange(e.employee_email, r.key, ev.target.checked)}
-                      />
-                    )
-                  ) : r.type === 'manual' ? (
-                    r.managerOnly && !e.is_manager ? (
-                      <span className="text-zinc-300 dark:text-zinc-700">n/a</span>
-                    ) : (
-                      <PesoAmountInput
-                        value={Number(e.kpi_data[r.key] ?? 0)}
-                        disabled={isLocked}
-                        ariaLabel={`${r.label} amount for ${e.employee_name}`}
-                        onChange={(n) => onKpiChange(e.employee_email, r.key, n)}
-                      />
-                    )
-                  ) : (
-                    <StepperInput
-                      value={Number(e.kpi_data[r.key] ?? 0)}
-                      disabled={isLocked}
-                      ariaLabel={`${r.label} for ${e.employee_name}`}
-                      onChange={(n) => onKpiChange(e.employee_email, r.key, n)}
-                    />
-                  )}
-                </td>
+                <th key={r.key} className="px-2 py-2 text-right font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-500">
+                  {r.label}
+                  <span className="block font-normal text-zinc-400 dark:text-zinc-600">
+                    {r.type === 'per_unit' ? formatPeso(r.rate, r.currency) :
+                     r.type === 'flat' ? `${formatPeso(r.amount, r.currency)} flat${r.cadence === 'monthly' ? ' · monthly' : ''}` :
+                     r.type === 'manual' ? 'manual ₱' :
+                     'tiered'}
+                  </span>
+                </th>
               ))}
-              {catalogCols.map(({ bonus }) => {
-                const mine = catalogFor ? catalogFor(e.employee_email) : [];
-                const hit = mine.find((c) => c.bonus.id === bonus.id);
-                if (!hit) {
-                  // Assigned to someone else on this page (a per-employee bonus).
-                  return (
-                    <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
-                      <span className="text-zinc-300 dark:text-zinc-700">n/a</span>
-                    </td>
-                  );
-                }
-                if (!hit.scoreable) {
-                  return (
-                    <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
-                      <span
-                        className="font-mono text-[9px] uppercase tracking-wider text-amber-500"
-                        title={`${bonus.name} is a ${bonus.currency} bonus. This card scores in pesos only, so it pays nothing here — assign a PHP bonus, or score it on the department card.`}
-                      >
-                        {bonus.currency}
-                      </span>
-                    </td>
-                  );
-                }
-                const on = !!e.kpi_data[catalogOnKey(bonus.id)];
+              {catalogCols.map(({ bonus, scoreable }) => {
                 const vars = catalogBonusVariables(bonus);
+                const rule = catalogRuleText(bonus, scoreable);
                 return (
-                  <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {on && vars.map((v) => (
-                        <input
-                          key={v}
-                          type="number"
-                          min={0}
-                          disabled={isLocked}
-                          title={v}
-                          aria-label={`${bonus.name} — ${v} for ${e.employee_name}`}
-                          value={String(e.kpi_data[catalogVarKey(bonus.id, v)] ?? '')}
-                          onChange={(ev) =>
-                            onKpiChange(e.employee_email, catalogVarKey(bonus.id, v), Number(ev.target.value) || 0)
-                          }
-                          className="w-14 rounded border border-zinc-200 bg-white px-1 py-0.5 text-right font-mono text-[11px] disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900"
-                        />
-                      ))}
-                      <input
-                        type="checkbox"
-                        className="accent-sky-600"
-                        checked={on}
-                        disabled={isLocked}
-                        aria-label={`${bonus.name} for ${e.employee_name}`}
-                        onChange={() => onKpiChange(e.employee_email, catalogOnKey(bonus.id), !on)}
-                      />
-                    </div>
-                  </td>
+                  <th
+                    key={`cat-${bonus.id}`}
+                    className={cn(
+                      'px-2 py-2 text-right font-mono text-[9px] uppercase tracking-[0.12em]',
+                      scoreable ? 'text-sky-700 dark:text-sky-400' : 'text-amber-700 dark:text-amber-400',
+                    )}
+                    title={[
+                      `${bonus.name} — assigned from the Bonus Library`,
+                      bonus.description?.trim() || null,
+                      bonus.kind === 'formula' ? `Formula: ${bonus.formula ?? ''}` : rule,
+                      vars.length > 0 ? `Inputs: ${vars.join(', ')}` : null,
+                      scoreable ? null : `This card scores in pesos only, so a ${bonus.currency} bonus pays ₱0 here.`,
+                    ]
+                      .filter(Boolean)
+                      .join('\n')}
+                  >
+                    <span className="flex items-center justify-end gap-1">
+                      <CatalogKindChip kind={bonus.kind} />
+                      <span className="max-w-[128px] truncate">{bonus.name}</span>
+                    </span>
+                    <span
+                      className={cn(
+                        'block max-w-[168px] truncate font-normal normal-case tracking-normal',
+                        scoreable ? 'text-zinc-500 dark:text-zinc-400' : 'text-amber-700 dark:text-amber-400',
+                      )}
+                    >
+                      {clipRule(rule)}
+                    </span>
+                  </th>
                 );
               })}
-              <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                <AnimatedPeso amount={e.calculated_bonus} />
+              <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Bonus</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 && (
+              <tr>
+                <td colSpan={rules.length + catalogCols.length + 3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
+                  No employees on this page.
+                </td>
+              </tr>
+            )}
+            {entries.map((e) => {
+              const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
+              return (
+              <tr key={e.employee_email} className="border-b border-zinc-100 hover:bg-zinc-50/60 dark:border-zinc-800/60 dark:hover:bg-zinc-900/40">
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-1.5">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                        <span className="truncate">{e.employee_name}</span>
+                        {isExternal && <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />}
+                      </div>
+                      <div className="font-mono text-[10px] text-zinc-500">{e.employee_email}</div>
+                    </div>
+                    {isExternal && onRemoveMember && !isLocked && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveMember(e.employee_email)}
+                        title="Remove external member"
+                        aria-label={`Remove ${e.employee_name}`}
+                        className="ml-auto shrink-0 rounded p-1 text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                </td>
+                <td className="px-2 py-2 text-center">
+                  <input
+                    type="checkbox"
+                    className="accent-blue-600"
+                    checked={e.is_manager}
+                    disabled={isLocked}
+                    onChange={() => onToggleManager(e.employee_email)}
+                  />
+                </td>
+                {rules.map((r) => (
+                  <td key={r.key} className="px-2 py-2 text-right">
+                    {r.type === 'flat' ? (
+                      r.managerOnly && !e.is_manager ? (
+                        <span className="text-zinc-500 dark:text-zinc-400">n/a</span>
+                      ) : r.cadence === 'monthly' && !finalWeekOfMonth ? (
+                        <span
+                          className="font-mono text-[9px] uppercase tracking-wider text-zinc-500 dark:text-zinc-400"
+                          title={`${r.label} is a monthly bonus — tick it in the last payroll week of the month`}
+                        >
+                          final wk
+                        </span>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          className="accent-amber-500"
+                          checked={Boolean(e.kpi_data[r.key])}
+                          disabled={isLocked}
+                          aria-label={`${r.label} for ${e.employee_name}`}
+                          onChange={(ev) => onKpiChange(e.employee_email, r.key, ev.target.checked)}
+                        />
+                      )
+                    ) : r.type === 'manual' ? (
+                      r.managerOnly && !e.is_manager ? (
+                        <span className="text-zinc-500 dark:text-zinc-400">n/a</span>
+                      ) : (
+                        <PesoAmountInput
+                          value={Number(e.kpi_data[r.key] ?? 0)}
+                          disabled={isLocked}
+                          ariaLabel={`${r.label} amount for ${e.employee_name}`}
+                          onChange={(n) => onKpiChange(e.employee_email, r.key, n)}
+                        />
+                      )
+                    ) : (
+                      <StepperInput
+                        value={Number(e.kpi_data[r.key] ?? 0)}
+                        disabled={isLocked}
+                        ariaLabel={`${r.label} for ${e.employee_name}`}
+                        onChange={(n) => onKpiChange(e.employee_email, r.key, n)}
+                      />
+                    )}
+                  </td>
+                ))}
+                {catalogCols.map(({ bonus }) => {
+                  const mine = catalogFor ? catalogFor(e.employee_email) : [];
+                  const hit = mine.find((c) => c.bonus.id === bonus.id);
+                  if (!hit) {
+                    // Assigned to someone else on this page (a per-employee bonus).
+                    return (
+                      <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
+                        <span
+                          className="text-zinc-500 dark:text-zinc-400"
+                          title={`${bonus.name} is not assigned to ${e.employee_name}`}
+                        >
+                          n/a
+                        </span>
+                      </td>
+                    );
+                  }
+                  if (!hit.scoreable) {
+                    // Shown, never paid. The chip says the consequence (₱0) rather
+                    // than only the currency, so nobody reads "USD" as "pays USD".
+                    return (
+                      <td key={`cat-${bonus.id}`} className="px-2 py-2 text-right">
+                        <span
+                          className="inline-flex items-center gap-1 rounded border border-amber-300/80 bg-amber-50 px-1 py-px font-mono text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300"
+                          title={`${bonus.name} is a ${bonus.currency} bonus. This card scores in pesos only, so it pays ₱0 here — assign a PHP bonus, or score it on the department card.`}
+                        >
+                          {bonus.currency} → ₱0
+                        </span>
+                      </td>
+                    );
+                  }
+                  const on = !!e.kpi_data[catalogOnKey(bonus.id)];
+                  const vars = catalogBonusVariables(bonus);
+                  // What this ONE bonus pays this person. A flat bonus already
+                  // states its amount in the column head, so repeating it on every
+                  // row would be noise; a formula's result is knowable no other
+                  // way, and ₱0 from a ticked bonus is the state worth catching.
+                  const amount = on ? calcHslCatalogBonus(e.kpi_data, bonus) : 0;
+                  return (
+                    <td key={`cat-${bonus.id}`} className="px-2 py-2">
+                      <div className="flex flex-col items-end gap-1">
+                        <input
+                          type="checkbox"
+                          className="accent-sky-600"
+                          checked={on}
+                          disabled={isLocked}
+                          aria-label={`Apply ${bonus.name} to ${e.employee_name}`}
+                          title={
+                            on
+                              ? `${bonus.name} applies to ${e.employee_name}`
+                              : vars.length > 0
+                                ? `Apply ${bonus.name} to ${e.employee_name}, then enter ${vars.join(', ')}`
+                                : `Apply ${bonus.name} to ${e.employee_name}`
+                          }
+                          onChange={() => onKpiChange(e.employee_email, catalogOnKey(bonus.id), !on)}
+                        />
+                        {on && vars.length > 0 && (
+                          <>
+                            <CatalogVarFields
+                              bonus={bonus}
+                              vars={vars}
+                              kpiData={e.kpi_data}
+                              employeeName={e.employee_name}
+                              disabled={isLocked}
+                              onChange={(key, val) => onKpiChange(e.employee_email, key, val)}
+                            />
+                            <span
+                              className={cn(
+                                'font-mono text-[9.5px] font-semibold tabular-nums',
+                                amount > 0 ? 'text-sky-700 dark:text-sky-400' : 'text-amber-700 dark:text-amber-400',
+                              )}
+                              title={
+                                amount > 0
+                                  ? `${bonus.name} pays ${formatPeso(amount)} of ${e.employee_name}'s bonus`
+                                  : `${bonus.name} pays ₱0 with these inputs — it is ticked, so check the numbers above`
+                              }
+                            >
+                              {formatPeso(amount)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-right font-mono font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  <AnimatedPeso amount={e.calculated_bonus} />
+                </td>
+              </tr>
+              );
+            })}
+            <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
+              <td colSpan={rules.length + catalogCols.length + 2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+                Subtotal
+              </td>
+              <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900 dark:text-zinc-100">
+                <AnimatedPeso amount={subtotal} />
               </td>
             </tr>
-            );
-          })}
-          <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
-            <td colSpan={rules.length + catalogCols.length + 2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
-              Subtotal
-            </td>
-            <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900 dark:text-zinc-100">
-              <AnimatedPeso amount={subtotal} />
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </tbody>
+        </table>
+      </div>
     </div>
   );
 }

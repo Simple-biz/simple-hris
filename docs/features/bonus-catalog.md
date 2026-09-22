@@ -320,6 +320,29 @@ US Manager Bonus · USEE**.
     keyed off `HslDeptKey`, so it covered the 14 code teams only — not a
     sub-team an accountant had just created, which had no card at all. See
     `hsl-subdepartments.md` §5.5.
+  - **How it READS on the card** *(2026-09-22, `impeccable clarify`)*. The
+    first cut put the bonus name in the column head and left everything else
+    unsaid: the head's second line was the word **"formula"** — a KIND, where
+    every neighbouring column states a RULE (`₱100.00`, `₱250.00 flat`) — and a
+    formula's variables were rendered as identical unlabelled boxes carrying a
+    `title` tooltip and nothing else. Kane, on the Filing Specialist card:
+    *"There are no name on the bonus I just assigned, it's confusing."* A
+    tooltip is also unreachable by touch and by keyboard, so for those users the
+    inputs had no names at all. The contract now:
+    - the head is **name + `flat`/`ƒ(x)` chip + the rule**, and for a formula
+      the rule is the accountant's expression itself, clipped, whole text in
+      `title`. The kind is stated in **text** — sky-on-zinc was previously the
+      only thing separating a Library column from a coded KPI column;
+    - a **`Bonus Library` legend strip** above the grid states each bonus once
+      in full — name, rule, the inputs it asks for, its description in `title` —
+      because a 9px column head scrolls away and cannot carry that;
+    - every formula variable is a **labelled field**, the treatment the general
+      KPI calculator's `VarFields` has always used;
+    - a ticked formula prints **its own peso** beneath its inputs, **amber at
+      ₱0**: a bonus that is ticked and pays nothing is the state worth catching,
+      and the row total cannot show it;
+    - the non-PHP cell reads **`USD → ₱0`**, the consequence rather than only
+      the currency.
   - Editing an assignment does **not** rewrite an already-scored week: the
     wizard pays the stored `calculated_bonus`, per
     [[payroll-rule-changes-forward-only]]. `withoutCatalogKeys` strips a removed
