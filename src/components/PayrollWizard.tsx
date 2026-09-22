@@ -161,6 +161,11 @@ import {
   mapPayloadToPayStub,
   type ProrationBlockRaw,
 } from '@/lib/payroll/paystub-view';
+import {
+  resolvePayStubFieldStates,
+  type PayStubFieldState,
+  type PayStubSourceStates,
+} from '@/lib/payroll/paystub-field-state';
 import { PayStubStatement } from '@/components/paystub/PayStubStatement';
 import {
   CURRENCY_SYMBOL,
@@ -3041,6 +3046,55 @@ export default function PayrollWizard({
   const [managerBonusLoaded, setManagerBonusLoaded] = useState<KpiLoadMarker>(null);
   /** {@link managerBonusLoaded}'s twin for `hslKpiAmounts` / `hslKpiPeriod`. */
   const [hslKpiLoaded, setHslKpiLoaded] = useState<KpiLoadMarker>(null);
+  /**
+   * The FAILED terminal for the two markers above, and for the additions blob.
+   *
+   * Those three markers are publish gates: `null` means "do not write the
+   * final-pay snapshot", and they stay null forever after a failed read *on
+   * purpose* — holding the previous snapshot beats overwriting it with a
+   * KPI-less total. That is exactly right for a gate and useless for a display,
+   * because it makes "still loading" and "will never load" the same value, and
+   * `payroll-wizard-step-load.md` § forbids driving an animation off a flag that
+   * never settles ("a line driven off it would run forever on exactly the case
+   * the line has to survive").
+   *
+   * So these are ADDED, never a relaxation: the gates below still read the
+   * markers and still refuse exactly what they refused before. All these do is
+   * let the Step-8 paystub preview say **Unavailable** — a terminal word —
+   * instead of shimmering forever or printing a confident ₱0.00.
+   */
+  const [managerBonusFailed, setManagerBonusFailed] = useState(false);
+  const [hslKpiFailed, setHslKpiFailed] = useState(false);
+  /** The `sourceFile` whose additions read failed, or null. Keyed by file for the
+   *  same reason {@link additionsHydratedFor} is: a failure belongs to one week. */
+  const [additionsLoadFailedFor, setAdditionsLoadFailedFor] = useState<string | null>(null);
+
+  /* ── Load state for the money inputs that had NO flag at all ───────────────
+   *
+   * Each of these loaders shares one anti-pattern: its `catch` resets to the
+   * SAME empty value the state initialises with, so *in flight*, *failed* and
+   * *genuinely none* are one indistinguishable value — and the Step-8 paystub
+   * preview printed all three as a confident ₱0.00 (or, for the MESA opt-out
+   * ledger, a confident −₱100.00 on somebody who had left).
+   *
+   * Purely additive: no consumer of the underlying maps changed, nothing that
+   * refused before is now allowed. They exist so the preview can distinguish
+   * the three, and they settle on EVERY path including failure — the rule
+   * `payroll-wizard-step-load.md` § imposes on anything that drives an
+   * animation. See `paystub-field-state.ts`.
+   */
+  const [pabMergeState, setPabMergeState] = useState<PayStubFieldState>('pending');
+  const [timeAdjOverridesState, setTimeAdjOverridesState] = useState<PayStubFieldState>('pending');
+  const [mesaDisbursementsState, setMesaDisbursementsState] = useState<PayStubFieldState>('pending');
+  const [mesaOptOutState, setMesaOptOutState] = useState<PayStubFieldState>('pending');
+  /** The server may ship the roster with `initialData`, in which case the first
+   *  fetch is deliberately skipped — that is landed data, not a pending read. */
+  const [masterRosterState, setMasterRosterState] = useState<PayStubFieldState>(
+    initialData?.employees?.length ? 'settled' : 'pending',
+  );
+  /** File-keyed, like the additions pair: this cycle's FX record belongs to one week. */
+  const [cycleFxLoadedFor, setCycleFxLoadedFor] = useState<string | null>(null);
+  const [cycleFxFailedFor, setCycleFxFailedFor] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -3051,6 +3105,10 @@ export default function PayrollWizard({
     // snapshot (the one Payment Dispatch prices from). Same reason the HSL twin
     // below clears instead of holding.
     setManagerBonusLoaded(null);
+    // A new attempt is not a failed one. Cleared with the maps, so the preview
+    // returns to "pending" for the width of the retry rather than staying on a
+    // stale Unavailable.
+    setManagerBonusFailed(false);
     setManagerBonusMeta({});
     setManagerBonusRaw({});
     setManagerBonusRowsRaw({});
@@ -3152,6 +3210,9 @@ export default function PayrollWizard({
         // possibly-stale other-week amount"). Never silent — an unreadable money
         // input has to be visible somewhere.
         console.error('[managerBonus] load failed — KPI submissions unavailable', e);
+        // ...and "somewhere" now includes the Step-8 paystub preview, which used
+        // to print the cleared maps as a confident ₱0.00 Performance Bonus.
+        if (!cancelled) setManagerBonusFailed(true);
       }
     })();
     return () => {
@@ -3167,6 +3228,7 @@ export default function PayrollWizard({
     // synchronously, before the first await, for the same reason as the manager
     // twin above — the spinner (`hslKpiLoading`) already covers the gap in the UI.
     setHslKpiLoaded(null);
+    setHslKpiFailed(false); // a new attempt is not a failed one
     setHslKpiPeriod(null);
     setHslKpiAmounts({});
     (async () => {
@@ -3191,6 +3253,9 @@ export default function PayrollWizard({
         if (hslSubsStatus !== 'ready') {
           if (hslSubsStatus === 'error') {
             console.error('[hslKpi] sub-department list unreadable — HSL KPI amounts withheld');
+            // Terminal, not in flight: this read is not going to be retried on its
+            // own, so the preview must say Unavailable rather than shimmer forever.
+            if (!cancelled) setHslKpiFailed(true);
           }
           return;
         }
@@ -3301,6 +3366,9 @@ export default function PayrollWizard({
         if (!cancelled) {
           setHslKpiPeriod(null);
           setHslKpiAmounts({});
+          // `hslKpiLoaded` stays null — the publish gate is unchanged. This is the
+          // terminal the Step-8 preview needs so it stops shimmering and says so.
+          setHslKpiFailed(true);
         }
       } finally {
         if (!cancelled) setHslKpiLoading(false);
@@ -3560,6 +3628,9 @@ export default function PayrollWizard({
     // a publish mid-load would write zeroed adjustments/orphanage over the
     // snapshot that Payment Dispatch prices from and the paystub merge trusts.
     setAdditionsHydratedFor(null);
+    // A new attempt is not a failed one — the Step-8 preview returns to "pending"
+    // for the width of the retry instead of holding a stale Unavailable.
+    setAdditionsLoadFailedFor(null);
     // Same reason: until this file's own toggles are on file, a marker left over
     // from the previously-viewed week must not authorize freezing anything.
     setSavedBonusTogglesFor(null);
@@ -3654,6 +3725,12 @@ export default function PayrollWizard({
       setAdditionsHydratedFor(sourceFile);
     } catch (e) {
       console.error('Failed to load additions progress', e);
+      // The marker above deliberately stays null so the snapshot publisher keeps
+      // refusing (unchanged). This records WHY it is null, so the Step-8 paystub
+      // preview can print "Unavailable" on Adjustment and Orphanage instead of a
+      // confident ₱0.00 or a shimmer that never ends. Only for the file we were
+      // actually reading — a period switch mid-flight already returned above.
+      if (calcSourceFileRef.current === sourceFile) setAdditionsLoadFailedFor(sourceFile);
     }
   }, []);
 
@@ -4002,11 +4079,17 @@ export default function PayrollWizard({
   const reloadMasterEmployees = React.useCallback(async () => {
     try {
       const res = await fetch('/api/employees', { cache: 'no-store' });
-      if (!res.ok) return;
+      // A non-ok response returns early and leaves the old list in place, which
+      // is right for the roster and is still a read that did not land.
+      if (!res.ok) { setMasterRosterState('unavailable'); return; }
       const json = (await res.json()) as { employees: EmployeeRow[]; error: string | null };
       setMasterEmployees(json.employees ?? []);
+      setMasterRosterState('settled');
     } catch {
-      // payrollComparison degrades gracefully with an empty list
+      // payrollComparison degrades gracefully with an empty list — but the Tech
+      // Allowance's 30-days-of-service gate reads `start_date` off this roster,
+      // so an empty one silently forces that line to ₱0.00 for everybody.
+      setMasterRosterState('unavailable');
     }
   }, []);
 
@@ -4172,7 +4255,10 @@ export default function PayrollWizard({
     fetch(`/api/app-settings?keys=${encodeURIComponent(key)}`, { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : { values: {} }))
       .then((json: { values?: Record<string, string | null> }) => {
-        if (cancelled || seq !== cycleFxWriteSeqRef.current) return;
+        if (cancelled) return;
+        // A save raced ahead of this response, so the LOCAL value is the newer
+        // truth — this cycle's rate is known, which is all the preview asks.
+        if (seq !== cycleFxWriteSeqRef.current) { setCycleFxLoadedFor(calcSourceFile); return; }
         const rec = parseCycleFxRecord(json.values?.[key] ?? null);
         // Last-writer-wins: never roll state back past a write we KNOW we made.
         // A fetch can overtake our still-in-flight POST (the GET is auth-lighter),
@@ -4182,7 +4268,8 @@ export default function PayrollWizard({
         const known = cycleFxRef.current;
         if (known && known.file === calcSourceFile && known.at) {
           const fetchedAt = rec?.at ?? null;
-          if (!fetchedAt || fetchedAt < known.at) return; // stale read — keep local truth
+          // Stale read — keep local truth, which is still a known rate.
+          if (!fetchedAt || fetchedAt < known.at) { setCycleFxLoadedFor(calcSourceFile); return; }
         }
         const php = rec?.php ?? (isReplay ? globalPhpRate : 0);
         const cop = rec?.cop ?? (isReplay ? globalCopRate : 0);
@@ -4191,9 +4278,14 @@ export default function PayrollWizard({
         setUsdToCopRate(cop);
         setUsdToCopInput(String(cop));
         cycleFxRef.current = { file: calcSourceFile, php, cop, at: rec?.at ?? null };
+        setCycleFxLoadedFor(calcSourceFile);
       })
       .catch(() => {
         /* keep current values — a failed read must not zero a set cycle */
+        // ...but the statement's USD/COP equivalents are Net × this rate, and
+        // `mapPayloadToPayStub` falls back to a hardcoded 58 when it is absent —
+        // a plausible, wrong dollar figure indistinguishable from a real one.
+        setCycleFxFailedFor(calcSourceFile);
       });
     return () => {
       cancelled = true;
@@ -4873,7 +4965,10 @@ export default function PayrollWizard({
   useEffect(() => {
     if (sourceFilesLoading) return;
     setPabMergeLoaded(false);
+    setPabMergeState('pending');
     let cancelled = false;
+    /** Set by the catch below; read by its `finally`, which runs either way. */
+    let mergeFailed = false;
     (async () => {
       try {
         const mergeRowsInto = (
@@ -4944,8 +5039,18 @@ export default function PayrollWizard({
         setPabAllRows([...rowsByEmail.values()]);
       } catch (e) {
         console.warn('[PAB all-files fetch]', e);
+        // The merge is a single try around the whole per-upload loop, so ONE
+        // failed request leaves `pabAllRows` empty — and `pabMergeLoaded` still
+        // flips true in the `finally` below, which is what the step rail needs
+        // (it must not spin forever) and what made the preview print ₱0.00
+        // Attendance Incentive for the entire company with nothing to say so.
+        // The marker stays exactly as it was; this records that it settled EMPTY.
+        if (!cancelled) mergeFailed = true;
       } finally {
-        if (!cancelled) setPabMergeLoaded(true);
+        if (!cancelled) {
+          setPabMergeLoaded(true);
+          setPabMergeState(mergeFailed ? 'unavailable' : 'settled');
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -5649,6 +5754,59 @@ export default function PayrollWizard({
   const anyStepDataLoading = steps.some((step) => isStepDataLoading(step.id));
 
   /**
+   * ── The step rail's per-LINE twin, for the Step-8 paystub preview ──────────
+   *
+   * `isStepDataLoading` above answers "can this TAB's figures be judged". It ORs
+   * six sources into one boolean, which is right for a 3px line under a step and
+   * useless for a pay statement: it would shimmer all thirteen lines whenever any
+   * one fetch was out, and it structurally cannot express *failed*.
+   *
+   * This is the same question asked per printed line. It sits here deliberately —
+   * the two mappings must be read together, because a step going green while a
+   * line beneath it still shimmers (or the reverse) means one of them is lying.
+   *
+   * Every entry resolves to `unavailable` on a FAILED read rather than staying
+   * `pending`, which is what keeps the statement off the forever-spinner
+   * `payroll-wizard-step-load.md` § rules out. The three publish-gate markers
+   * (`additionsHydratedFor`, `managerBonusLoaded`, `hslKpiLoaded`) are read here
+   * EXACTLY as the snapshot publisher reads them and are never relaxed; the
+   * `*Failed` flags beside them are additions that only distinguish "will never
+   * land" from "has not landed yet".
+   */
+  const paystubSourceStates = useMemo<PayStubSourceStates>(() => ({
+    weekHours: loadingWeekHours ? 'pending' : 'settled',
+    rates: loadingRates ? 'pending' : 'settled',
+    pabMerge: loadingPabMerge ? 'pending' : pabMergeState,
+    pabPeriod: pabPeriodSettings.loading ? 'pending' : 'settled',
+    additions:
+      additionsLoadFailedFor === calcSourceFile ? 'unavailable'
+        : additionsHydratedFor === calcSourceFile ? 'settled'
+          : 'pending',
+    managerKpi:
+      managerBonusFailed ? 'unavailable'
+        : kpiAmountsMatchWeek(managerBonusLoaded, hubstaffWeekStart) ? 'settled'
+          : 'pending',
+    hslKpi:
+      hslKpiFailed ? 'unavailable'
+        : kpiAmountsMatchWeek(hslKpiLoaded, hubstaffWeekStart) ? 'settled'
+          : 'pending',
+    timeAdjustments: timeAdjOverridesState,
+    mesaDisbursements: mesaDisbursementsState,
+    mesaOptOut: mesaOptOutState,
+    masterRoster: masterRosterState,
+    fx:
+      cycleFxFailedFor === calcSourceFile ? 'unavailable'
+        : cycleFxLoadedFor === calcSourceFile ? 'settled'
+          : 'pending',
+  }), [
+    loadingWeekHours, loadingRates, loadingPabMerge, pabMergeState, pabPeriodSettings.loading,
+    additionsLoadFailedFor, additionsHydratedFor, calcSourceFile,
+    managerBonusFailed, managerBonusLoaded, hslKpiFailed, hslKpiLoaded, hubstaffWeekStart,
+    timeAdjOverridesState, mesaDisbursementsState, mesaOptOutState, masterRosterState,
+    cycleFxFailedFor, cycleFxLoadedFor,
+  ]);
+
+  /**
    * The effective PAB end, extended so the last HSL week is fully evaluated.
    * Pre-cutover (Mon→Sun) snaps forward to the closing SUNDAY; post-cutover
    * (Sun→Sat) snaps to the closing SATURDAY. Delegates to getHslAdjustedEnd so
@@ -5896,14 +6054,19 @@ export default function PayrollWizard({
     const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
     const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
+    setTimeAdjOverridesState('pending');
     fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
       .then(r => r.json())
       .then((json: { rows?: TimeAdjustmentRow[] }) => {
         // Rows are kept RAW. Their day total depends on tracked hours, which are not
         // known here, so the overlay is derived in a memo further down.
         setApprovedAdjustmentRows(json.rows ?? []);
+        setTimeAdjOverridesState('settled');
       })
-      .catch(() => setApprovedAdjustmentRows([]));
+      // `[]` here is the same value the state initialises with, so without the
+      // marker the Time Adjustment line is SUPPRESSED (showsTimeAdjustmentLine
+      // keys on the money) and the credit silently leaves the statement with it.
+      .catch(() => { setApprovedAdjustmentRows([]); setTimeAdjOverridesState('unavailable'); });
   }, [pabMonthRange]);
 
   useEffect(() => {
@@ -5936,6 +6099,7 @@ export default function PayrollWizard({
   // Approved MESA disbursements (accounting-approved, not yet paid out via the
   // Urgent Payments queue) — folded into the Additions MESA column + Final pay.
   const fetchMesaDisbursements = useCallback(() => {
+    setMesaDisbursementsState('pending');
     fetch('/api/mesa-requests?request_type=disbursement&status=approved&limit=500', { cache: 'no-store' })
       .then(r => r.json())
       .then((json: { rows?: Array<{ work_email?: string; amount_needed?: number | null; dispatched_at?: string | null }> }) => {
@@ -5948,8 +6112,9 @@ export default function PayrollWizard({
           map.set(em, (map.get(em) ?? 0) + amt);
         }
         setMesaDisbursements(map);
+        setMesaDisbursementsState('settled');
       })
-      .catch(() => setMesaDisbursements(new Map()));
+      .catch(() => { setMesaDisbursements(new Map()); setMesaDisbursementsState('unavailable'); });
   }, []);
 
   // Load approved MESA disbursements as soon as the wizard mounts — and keep them fresh
@@ -5970,6 +6135,7 @@ export default function PayrollWizard({
   // list. Best-effort: a ledger failure leaves the set empty (falls back to flag-only), so
   // a transient error never re-introduces a deduction beyond what the flag alone gives.
   const fetchMesaOptedOut = useCallback(() => {
+    setMesaOptOutState('pending');
     fetch('/api/mesa-ledger', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : { members: [] }))
       .then((json: { members?: Array<{ email?: string | null; lastEventOptedOut?: boolean }> }) => {
@@ -5980,8 +6146,12 @@ export default function PayrollWizard({
           if (em) set.add(em);
         }
         setMesaOptedOutEmails(set);
+        setMesaOptOutState('settled');
       })
-      .catch(() => setMesaOptedOutEmails(new Set()));
+      // The empty set can only mean "nobody opted out", so until this lands an
+      // opted-out member's stub prints a confident −₱100.00 — a wrong NON-zero,
+      // which is why the preview resolves state from the loader, never the amount.
+      .catch(() => { setMesaOptedOutEmails(new Set()); setMesaOptOutState('unavailable'); });
   }, []);
 
   // Keep the opted-out set fresh across navigation for the same reason as
@@ -9809,7 +9979,15 @@ export default function PayrollWizard({
         rows.push(emp);
       }
     }
-    return { rows, excludedRows, missing, payPeriodPayload, rateIssues };
+    // `isFinalPabWeek` rides along so the Step-8 paystub preview can tell a
+    // POLICY-settled ₱0.00 apart from an unloaded one. PAB pays on exactly one
+    // week of its month, so on the other three Attendance Incentive is a certain
+    // zero and must NOT shimmer however slow the all-weeks merge is — shimmering
+    // it would tell a clerk to wait for money that is never coming, which is the
+    // same confusion this feature exists to remove. Week-level and DISPLAY-ONLY:
+    // it is returned beside the rows, never written onto one, so it cannot reach
+    // the staged payload, the snapshot, the email or an export.
+    return { rows, excludedRows, missing, payPeriodPayload, rateIssues, isFinalPabWeek };
   }, [
     effectiveCalcResults,
     ratesByEmail,
@@ -20787,6 +20965,30 @@ export default function PayrollWizard({
               const stubView = mapPayloadToPayStub(
                 selected as unknown as Record<string, unknown>,
               );
+              // Per-line load state. This dialog is the ONE surface that renders
+              // a statement off rows whose fetches have not all landed: the
+              // button opens on `rows.length > 0` alone, while the snapshot
+              // publisher reading these very rows already REFUSES to write in
+              // the same window ("dispatchData would still carry zeroed
+              // adjustments/orphanage/bonus toggles"). The preview printed them
+              // as a pay document anyway, and a ₱0.00 that has not loaded is
+              // indistinguishable from one that has.
+              //
+              // A React prop, never a field on the view: `renderPayStubEmailHtml`,
+              // `buildPayStubsWorkbook` and the staged `paystub_dispatch_queue`
+              // payload are all built from `PayStubView`, and none of their
+              // signatures can carry this — so it cannot reach an inbox, a PDF or
+              // a row re-rendered days later.
+              const stubFieldStates = resolvePayStubFieldStates(paystubSourceStates, {
+                // PAB pays on exactly ONE week of its month. On the other three
+                // Attendance Incentive is a certain ₱0.00, so it must not shimmer
+                // however slow the all-weeks merge is — the merge is the documented
+                // straggler and this is three weeks in four.
+                settledByPolicy:
+                  paystubSourceStates.pabPeriod === 'settled' && !dispatchData.isFinalPabWeek
+                    ? ['attendanceBonus']
+                    : [],
+              });
               return (
                 <>
                   <DialogHeader className="sr-only">
@@ -20833,7 +21035,7 @@ export default function PayrollWizard({
                         with no scrollbar on a normal viewport. */}
                     <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-4 py-4">
                       <div className="w-[560px] shrink-0" style={{ zoom: 0.84 }}>
-                        <PayStubStatement view={stubView} />
+                        <PayStubStatement view={stubView} fieldStates={stubFieldStates} />
                       </div>
                     </div>
                   </div>

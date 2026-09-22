@@ -13,6 +13,12 @@ import {
   type PayStubView,
   type ProratedLineView,
 } from '@/lib/payroll/paystub-view';
+import {
+  allFieldsSettled,
+  showsWhileUnsettled,
+  type PayStubFieldState,
+  type PayStubFieldStates,
+} from '@/lib/payroll/paystub-field-state';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
@@ -235,6 +241,57 @@ export function ProratedRateDetail({
   );
 }
 
+/**
+ * A shimmering placeholder standing where a figure will be — the Wizard Step-8
+ * preview only, driven by `fieldStates`. Grey and in motion, never amber: amber
+ * is the wizard's WARNING colour (`payroll-wizard-pab-step.md` § — *"missing
+ * evidence is a warning to check, not furniture"*), and a fetch that has not
+ * landed yet is not a warning, it is simply not an answer. Amber is reserved
+ * below for `unavailable`, which genuinely is one.
+ *
+ * `aria-hidden` on the bar with the state in text beside it, so a screen reader
+ * hears "still loading" rather than nothing at all.
+ */
+function PendingBar({ w = 'w-[62px]', h = 'h-[11px]' }: { w?: string; h?: string }) {
+  return (
+    <>
+      <span className={`paystub-pending-bar ${h} ${w}`} aria-hidden="true" />
+      <span className="sr-only">still loading</span>
+    </>
+  );
+}
+
+/**
+ * The terminal state. A loader that FAILED will not produce a figure without a
+ * reload, so it must never animate — `payroll-wizard-step-load.md` § forbids the
+ * forever-spinner, and [[kpi-calculator-week-unresolved-hang]] settled the
+ * general rule: an unresolvable input is TERMINAL, not pending. Says the word
+ * rather than showing a zero, the same ruling as the wizard's first-paycheck
+ * label (*"a failed read says unavailable, never zero"*).
+ */
+function UnavailableMark() {
+  return (
+    <span className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.06em] text-[#b45309]">
+      Unavailable
+    </span>
+  );
+}
+
+/** Render `amount` as itself, a shimmer, or the word — one decision, three cells. */
+function AmountCell({
+  amount,
+  state,
+  barWidth,
+}: {
+  amount: string;
+  state: PayStubFieldState;
+  barWidth?: string;
+}) {
+  if (state === 'pending') return <PendingBar w={barWidth} />;
+  if (state === 'unavailable') return <UnavailableMark />;
+  return <>{amount}</>;
+}
+
 function EarningRow({
   label,
   badge,
@@ -242,6 +299,7 @@ function EarningRow({
   amount,
   amountClass,
   last,
+  state = 'settled',
 }: {
   label: string;
   /** Inline tag after the label (the "Prorated" chip) — never a new row. */
@@ -250,8 +308,29 @@ function EarningRow({
   amount: string;
   amountClass?: string;
   last?: boolean;
+  /**
+   * Wizard preview only; omitted everywhere else, which is what keeps every
+   * employee-facing and emailed statement byte-identical. While it is not
+   * `settled` the row keeps its label and its position and swaps ONLY the two
+   * cells that would otherwise assert a figure — the detail cell goes too,
+   * because `40.00h × ₱0.00` is exactly as confident a claim as the amount is.
+   */
+  state?: PayStubFieldState;
 }) {
   const border = last ? '' : 'border-b border-[#edf2f7]';
+  const unsettled = state !== 'settled';
+  // The detail cell follows the SAME three-way branch as the amount. It must not
+  // shimmer on `unavailable` — a terminal state that animates is exactly the
+  // forever-spinner `payroll-wizard-step-load.md` § rules out, and this cell was
+  // the one place it could still creep in (caught by the all-unavailable test).
+  // On `unavailable` it goes blank rather than repeating the word: the amount
+  // cell beside it already says it once, and twice reads as two problems.
+  const detailCell =
+    state === 'pending' ? <PendingBar w="w-[74px]" /> : state === 'unavailable' ? null : detail;
+  // `amountClass` carries the signed teal/red of the MESA and Orphanage rows.
+  // Dropping it while unsettled is deliberate: a red placeholder would assert a
+  // deduction, and a teal one a credit, before either is known.
+  const amountTone = unsettled ? '' : (amountClass ?? '');
   return (
     <tr>
       <th
@@ -263,18 +342,18 @@ function EarningRow({
         {/* The detail column is hidden below sm — carry the detail under the
             label so no line ever loses the basis for its amount. */}
         <div className="mt-[3px] break-words text-[11px] font-normal leading-[14px] text-[#556377] sm:hidden">
-          {detail}
+          {detailCell}
         </div>
       </th>
       <td
         className={`hidden break-words px-2 py-1.5 align-top text-[12px] leading-[15px] text-[#556377] sm:table-cell ${border}`}
       >
-        {detail}
+        {detailCell}
       </td>
       <td
-        className={`whitespace-nowrap py-1.5 text-right align-top text-[13px] font-bold leading-[15px] tabular-nums text-[#102034] ${border} ${amountClass ?? ''}`}
+        className={`whitespace-nowrap py-1.5 text-right align-top text-[13px] font-bold leading-[15px] tabular-nums text-[#102034] ${border} ${amountTone}`}
       >
-        {amount}
+        <AmountCell amount={amount} state={state} />
       </td>
     </tr>
   );
@@ -284,6 +363,7 @@ export function PayStubStatement({
   view,
   paidAt,
   status,
+  fieldStates,
 }: {
   view: PayStubView;
   paidAt?: string | null;
@@ -297,9 +377,35 @@ export function PayStubStatement({
    * date means paid.
    */
   status?: string | null;
+  /**
+   * Per-line load state — the **Payroll Wizard Step-8 preview only**, which is
+   * the one surface that renders a statement off rows whose fetches have not all
+   * landed. Omitted (undefined) everywhere else, and an omitted prop resolves
+   * every line to `settled`, so every employee-facing mount, every emailed copy
+   * and every export is byte-identical to before — the same contract the
+   * weekend, proration, transfer and time-adjustment blocks each carry.
+   *
+   * Deliberately a React prop and NOT a field on {@link PayStubView}: the view is
+   * what `renderPayStubEmailHtml`, `buildPayStubsWorkbook` and the staged
+   * `paystub_dispatch_queue` payload are all built from, and none of those three
+   * signatures can carry a React prop. A load state can therefore never reach an
+   * inbox, a PDF or a row re-rendered days later — structurally, not by
+   * discipline. See `paystub-field-state.ts` for the resolution rules.
+   */
+  fieldStates?: PayStubFieldStates;
 }) {
   const paidLabel = formatStatementDate(paidAt);
   const isPaid = status ? status === 'paid' : Boolean(paidLabel);
+  // One object either way, so nothing below branches on "was the prop passed".
+  const fs = fieldStates ?? allFieldsSettled();
+  // The three optional lines are ABSENT rather than ₱0.00 when they carry no
+  // money. Unloaded, that absence is a claim the data cannot support — and a
+  // vanished row is less visible than a zeroed one, not more (Kane 2026-09-22).
+  // The shared predicate still owns the SETTLED answer, which is what keeps the
+  // three renderers in agreement about every statement anyone is ever sent.
+  const showsWeekend = showsWhileUnsettled(view.hasWeekend, fs.weekend);
+  const showsTimeAdj = showsWhileUnsettled(showsTimeAdjustmentLine(view), fs.timeAdjustment);
+  const showsOrphanage = showsWhileUnsettled(showsOrphanageLine(view), fs.orphanage);
   return (
     <div
       className="w-full max-w-[560px] overflow-hidden rounded-[17px] bg-[#f97316] p-[3px] shadow-[0_20px_48px_rgba(16,32,52,0.16),0_2px_6px_rgba(16,32,52,0.07)]"
@@ -343,13 +449,31 @@ export function PayStubStatement({
           <div className="overflow-hidden rounded-[10px] border border-[#e2e8f0] bg-[#f8fafc]">
             <div className={`${SEC_HEAD} px-5 tracking-[0.11em]`}>Total Net Pay</div>
             <div className="px-5 pb-[10px] pt-[9px]">
+              {/* Net inherits the worst state of every line beneath it. A
+                  shimmering Attendance Incentive under a confident ₱14,188.29
+                  would re-open the exact defect closed on 2026-09-22 — a pay
+                  document that does not add up to its own total. `resolvePay
+                  StubFieldStates` folds that identity; this only obeys it. */}
               <div className="whitespace-nowrap text-[30px] font-extrabold leading-9 tabular-nums text-[#102034] sm:text-[34px] sm:leading-10">
-                {php(view.totalPayPhp)}
+                {fs.total === 'pending' ? (
+                  /* Sized to the NUMBER it replaces (30/34px), not to a line of
+                     text — a hairline under the statement's largest figure reads
+                     as a rule, not as "this is still coming". */
+                  <PendingBar w="w-[170px] sm:w-[196px]" h="h-[26px] sm:h-[30px]" />
+                ) : fs.total === 'unavailable' ? (
+                  <UnavailableMark />
+                ) : (
+                  php(view.totalPayPhp)
+                )}
               </div>
               <div className="mt-1.5 flex items-center justify-between gap-3 border-t border-[#e2e8f0] pt-1.5">
                 <span className="text-[12px] leading-[17px] text-[#556377]">USD equivalent</span>
+                {/* Never better than Net and never better than the FX read:
+                    `mapPayloadToPayStub` falls back to a hardcoded 58 when the
+                    cycle rate is absent, so this figure is plausible, wrong and
+                    indistinguishable from a real one. */}
                 <span className="whitespace-nowrap text-[12px] font-bold leading-[17px] text-[#26384d]">
-                  {usd(view.totalPayUsd)}
+                  <AmountCell amount={usd(view.totalPayUsd)} state={fs.totalUsd} barWidth="w-[58px]" />
                 </span>
               </div>
               {/* Colombian (COP-country) payees: the native figure their bank
@@ -359,7 +483,7 @@ export function PayStubStatement({
                 <div className="mt-1 flex items-center justify-between gap-3">
                   <span className="text-[12px] leading-[17px] text-[#556377]">COP equivalent</span>
                   <span className="whitespace-nowrap text-[12px] font-bold leading-[17px] text-[#26384d]">
-                    {cop(view.totalPayCop)}
+                    <AmountCell amount={cop(view.totalPayCop)} state={fs.totalCop} barWidth="w-[66px]" />
                   </span>
                 </div>
               )}
@@ -437,6 +561,7 @@ export function PayStubStatement({
                 )
               }
               amount={php(view.weekdayPay ?? view.mfPay)}
+              state={fs.regular}
             />
             <EarningRow
               label={view.otIsDifferential ? 'OT Differential' : 'Overtime'}
@@ -453,8 +578,9 @@ export function PayStubStatement({
                 )
               }
               amount={php(view.weekdayOtPay ?? view.otPay)}
+              state={fs.overtime}
             />
-            {view.hasWeekend && (
+            {showsWeekend && (
               <EarningRow
                 label="Weekend Hours"
                 badge={view.proration?.weekend ? <ProratedChip /> : null}
@@ -480,6 +606,7 @@ export function PayStubStatement({
                   )
                 }
                 amount={php(view.weekendPay)}
+                state={fs.weekend}
               />
             )}
             {/* Approved time adjustment. It sits directly after the hours lines,
@@ -493,42 +620,55 @@ export function PayStubStatement({
                 when the block moved money (`showsTimeAdjustmentLine`), so every
                 statement staged before 2026-09-10 and every week without an
                 adjustment is byte-identical to before. */}
-            {showsTimeAdjustmentLine(view) && (
+            {showsTimeAdj && (
               <EarningRow
                 label="Time Adjustment"
                 detail={formatTimeAdjustmentDetail(view.timeAdjustment)}
                 amount={php(view.timeAdjustment?.payPhp ?? 0)}
+                state={fs.timeAdjustment}
               />
             )}
-            <EarningRow label="Tech Allowance" detail="Bonus" amount={php(view.techBonus)} />
+            <EarningRow
+              label="Tech Allowance"
+              detail="Bonus"
+              amount={php(view.techBonus)}
+              state={fs.techBonus}
+            />
             <EarningRow
               label="Attendance Incentive"
               detail="Bonus"
               amount={php(view.attendanceBonus)}
+              state={fs.attendanceBonus}
             />
             <EarningRow
               label="Performance Bonus"
               detail="Bonus"
               amount={php(view.performanceBonus)}
+              state={fs.performanceBonus}
             />
             <EarningRow
               label="Adjustment"
+              /* The fallback literal is itself a claim — it reads as "Accounting
+                 entered one and left it blank" on a week whose additions blob has
+                 not hydrated. EarningRow swaps the detail cell while unsettled. */
               detail={view.adjustmentNote || 'Manual adjustment'}
               amount={php(view.adjustment)}
-              last={!showsOrphanageLine(view)}
+              last={!showsOrphanage}
+              state={fs.adjustment}
             />
             {/* Orphanage — an accounting extra added on top of pay, and one
                 almost nobody receives, so the row appears only when there is
                 money on it (`showsOrphanageLine`) rather than printing ₱0.00 on
                 every other person's statement. Signed + teal, matching the
                 emailed statement and the wizard preview, which share the rule. */}
-            {showsOrphanageLine(view) && (
+            {showsOrphanage && (
               <EarningRow
                 label="Orphanage"
                 detail="Contribution"
                 amount={`+${php(view.orphanagePay)}`}
                 amountClass="!text-[#0f766e]"
                 last
+                state={fs.orphanage}
               />
             )}
           </StatementTable>
@@ -543,6 +683,7 @@ export function PayStubStatement({
               detail="Payout"
               amount={`+${php(view.mesaDisbursement)}`}
               amountClass="!text-[#0f766e]"
+              state={fs.mesaDisbursement}
             />
             <EarningRow
               label="MESA Deduction"
@@ -550,6 +691,11 @@ export function PayStubStatement({
               amount={`-${php(view.mesaDeduction)}`}
               amountClass="!text-[#b3261e]"
               last
+              /* The opt-out ledger can only SUPPRESS this charge, so an unread
+                 one prints a confident −₱100.00 on someone who has left MESA —
+                 a wrong NON-zero, which is why the state is resolved from the
+                 loader and not from the amount. */
+              state={fs.mesaDeduction}
             />
           </StatementTable>
         </div>

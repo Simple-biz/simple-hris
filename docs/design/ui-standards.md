@@ -1141,6 +1141,17 @@ Three flavors:
   fires — a ref callback that checks `el.complete && el.naturalWidth > 0` and
   skips the skeleton avoids a permanent shimmer on cached images.
 
+- **Per-field placeholder** for a *document* whose individual figures arrive on
+  separate clocks — currently only the pay statement (`.paystub-pending-bar`,
+  `paystub-dispatch.md` § *Per-line load state*). Three states, never two:
+  `pending` is a grey shimmer, **`unavailable` is amber and STATIC**. A terminal
+  state must never animate — an animation promises an arrival.
+  Amber is right there and wrong for `pending`: amber is the warning colour
+  (§ 12.4, and `payroll-wizard-pab-step.md`'s "missing evidence is a warning to
+  check"), a fetch still in flight is not a warning, and a failed one is.
+  The bar is light-locked — no `.dark` variant — because the statement is a
+  document in both app themes.
+
 Reading-state captions follow this format:
 `<p className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-400">Reading ledger</p>`.
 Use a verb that matches the domain ("Reading ledger", "Loading roster",
@@ -1419,7 +1430,9 @@ Every new surface must:
 - Header: editorial breadcrumb header at the page level for most tabs;
   branded hero header on `Overview`
 - Notable surfaces: `Overview` (mixed densities), `Rates` (editorial
-  card-list), `PayrollWizard` (its own deep convention — do not modify),
+  card-list), `PayrollWizard` (its own deep convention — do not modify; its
+  Step-8 paystub preview is a *document* and follows § 12.3's per-field rule,
+  not app-table chrome),
   `PabDisputeQueue` (table + dialog), `LeaveRequestsPanel`
 
 ### 17.2 Payroll Clerk (`/payroll-clerk`)

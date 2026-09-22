@@ -980,6 +980,29 @@
     background-size: 50% 100%;
     background-repeat: no-repeat;
   }
+
+  /* Pay statement pending bar (Payroll Wizard step 8 preview only).
+     A DELIBERATE sibling of `.skeleton-shimmer` rather than a reuse: the pay
+     statement is a light "document" in both app themes (PayStubStatement sets
+     `colorScheme: light` and uses literal hex throughout), so the `.dark`
+     variant above would paint a zinc-800 slab onto white paper. This one has no
+     dark variant on purpose — it must look the same under either theme, exactly
+     as every other colour on the statement does. */
+  .paystub-pending-bar {
+    display: inline-block;
+    vertical-align: middle;
+    border-radius: 3px;
+    background-color: rgb(226 232 240); /* the statement's own #e2e8f0 rule colour */
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.9) 50%,
+      transparent 100%
+    );
+    background-size: 50% 100%;
+    background-repeat: no-repeat;
+    animation: skeleton-shimmer-sweep 1.6s linear infinite;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -991,6 +1014,13 @@
   .dark .initial-calc-skeleton-bar,
   .dark .skeleton-shimmer {
     background: rgb(63 63 70);
+  }
+  /* Still a visible placeholder, just a still one — the bar IS the message
+     ("this figure is not an answer yet"), so it may never be animated away to
+     nothing. No `.dark` rule here either, same reason as above. */
+  .paystub-pending-bar {
+    animation: none;
+    background: rgb(226 232 240);
   }
 }
 

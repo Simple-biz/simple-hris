@@ -511,7 +511,9 @@ Where it shows (all driven by `PayStubView`'s `hasWeekend`/`weekday*`/`weekend*`
 
 - **Shared statement** (`PayStubStatement.tsx`) → Employee Dashboard modal, Employee Profile
   Pay Stubs tab, Salary-Paid notification, and Payment Dispatch's Accounting stub viewer.
-- **Wizard Paystubs preview** (its own inline markup, same split).
+- **Wizard Paystubs preview** — renders the shared `PayStubStatement` itself since 2026-08-06
+  (see § *Statement rendering moved into the app*); the hand-copied inline markup this line used
+  to describe is gone.
 - **Employee exports** (`paystub-export.ts`): XLSX carries merged Weekend Hours / Weekend Pay
   columns (both buckets — the per-bucket split collapsed 2026-08-07); the PDF's `Weekend` column
   shows the same merged figure. Regular/Overtime columns hold the weekday portion so a row still
@@ -930,7 +932,11 @@ cannot forget to render the document. The mark-paid path passes its **reconciled
 whose total matches the money the row just recorded, plus `amount_cop` for Colombian payees) via
 `views[]`; anything else is derived from the payload itself.
 
-**Line visibility** is decided once, in `paystub-view.ts`, and obeyed by all three surfaces:
+**Line visibility** is decided once, in `paystub-view.ts`, and obeyed by all three surfaces.
+**The predicate owns the SETTLED answer** — which is the answer on every statement anyone is
+ever sent, and keeping the three renderers from disagreeing about it is the whole point. The one
+narrowing (Kane, 2026-09-22) is the Wizard Step-8 **preview**, which may render a row while that
+row's data has not landed; see § *Per-line load state* below. Nothing else may.
 
 - **Weekend Hours** (one merged row since 2026-08-07 — both pay buckets, per-rate basis) — only
   when `hasWeekend` (HSL/Hogan weeks carrying a Sat+Sun carve-out). Non-HSL statements have no
@@ -940,13 +946,103 @@ whose total matches the money the row just recorded, plus `amount_cop` for Colom
 - **Time Adjustment** — only when the block moved money (`showsTimeAdjustmentLine`); see below.
 - **Everything else** — Regular, Overtime, Tech, Attendance, Performance, Adjustment and the MESA
   pair — always renders, `₱0.00` included, so the breakdown reconciles to Net the same way on every
-  document.
+  document. **This governs SETTLED data** (narrowed 2026-09-22, Kane): a printed `₱0.00` is an
+  assertion that the figure is zero, and the Wizard Step-8 preview is the one surface that renders
+  a statement before its fetches have landed, where that assertion is not yet true. There the
+  amount cell carries a **third state** instead — see § *Per-line load state*. Everywhere else,
+  and on every settled line, the rule is unchanged: the zero prints.
 
 **Editing the statement.** Change `PayStubStatement.tsx` and `paystub-email-html.ts` together; the
 component is the reference and the renderer is its email-safe transcription (tables + inline styles,
 since email clients have no flexbox). `src/lib/payroll/paystub-email-html.test.ts` pins the parts
 that drifted before. **Do not paste HTML back into the n8n Gmail node** — that is the exact
 regression this replaced.
+
+## Per-line load state (Wizard Step-8 preview only) — 2026-09-22
+
+Kane: *"when the certain step is still loading — like adjustments or PAB or Attendance Incentive —
+the field in the paystub should have a loading animation in there, that way we don't get confused."*
+
+**The defect.** "Preview Emails" opens on `dispatchData.rows.length > 0` and nothing else, while
+the snapshot publisher reading *those very rows* refuses to write in the same window —
+`publishFinalPaySnapshot`: *"dispatchData would still carry zeroed adjustments/orphanage/bonus
+toggles."* The wizard already knew the rows were not judgeable; the preview printed them as a pay
+document anyway. Measured on the PAB path: while `!pabMergeLoaded`, `hubstaffRowsForPab` is null,
+so `perfectAttendanceEligible` returns an **empty Set by design**, the auto-toggle writes
+`perfect_attendance: false`, and **Attendance Incentive prints ₱0.00 for the entire company** —
+indistinguishable from a missed day, from a non-payout week, and from an Ignored person's
+deliberate zero. The all-weeks PAB merge is the documented straggler (one fetch per archived
+upload), so this window is not small.
+
+**Three states, never two.**
+
+| State | When | Cell |
+|---|---|---|
+| `settled` | every loader behind the line has landed | the amount, **`₱0.00` included** |
+| `pending` | a loader is in flight | a grey shimmer (`.paystub-pending-bar`) |
+| `unavailable` | a loader **failed** | the word, amber, **static** |
+
+`unavailable` outranks `pending` because it is terminal: a line with one failed input can never
+become settled, and animating it would be the forever-spinner `payroll-wizard-step-load.md`
+§ *Deliberately excluded* rules out — the same ruling as [[kpi-calculator-week-unresolved-hang]]
+(*"an unresolvable payroll week is TERMINAL, not pending"*) and [[wizard-first-paycheck-label]]
+(*"a failed read says unavailable, never zero"*). Grey for `pending` and amber for `unavailable`
+is deliberate and not decoration: amber is the wizard's **warning** colour
+(`payroll-wizard-pab-step.md` § — *"missing evidence is a warning to check, not furniture"*), a
+fetch that has not landed yet is not a warning, and a fetch that has failed is.
+
+**Resolved from the LOADER, never from the amount.** A zero is not evidence of anything — the same
+reason the PAB step bands a no-hours person amber rather than counting them as a failure. Keying
+off `amount === 0` would shimmer every policy-settled zero (a non-final PAB week, weeks 4–5 for
+Tech, the Lead Gen exclusion, the no-rates cohort) and tell a clerk to wait for money that is never
+coming. It would also miss the opposite case, which is worse: `isMesaOptedOut` returns false on an
+empty set, so an unread MESA ledger prints a confident **−₱100.00 on someone who has left MESA** —
+a wrong NON-zero.
+
+**Net inherits the worst of every line beneath it.** A shimmering Attendance Incentive under a
+confident total would re-open the exact defect closed the same day: a pay document that does not
+add up to its own total. `totalUsd` / `totalCop` are never better than Net **and** never better
+than the FX read, because `mapPayloadToPayStub` falls back to a hardcoded **58** when the cycle
+rate is absent — a plausible, wrong dollar figure indistinguishable from a real one.
+
+**The three ABSENT-not-zero lines render while unsettled.** Weekend Hours, Time Adjustment and
+Orphanage are suppressed — not zeroed — when they carry no money. Unloaded, that absence is a claim
+the data cannot support, and a vanished row is *less* visible than a zeroed one, not more. Kane
+ruled the preview shows the row with a shimmer and lets the shared predicate decide once the data
+lands (`showsWhileUnsettled`). The settled statement is unchanged.
+
+**Why it cannot reach an inbox, a PDF, or a row re-rendered days later.** The states are a **React
+prop on `PayStubStatement`**, never a field on `PayStubView`:
+
+| Destination | Signature | Reachable |
+|---|---|---|
+| Emailed statement | `renderPayStubEmailHtml(view, opts)` | **No** — no argument can carry a React prop |
+| Per-employee send | `views?.[i] ?? mapPayloadToPayStub(e)` | **No** — derived from the stored payload |
+| XLSX / PDF | `buildPayStubsWorkbook(weeks, opts, at)` | **No** — same reason |
+| Staged queue | the wizard stages `payload: e` | **No** — computed beside the row, never onto it |
+| Every employee-facing mount | `PayStubModal` passes nothing | **No** — omitted ⇒ all `settled` |
+
+That is structural, not a discipline, and it is why this change did **not** need a matching edit to
+`paystub-email-html.ts` under § *Editing the statement* — there is nothing to transcribe. **Do not
+"simplify" the prop onto the view.** An omitted prop renders byte-identically to before, the same
+contract the weekend, proration, transfer and time-adjustment blocks each carry.
+
+**The loaders had to change first.** Of the thirteen lines, exactly one (`pabMergeLoaded` →
+Attendance Incentive) had a flag that settled on every path. `additionsHydratedFor`,
+`managerBonusLoaded` and `hslKpiLoaded` stay null forever on failure **on purpose** — they are
+publish gates, and holding the previous snapshot beats overwriting it with a KPI-less total. Six
+more inputs had no flag at all, each with the same anti-pattern: the `catch` resets to the same
+empty value the state initialises with, so *in flight*, *failed* and *genuinely none* were one
+value. Each now carries an **added** failure terminal. **No gate was relaxed** — every publisher
+and every consumer reads the original markers unchanged; the new flags only distinguish "will never
+land" from "has not landed yet".
+
+Files: `src/lib/payroll/paystub-field-state.ts` (pure, tested) · `PayStubStatement.tsx`
+(`fieldStates` prop) · `PayrollWizard.tsx` `paystubSourceStates` (beside `isStepDataLoading`, so
+the step rail's mapping and this one can be read together) · `src/index.css`
+`.paystub-pending-bar`. Tests: `paystub-field-state.test.ts` (29) ·
+`paystub-pending-render.test.ts` (21 — including the byte-identical pair, the all-unavailable
+no-shimmer proof, and the email/view escape hatches held shut).
 
 ## The Time Adjustment line — 2026-09-22
 

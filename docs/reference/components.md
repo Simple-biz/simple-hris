@@ -696,8 +696,33 @@ The **weekly** period cards were removed in the same pass: a weekly dept's bonus
 **Layout**: Centered animated circle (indigo gradient) with a Send icon. Shows worker count from the payrollComparison stats.
 
 **Buttons**:
-- "Preview Paystubs" → `toast.info("Coming soon")` (placeholder)
-- "Confirm & Dispatch" → `toast.success("Payroll dispatched")` + resets wizard to Step 1 (placeholder — no actual payment API call)
+- **"Preview Emails"** → opens the Preview Paystubs modal over `dispatchData.rows` (recipient list
+  + the shared `PayStubStatement`). It has **no load gate** — it opens whenever there is at least
+  one row, which is why the statement carries per-line load state (below).
+- **"Lock in Values & Send to Payment Dispatch"** → stages every payable row into
+  `paystub_dispatch_queue` and publishes the final-pay snapshot Payment Dispatch prices from.
+
+*(Both bullets described `toast.info("Coming soon")` placeholders until 2026-09-22. The real
+dispatch path has been live since 2026-08-06 — see `docs/features/paystub-dispatch.md`.)*
+
+### `PayStubStatement` (`src/components/paystub/PayStubStatement.tsx`)
+
+The one pay statement, rendered from a `PayStubView`. Mounted by `PayStubModal` (employee
+dashboard, Employee Profile → Pay Stubs, the Salary-Paid notification, Payment Dispatch's
+Accounting viewer) and by the Payroll Wizard's Step-8 preview. `paystub-email-html.ts` is its
+email-safe transcription — **change the two together**.
+
+| Prop | Meaning |
+|---|---|
+| `view` | the statement's figures (`mapPayloadToPayStub`) |
+| `paidAt` / `status` | the header pill: `Paid <date>` vs `Pending` |
+| `fieldStates` | **Wizard Step-8 preview only.** Per-line `settled` / `pending` / `unavailable`. Omitted ⇒ every line `settled`, byte-identical to before. |
+
+`fieldStates` is deliberately a **React prop and not a `PayStubView` field**: the view is what the
+email renderer, the workbook builder and the staged queue payload are all built from, and none of
+their signatures can carry a React prop — so a load marker cannot reach an inbox, a PDF or a row
+re-rendered days later. Do not move it onto the view. Rules:
+`src/lib/payroll/paystub-field-state.ts`.
 
 **Excel (XLSX) export.** The payroll report export includes the **Employee ID** (`YYMM-NNNN`) column so exported files can be cross-referenced with other records by ID. Columns: Employee, Email, Department, Hours, Regular, OT, Bonuses, MESA, Net Pay, **Employee ID**.
 

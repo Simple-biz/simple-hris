@@ -46,9 +46,13 @@ judges mid-load.
 |---|---|
 | `src/lib/payroll/step-load-prediction.ts` | pure prediction + the localStorage EMA. **The invariant lives here so it can be tested.** |
 | `src/lib/payroll/step-load-prediction.test.ts` | 12 tests, incl. the never-reaches-100% proof |
-| `src/components/PayrollWizard.tsx` `StepDataProgress` (~1796) | the component: rAF loop, grace window, settle timers |
-| `src/components/PayrollWizard.tsx` `isStepDataLoading` (~5030) | the per-step data mapping |
-| `src/index.css` `.wizard-step-progress` / `-bar` (~1451) | track, fill, done colour |
+| `src/components/PayrollWizard.tsx` `StepDataProgress` (~1915) | the component: rAF loop, grace window, settle timers |
+| `src/components/PayrollWizard.tsx` `isStepDataLoading` (~5699) | the per-step data mapping |
+| `src/components/PayrollWizard.tsx` `paystubSourceStates` (~5776) | the per-LINE twin — see § below |
+| `src/index.css` `.wizard-step-progress` / `-bar` (~1540) | track, fill, done colour |
+
+(Line numbers drift; they are a starting point, not a citation. `isStepDataLoading` had been
+recorded at ~5030 since 2026-08-25 and was ~670 lines out by 2026-09-22.)
 
 ---
 
@@ -138,6 +142,36 @@ animation. The line cannot become the forever-spinner a terminal skeleton once w
 - **`hslSyncLoading` and the upload-progress spinners.** Those are actions Accounting just
   took, already reported by the button they pressed. This line is about *data arriving*, not
   about work they asked for.
+
+### The per-LINE twin — 2026-09-22
+
+`isStepDataLoading` answers *"can this TAB's figures be judged"*. Since 2026-09-22 the Step-8
+**Paystubs preview** asks the same question **per printed line** — `paystubSourceStates` in
+`PayrollWizard.tsx`, folded by `src/lib/payroll/paystub-field-state.ts`
+(`paystub-dispatch.md` § *Per-line load state*).
+
+**The two mappings live side by side in the file and must be read together.** A step going green
+while a line beneath it still shimmers — or the reverse — means one of them is lying, and they are
+claims about the same fetches.
+
+`isStepDataLoading` is **not reusable** for it, for two reasons that are both the point:
+
+1. It ORs six sources into one boolean. Correct for a 3 px line under a step; on a statement it
+   would shimmer all thirteen lines whenever any one fetch was out.
+2. It cannot express **failed**. The rail only ever needs *in flight* vs *landed*, so
+   `pabMergeLoaded` flips true in its `finally` even when every request in the merge threw — which
+   is right for the rail and is exactly how a failed merge printed ₱0.00 Attendance Incentive for
+   the whole company with the rail green above it. The per-line map carries a third state.
+
+Six loaders gained failure terminals for this, and **three of them are the publish gates**
+(`additionsHydratedFor`, `managerBonusLoaded`, `hslKpiLoaded`), which stay null forever on failure
+on purpose. The new flags are **additive** — the gates read the original markers and refuse exactly
+what they refused before. Adding a *gate* to this rail would still be wrong; adding a *terminal*
+beside one is what let the statement stop spinning.
+
+`orphanageDetailLoadedFor` is **still excluded, and still unwired** — the Orphanage line rides the
+additions blob (which is what actually holds the column) rather than that marker, so the rule below
+is unchanged and untested by this.
 
 ### Step-scoped fetches
 
