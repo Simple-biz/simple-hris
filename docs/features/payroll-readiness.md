@@ -124,7 +124,15 @@ week-scoped exemption stores were added later: `payroll_bank_exemptions`
 1. **KPI Submissions** — per department: has the manager marked the week
    ready/locked (`hsl_bonus_period_status` ⨝ `hsl_bonus_entries` /
    `bonus_catalog_applied`)? The list covers **every master-list department**:
-   built-in manager-KPI depts, every HSL sub-dept (monthly ones read `Not due`
+   built-in manager-KPI depts, every HSL sub-dept — **the 14 code teams AND, since
+   2026-09-22, every DATA sub-team** created from Payment Catalog → Departments →
+   Edit (`dataBranchConfig`; Kane checked this list for one and found it missing).
+   A data branch has **no rules**, so the only thing it can owe is a Bonus Library
+   bonus assigned to its `hsl:<key>`: with none this week it reads **`no_bonus`**
+   ("Ready by definition", `dataBranchHasWork`) rather than holding the 25 %-weight
+   KPI dimension at `draft` forever — the same trap `HSL_PLACEMENT_ONLY_SUB_KEYS`
+   exists to avoid. The map is read best-effort, so a failed read degrades to the
+   code teams only. (Monthly ones read `Not due`
    off the month's final payroll week), in-app registry depts ("In-app" chip,
    informational), and derived rows for any roster Department label not
    otherwise enumerated (e.g. "Orphan Ministry") — so a dept with nothing owed

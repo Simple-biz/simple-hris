@@ -233,6 +233,37 @@ Two deliberate carve-outs:
 > "deliberately keep showing the literal sheet cell" — Kane reversed that on
 > 2026-08-10, which is the whole point of "only 1 department for HSL".
 
+## 5.5 A DATA sub-team is a scoreable BRANCH (2026-09-22)
+
+Creating a sub-team from Payment Catalog → Departments → Edit made it placeable,
+priceable and transferable — but **not scoreable**. The HSL calculator's branch
+list was `HSL_DEPT_KEYS.filter(...)`, the 14 code teams, so a data sub-team had:
+
+- no KPI card to score on,
+- therefore no `hsl_bonus_period_status` row,
+- therefore no row in Payroll Notes → KPI Submissions,
+- and no reach for the catalog-bonus work shipped earlier the same day, which
+  keyed off `HslDeptKey`.
+
+`src/lib/hsl-bonus/data-branch.ts` closes it. A data sub-team becomes a
+`DeptConfig` with **no rules** — the HSL programme defines no KPI for it, so
+`calcBonus` contributes 0 and everything it pays comes from a Bonus Library
+bonus assigned to its `hsl:<key>` (§ `bonus-catalog.md`). That is the Simple
+Texting shape with a card attached.
+
+- **`HSL_DEPTS[key]` is `undefined` for a data branch — never index it blind.**
+  The calculator resolves every branch through `cfgOf(key)`
+  (`hslBranchConfigs`), and the two module-scope helpers take the config as an
+  argument. `isDataBranchKey` is how callers tell the two apart.
+- **A data key can never shadow a code team.** `validateBuiltinSubsInput`
+  already refuses to store one; `hslBranchConfigs` drops it a second time,
+  because shadowing would redirect a real team's rules to an empty config.
+- **Access is unchanged**: a data branch's grant is `hsl:<key>` exactly like a
+  code team's, so `canAccessHslDept` covers both and Admin → Roles already
+  offers it (2026-09-22, earlier the same day).
+- **Ordering**: code teams first in `HSL_DEPT_KEYS` declaration order, then data;
+  the calculator then sorts by display name as it always has.
+
 ## 6. Transfers
 
 - **A namespaced target demands the exact cell — always.** `deptCellSatisfiesTarget`

@@ -108,7 +108,11 @@ import {
   deptPayPausedSettingKey,
   parsePausedDeptKeys,
 } from '@/lib/payroll/dept-pay-config';
-import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPTS, HSL_DEPT_KEYS, type DeptConfig, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { dataBranchConfig, dataBranchHasWork, isDataBranchKey } from '@/lib/hsl-bonus/data-branch';
+import { builtinSubsFor, type BuiltinSubMap } from '@/lib/departments/builtin-subs';
+import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
+import type { BonusAssignment, BonusDef } from '@/lib/bonus-catalog/types';
 import { weekRangeLabel, payrollNotesWeekStart, weekEndFromStart } from '@/lib/payroll/manila-week';
 import { isFutureHireForWeek, startsAfterWeek } from '@/lib/payroll/readiness-week-scope';
 import {
@@ -513,6 +517,10 @@ async function buildKpiReadiness(
    *  simply never appeared, which read as "missing" rather than "nothing
    *  owed". */
   masterDeptLabels: string[],
+  /** Built-in departments' DATA sub-teams. HSL's become branches in this list
+   *  (2026-09-22); best-effort from the caller, so a failed read degrades to
+   *  the code teams only — the pre-2026-09-22 list. */
+  builtinSubs: BuiltinSubMap,
 ): Promise<ReadinessKpiDept[]> {
   const supabase = createSupabaseServiceRoleClient();
 
@@ -591,8 +599,14 @@ async function buildKpiReadiness(
   // Best-effort: if the catalog can't load we assume every dept has bonuses
   // (never auto-Ready on a read failure).
   let catalogDeptKeys: Set<string> | null = null;
+  // Kept raw as well, for the HSL data-branch "has anything been assigned to it
+  // this week" question below — same single read, no second round trip.
+  let catalogBonusesForHsl: BonusDef[] = [];
+  let catalogAssignmentsForHsl: BonusAssignment[] = [];
   try {
     const { bonuses, assignments } = await listBonusCatalog();
+    catalogBonusesForHsl = bonuses;
+    catalogAssignmentsForHsl = assignments;
     const bonusById = new Map(bonuses.map((b) => [b.id, b]));
     catalogDeptKeys = new Set<string>();
     for (const a of assignments) {
@@ -670,11 +684,33 @@ async function buildKpiReadiness(
   // so there is never a submission due from its manager: it reads 'no_bonus'
   // ("Ready by definition", same as a custom dept with nothing to submit) instead
   // of holding the 25%-weight KPI dimension at 'draft' every week forever.
-  for (const key of HSL_DEPT_KEYS as readonly HslDeptKey[]) {
+  // DATA sub-teams (Payment Catalog -> Departments -> Edit) are branches too
+  // since 2026-09-22 — they have a card, a period-status row and entries, so
+  // they belong in this list exactly like a code team. Kane checked KPI
+  // Submissions for one and found it missing. A data branch has NO rules, so
+  // the only thing it can owe is a Bonus Library bonus assigned to its
+  // `hsl:<key>`; with none it reads `no_bonus` ("Ready by definition") rather
+  // than holding the 25%-weight KPI dimension at draft forever.
+  const hslDataSubs = builtinSubsFor(builtinSubs, 'hogan_smith_law');
+  const hslBranches: { key: string; cfg: DeptConfig; isData: boolean }[] = [
+    ...(HSL_DEPT_KEYS as readonly HslDeptKey[]).map((k) => ({ key: k as string, cfg: HSL_DEPTS[k], isData: false })),
+    ...hslDataSubs
+      .filter((sub) => isDataBranchKey(sub.key))
+      .map((sub) => ({ key: sub.key, cfg: dataBranchConfig(sub), isData: true })),
+  ];
+  for (const { key, cfg, isData } of hslBranches) {
     const hslExcluded = paused.has('hogan_smith_law') || paused.has(key);
-    const cfg = HSL_DEPTS[key];
     const monthly = cfg.cadence === 'monthly';
     const due = !monthly || isMonthly;
+    // A data branch with nothing assigned this week has nothing to submit.
+    const dataIdle =
+      isData &&
+      !dataBranchHasWork({
+        subKey: key,
+        assignments: catalogAssignmentsForHsl,
+        bonuses: catalogBonusesForHsl,
+        periodStart: weekStart,
+      });
     const status = statusByDept.get(key);
     const agg = hslAggByDept.get(key);
     out.push({
@@ -686,7 +722,7 @@ async function buildKpiReadiness(
         ? 'excluded'
         : !due
           ? 'na'
-          : cfg.noKpi
+          : cfg.noKpi || dataIdle
             ? 'no_bonus'
             : ((status?.status ?? 'draft') as KpiDeptStatus),
       scoredCount: agg?.scoredCount ?? 0,
@@ -2079,6 +2115,10 @@ export async function getPayrollReadiness(
   }
   const employees = rosterRes.employees;
   const registrySafe = registry ?? ([] as DepartmentRegistryEntry[]);
+  // HSL's DATA sub-teams join the KPI list as branches (2026-09-22). Best-effort
+  // and read HERE rather than inside the builder so one failure mode covers it:
+  // no map -> the code teams only, exactly the list this was before.
+  const builtinSubsSafe = await getBuiltinSubs().catch(() => ({}) as BuiltinSubMap);
 
   const pausedDeptKeys = parsePausedDeptKeys(pausedRaw ?? null);
   const isPausedDept = (dept: string | null | undefined): boolean => {
@@ -2109,7 +2149,7 @@ export async function getPayrollReadiness(
   const hrExceptions = exceptionsRes.rows.filter((r) => !isPausedDept(r.department));
 
   const [kpi, ratesRes] = await Promise.all([
-    buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels),
+    buildKpiReadiness(weekStart, isMonthlyPayWeek, registrySafe, pausedDeptKeys, masterDeptLabels, builtinSubsSafe),
     buildMissingRates(
       resolvedFile,
       employees,

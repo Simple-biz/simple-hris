@@ -61,6 +61,9 @@ import {
 
 import { formatDeptLabel, hslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BonusAssignment, BonusDef } from '@/lib/bonus-catalog/types';
+import { useBuiltinSubs } from '@/lib/departments/use-builtin-subs';
+import { builtinSubsFor } from '@/lib/departments/builtin-subs';
+import { hslBranchConfigs, hslBranchKeys } from '@/lib/hsl-bonus/data-branch';
 import {
   calcHslCatalogTotal,
   catalogBonusVariables,
@@ -294,7 +297,8 @@ export function recomputeManagerEntries(
   entries: EntryRow[],
   periodStart: string,
 ): EntryRow[] {
-  if (!HSL_DEPTS[deptKey].perEmployee) return entries;
+  // A DATA branch has no config in HSL_DEPTS and is never `perEmployee`.
+  if (!HSL_DEPTS[deptKey]?.perEmployee) return entries;
   return entries.map((e) => {
     const bonus = calcManagerBonus(e.employee_email, e.kpi_data, { periodStart });
     return e.calculated_bonus === bonus ? e : { ...e, calculated_bonus: bonus };
@@ -368,8 +372,11 @@ export function mergeHslBranchPayload(
   payload: HslBranchPayload,
   subTeams: Record<SubTeamName, SubTeamState>,
   periodStart: string,
+  /** The branch config. Passed rather than looked up: a DATA sub-team
+   *  (2026-09-22) has no `HSL_DEPTS` entry. */
+  cfg?: DeptConfig,
 ): { entries: EntryRow[]; status: BonusStatus; rosterEmails: Set<string> } {
-  const dept = HSL_DEPTS[key];
+  const dept = cfg ?? HSL_DEPTS[key];
 
   // DB entries (existing scored data) — these win over roster defaults.
   const byEmail = new Map<string, EntryRow>();
@@ -668,6 +675,23 @@ export default function HslBonusCalculator({
   }, []);
 
   /**
+   * Branch configs: the 14 CODE teams plus every DATA sub-team created from
+   * Payment Catalog -> Departments -> Edit (2026-09-22). Before this the branch
+   * list was `HSL_DEPT_KEYS` alone, so a data sub-team had no card at all — no
+   * way to score it, no `hsl_bonus_period_status` row, and nothing for Payroll
+   * Readiness to list. See `src/lib/hsl-bonus/data-branch.ts`.
+   */
+  const builtinSubs = useBuiltinSubs();
+  const hslDataSubs = useMemo(() => builtinSubsFor(builtinSubs, 'hogan_smith_law'), [builtinSubs]);
+  const branchConfigs = useMemo(() => hslBranchConfigs(hslDataSubs), [hslDataSubs]);
+  /** The config for any branch key — code or data. Never index `HSL_DEPTS`
+   *  directly in this component: it is undefined for a data branch. */
+  const cfgOf = useCallback(
+    (key: string): DeptConfig => branchConfigs[key] ?? cfgOf(key as HslDeptKey),
+    [branchConfigs],
+  );
+
+  /**
    * The catalog bonuses that apply to one person on one branch. Resolved per
    * call rather than memoised across branches: a branch's period_start decides
    * whether a monthly bonus is even offered this week.
@@ -679,7 +703,7 @@ export default function HslBonusCalculator({
         employeeEmail: email,
         assignments: catalogAssignments,
         bonuses: catalogBonuses,
-        periodStart: periodStart(HSL_DEPTS[deptKey]),
+        periodStart: periodStart(cfgOf(deptKey)),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- periodStart is stable per week
     [catalogAssignments, catalogBonuses, weekStart],
@@ -692,7 +716,7 @@ export default function HslBonusCalculator({
    */
   const scoreEntry = useCallback(
     (deptKey: HslDeptKey, email: string, kpi: KpiData, isManager: boolean): number => {
-      const cfg = HSL_DEPTS[deptKey];
+      const cfg = cfgOf(deptKey);
       const base = cfg.perEmployee
         ? calcManagerBonus(email, kpi, { periodStart: periodStart(cfg) })
         : calcBonus(kpi, cfg, isManager, { periodStart: periodStart(cfg) });
@@ -726,10 +750,14 @@ export default function HslBonusCalculator({
   // which is history, not something a manager can predict.
   const visibleDepts = useMemo<HslDeptKey[]>(
     () =>
-      HSL_DEPT_KEYS.filter((k) => canAccessHslDept(managedDepts, k, isElevated)).sort((a, b) =>
-        HSL_DEPTS[a].name.localeCompare(HSL_DEPTS[b].name, 'en', { sensitivity: 'base' }),
-      ),
-    [managedDepts, isElevated],
+      (hslBranchKeys(hslDataSubs) as HslDeptKey[])
+        // A data branch's grant is `hsl:<key>` exactly like a code team's, so
+        // one access rule covers both.
+        .filter((k) => canAccessHslDept(managedDepts, k, isElevated))
+        .sort((a, b) =>
+          (branchConfigs[a]?.name ?? a).localeCompare(branchConfigs[b]?.name ?? b, 'en', { sensitivity: 'base' }),
+        ),
+    [managedDepts, isElevated, hslDataSubs, branchConfigs],
   );
 
   /** True when at least one branch painted from the tab cache on this mount. */
@@ -737,7 +765,7 @@ export default function HslBonusCalculator({
 
   const [deptState, setDeptState] = useState<AllDeptState>(() => {
     const init = {} as AllDeptState;
-    for (const k of HSL_DEPT_KEYS) {
+    for (const k of hslBranchKeys(hslDataSubs) as HslDeptKey[]) {
       // Seeded from the last visit's raw payload for THIS branch and THIS week,
       // so the numbers are on screen before the three fetches below have even
       // been sent. Three things this deliberately does not do:
@@ -774,7 +802,7 @@ export default function HslBonusCalculator({
   const [cacheAsOf, setCacheAsOf] = useState<number | null>(() => {
     if (!cachedWeek) return null;
     let newest: number | null = null;
-    for (const k of HSL_DEPT_KEYS) {
+    for (const k of hslBranchKeys(hslDataSubs) as HslDeptKey[]) {
       const at = readKpiCacheStamp(KPI_CACHE_KEYS.hslBranch(k, cachedWeek));
       if (at !== undefined && (newest === null || at > newest)) newest = at;
     }
@@ -927,7 +955,7 @@ export default function HslBonusCalculator({
     for (const p of offboardedForWeek) {
       const label = (p.department ?? '').trim().toLowerCase();
       if (!label) continue;
-      for (const key of HSL_DEPT_KEYS) {
+      for (const key of hslBranchKeys(hslDataSubs) as HslDeptKey[]) {
         if (label === `hsl:${key}` || slugifyDeptKey(label) === key) {
           const list = m.get(key) ?? [];
           list.push(p);
@@ -1005,7 +1033,7 @@ export default function HslBonusCalculator({
         [key]: { ...cur, dirty: true, entries: cur.entries.filter((e) => e.employee_email !== email) },
       };
     });
-    const start = periodStart(HSL_DEPTS[key]);
+    const start = periodStart(cfgOf(key));
     try {
       await fetch(
         `/api/hsl-bonus/entries?dept=${key}&period_start=${start}&email=${encodeURIComponent(email)}`,
@@ -1020,7 +1048,7 @@ export default function HslBonusCalculator({
   // ── Load entries from DB and merge with roster auto-population ─────────────
 
   const loadDept = useCallback(async (key: HslDeptKey) => {
-    const dept = HSL_DEPTS[key];
+    const dept = cfgOf(key);
     // A branch's period key is the Hubstaff upload's week — reading before that
     // resolves queries a key nothing was ever saved under, which is what made
     // one manager's scores look empty on another account. Applies to monthly
@@ -1228,7 +1256,7 @@ export default function HslBonusCalculator({
    */
   async function saveDept(key: HslDeptKey, opts?: { silent?: boolean }): Promise<boolean> {
     const d = deptStateRef.current[key]!;
-    const dept = HSL_DEPTS[key];
+    const dept = cfgOf(key);
     // Refuse rather than strand the work: an unresolved week would write this
     // dept-week under a key no reader asks for (invisible scores, and a duplicate
     // if it's re-scored later under the right key).
@@ -1390,7 +1418,7 @@ export default function HslBonusCalculator({
   }, []);
 
   async function setStatus(key: HslDeptKey, next: BonusStatus): Promise<boolean> {
-    const dept = HSL_DEPTS[key];
+    const dept = cfgOf(key);
     // Same reason as saveDept: a status row on an unresolved week is a dept-week
     // Readiness will never see, so the branch would read "Pending" forever.
     if (!weekResolved) {
@@ -1442,7 +1470,7 @@ export default function HslBonusCalculator({
     }
     const ok = await setStatus(key, 'ready');
     if (ok) {
-      toast.success(`${HSL_DEPTS[key].name} marked ready`, {
+      toast.success(`${cfgOf(key).name} marked ready`, {
         description: 'Visible to Accounting · PayrollWizard.',
       });
       setViewingDept(key);
@@ -1454,7 +1482,7 @@ export default function HslBonusCalculator({
     const ok = await setStatus(key, 'draft');
     setReopenSubmitting(false);
     if (ok) {
-      toast.success(`${HSL_DEPTS[key].name} reopened`, {
+      toast.success(`${cfgOf(key).name} reopened`, {
         description: 'Back to draft — make edits and Mark Ready when done.',
       });
       setViewingDept(null);
@@ -1482,7 +1510,7 @@ export default function HslBonusCalculator({
     const headers = ['Department', 'Period', 'Employee', 'Email', 'Bonus (PHP)', 'Status'];
     const rows: string[] = [];
     for (const key of visibleDepts) {
-      const dept = HSL_DEPTS[key];
+      const dept = cfgOf(key);
       const d = deptState[key]!;
       const period = periodLabel(dept, periodStart(dept));
       for (const e of d.entries) {
@@ -1553,7 +1581,7 @@ export default function HslBonusCalculator({
       { value: 'all' as const, label: `All branches · ${visibleDepts.length}` },
       ...visibleDepts.map((k) => ({
         value: k,
-        label: `${HSL_DEPTS[k].name} · ${deptState[k]?.entries.length ?? 0}`,
+        label: `${cfgOf(k).name} · ${deptState[k]?.entries.length ?? 0}`,
       })),
     ],
     [visibleDepts, deptState],
@@ -1581,8 +1609,9 @@ export default function HslBonusCalculator({
             state={deptState[key]!}
             loading={pendingFirstLoad.has(key)}
             searchSeed={personSearch}
-            periodStartStr={periodStart(HSL_DEPTS[key])}
+            periodStartStr={periodStart(cfgOf(key))}
             catalogFor={(email) => catalogFor(key, email)}
+            cfgOf={cfgOf}
             onKpiChange={(email, kpiKey, val) => {
               setDeptState((prev) => {
                 const d = prev[key]!;
@@ -1709,7 +1738,7 @@ export default function HslBonusCalculator({
           isElevated
             ? 'All Departments'
             : visibleDepts.length === 1
-              ? HSL_DEPTS[visibleDepts[0]!].name
+              ? cfgOf(visibleDepts[0]!).name
               : 'My Departments'
         }
         cards={visibleDepts.length}
@@ -1718,7 +1747,7 @@ export default function HslBonusCalculator({
         // the page drops several hundred pixels when the data lands.
         teamSplit={
           visibleDepts.length === 1 &&
-          HSL_DEPTS[visibleDepts[0]!].rules[0]?.type === 'team_split'
+          cfgOf(visibleDepts[0]!).rules[0]?.type === 'team_split'
         }
       />
     );
@@ -1734,7 +1763,7 @@ export default function HslBonusCalculator({
               KPI Calculator · HSL
             </p>
             <h2 className="text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
-              {isElevated ? 'All Departments' : visibleDepts.length === 1 ? HSL_DEPTS[visibleDepts[0]!].name : 'My Departments'}
+              {isElevated ? 'All Departments' : visibleDepts.length === 1 ? cfgOf(visibleDepts[0]!).name : 'My Departments'}
               <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
                 week of {weekStart}
               </span>
@@ -1862,7 +1891,7 @@ export default function HslBonusCalculator({
           <p className="font-mono text-[10px] text-zinc-500 dark:text-zinc-400">
             {personHitDepts.length === 0
               ? `No one matches “${personSearch.trim()}” in your branches.`
-              : `Matched in ${personHitDepts.length} ${personHitDepts.length === 1 ? 'branch' : 'branches'}: ${personHitDepts.map((k) => HSL_DEPTS[k].name).join(', ')}`}
+              : `Matched in ${personHitDepts.length} ${personHitDepts.length === 1 ? 'branch' : 'branches'}: ${personHitDepts.map((k) => cfgOf(k).name).join(', ')}`}
           </p>
         )}
       </div>
@@ -1883,6 +1912,7 @@ export default function HslBonusCalculator({
       <div className="flex flex-col gap-4 px-4 py-5 sm:px-6">
         {multiDept ? (
           <HslBranchList
+            cfgOf={cfgOf}
             deptKeys={filteredDepts}
             state={deptState}
             pendingFirstLoad={pendingFirstLoad}
@@ -1899,7 +1929,7 @@ export default function HslBonusCalculator({
           period back to draft so the manager can edit again. */}
       <HslBonusReadyPreview
         open={viewingDept !== null}
-        dept={viewingDept ? HSL_DEPTS[viewingDept] : null}
+        dept={viewingDept ? cfgOf(viewingDept) : null}
         status={
           viewingDept && deptState[viewingDept]!.status !== 'draft'
             ? (deptState[viewingDept]!.status as 'ready' | 'locked')
@@ -1907,7 +1937,7 @@ export default function HslBonusCalculator({
         }
         periodLabel={
           viewingDept
-            ? periodLabel(HSL_DEPTS[viewingDept], periodStart(HSL_DEPTS[viewingDept]))
+            ? periodLabel(cfgOf(viewingDept), periodStart(cfgOf(viewingDept)))
             : ''
         }
         entries={viewingDept ? deptState[viewingDept]!.entries : []}
@@ -1920,8 +1950,8 @@ export default function HslBonusCalculator({
       <AnimatePresence>
         {addingMemberDept && (
           <HslAddMemberModal
-            deptName={HSL_DEPTS[addingMemberDept].name}
-            color={HSL_DEPTS[addingMemberDept].color}
+            deptName={cfgOf(addingMemberDept).name}
+            color={cfgOf(addingMemberDept).color}
             offboarded={offboardedForWeek}
             onAdd={(name, email) => addMember(addingMemberDept, name, email)}
             onClose={() => setAddingMemberDept(null)}
@@ -1972,7 +2002,7 @@ export default function HslBonusCalculator({
                   tabIndex={-1}
                   role="dialog"
                   aria-modal="true"
-                  aria-label={`${HSL_DEPTS[overlayDept].name} KPI calculator`}
+                  aria-label={`${cfgOf(overlayDept).name} KPI calculator`}
                   variants={PANEL_VARIANTS[openMode]}
                   transition={{ duration: openMode === 'half' ? 0.42 : 0.36, ease: OVERLAY_EASE }}
                   className={cn(
@@ -1983,7 +2013,7 @@ export default function HslBonusCalculator({
                     openMode === 'half' &&
                       'h-full w-[min(920px,92vw)] border-l border-zinc-200 shadow-2xl dark:border-zinc-800',
                   )}
-                  style={{ borderTop: `3px solid ${HSL_DEPTS[overlayDept].color}` }}
+                  style={{ borderTop: `3px solid ${cfgOf(overlayDept).color}` }}
                 >
                 <div className="flex flex-none flex-wrap items-center gap-3 border-b border-zinc-200 bg-zinc-50/80 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
                   <p className="min-w-0 truncate font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
@@ -2027,11 +2057,11 @@ export default function HslBonusCalculator({
                             <span
                               aria-hidden
                               className="h-2 w-2 flex-none rounded-full"
-                              style={{ backgroundColor: HSL_DEPTS[k].color }}
+                              style={{ backgroundColor: cfgOf(k).color }}
                             />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-[12.5px] font-medium text-zinc-800 dark:text-zinc-100">
-                                {HSL_DEPTS[k].name}
+                                {cfgOf(k).name}
                               </span>
                               <span className="block font-mono text-[10px] text-zinc-500">
                                 {formatPeso(st.entries.reduce((s, e) => s + e.calculated_bonus, 0))}
@@ -2063,6 +2093,9 @@ export default function HslBonusCalculator({
 // ── Branch list ───────────────────────────────────────────────────────────────
 
 interface HslBranchListProps {
+  /** Branch config resolver — code teams AND data sub-teams (2026-09-22).
+   *  Passed rather than indexing `HSL_DEPTS`, which is undefined for a data one. */
+  cfgOf: (key: string) => DeptConfig;
   deptKeys: HslDeptKey[];
   state: AllDeptState;
   /** Only branches with nothing on screen yet. A background re-pull over rows
@@ -2096,7 +2129,7 @@ interface HslBranchListProps {
  *  and its border half-drawn. `h-full` keeps the pair on a line the same height
  *  when one branch name wraps. */
 export function HslBranchList({
-  deptKeys, state, pendingFirstLoad, periodStart, matchedBySearch, onOpen,
+  deptKeys, state, pendingFirstLoad, periodStart, matchedBySearch, onOpen, cfgOf,
 }: HslBranchListProps) {
   if (deptKeys.length === 0) {
     return (
@@ -2109,7 +2142,7 @@ export function HslBranchList({
   return (
     <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       {deptKeys.map((key) => {
-        const dept = HSL_DEPTS[key];
+        const dept = cfgOf(key);
         const st = state[key]!;
         const total = st.entries.reduce((s, e) => s + e.calculated_bonus, 0);
         const loading = pendingFirstLoad.has(key);
@@ -2210,6 +2243,8 @@ interface DeptBlockProps {
   /** Bonus Library bonuses assigned to THIS branch, per person (2026-09-22).
    *  Threaded from the calculator so the table and the scorer read one source. */
   catalogFor?: (email: string) => HslCatalogBonus[];
+  /** Branch config resolver — code teams AND data sub-teams. */
+  cfgOf: (key: string) => DeptConfig;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
   onToggleManager: (email: string) => void;
   /** Epoch ms of the last successful autosave for this dept, for the inline
@@ -2257,6 +2292,7 @@ const DEPT_PAGE_SIZE = 10;
 
 function DeptBlock({
   catalogFor,
+  cfgOf,
   deptKey, state, loading, searchSeed, sectionClassName,
   chromeless, onOpen, periodStartStr,
   onKpiChange, onToggleManager,
@@ -2264,7 +2300,7 @@ function DeptBlock({
   payrollLocked, weekPending, markUnreadySubmitting,
   rosterEmails, offboardedEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
 }: DeptBlockProps) {
-  const dept = HSL_DEPTS[deptKey];
+  const dept = cfgOf(deptKey);
   const deptTotal = state.entries.reduce((s, e) => s + e.calculated_bonus, 0);
   const isTeamSplit = dept.rules[0]?.type === 'team_split';
   const tieredRule = dept.rules.find((r): r is TieredRule => r.type === 'tiered');

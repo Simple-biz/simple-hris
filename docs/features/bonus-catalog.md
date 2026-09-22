@@ -316,6 +316,10 @@ US Manager Bonus · USEE**.
     dead; refusing it is the tightening this change earns. The Assignments rail
     drops the parent row and `buildDeptRail` promotes its sub-teams, so nothing
     disappears from the list.
+  - **Reaches DATA sub-teams too, since the same-day follow-up.** The first cut
+    keyed off `HslDeptKey`, so it covered the 14 code teams only — not a
+    sub-team an accountant had just created, which had no card at all. See
+    `hsl-subdepartments.md` §5.5.
   - Editing an assignment does **not** rewrite an already-scored week: the
     wizard pays the stored `calculated_bonus`, per
     [[payroll-rule-changes-forward-only]]. `withoutCatalogKeys` strips a removed
