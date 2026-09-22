@@ -937,6 +937,7 @@ whose total matches the money the row just recorded, plus `amount_cop` for Colom
   weekend row at all.
 - **Orphanage** — only when there is money on it (`showsOrphanageLine`). It used to print `₱0.00`
   on everyone's statement.
+- **Time Adjustment** — only when the block moved money (`showsTimeAdjustmentLine`); see below.
 - **Everything else** — Regular, Overtime, Tech, Attendance, Performance, Adjustment and the MESA
   pair — always renders, `₱0.00` included, so the breakdown reconciles to Net the same way on every
   document.
@@ -946,6 +947,81 @@ component is the reference and the renderer is its email-safe transcription (tab
 since email clients have no flexbox). `src/lib/payroll/paystub-email-html.test.ts` pins the parts
 that drifted before. **Do not paste HTML back into the n8n Gmail node** — that is the exact
 regression this replaced.
+
+## The Time Adjustment line — 2026-09-22
+
+Kane: *"juliar@simple.biz please check her paystub if her calculation is wrong"* / *"the paystub on
+Payroll wizard is wrong"*.
+
+**The defect, measured on a real staged stub.** An approved time adjustment is folded into Initial
+Pay by the wizard, but `hours.total` stays the **RAW tracked** figure — Hubstaff data is never
+mutated — so the correction lived in `pay_php.initial` and in nothing that explained it.
+`paystub-view.ts` had **zero** references to `time_adjustment`. Running juliar@'s real
+2026-09-06→09-12 payload through the shipped `mapPayloadToPayStub`:
+
+| Line | Amount |
+|---|---|
+| Regular Hours | ₱10,638.29 |
+| Overtime · Attendance · Adjustment · Orphanage · MESA Reimbursement | ₱0.00 |
+| Technology Bonus | ₱1,850.00 |
+| Performance Bonus | ₱1,800.00 |
+| MESA Deduction | −₱100.00 |
+| **lines sum** | **₱14,188.29** |
+| **NET PRINTED** | **₱14,211.62** |
+| **unexplained** | **₱23.33** |
+
+A pay document that does not add up to its own total is the defect; ₱23.33 is just this week's size
+of it. The money itself was right — `payment_dispatches` paid ₱14,211.62.
+
+**The line.** A dedicated **Time Adjustment** row sits directly after the hours lines — Regular,
+Overtime and (on HSL) Weekend — the same position the Reports XLSX puts its columns, so the
+document reads `Regular + OT (+ Weekend) + Time Adjustment = Initial Pay`, the identity
+`payrollExportRowReconciles` has pinned since 2026-09-10. **Regular Hours stays raw**: it is what
+Hubstaff reconciles against, and folding the delta into it would make two documents describe the
+same hours differently.
+
+Its detail cell is `+0.08h · Sep 10, 2026` — signed hours (an adjustment may *lower* a day, and
+`−0.50h` beside a negative amount is the only non-alarming reading) and every day that earned them,
+oldest first, the same order `formatTimeAdjustmentDates` prints them in the XLSX. The string is
+built by **`formatTimeAdjustmentDetail` on the view**, not in either renderer — the weekend rows and
+the proration chip each shipped in-app while the emailed copy stayed stale, and a parity test now
+pins the pair.
+
+**When it renders.** `showsTimeAdjustmentLine` — the block is staged on **every** payload since
+2026-09-10 (zeros + `[]` when the person had none), so keying on its *presence* would print
+`₱0.00` on thousands of statements with nothing to say. It follows the Orphanage precedent and
+renders only when the block moved money. Keyed on the **money, not the hours**: `pay_php` is 0 when
+no rate resolved even though hours ≠ 0, and a line reading `0.08h ₱0.00` would assert a correction
+the pay never received. Every statement staged before the block existed, and every week without an
+adjustment, is **byte-identical** to before — the same contract the weekend, proration and transfer
+blocks carry.
+
+**Freshness.** `mergeSnapshotIntoStaged` moves the block WITH the figures it explains, under the
+same tri-state as the weekend and proration blocks: `undefined` (an older snapshot) keeps the staged
+block, a value replaces it — **zeros included**, because a re-lock that correctly drops an
+out-of-week credit must be able to zero a block that is already staged, or the stub keeps
+advertising money the new totals no longer contain. `sameTimeAdjustmentBlock` compares a sorted
+`date|hours` set plus the two figures, so neither jsonb key reordering nor a different day order
+forces an endless refresh, and an absent block compares equal to a zeroed one.
+
+**Where it shows.** All via `PayStubView.timeAdjustment`: the shared `PayStubStatement` (Employee
+Dashboard modal, Employee Profile Pay Stubs tab, the Salary-Paid notification, Payment Dispatch's
+Accounting stub viewer), the **wizard's Step-8 preview** (which renders that component), the
+**emailed statement** (`paystub-email-html.ts`), and the employee's **exports** — the XLSX gains a
+fixed `Time Adj.` column and the PDF an `optional` one, which the measured-layout filter drops
+entirely for anyone who never had an adjustment. The exports list every component beside Net Pay,
+so they had the identical gap; leaving one of the three documents describing one payment unable to
+add up would have left the class half-closed.
+
+**Not covered, on purpose:** the employee route's `computeCurrentPay` **reconstruction** path — the
+same precedent the weekend and transfer blocks set for pre-feature weeks. Those snapshots carry no
+record of what was approved when the week was priced, and inventing one today would explain the
+wrong thing.
+
+Tests: `paystub-time-adjustment-line.test.ts` (12 — the reconciliation identity on juliar@'s real
+figures, raw Regular Hours, pre-block and zero-block silence, hours-without-pesos, a negative
+adjustment, day ordering, malformed days, and the component/email parity pair) ·
+`paystub-fresh.test.ts` (5 merge cases).
 
 ## n8n workflow
 
@@ -1134,6 +1210,7 @@ launch disables the whole recovery path, this key included.
 - Reissues: `src/lib/payroll/paystub-issue.ts` (+ `.test.ts`), `src/lib/supabase/paystub-issues.ts`, `references/sql/create/2026-09-12_paystub_issues.sql`, `scripts/apply-paystub-issues-migration.mts`.
 - Mid-week transfer disclosure: `src/lib/payroll/department-transfer-legs.ts` (`buildTransferLegsByEmail`, `transferBlockForWeek`, `formatTransferLabel`) + `src/lib/payroll/hsl-transfer-effective.ts` (`fetchDepartmentTransferRows`).
 - Paystub freshness: `src/lib/payroll/paystub-fresh.ts` (`mergeSnapshotIntoStaged`, `getFreshPaystubEntry`, `refreshPaystubQueuePayload`).
+- Time Adjustment line: `src/lib/payroll/paystub-view.ts` (`parseTimeAdjustmentBlock`, `showsTimeAdjustmentLine`, `formatTimeAdjustmentDetail`) + `paystub-time-adjustment-line.test.ts`; the pay-week scope it discloses is `src/lib/payroll-wizard/time-adjustment-week-scope.ts` (`buildTimeAdjustmentDeltas`).
 - Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`).
 - Realtime lock hook: `src/hooks/useWizardDispatchLock.ts`.
 - Clerk-side queue: `src/components/payroll-clerk/useDispatchQueue.ts` + `ExcludedQueue.tsx`.

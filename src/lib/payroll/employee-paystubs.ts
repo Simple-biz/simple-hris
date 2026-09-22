@@ -275,6 +275,10 @@ function buildView(p: {
   performanceBonus: number;
   adjustment: number;
   adjustmentNote: string | null;
+  /** Approved time-adjustment block — null on every snapshot older than
+   *  2026-09-10 and on the engine reconstruction path, which has no record of
+   *  what was approved when that week was priced. */
+  timeAdjustment?: { hours: number; payPhp: number; days: Array<{ date: string; hours: number }> } | null;
   orphanagePay: number;
   mesaDeduction: number;
   mesaDisbursement: number;
@@ -378,6 +382,7 @@ function buildView(p: {
     performanceBonus: p.performanceBonus,
     adjustment: p.adjustment,
     adjustmentNote: p.adjustment !== 0 ? p.adjustmentNote : null,
+    timeAdjustment: p.timeAdjustment ?? null,
     orphanagePay: p.orphanagePay,
     mesaDisbursement: p.mesaDisbursement,
     mesaDeduction: p.mesaDeduction,
@@ -492,6 +497,18 @@ export async function reconstructStubForWeek(params: {
       // Mid-week transfer disclosure — snapshots since 2026-08-25; older ones
       // render the Department line alone.
       departmentTransfer: fp.departmentTransfer ?? null,
+      // Approved time-adjustment money — snapshots since 2026-09-10. An older
+      // snapshot has no fields at all and renders no line, exactly as it did
+      // before the line existed; a snapshot that carries zeros renders none
+      // either (showsTimeAdjustmentLine keys on the money).
+      timeAdjustment:
+        fp.timeAdjustmentPay != null || fp.timeAdjustmentHours != null
+          ? {
+              hours: round2(fp.timeAdjustmentHours ?? 0),
+              payPhp: round2(fp.timeAdjustmentPay ?? 0),
+              days: Array.isArray(fp.timeAdjustmentDays) ? fp.timeAdjustmentDays : [],
+            }
+          : null,
       pab: round2(fp.perfectAttendanceBonus as number),
       tech: round2(fp.techBonus as number),
       performanceBonus: round2(fp.otherBonuses as number),

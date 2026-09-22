@@ -692,15 +692,39 @@ Hubstaff-tracked seconds for that date at calculation time only.
 
 1. **`effectiveOverrides` memo** — merged map of `email → (ISO date → override hours | null)`. Built by layering approved PAB disputes then overlaying approved time adjustments (time adjustments win on a same-day collision). All three PAB memos read this map.
 
-2. **`timeAdjustDeltaByEmail` memo** (named `timeAdjustDeltaHoursByEmail` until 2026-09-10) — sums `(approved_hours − raw tracked hours)` over in-period adjustment dates per employee and keeps the per-day breakdown. Folded into `effectiveCalcResults.initialPay`:
+2. **`timeAdjustDeltaByEmail` memo** (named `timeAdjustDeltaHoursByEmail` until 2026-09-10) — sums `(approved day hours − raw tracked hours)` over the adjustment dates that fall inside **this pay week**, per employee, and keeps the per-day breakdown. Folded into `effectiveCalcResults.initialPay`:
 ```
 adjPesos = phpHourlyPayFromSeconds(regularRate, |deltaHours| × 3600)
 newInitialPay = initialPay ± adjPesos
 ```
 
+**The week is the pay week, and an unknown week credits nothing (2026-09-22).** The rule lives in
+`src/lib/payroll-wizard/time-adjustment-week-scope.ts` (`buildTimeAdjustmentDeltas`, 14 tests), and
+the week it scopes to is `activeBatchDateRange` — the range parsed from the active Hubstaff
+filename, the **same one** the Additions review panel filters on and the same one the dispatch
+payload declares as `pay_period.week`. One definition, so the panel and the money cannot disagree.
+
+Until 2026-09-22 the memo scoped on `allDaysColumnGroups`, whose own definition reads *"all
+date-column groups within the **PAB RANGE**"* — a MONTH. **One approved day was therefore credited
+to every pay week inside its PAB month, at each week's own regular rate.** Measured read-only on
+production that day (`scripts/probe-time-adjustment-week-leak.mts`): juliar@'s 2026-09-10
+adjustment — ₱23.33, paid on the 09-06→09-12 week and dispatched 09-15 — was folded into the live
+09-13→09-19 week a second time. Only two approved rows exist company-wide, so the live exposure was
+₱23.33 on an unlocked week; the shape is what matters, because a row carrying a stored
+`approved_hours` (rule 1, SET-semantics) leaks a **whole day** the same way — `adriant@`'s 7.0 h
+would have re-paid ₱1,960 every week of its month.
+
+The second half of the fix is the failure mode. The old guard read
+`periodDates.size > 0 && !periodDates.has(date)`, so it **disabled itself** when no date column
+parsed: *"I cannot tell which week this is"* meant *"credit every approved adjustment on record"*.
+An unresolvable week now credits **nothing**. The two errors are not symmetric on a money path — an
+uncredited adjustment is visible (the employee says so, and a re-lock fixes it), an over-credit is
+silent and leaves the building. The Additions review panel keeps its own show-everything fallback
+on purpose: it displays, it does not pay.
+
 **Email-drift caveat:** if `work_email` on the request does not match the Hubstaff row email, the delta is silently zero.
 
-**Disclosed on the payload and the Reports exports (2026-09-10).** The fold used to be invisible downstream — an adjusted row exported Regular + OT ≠ Initial Pay with no column explaining why. `effectiveCalcResults` now stages the delta on every row (`CalcRow.timeAdjustment`: signed hours, the exact signed pesos added — 0 when no rate resolved — and the dates); the dispatch payload carries it as `DispatchEmployee.time_adjustment { hours, pay_php, days }` (zeros + `[]` when none, so "none" and "predates the block" stay distinguishable); the final-pay snapshot stores it as `timeAdjustmentHours` / `timeAdjustmentPay` / `timeAdjustmentDays`; and the Payroll Wizard Reports XLSX carries it as **Time Adj. Hours / Time Adj. Pay / Time Adj. Dates** between OT and Initial Pay, with the identity `Regular + OT + Time Adj. Pay = Initial Pay` in the builder's test guard. `hours.total` stays the raw tracked figure. Owned by [payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) § 2026-09-10. The paystub's earnings lines still do **not** itemize the delta (open — session log 2026-09-10, item 32).
+**Disclosed on the payload and the Reports exports (2026-09-10).** The fold used to be invisible downstream — an adjusted row exported Regular + OT ≠ Initial Pay with no column explaining why. `effectiveCalcResults` now stages the delta on every row (`CalcRow.timeAdjustment`: signed hours, the exact signed pesos added — 0 when no rate resolved — and the dates); the dispatch payload carries it as `DispatchEmployee.time_adjustment { hours, pay_php, days }` (zeros + `[]` when none, so "none" and "predates the block" stay distinguishable); the final-pay snapshot stores it as `timeAdjustmentHours` / `timeAdjustmentPay` / `timeAdjustmentDays`; and the Payroll Wizard Reports XLSX carries it as **Time Adj. Hours / Time Adj. Pay / Time Adj. Dates** between OT and Initial Pay, with the identity `Regular + OT + Time Adj. Pay = Initial Pay` in the builder's test guard. `hours.total` stays the raw tracked figure. Owned by [payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) § 2026-09-10. **Since 2026-09-22 the paystub itemizes it too** — a dedicated **Time Adjustment** earnings line on the in-app statement, the emailed copy and the employee's PDF/XLSX export, so `Regular + OT + Time Adjustment = Initial Pay` now holds on the pay document exactly as it does in Reports; see [paystub-dispatch.md](./paystub-dispatch.md) § *The Time Adjustment line*. That closes session-log item 32.
 
 ### `current-pay.ts` parity
 

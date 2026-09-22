@@ -256,6 +256,7 @@ import {
   type ReportTimeAdjustment,
   type ReportTimeAdjustmentDay,
 } from '@/lib/payroll-wizard/report-rows';
+import { buildTimeAdjustmentDeltas } from '@/lib/payroll-wizard/time-adjustment-week-scope';
 import { overlayReplayFinal, type ReplayFinalEntry } from '@/lib/payroll-wizard/replay-finals-overlay';
 import { formatLockedStamp, resolveDispatchButtonState } from '@/lib/payroll-wizard/dispatch-button-state';
 import { usePabPeriodSettings } from '@/hooks/usePabPeriodSettings';
@@ -6126,37 +6127,29 @@ export default function PayrollWizard({
 
   /**
    * Per-employee pay delta from approved time adjustments: the sum of
-   * (approved_hours - raw tracked hours) over adjustment dates that fall within the
-   * current pay period, plus the per-day breakdown. Positive values increase pay;
+   * (approved day hours - raw tracked hours) over adjustment dates that fall inside
+   * THIS PAY WEEK, plus the per-day breakdown. Positive values increase pay;
    * folded into initialPay below and staged on the payload as `time_adjustment` so
-   * the Reports exports can disclose it (2026-09-10). Dates outside the period are
-   * not credited here (they belong to another cycle). An entry exists for anyone
-   * with ≥1 in-period approved day — even a 0h net delta — so the export can show
+   * the Reports exports can disclose it (2026-09-10). An entry exists for anyone
+   * with ≥1 in-week approved day — even a 0h net delta — so the export can show
    * the approved dates; the pay fold below still gates on hours ≠ 0.
+   *
+   * The week is `activeBatchDateRange` — the range parsed from the active Hubstaff
+   * filename, the SAME one the Additions review panel scopes on and the same one
+   * the dispatch payload declares as `pay_period.week`. It used to be
+   * `allDaysColumnGroups`, which is the PAB MONTH, so one approved day was paid on
+   * every week of its month; see time-adjustment-week-scope.ts for the measurement.
+   * An unresolvable week now credits NOTHING rather than everything.
    */
-  const timeAdjustDeltaByEmail = useMemo<Map<string, { hours: number; days: ReportTimeAdjustmentDay[] }>>(() => {
-    const delta = new Map<string, { hours: number; days: ReportTimeAdjustmentDay[] }>();
-    if (approvedTimeAdjustments.size === 0) return delta;
-    const periodDates = new Set<string>();
-    for (const group of allDaysColumnGroups) {
-      const d = isoDateFromColumnGroup(group);
-      if (d) periodDates.add(d);
-    }
-    for (const [em, dates] of approvedTimeAdjustments) {
-      const raw = rawDayHoursByEmail.get(em);
-      let d = 0;
-      const days: ReportTimeAdjustmentDay[] = [];
-      for (const [date, setHours] of dates) {
-        if (periodDates.size > 0 && !periodDates.has(date)) continue;
-        const rawHours = raw?.get(date) ?? 0;
-        const dayDelta = setHours - rawHours;
-        d += dayDelta;
-        days.push({ date, hours: Math.round(dayDelta * 100) / 100 });
-      }
-      if (days.length > 0) delta.set(em, { hours: d, days });
-    }
-    return delta;
-  }, [approvedTimeAdjustments, rawDayHoursByEmail, allDaysColumnGroups]);
+  const timeAdjustDeltaByEmail = useMemo<Map<string, { hours: number; days: ReportTimeAdjustmentDay[] }>>(
+    () =>
+      buildTimeAdjustmentDeltas({
+        approvedByEmail: approvedTimeAdjustments,
+        rawByEmail: rawDayHoursByEmail,
+        payWeek: activeBatchDateRange,
+      }),
+    [approvedTimeAdjustments, rawDayHoursByEmail, activeBatchDateRange],
+  );
 
   const decideTimeAdjustmentRequest = useCallback(
     async (id: string, action: 'approve' | 'deny', note?: string) => {

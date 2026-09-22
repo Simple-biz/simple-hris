@@ -6,8 +6,10 @@ import {
   formatHours,
   formatPhp,
   formatStatementDate,
+  formatTimeAdjustmentDetail,
   formatUsd,
   showsOrphanageLine,
+  showsTimeAdjustmentLine,
   type PayStubView,
   type ProratedLineView,
 } from '@/lib/payroll/paystub-view';
@@ -478,6 +480,24 @@ export function PayStubStatement({
                   )
                 }
                 amount={php(view.weekendPay)}
+              />
+            )}
+            {/* Approved time adjustment. It sits directly after the hours lines,
+                the same place the Reports XLSX puts its columns, so the document
+                reads `Regular + OT (+ Weekend) + Time Adjustment = Initial Pay`.
+                It is NOT folded into Regular Hours: `hours.total` is the RAW
+                tracked figure and Hubstaff data is never mutated, so without its
+                own row this money is inside the Net and inside nothing that
+                explains it — measured 2026-09-22 on a real staged stub whose
+                lines summed ₱23.33 short of the Net it printed. Renders only
+                when the block moved money (`showsTimeAdjustmentLine`), so every
+                statement staged before 2026-09-10 and every week without an
+                adjustment is byte-identical to before. */}
+            {showsTimeAdjustmentLine(view) && (
+              <EarningRow
+                label="Time Adjustment"
+                detail={formatTimeAdjustmentDetail(view.timeAdjustment)}
+                amount={php(view.timeAdjustment?.payPhp ?? 0)}
               />
             )}
             <EarningRow label="Tech Allowance" detail="Bonus" amount={php(view.techBonus)} />

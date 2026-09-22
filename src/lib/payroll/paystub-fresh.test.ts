@@ -750,3 +750,114 @@ test('an unchanged department is not a change', () => {
   const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
   assert.equal(r.refreshed, false);
 });
+
+// ── The approved time-adjustment block travels with the figures it explains ──
+// The block IS the statement's Time Adjustment earnings line, and it explains
+// part of `initial`. A merge that refreshes the totals while leaving a stale
+// block behind would print a line whose amount the rest of the document no
+// longer sums to — the same failure the weekend block's tri-state prevents.
+
+/** Staged row carrying a time-adjustment block, priced at ₱225/h. */
+function stagedRowWithTimeAdjustment(): StagedPaystubLike {
+  const row = stagedRow();
+  (row.payload as Record<string, unknown>).time_adjustment = {
+    hours: 0.5,
+    pay_php: 112.5,
+    days: [{ date: '2026-07-24', hours: 0.5 }],
+  };
+  return row;
+}
+
+test('a newer snapshot replaces the staged time-adjustment block', () => {
+  const r = mergeSnapshotIntoStaged(
+    stagedRowWithTimeAdjustment(),
+    snapValue(
+      snapEntry({
+        regularRate: 225,
+        otRate: 337.5,
+        timeAdjustmentHours: 1,
+        timeAdjustmentPay: 225,
+        timeAdjustmentDays: [{ date: '2026-07-25', hours: 1 }],
+      }),
+    ),
+    SNAP_NEWER,
+    CLAIM_225,
+  );
+  assert.equal(r.refreshed, true);
+  assert.deepEqual((r.payload as Record<string, unknown>).time_adjustment, {
+    hours: 1,
+    pay_php: 225,
+    days: [{ date: '2026-07-25', hours: 1 }],
+  });
+});
+
+// The whole point of the pay-week scope fix: a re-lock that DROPS an
+// out-of-week credit must be able to zero a block that is already staged, or
+// the stub keeps advertising money the new totals no longer contain.
+test('a snapshot that dropped the credit ZEROES the staged block, and that counts as a change', () => {
+  const r = mergeSnapshotIntoStaged(
+    stagedRowWithTimeAdjustment(),
+    snapValue(
+      snapEntry({
+        regularRate: 225,
+        otRate: 337.5,
+        timeAdjustmentHours: 0,
+        timeAdjustmentPay: 0,
+        timeAdjustmentDays: [],
+      }),
+    ),
+    SNAP_NEWER,
+    CLAIM_225,
+  );
+  assert.equal(r.refreshed, true);
+  assert.deepEqual((r.payload as Record<string, unknown>).time_adjustment, {
+    hours: 0,
+    pay_php: 0,
+    days: [],
+  });
+});
+
+test('an older-shape snapshot cannot speak for the block — the staged one is kept', () => {
+  const r = mergeSnapshotIntoStaged(
+    stagedRowWithTimeAdjustment(),
+    // No timeAdjustment* fields at all: a snapshot published before 2026-09-10.
+    snapValue(snapEntry({ regularRate: 225, otRate: 337.5, regularPay: 9000, otPay: 1398.38, initial: 10398.38, final: 10398.38 })),
+    SNAP_NEWER,
+    CLAIM_225,
+  );
+  assert.deepEqual((r.payload as Record<string, unknown>).time_adjustment, {
+    hours: 0.5,
+    pay_php: 112.5,
+    days: [{ date: '2026-07-24', hours: 0.5 }],
+  });
+});
+
+test('an unchanged block does not by itself force a refresh', () => {
+  // Built on the figure-for-figure fixtures, so the ONLY thing under test is
+  // the block comparator. The staged day is written in the opposite key order a
+  // jsonb round-trip might produce.
+  const staged = transferBaseRow();
+  (staged.payload as Record<string, unknown>).time_adjustment = {
+    hours: 0.5,
+    pay_php: 112.5,
+    days: [{ hours: 0.5, date: '2026-07-24' }],
+  };
+  const entry = snapEntry(
+    transferOnly({
+      timeAdjustmentHours: 0.5,
+      timeAdjustmentPay: 112.5,
+      timeAdjustmentDays: [{ date: '2026-07-24', hours: 0.5 }],
+    }),
+  );
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, false);
+});
+
+test('a staged payload with NO block and a zeroed snapshot compare equal — no endless refresh', () => {
+  const staged = transferBaseRow(); // no time_adjustment key at all
+  const entry = snapEntry(
+    transferOnly({ timeAdjustmentHours: 0, timeAdjustmentPay: 0, timeAdjustmentDays: [] }),
+  );
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
+  assert.equal(r.refreshed, false);
+});

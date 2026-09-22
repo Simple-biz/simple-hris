@@ -26,7 +26,9 @@ import {
   formatPhp,
   formatStatementDate,
   formatUsd,
+  formatTimeAdjustmentDetail,
   showsOrphanageLine,
+  showsTimeAdjustmentLine,
   type PayStubView,
   type ProratedLineView,
 } from '@/lib/payroll/paystub-view';
@@ -300,6 +302,22 @@ export function renderPayStubEmailHtml(
                 )
               : rateDetail(view.weekendHours, view.weekendBasis[0]?.ratePhp ?? 0),
         amount: php(view.weekendPay),
+      }),
+    );
+  }
+  // Approved time adjustment — directly after the hours lines, the same place
+  // the in-app statement and the Reports XLSX put it, so the document reads
+  // `Regular + OT (+ Weekend) + Time Adjustment = Initial Pay`. Renders only
+  // when the block moved money (`showsTimeAdjustmentLine`), so every statement
+  // staged before 2026-09-10 is byte-identical. The detail string comes from
+  // the shared `formatTimeAdjustmentDetail` — this file is a transcription of
+  // the component, never a second derivation.
+  if (showsTimeAdjustmentLine(view)) {
+    earnings.push(
+      renderRow({
+        label: 'Time Adjustment',
+        detail: esc(formatTimeAdjustmentDetail(view.timeAdjustment)),
+        amount: php(view.timeAdjustment?.payPhp ?? 0),
       }),
     );
   }

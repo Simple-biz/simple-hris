@@ -174,6 +174,41 @@ function sameTransferBlock(a: unknown, b: unknown): boolean {
   return ak.length === bk.length && ak.every((k, i) => k === bk[i]);
 }
 
+/**
+ * Field-wise compare of two `time_adjustment` blocks. An ABSENT block and a
+ * zeroed one both mean "no adjustment money this week", so they compare EQUAL —
+ * otherwise every legacy payload would read as changed on every merge and
+ * refresh the queue row forever (the same trap `sameTransferBlock` documents).
+ * The days list is compared as a sorted `date|hours` set, so jsonb key
+ * reordering and a different day order are not a change.
+ */
+function sameTimeAdjustmentBlock(a: unknown, b: unknown): boolean {
+  const keys = (v: unknown): { hours: number; pay: number; days: string[] } => {
+    const o = v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+    if (!o) return { hours: 0, pay: 0, days: [] };
+    const days = Array.isArray(o.days) ? o.days : [];
+    return {
+      hours: num(o.hours),
+      pay: num(o.pay_php),
+      days: days
+        .map((d) => {
+          const dd = obj(d);
+          const date = typeof dd.date === "string" ? dd.date.slice(0, 10) : "";
+          return `${date}|${num(dd.hours)}`;
+        })
+        .sort(),
+    };
+  };
+  const ak = keys(a);
+  const bk = keys(b);
+  return (
+    sameAmount(ak.hours, bk.hours) &&
+    sameAmount(ak.pay, bk.pay) &&
+    ak.days.length === bk.days.length &&
+    ak.days.every((k, i) => k === bk.days[i])
+  );
+}
+
 function sameHoganBlock(a: unknown, b: unknown): boolean {
   const ao = a && typeof a === "object" ? (a as Record<string, unknown>) : null;
   const bo = b && typeof b === "object" ? (b as Record<string, unknown>) : null;
@@ -456,6 +491,28 @@ export function mergeSnapshotIntoStaged(
   const nextHogan = !hasHoganField ? oldHogan : (entry.hoganSheet ?? null);
   const hoganChanged = hasHoganField && !sameHoganBlock(oldHogan, entry.hoganSheet ?? null);
 
+  // ── Approved time adjustment (snapshots since 2026-09-10) ──
+  // Same contract as the weekend and proration blocks, and for the same reason:
+  // this block EXPLAINS part of `initial` — it is the statement's Time
+  // Adjustment earnings line — so a stale block sitting under refreshed totals
+  // would advertise money the lines no longer sum to. Undefined = an older
+  // snapshot that cannot speak for it, keep the staged block; a value replaces
+  // it, zeros included (a re-lock that dropped an out-of-week credit must be
+  // able to zero a block that is already staged).
+  const oldTimeAdj =
+    p.time_adjustment && typeof p.time_adjustment === "object"
+      ? (p.time_adjustment as Record<string, unknown>)
+      : null;
+  const hasTimeAdjField = entry.timeAdjustmentHours !== undefined || entry.timeAdjustmentPay !== undefined;
+  const nextTimeAdj = !hasTimeAdjField
+    ? oldTimeAdj
+    : {
+        hours: num(entry.timeAdjustmentHours),
+        pay_php: num(entry.timeAdjustmentPay),
+        days: Array.isArray(entry.timeAdjustmentDays) ? entry.timeAdjustmentDays : [],
+      };
+  const timeAdjChanged = hasTimeAdjField && !sameTimeAdjustmentBlock(oldTimeAdj, nextTimeAdj);
+
   // ── Mid-week department transfer (snapshots since 2026-08-25) ──
   // The odd one out: this block explains no money — a transfer is a relabel and
   // only a RATE change prorates — so it can be the ONLY thing that differs
@@ -503,6 +560,7 @@ export function mergeSnapshotIntoStaged(
     weekendChanged ||
     prorationChanged ||
     hoganChanged ||
+    timeAdjChanged ||
     transferChanged ||
     deptChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
@@ -520,6 +578,8 @@ export function mergeSnapshotIntoStaged(
     ...(hasProrationField ? { proration: nextProration } : {}),
     // Same rule for the Hogan sheet-form block (see above).
     ...(hasHoganField ? { hogan_sheet: nextHogan } : {}),
+    // Same rule for the approved time-adjustment block (see above).
+    ...(hasTimeAdjField ? { time_adjustment: nextTimeAdj } : {}),
     // Same rule for the mid-week transfer block (see above).
     ...(hasTransferField ? { department_transfer: nextTransfer } : {}),
     // The Department line follows the wizard's current resolution (see above).

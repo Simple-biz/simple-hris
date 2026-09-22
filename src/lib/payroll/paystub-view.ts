@@ -15,6 +15,23 @@ import {
   type DepartmentTransferLegRaw,
 } from './department-transfer-legs';
 
+/** One approved time-adjustment day on the statement: the ISO date and the
+ *  SIGNED hours delta (approved day total − raw tracked) it contributed. */
+export interface TimeAdjustmentDayView {
+  date: string;
+  hours: number;
+}
+
+/** The approved time-adjustment block as staged on the payload
+ *  (`DispatchEmployee.time_adjustment`, 2026-09-10). `payPhp` is the exact
+ *  signed amount the wizard added to Initial Pay — 0 when no rate resolved,
+ *  even if hours ≠ 0, because the fold is gated on a rate. */
+export interface TimeAdjustmentView {
+  hours: number;
+  payPhp: number;
+  days: TimeAdjustmentDayView[];
+}
+
 export interface PayStubView {
   name: string;
   department: string;
@@ -96,6 +113,21 @@ export interface PayStubView {
   performanceBonus: number;
   adjustment: number;
   adjustmentNote: string | null;
+  /**
+   * Approved time-adjustment money for this week — the signed pesos the wizard
+   * folded into Initial Pay, with the days that earned them. Null for a payload
+   * staged before the block existed (2026-09-10) and for every week that had no
+   * approved adjustment, so those statements render byte-identical.
+   *
+   * It is a SEPARATE earnings line and not part of Regular: `hours.total` is the
+   * RAW tracked figure and stays that way (Hubstaff data is never mutated), so
+   * without its own line the money is in `final` and in nothing that explains it.
+   * Measured on a real staged stub 2026-09-22: juliar@'s 09-06→09-12 lines summed
+   * to ₱14,188.29 under a printed Net of ₱14,211.62 — ₱23.33 unaccounted for.
+   * The line restores `Regular + OT + Time Adjustment = Initial Pay`, the identity
+   * the Reports XLSX has pinned since 2026-09-10.
+   */
+  timeAdjustment: TimeAdjustmentView | null;
   /** Accounting orphanage pay — a positive amount added on top of pay, its own line. */
   orphanagePay: number;
   mesaDisbursement: number;
@@ -226,6 +258,43 @@ const MONEY_EPSILON = 0.005;
  */
 export function showsOrphanageLine(view: Pick<PayStubView, 'orphanagePay'>): boolean {
   return Math.abs(view.orphanagePay) >= MONEY_EPSILON;
+}
+
+/**
+ * Whether the Time Adjustment line renders — same "only when it applies" rule
+ * as Orphanage, and for the same reason: the block is staged on EVERY payload
+ * since 2026-09-10 (zeros + `[]` when the person had none), so keying on its
+ * presence would print `₱0.00` on thousands of statements that have nothing to
+ * say. It renders when the block moved money.
+ *
+ * Deliberately keyed on the MONEY, not on the hours: `payPhp` is 0 when no rate
+ * resolved even though hours ≠ 0, and a line reading "0.08h  ₱0.00" beside an
+ * unchanged Net would assert a correction the pay never received.
+ */
+export function showsTimeAdjustmentLine(view: Pick<PayStubView, 'timeAdjustment'>): boolean {
+  return view.timeAdjustment != null && Math.abs(view.timeAdjustment.payPhp) >= MONEY_EPSILON;
+}
+
+/**
+ * The Time Adjustment line's detail cell — `+0.08h · Sep 10, 2026`.
+ *
+ * Derived HERE, not in either renderer. The weekend rows and the proration chip
+ * each shipped in-app while the emailed copy stayed stale, so the employee read
+ * one breakdown in their Pay Stubs tab and another in their inbox for the same
+ * payment. One string, two transcriptions, one parity test.
+ *
+ * The sign is explicit on the hours because an adjustment may lower a day, and
+ * `−0.50h` beside a negative amount is the only reading that is not alarming.
+ */
+export function formatTimeAdjustmentDetail(block: TimeAdjustmentView | null): string {
+  if (!block) return '';
+  const magnitude = formatHours(Math.abs(block.hours));
+  const hours = `${block.hours < 0 ? '−' : '+'}${magnitude}h`;
+  const dates = block.days
+    .map((d) => formatStatementDate(d.date))
+    .filter((d): d is string => Boolean(d))
+    .join(' · ');
+  return dates ? `${hours} · ${dates}` : hours;
 }
 
 /** Default HSL weekend premium (₱/h) for payloads that predate carrying it. */
@@ -626,6 +695,33 @@ export function parseWeekendBlock(payload: Json): WeekendFigures | null {
 }
 
 /**
+ * Parse a payload's `time_adjustment` block (staged on every payload since
+ * 2026-09-10). Absent → null, so a statement staged before the block existed
+ * renders byte-identical; a present block with zeros is kept as zeros and
+ * {@link showsTimeAdjustmentLine} is what decides whether it prints, exactly
+ * like the Orphanage line.
+ *
+ * Days are sorted oldest-first here, the same order the Reports XLSX prints
+ * them in (`formatTimeAdjustmentDates`), so the two documents describing one
+ * week never list the same dates in different orders.
+ */
+export function parseTimeAdjustmentBlock(payload: Json): TimeAdjustmentView | null {
+  const p = obj(payload);
+  if (!p.time_adjustment || typeof p.time_adjustment !== 'object') return null;
+  const t = obj(p.time_adjustment);
+  const rawDays = Array.isArray(t.days) ? t.days : [];
+  const days: TimeAdjustmentDayView[] = [];
+  for (const d of rawDays) {
+    const day = obj(d);
+    const date = day.date == null ? '' : str(day.date);
+    if (!date) continue;
+    days.push({ date, hours: num(day.hours) });
+  }
+  days.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return { hours: num(t.hours), payPhp: num(t.pay_php), days };
+}
+
+/**
  * Parse a payload's `department_transfer` block into the view's display form.
  *
  * The block is staged only when a move was effective INSIDE the pay week, so
@@ -715,6 +811,7 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
     performanceBonus: num(pay.other_bonuses),
     adjustment: num(pay.adjustment),
     adjustmentNote: p.adjustment_note ? str(p.adjustment_note) : null,
+    timeAdjustment: parseTimeAdjustmentBlock(payload),
     orphanagePay: num(pay.orphanage_pay),
     mesaDisbursement: num(pay.mesa_disbursement),
     mesaDeduction: num(pay.mesa_deduction),

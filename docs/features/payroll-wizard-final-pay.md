@@ -273,8 +273,8 @@ progress, prediction or readiness wiring.
 > XLSX's `Salaries` sheet is the file meant (the code has always called it "the CSV").
 
 **What was wrong.** An approved time adjustment SETS a day's hours at calculation time, and the
-wizard folds the resulting pesos — Σ(approved − raw) over in-period dates × the regular rate —
-into Initial Pay (`effectiveCalcResults`; see
+wizard folds the resulting pesos — Σ(approved − raw) over the dates inside **this pay week**
+× the regular rate — into Initial Pay (`effectiveCalcResults`; see
 [time-adjustment-requests.md](./time-adjustment-requests.md) § Pay wiring). Nothing itemized
 that delta: not `CalcRow`, not the staged payload, not the final-pay snapshot, not the export. So
 an adjusted row exported **Regular + OT ≠ Initial Pay** with nothing in the file explaining the
@@ -309,9 +309,11 @@ half-written entry) is treated as absent.
 
 **Deliberately unchanged.** The PDF keeps its 12 fixed-width columns (a 704pt budget; it already
 omits the PAB/Tech/Other split and reconciles at Initial → Net); the step-9 on-screen table;
-`hours.total`; every peso of pay. **OPEN (finding):** the paystub's Regular/OT earnings lines do
-not itemize this delta either while `final` includes it — recorded in the 2026-09-10 session log
-(Open item 32); its own change.
+`hours.total`; every peso of pay. **The finding recorded here as open — the paystub's earnings
+lines not itemizing the delta while `final` includes it — was CLOSED 2026-09-22** by a dedicated
+**Time Adjustment** line on the statement, its emailed copy and the employee export; see
+[paystub-dispatch.md](./paystub-dispatch.md) § *The Time Adjustment line*. Session-log item 32 is
+closed with it.
 
 Tests: `report-rows.test.ts` (signed/negative delta, the undisclosed-fold bug class, no-rate
 hours, legacy blanks, sheet-form HSL, column placement) · `replay-finals-overlay.test.ts` (saved
@@ -524,7 +526,12 @@ still governs the numbers: cards hydrate **raw** from
   [payment-catalog-departments.md](./payment-catalog-departments.md).
 - **Time Adjustments are week-gated.** The Additions "Time Adjustments" fold-in
   only shows requests belonging to the wizard's **current pay week**; other
-  weeks' requests no longer bleed into every run.
+  weeks' requests no longer bleed into every run. **The PAY fold was NOT gated
+  the same way until 2026-09-22** — it scoped on the PAB month, so one approved
+  day was paid on every week of that month (juliar@, ₱23.33, measured). Both
+  now read one definition, `activeBatchDateRange`, through
+  `buildTimeAdjustmentDeltas`; an unresolvable week credits nothing. See
+  [time-adjustment-requests.md](./time-adjustment-requests.md) § Pay wiring.
 - **HSL table UX.** Pinned always-visible horizontal + vertical scrollbars,
   Additions-matching text size, and the **KPI Bonus column hidden by default**
   behind a Show/Hide dropdown in the toolbar.

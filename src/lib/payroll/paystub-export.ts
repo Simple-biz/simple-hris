@@ -165,6 +165,10 @@ function derive(w: PayStubWeek) {
     weekdayOtPay: v.weekdayOtPay ?? v.otPay,
     weekendHours: hasWeekend ? v.weekendHours : 0,
     weekendPay: hasWeekend ? v.weekendPay : 0,
+    // Approved time-adjustment money (2026-09-10 block). It is inside Net and
+    // inside nothing else on the sheet, so without its own column a row with an
+    // adjustment does not add across — the same gap the statement had.
+    timeAdjustmentPay: v.timeAdjustment?.payPhp ?? 0,
   };
 }
 
@@ -176,6 +180,7 @@ interface Totals {
   attendanceBonus: number;
   performanceBonus: number;
   adjustment: number;
+  timeAdjustmentPay: number;
   orphanagePay: number;
   mesaNet: number;
   netPhp: number;
@@ -193,6 +198,7 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
       t.attendanceBonus += w.view.attendanceBonus;
       t.performanceBonus += w.view.performanceBonus;
       t.adjustment += w.view.adjustment;
+      t.timeAdjustmentPay += d.timeAdjustmentPay;
       t.orphanagePay += w.view.orphanagePay;
       t.mesaNet += d.mesaNet;
       t.netPhp += w.view.totalPayPhp;
@@ -207,6 +213,7 @@ function sumTotals(weeks: PayStubWeek[]): Totals {
       attendanceBonus: 0,
       performanceBonus: 0,
       adjustment: 0,
+      timeAdjustmentPay: 0,
       orphanagePay: 0,
       mesaNet: 0,
       netPhp: 0,
@@ -296,6 +303,11 @@ const XLSX_COLS: XlsxCol[] = [
   // (2026-08-07; the OT bucket pays otRate + premium). Zero for non-HSL weeks.
   { header: 'Weekend Hours', width: 14, value: (w) => round2(derive(w).weekendHours) },
   { header: 'Weekend Pay', width: 14, value: (w) => round2(derive(w).weekendPay), total: (t) => round2(t.weekendPay) },
+  {
+    header: 'Time Adj.', width: 12,
+    value: (w) => round2(derive(w).timeAdjustmentPay),
+    total: (t) => round2(t.timeAdjustmentPay),
+  },
   { header: 'Tech Allowance', width: 14, value: (w) => round2(w.view.techBonus), total: (t) => round2(t.techBonus) },
   { header: 'Attendance', width: 12, value: (w) => round2(w.view.attendanceBonus), total: (t) => round2(t.attendanceBonus) },
   { header: 'Performance Bonus', width: 16, value: (w) => round2(w.view.performanceBonus), total: (t) => round2(t.performanceBonus) },
@@ -469,6 +481,14 @@ const PDF_COL_DEFS: PdfColDef[] = [
       return pay !== 0 ? n2(pay) : '-';
     },
     total: (t) => (t.weekendPay !== 0 ? n2(t.weekendPay) : '-'),
+  },
+  {
+    header: 'Time Adj', align: 'right', optional: true,
+    cell: (w) => {
+      const pay = derive(w).timeAdjustmentPay;
+      return pay !== 0 ? n2Signed(pay) : '-';
+    },
+    total: (t) => (t.timeAdjustmentPay !== 0 ? n2Signed(t.timeAdjustmentPay) : '-'),
   },
   {
     header: 'Tech', align: 'right', optional: true,
