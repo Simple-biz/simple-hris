@@ -14,6 +14,8 @@ already existed; what was missing was an employee-safe way to read them.
 | Piece | File |
 | --- | --- |
 | The step decision layer (pure) | `src/lib/employee/paycycle-steps.ts` (+ `.test.ts`) |
+| The day ladder (pure) | `src/lib/employee/paycycle-days.ts` (+ `.test.ts`) |
+| The Hubstaff duration parser | `src/lib/hubstaff/duration.ts` (+ `.test.ts`) |
 | The arrival-day copy | `src/lib/employee/paycycle-arrival.ts` (+ `.test.ts`) |
 | The server assembler | `app/api/employee/current-paycycle/route.ts` |
 | The pane | `src/components/employee/CurrentPaycycle.tsx` |
@@ -195,6 +197,48 @@ parameter; if an elevated previewer ever needs one, it goes through `authorizeEm
 cross-person rate clamp from `app/api/employee-hourly-rates/route.ts:39-42`, because this payload is
 money.
 
+## 11 · The day ladder: cells are DURATION STRINGS, and a day can span several columns
+
+**Fixed 2026-09-22, the same day it shipped, after Kane reported the hours were wrong.** The ladder
+had rendered "—" for all seven days for everyone. Three faults, all in the same dozen lines, all now
+pinned by `paycycle-days.test.ts` against a real production row:
+
+1. **`Number("8:20:29")` is `NaN`.** Hubstaff writes a worked day as a duration string — `H:MM:SS`,
+   sometimes `H:MM`, occasionally a bare decimal — never a number. The first version read the cell
+   with `Number()`, got `NaN`, fell through to "no cell for this day", and printed a blank. It did
+   not under-report; it reported **nothing**, silently, for a full week of tracked time.
+   `parseHubstaffDurationSeconds` (`src/lib/hubstaff/duration.ts`) is now the parser.
+2. **A calendar day can span more than one column**, so the columns are grouped with
+   `groupDateColumnsByCalendarDay` and the group's **MAX** is taken — `INDEX.md:41`: *"readers
+   dedupe, they do not sum."* Reading a single `row[iso]` cell missed this entirely.
+3. **A double ingest leaves two `upload_id` batches under one `source_file`.** The first version
+   took the *last* row, a coin flip between batches. It now calls `collapseToSingleUploadBatch`
+   with the preferred upload id (`is_current` → newest → largest), per
+   `hubstaff-double-ingest-duplicate-batch`.
+
+**`Total worked` is the trap in the column predicate.** It is a perfectly valid duration string
+sitting on the same row, so a predicate that forgets to exclude it turns a 42-hour weekly total into
+a 42-hour Monday. `isHubstaffDayColumn` excludes it, along with `source_file` and `upload_id` —
+which exist on the stored row but not in the CSV, so the CSV-facing copies of this predicate never
+had to.
+
+**Zero and absent stay different.** A day whose column reads `0:00:00` is `0`; a day the upload has
+no column for at all is `null` and renders "—". Collapsing them would tell someone their Saturday
+was zero when the file never mentioned Saturday. This is §2's rule applied to hours.
+
+**Measured after the fix, read-only on production:** for
+`simple-biz_daily_report_2026-09-13_to_2026-09-19.csv`, **998 of 999 people sampled render real
+hours** (the one blank is a genuine zero-hours person), and a sample employee's seven days sum to
+`42.45 h` against that row's own `Total worked` of `42:27:06`. The sample was capped by PostgREST at
+1000 rows, so 999 is the probe's ceiling, not a headcount.
+
+**There are five more copies of this parser** — `EmployeeMyHours.tsx:137`,
+`EmployeeDashboard.tsx:125`, `EmployeePabCalendar.tsx:128`, `ManagerMemberHoursMini.tsx:83`,
+`member-monthly-pay.ts:129`. They are correct today and were not migrated in this fix (session log
+item 164). `fetch-hours-by-employee.ts` now imports the shared one, so the count went 6 → 5 rather
+than 6 → 7. **Do not write a sixth private copy: import `@/lib/hubstaff/duration`.**
+
+
 ## Deploy notes
 
 **No migration.** No new table, no DDL, no `references/sql/` file — every signal already existed in
@@ -208,7 +252,7 @@ Compensation *section* cannot be admin-hidden, cannot ship under-construction, a
 out to a subset. It is visible to every employee the moment it deploys. Making it gateable means
 promoting it to a top-level page, which is a different build.
 
-**Verified 2026-09-22:** `npx tsc --noEmit` clean; `npm test` 4188/4190 — the two failures are
+**Verified 2026-09-22 (after the §11 fix):** `npx tsc --noEmit` clean for these files; `npm test` 4266/4268 — the two failures are
 `dept-label-render.test.ts` and `manager-time-adjustments-live.test.ts`, both scanning
 `ManagerApp.tsx` / `EditBuiltinManagersDialog.tsx`, untouched by this build and already failing on
 `main` (session log item 96). `next build` was NOT run: a dev server was live on :3000 and they share

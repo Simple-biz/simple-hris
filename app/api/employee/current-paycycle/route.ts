@@ -11,11 +11,9 @@ import { getEmployeeKpiResults } from "@/lib/supabase/employee-kpi-results";
 import { loadRecoveryForWeeks } from "@/lib/payroll/paystub-recovery";
 import { mapPayloadToPayStub, formatWeekHuman, type PayStubView } from "@/lib/payroll/paystub-view";
 import { resolveEmployeeProcessor } from "@/lib/payroll/pay-schedule";
-import {
-  parseDateRangeFromFilename,
-  resolveCanonicalColumnsToIso,
-  columnsAreAllCanonical,
-} from "@/lib/hubstaff/calendar-column-dedupe";
+import { parseDateRangeFromFilename } from "@/lib/hubstaff/calendar-column-dedupe";
+import { collapseToSingleUploadBatch } from "@/lib/supabase/hubstaff-hours-db";
+import { buildPaycycleDays } from "@/lib/employee/paycycle-days";
 import {
   cycleFxSettingKey,
   orphanageConfirmedSettingKey,
@@ -86,52 +84,27 @@ function toIso(d: Date): string {
   ).padStart(2, "0")}`;
 }
 
-const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-
-/** One day of the Sun→Sat ladder. */
-interface PaycycleDay {
-  iso: string;
-  label: string;
-  /** Hours from the upload. Null = the upload has no cell for this day at all,
-   *  which is NOT the same as a zero-hour day and must not render as "0.00". */
-  hours: number | null;
-}
-
 /**
- * The seven days of the pay week, Sunday first, built from the FILENAME range
- * rather than from whatever columns the row happens to carry — a week missing
- * its Saturday column must still show Saturday, as a blank.
+ * This caller's Hubstaff rows for ONE upload. Alias-filtered and PAGED —
+ * PostgREST truncates at 1000 rows even with `.range()`.
+ *
+ * Returns the rows RAW. Parsing them into days is `buildPaycycleDays`'s job and
+ * lives in a pure, tested module: the day columns are canonical weekday names
+ * holding duration strings (`"8:20:29"`), and reading them with `Number()` is
+ * exactly how this pane shipped blank on 2026-09-22.
+ *
+ * A double ingest leaves two `upload_id` batches under one `source_file`
+ * (memory `hubstaff-double-ingest-duplicate-batch`), so the rows are collapsed
+ * to the PREFERRED batch before anyone counts them — `INDEX.md:41`: *"A double
+ * ingest must collapse to the preferred batch — readers dedupe, they do not
+ * sum."* Picking the last row instead, as this first did, is the coin-flip that
+ * rule exists to forbid.
  */
-function buildDays(sourceFile: string, row: Record<string, unknown> | null): PaycycleDay[] {
-  const range = parseDateRangeFromFilename(sourceFile);
-  if (!range) return [];
-  const days: PaycycleDay[] = [];
-  const cursor = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate());
-  for (let i = 0; i < 7; i += 1) {
-    const iso = toIso(cursor);
-    const raw = row ? row[iso] : undefined;
-    const n = typeof raw === "string" ? Number(raw) : (raw as number | undefined);
-    days.push({
-      iso,
-      label: DAY_LABELS[cursor.getDay()] ?? "",
-      hours: typeof n === "number" && Number.isFinite(n) ? n : null,
-    });
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return days;
-}
-
-/**
- * This caller's Hubstaff row for ONE upload. Alias-filtered and PAGED —
- * PostgREST truncates at 1000 rows even with `.range()`, and while one person
- * will never have 1000 rows for one week, the paging loop is the house rule and
- * a duplicate-batch week (memory `hubstaff-double-ingest-duplicate-batch`) can
- * return more rows than expected.
- */
-async function fetchHoursRow(
+async function fetchHoursRows(
   emails: string[],
   sourceFile: string,
-): Promise<Record<string, unknown> | null> {
+  preferredUploadId: string | null,
+): Promise<Record<string, unknown>[]> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
   if (!supabase) throw new Error("Supabase client unavailable");
   const table =
@@ -156,12 +129,7 @@ async function fetchHoursRow(
     from += PAGE;
     if (from > 10_000) break;
   }
-  if (rows.length === 0) return null;
-  // Last wins on the rare duplicate, matching the merge_all mode's grouping.
-  const row = rows[rows.length - 1];
-  return columnsAreAllCanonical(Object.keys(row))
-    ? (resolveCanonicalColumnsToIso(row, sourceFile) as Record<string, unknown>)
-    : row;
+  return collapseToSingleUploadBatch(rows, preferredUploadId);
 }
 
 /** Does the week's orphanage data exist AT ALL — for anyone? This is what makes
@@ -241,7 +209,7 @@ export async function GET() {
 
   const [
     settings,
-    hoursRow,
+    hoursRows,
     orphanageRows,
     orphanageLanded,
     kpi,
@@ -254,7 +222,7 @@ export async function GET() {
       mark("fx", "adjustments", "locked", "orphanage");
       return null;
     }),
-    fetchHoursRow(emails, sourceFile).catch(() => {
+    fetchHoursRows(emails, sourceFile, uploadIdByFile.get(sourceFile) ?? null).catch(() => {
       mark("hubstaff");
       return null;
     }),
@@ -334,7 +302,7 @@ export async function GET() {
 
   const trackInput: PaycycleTrackInput = {
     hubstaffLoaded: true, // the file exists — we resolved the week from it
-    hasHoursRow: !!hoursRow,
+    hasHoursRow: (hoursRows ?? []).length > 0,
     fxSet,
     orphanageWeekKnown: orphanageLanded === true || !!noneMarker,
     hasOrphanageHours: myOrphanageHours > 0,
@@ -392,7 +360,7 @@ export async function GET() {
       weekEnd: weekEndIso,
       weekHuman: formatWeekHuman(weekStartIso, weekEndIso),
     },
-    days: buildDays(sourceFile, hoursRow),
+    days: buildPaycycleDays(sourceFile, hoursRows ?? []),
     stub,
     track: derivePaycycleSteps(trackInput),
     rail,

@@ -11,6 +11,10 @@
  */
 
 import { normEmail } from '@/lib/email/norm-email';
+// The ONE duration parser. This file used to carry a private copy; it was one
+// of six, and the seventh reader wrote `Number()` instead because there was
+// nothing to import — which shipped the Current Paycycle ladder blank.
+import { parseHubstaffDurationSeconds as parseHMS } from './duration';
 import {
   columnsAreAllCanonical,
   groupDateColumnsByCalendarDay,
@@ -39,18 +43,6 @@ function isDateCol(col: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(col.trim());
 }
 
-/** Parse Hubstaff "h:mm:ss" / "h:mm" / decimal-hours strings into integer seconds. */
-function parseHMS(v: unknown): number {
-  if (v == null) return 0;
-  const s = String(v).trim();
-  if (!s) return 0;
-  const hms = /^(\d+):(\d{2}):(\d{2})$/.exec(s);
-  if (hms) return parseInt(hms[1], 10) * 3600 + parseInt(hms[2], 10) * 60 + parseInt(hms[3], 10);
-  const hm = /^(\d+):(\d{2})$/.exec(s);
-  if (hm) return parseInt(hm[1], 10) * 3600 + parseInt(hm[2], 10) * 60;
-  const dec = parseFloat(s);
-  return Number.isFinite(dec) ? Math.round(dec * 3600) : 0;
-}
 
 function getRowEmails(row: Record<string, unknown>): string[] {
   const seen = new Set<string>();
