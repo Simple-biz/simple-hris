@@ -52,10 +52,13 @@ import {
 import { Label } from '@/components/ui/label';
 import {
   buildGiftRosterExport,
+  buildGiftSubmissionsExport,
   downloadGiftRosterCsv,
   downloadGiftRosterPdf,
   downloadGiftRosterXlsx,
+  downloadGiftSubmissionsCsv,
   type GiftRosterReceiptInput,
+  type GiftSubmissionsRowInput,
 } from '@/lib/gift-tracker/shipping-export';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -2577,6 +2580,61 @@ function SubmissionsPanel({
     { key: 'all',      label: 'All',      count: counts.all,      tone: 'pink' },
   ];
 
+  // ---- Export CSV ---------------------------------------------------------
+  // Submission grain, scoped to exactly what is on screen. The Roster tab's
+  // export is the OTHER grain on purpose (one row per person, including the
+  // people who never submitted) — neither file is the other one done wrong.
+  const [exporting, setExporting] = useState(false);
+
+  const exportRows = useMemo<GiftSubmissionsRowInput[]>(
+    () =>
+      filtered.map(({ sub, emailKey }) => {
+        const ref = rowsByEmail.get(emailKey);
+        return {
+          submission: sub,
+          // Resolved from the SAME map the list renders from, so the file and
+          // the screen can never disagree about who is off-roster.
+          offRoster: !ref,
+          name: ref?.name ?? null,
+          workEmail: ref?.workEmail ?? null,
+          department: ref?.department ?? null,
+        };
+      }),
+    [filtered, rowsByEmail],
+  );
+
+  /** What the pills + search were set to. Goes in the file, not just the UI. */
+  const scopeLabel = useMemo(() => {
+    const base = filter === 'all' ? 'All submissions' : `${filter[0].toUpperCase()}${filter.slice(1)}`;
+    const needle = search.trim();
+    return needle ? `${base} · search "${needle}"` : base;
+  }, [filter, search]);
+
+  const runExport = useCallback(() => {
+    if (exportRows.length === 0) {
+      toast.error('Nothing to export in this view.');
+      return;
+    }
+    setExporting(true);
+    try {
+      const model = buildGiftSubmissionsExport({
+        rows: exportRows,
+        // The count BEFORE the filter — the file prints "N of TOTAL" so a
+        // Pending-only export can never be mistaken for the whole queue.
+        totalSubmissions: all.length,
+        scopeLabel,
+      });
+      downloadGiftSubmissionsCsv(model);
+      toast.success(
+        `Exported ${model.rows.length.toLocaleString()} submission${model.rows.length === 1 ? '' : 's'} as CSV.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to export CSV');
+    } finally {
+      setExporting(false);
+    }
+  }, [exportRows, all.length, scopeLabel]);
+
   return (
     <div className="flex flex-col gap-4">
       {/* Filter pills + search */}
@@ -2615,14 +2673,40 @@ function SubmissionsPanel({
             );
           })}
         </div>
-        <div className="relative w-full max-w-sm">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, email, address…"
-            className="h-9 pl-8 text-sm"
-          />
+        {/* `data-readonly-allow` — downloading what you can already see is not a
+            write, so a view-only reviewer keeps the button, exactly as on the
+            Roster toolbar. */}
+        <div data-readonly-allow className="flex w-full max-w-lg items-center gap-2 sm:w-auto">
+          <div className="relative w-full min-w-0 sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, email, address…"
+              className="h-9 pl-8 text-sm"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={runExport}
+            disabled={exporting || filtered.length === 0}
+            // The count is on the button on purpose: the filter defaults to
+            // Pending, and a bare "Export" invites people to believe they took
+            // the whole queue.
+            title={`Download the ${filtered.length.toLocaleString()} submission${filtered.length === 1 ? '' : 's'} in view as CSV`}
+            className="h-9 shrink-0 gap-1.5 border-emerald-200 bg-white text-zinc-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-emerald-900/60 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-200"
+          >
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            {exporting ? 'Exporting…' : 'Export CSV'}
+            <span className="rounded bg-emerald-600/10 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
+              {filtered.length.toLocaleString()}
+            </span>
+          </Button>
         </div>
       </div>
 

@@ -26,6 +26,13 @@
 // structural (banner rows, sized columns, an auto-filtered header). The PDF
 // carries the colour treatment.
 //
+// SECOND EXPORT, SECOND GRAIN (2026-09-22): the Submissions sub-tab has its own
+// CSV — `buildGiftSubmissionsExport` / `giftSubmissionsToCsv`, one row per
+// submission actually on file, scoped to that panel's filter + search. It shares
+// `GiftSubmissionRecord` and `GIFT_SUBMISSION_COLUMNS` with XLSX sheet 2. The
+// roster grain above is NOT a bug to be reconciled with it — see the section
+// header down there for which question each file answers.
+//
 // NOTE on gifts: tenure gifts are INFORMATION ONLY. `gift_price_php`,
 // `gift_name` and `gift_catalog_item_id` still exist on the table as vestigial
 // history columns — they are deliberately absent from every output here, and
@@ -90,6 +97,15 @@ export interface GiftRosterSubmissionInput {
   decided_by: string | null;
   decided_at: string | null;
   updated_at: string;
+  /**
+   * OPTIONAL on purpose. Both are real columns on
+   * `employee_gift_shipping_details`, but this interface is the loose structural
+   * subset the roster's rows are assigned to — making either required would
+   * reject a caller that reads fewer columns, and the outputs already print `-`
+   * for an absent value. Never infer one from `updated_at`.
+   */
+  created_at?: string;
+  decision_note?: string | null;
 }
 
 /** Where the exported address came from — printed, so the two are never confused. */
@@ -166,6 +182,15 @@ export interface GiftSubmissionRecord {
   employeeNotes: string;
   decidedBy: string;
   decidedAt: string;
+  /** The reviewer's own words on an approve/reject — `decision_note`. */
+  reviewerNote: string;
+  /** When the row was first written (`created_at`). */
+  firstSubmittedAt: string;
+  /**
+   * `updated_at` — the LAST edit, not the first. The panel labels this
+   * "last edited"; the column header stays `Last Submitted` because renaming a
+   * shipped column silently breaks every sheet somebody built on it.
+   */
   submittedAt: string;
 }
 
@@ -542,6 +567,8 @@ function submissionRecord(
     employeeNotes: clean(s.notes),
     decidedBy: clean(s.decided_by),
     decidedAt: formatDateTime(s.decided_at),
+    reviewerNote: clean(s.decision_note),
+    firstSubmittedAt: formatDateTime(s.created_at),
     submittedAt: formatDateTime(s.updated_at),
   };
 }
@@ -591,8 +618,15 @@ export const GIFT_ROSTER_COLUMNS: {
   { header: 'Decided At', get: (r) => r.decidedAt || DASH },
 ];
 
-/** Column order for the XLSX "All submissions" history sheet. */
-const SUBMISSION_COLUMNS: {
+/**
+ * Column order at SUBMISSION grain — shared by the XLSX "All submissions"
+ * history sheet and the Submissions sub-tab's CSV. One list, so the two files
+ * can never drift into describing the same row differently.
+ *
+ * `Department` doubles as the off-roster flag (`Off-roster`), exactly as it does
+ * in the roster export. Do not add a second boolean column saying the same thing.
+ */
+export const GIFT_SUBMISSION_COLUMNS: {
   header: string;
   get: (r: GiftSubmissionRecord) => string;
 }[] = [
@@ -612,6 +646,11 @@ const SUBMISSION_COLUMNS: {
   { header: 'Employee Notes', get: (r) => r.employeeNotes || DASH },
   { header: 'Decided By', get: (r) => r.decidedBy || DASH },
   { header: 'Decided At', get: (r) => r.decidedAt || DASH },
+  { header: 'Reviewer Note', get: (r) => r.reviewerNote || DASH },
+  // Two timestamps, never one. `Submitted At` is when they first sent it;
+  // `Last Submitted` is the most recent edit. Collapsing them hides a row that
+  // was quietly rewritten after somebody read it.
+  { header: 'Submitted At', get: (r) => r.firstSubmittedAt || DASH },
   { header: 'Last Submitted', get: (r) => r.submittedAt || DASH },
 ];
 
@@ -677,11 +716,192 @@ export function giftRosterToCsv(model: GiftRosterExportModel): string {
 }
 
 // ---------------------------------------------------------------------------
+// Submissions grain — HR → Gift Tracker → Submissions → Export CSV
+// ---------------------------------------------------------------------------
+//
+// ONE ROW PER SUBMISSION, and deliberately so.
+//
+// The roster export above is the opposite grain, and the reason is load-bearing:
+// a person who never filled the form in is the finding, so membership there is
+// never decided by whether a submission exists. That rule governs the ROSTER
+// file and is not weakened here.
+//
+// The Submissions sub-tab is a work queue — every row is something somebody
+// typed that somebody else must approve, reject or ship — and this file answers
+// the shipping desk's question instead: what did these people actually send us.
+// Both files are correct. The failure mode is a future reader finding one and
+// "fixing" the other to match, which is why they share `GiftSubmissionRecord`
+// and `GIFT_SUBMISSION_COLUMNS` and cannot describe the same row differently.
+
+/** One in-view submission, with its roster match already resolved by the caller. */
+export interface GiftSubmissionsRowInput {
+  submission: GiftRosterSubmissionInput;
+  /**
+   * TRUE when this submission matched no roster row. Passed in, never inferred
+   * from a blank name: an off-roster submitter — offboarded, or they changed the
+   * personal email the form is keyed on — is the likeliest person to be
+   * mis-shipped, and a heuristic that guessed wrong would hide exactly them.
+   */
+  offRoster: boolean;
+  name?: string | null;
+  workEmail?: string | null;
+  department?: string | null;
+}
+
+export interface BuildGiftSubmissionsInput {
+  /**
+   * The rows in view, in the order the panel shows them. NEVER re-sorted here —
+   * the file has to match the screen it was taken from, and the panel's own
+   * pending-first ordering is the review order the team works in.
+   */
+  rows: readonly GiftSubmissionsRowInput[];
+  /** Submissions on file BEFORE the filter. The file prints `N of TOTAL`. */
+  totalSubmissions: number;
+  /** What the filter pills + search were set to, e.g. `Pending · search "cebu"`. */
+  scopeLabel?: string;
+}
+
+export interface GiftSubmissionsExportModel {
+  generatedAt: Date;
+  rows: GiftSubmissionRecord[];
+  totalSubmissions: number;
+  summary: {
+    submissions: number;
+    /** Distinct PEOPLE behind those submissions — identity is the work email. */
+    people: number;
+    pending: number;
+    approved: number;
+    rejected: number;
+    offRoster: number;
+    noAddress: number;
+    altRecipient: number;
+  };
+  scopeLabel: string;
+}
+
+/**
+ * Build the submission-grain model. Pure; the caller owns filtering and order.
+ *
+ * Every count is taken from the RAW submission, not from the formatted record —
+ * a display label is a presentation decision and must never become the thing a
+ * total is computed from.
+ */
+export function buildGiftSubmissionsExport(
+  input: BuildGiftSubmissionsInput,
+): GiftSubmissionsExportModel {
+  const rows: GiftSubmissionRecord[] = [];
+  // Identity is the WORK email, exactly as in the roster export above: two
+  // colleagues share one `personal_email` on this roster, so counting distinct
+  // submission keys would silently merge them into a single "person".
+  const people = new Set<string>();
+  const counts = { pending: 0, approved: 0, rejected: 0 };
+  let offRoster = 0;
+  let noAddress = 0;
+  let altRecipient = 0;
+
+  for (const r of input.rows) {
+    const s = r.submission;
+    const key = clean(s.personal_email).toLowerCase();
+    const workEmail = clean(r.workEmail);
+
+    rows.push(
+      submissionRecord(
+        s,
+        clean(r.name) || key,
+        // An off-roster submitter HAS no work email — the roster is where one
+        // lives. `-`, never their personal address dressed up as a company one.
+        r.offRoster ? DASH : workEmail || DASH,
+        r.offRoster ? 'Off-roster' : clean(r.department) || DASH,
+      ),
+    );
+
+    const identity = (r.offRoster ? '' : workEmail.toLowerCase()) || key;
+    if (identity) people.add(identity);
+    if (r.offRoster) offRoster += 1;
+    if (!clean(s.preferred_delivery_location)) noAddress += 1;
+    if (hasAlternateRecipient(s)) altRecipient += 1;
+    if (s.status === 'pending' || s.status === 'approved' || s.status === 'rejected') {
+      counts[s.status] += 1;
+    }
+  }
+
+  return {
+    generatedAt: new Date(),
+    rows,
+    totalSubmissions: input.totalSubmissions,
+    summary: {
+      submissions: rows.length,
+      people: people.size,
+      pending: counts.pending,
+      approved: counts.approved,
+      rejected: counts.rejected,
+      offRoster,
+      noAddress,
+      altRecipient,
+    },
+    scopeLabel: input.scopeLabel?.trim() || 'All submissions',
+  };
+}
+
+/**
+ * The provenance line. `N of TOTAL` is not decoration: the panel's filter
+ * defaults to Pending, so a file that only said "23 submissions" would read as
+ * the whole queue while holding a fraction of it.
+ */
+function submissionsSummaryLine(model: GiftSubmissionsExportModel): string {
+  const s = model.summary;
+  const n = (v: number) => v.toLocaleString();
+  return (
+    `${n(s.submissions)} of ${n(model.totalSubmissions)} submissions on file` +
+    ` · ${n(s.people)} ${s.people === 1 ? 'person' : 'people'}` +
+    ` · ${n(s.pending)} pending · ${n(s.approved)} approved · ${n(s.rejected)} rejected` +
+    ` · ${n(s.offRoster)} off-roster · ${n(s.noAddress)} with no address` +
+    ` · ${n(s.altRecipient)} received by someone else`
+  );
+}
+
+/** Serialize the submissions model to one flat CSV table (with a UTF-8 BOM). */
+export function giftSubmissionsToCsv(model: GiftSubmissionsExportModel): string {
+  const year = model.generatedAt.getFullYear();
+  const preamble = [
+    ['Tenure Gift Submissions'],
+    [`Scope: ${model.scopeLabel}`],
+    ['Pulled from Simple-HRIS System'],
+    [`Exported: ${formatTimestamp(model.generatedAt)}`],
+    [submissionsSummaryLine(model)],
+    [`Developed by AI/API Team / Simple.biz (c) ${year}`],
+    [''],
+  ].map((row) => row.map(csvEscape).join(','));
+
+  const header = ['#', ...GIFT_SUBMISSION_COLUMNS.map((c) => c.header)]
+    .map(csvEscape)
+    .join(',');
+  const body = model.rows.map((r, i) =>
+    [i + 1, ...GIFT_SUBMISSION_COLUMNS.map((c) => c.get(r))].map(csvEscape).join(','),
+  );
+  return '﻿' + [...preamble, header, ...body].join('\r\n');
+}
+
+/** Build + download the submissions CSV. */
+export function downloadGiftSubmissionsCsv(model: GiftSubmissionsExportModel): void {
+  downloadBlob(
+    `tenure-gift-submissions-${dateSuffix(model.generatedAt)}.csv`,
+    new Blob([giftSubmissionsToCsv(model)], { type: 'text/csv;charset=utf-8' }),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // XLSX
 // ---------------------------------------------------------------------------
 
 const ROSTER_COLUMN_WIDTHS = [26, 32, 32, 20, 14, 10, 9, 16, 15, 16, 11, 14, 46, 14, 18, 12, 34, 26, 20];
-const SUBMISSION_COLUMN_WIDTHS = [26, 32, 32, 20, 14, 15, 46, 18, 12, 14, 34, 26, 20, 20];
+// One width per entry in GIFT_SUBMISSION_COLUMNS, in the same order. It held 14
+// entries for 17 columns before 2026-09-22, so every width from `Alternate
+// Recipient` rightwards was being applied to the wrong column and the last three
+// got none at all. Keep the two lists the same length.
+const SUBMISSION_COLUMN_WIDTHS = [
+  26, 32, 32, 20, 14, 15, 46, 18, 12, 22, 22, 18, 12, 34, 26, 20, 34, 20, 20,
+];
 
 /** Build the workbook: sheet 1 = one row per person, sheet 2 = every submission. */
 export function buildGiftRosterWorkbook(model: GiftRosterExportModel): XLSX.WorkBook {
@@ -717,15 +937,15 @@ export function buildGiftRosterWorkbook(model: GiftRosterExportModel): XLSX.Work
     ['All submissions — every milestone on file'],
     [`Exported ${formatTimestamp(model.generatedAt)} · ${model.submissions.length.toLocaleString()} submission${model.submissions.length === 1 ? '' : 's'}`],
     [],
-    ['#', ...SUBMISSION_COLUMNS.map((c) => c.header)],
+    ['#', ...GIFT_SUBMISSION_COLUMNS.map((c) => c.header)],
   ];
   model.submissions.forEach((r, i) => {
-    subAoa.push([i + 1, ...SUBMISSION_COLUMNS.map((c) => c.get(r))]);
+    subAoa.push([i + 1, ...GIFT_SUBMISSION_COLUMNS.map((c) => c.get(r))]);
   });
   const ws2 = XLSX.utils.aoa_to_sheet(subAoa);
   ws2['!cols'] = [{ wch: 5 }, ...SUBMISSION_COLUMN_WIDTHS.map((wch) => ({ wch }))];
   const subHeaderRow = 4;
-  const subLastCol = SUBMISSION_COLUMNS.length;
+  const subLastCol = GIFT_SUBMISSION_COLUMNS.length;
   ws2['!autofilter'] = {
     ref: `A${subHeaderRow}:${XLSX.utils.encode_col(subLastCol)}${subHeaderRow + model.submissions.length}`,
   };

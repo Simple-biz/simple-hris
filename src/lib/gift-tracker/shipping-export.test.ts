@@ -18,11 +18,15 @@ import {
   buildGiftRosterExport,
   giftRosterToCsv,
   buildGiftRosterWorkbook,
+  buildGiftSubmissionsExport,
+  giftSubmissionsToCsv,
   milestoneLabel,
   GIFT_ROSTER_COLUMNS,
+  GIFT_SUBMISSION_COLUMNS,
   type GiftRosterEmployeeInput,
   type GiftRosterSubmissionInput,
   type GiftRosterReceiptInput,
+  type GiftSubmissionsRowInput,
 } from './shipping-export';
 import { diffDays, getCurrentShippingMilestone, parseStartDate } from '@/lib/gift-milestones';
 import { parseCsv } from './receipt-import';
@@ -310,7 +314,12 @@ test('the workbook carries both the roster sheet and the submission history shee
 // ---------------------------------------------------------------------------
 
 test('no price or gift-name column is ever emitted', () => {
-  const headers = GIFT_ROSTER_COLUMNS.map((c) => c.header.toLowerCase());
+  // BOTH grains. The submissions CSV was added 2026-09-22 against the same
+  // column list the XLSX history sheet uses, so this guard is extended rather
+  // than copied — a second copy would be the one that fell behind.
+  const headers = [...GIFT_ROSTER_COLUMNS, ...GIFT_SUBMISSION_COLUMNS].map((c) =>
+    c.header.toLowerCase(),
+  );
   for (const banned of ['price', 'gift name', 'php', 'amount', 'cost', 'catalog']) {
     assert.ok(
       !headers.some((h) => h.includes(banned)),
@@ -661,4 +670,213 @@ test('the recipient columns carry NO price, like every other column here', () =>
   const csv = giftRosterToCsv(model);
   const header = csv.split('\n').find((l) => l.includes('Alternate Recipient'))!;
   assert.equal(/price|cost|amount|php|catalog/i.test(header), false);
+});
+
+// ---------------------------------------------------------------------------
+// Submissions grain — HR → Gift Tracker → Submissions → Export CSV
+//
+// The OTHER grain, and these tests exist mostly to stop somebody reconciling the
+// two. This file is one row per submission on purpose: it is the shipping desk's
+// queue, not the roster reconciliation. Neither weakens the other.
+// ---------------------------------------------------------------------------
+
+function srow(over: Partial<GiftSubmissionsRowInput> = {}): GiftSubmissionsRowInput {
+  return {
+    submission: sub(),
+    offRoster: false,
+    name: 'Ana Cruz',
+    workEmail: 'anac@simple.biz',
+    department: 'Sales',
+    ...over,
+  };
+}
+
+test('caller order is preserved exactly — the builder never re-sorts', () => {
+  // The panel sorts pending-first, then newest edit. That IS the review order the
+  // team works in, so a file that re-sorted itself would stop matching the screen
+  // it was taken from.
+  const model = buildGiftSubmissionsExport({
+    rows: [
+      srow({ name: 'Third', submission: sub({ status: 'approved' }) }),
+      srow({ name: 'First', submission: sub({ status: 'pending' }) }),
+      srow({ name: 'Second', submission: sub({ status: 'rejected' }) }),
+    ],
+    totalSubmissions: 3,
+  });
+  assert.deepEqual(model.rows.map((r) => r.name), ['Third', 'First', 'Second']);
+});
+
+test('an off-roster submitter is FLAGGED in Department, never dropped', () => {
+  const model = buildGiftSubmissionsExport({
+    rows: [
+      srow(),
+      srow({
+        offRoster: true,
+        name: null,
+        workEmail: null,
+        department: null,
+        submission: sub({ personal_email: 'ghost@x.com' }),
+      }),
+    ],
+    totalSubmissions: 2,
+  });
+  assert.equal(model.rows.length, 2);
+  const ghost = model.rows[1];
+  assert.equal(ghost.department, 'Off-roster');
+  // No roster row means no work email exists. `-`, never their personal address
+  // dressed up as a company one.
+  assert.equal(ghost.workEmail, '-');
+  assert.equal(ghost.name, 'ghost@x.com');
+  assert.equal(model.summary.offRoster, 1);
+});
+
+test('people are counted on the WORK email, not the submission key', () => {
+  // personal_email is not injective on this roster — two colleagues share one.
+  // Counting distinct submission keys would merge them into a single "person".
+  const shared = 'shared.household@gmail.com';
+  const model = buildGiftSubmissionsExport({
+    rows: [
+      srow({ name: 'Ana', workEmail: 'anac@simple.biz', submission: sub({ personal_email: shared }) }),
+      srow({ name: 'Ben', workEmail: 'benc@simple.biz', submission: sub({ personal_email: shared }) }),
+      // Ana again, a second milestone: one more submission, still one person.
+      srow({
+        name: 'Ana',
+        workEmail: 'anac@simple.biz',
+        submission: sub({ personal_email: shared, milestone_index: 3 }),
+      }),
+    ],
+    totalSubmissions: 3,
+  });
+  assert.equal(model.summary.submissions, 3);
+  assert.equal(model.summary.people, 2);
+});
+
+test('the scope is stamped — N of TOTAL, because the panel defaults to Pending', () => {
+  const csv = giftSubmissionsToCsv(
+    buildGiftSubmissionsExport({
+      rows: [srow(), srow()],
+      totalSubmissions: 231,
+      scopeLabel: 'Pending · search cebu',
+    }),
+  );
+  assert.ok(csv.includes('Tenure Gift Submissions'));
+  assert.ok(csv.includes('Scope: Pending · search cebu'));
+  // An unstamped file would read as the whole queue while holding a fraction.
+  assert.ok(csv.includes('2 of 231 submissions on file'));
+});
+
+test('an omitted scope label says All submissions, never blank', () => {
+  const model = buildGiftSubmissionsExport({ rows: [srow()], totalSubmissions: 1 });
+  assert.equal(model.scopeLabel, 'All submissions');
+});
+
+test('status counts come from the RAW status, not the printed label', () => {
+  const model = buildGiftSubmissionsExport({
+    rows: [
+      srow({ submission: sub({ status: 'pending' }) }),
+      srow({ submission: sub({ status: 'pending' }) }),
+      srow({ submission: sub({ status: 'approved' }) }),
+      srow({ submission: sub({ status: 'rejected' }) }),
+    ],
+    totalSubmissions: 4,
+  });
+  assert.equal(model.summary.pending, 2);
+  assert.equal(model.summary.approved, 1);
+  assert.equal(model.summary.rejected, 1);
+});
+
+test('a submission with no address is counted, not silently fine', () => {
+  const model = buildGiftSubmissionsExport({
+    rows: [srow({ submission: sub({ preferred_delivery_location: '' }) }), srow()],
+    totalSubmissions: 2,
+  });
+  assert.equal(model.summary.noAddress, 1);
+  assert.equal(model.rows[0].shippingAddress, '-');
+});
+
+test('an alternate recipient is counted and printed at submission grain too', () => {
+  const model = buildGiftSubmissionsExport({
+    rows: [srow({ submission: sub({ ...SPOUSE_SUB }) }), srow()],
+    totalSubmissions: 2,
+  });
+  assert.equal(model.summary.altRecipient, 1);
+  assert.equal(model.rows[0].alternateRecipient, 'Maria Dela Cruz');
+  // The employee's own number stays the one the courier calls — same ruling as
+  // the roster file, and the reason the recipient columns sit BESIDE it.
+  assert.equal(model.rows[0].contactNumber, sub().active_contact_number);
+});
+
+test('Reviewer Note and Submitted At reach BOTH grains from the one column list', () => {
+  const rich = sub({
+    created_at: '2026-08-01T02:00:00Z',
+    decision_note: 'Address confirmed by phone',
+    updated_at: '2026-08-09T02:00:00Z',
+  });
+  const headers = GIFT_SUBMISSION_COLUMNS.map((c) => c.header);
+  assert.ok(headers.includes('Reviewer Note'));
+  // Two timestamps, never one: first send vs most recent edit.
+  assert.ok(headers.includes('Submitted At'));
+  assert.ok(headers.includes('Last Submitted'));
+
+  const csv = giftSubmissionsToCsv(
+    buildGiftSubmissionsExport({ rows: [srow({ submission: rich })], totalSubmissions: 1 }),
+  );
+  assert.ok(csv.includes('Reviewer Note'));
+  assert.ok(csv.includes('Address confirmed by phone'));
+
+  // The roster export's XLSX history sheet reads the same record, so it gains
+  // them for free — that shared list is what keeps the two files in step.
+  const roster = build([emp()], [rich]);
+  assert.equal(roster.submissions[0].reviewerNote, 'Address confirmed by phone');
+  assert.notEqual(roster.submissions[0].firstSubmittedAt, '');
+  assert.notEqual(roster.submissions[0].firstSubmittedAt, roster.submissions[0].submittedAt);
+});
+
+test('an absent created_at / decision_note prints a dash, never an invented value', () => {
+  // Both are OPTIONAL on the input type. Absent must not be back-filled from
+  // updated_at — that would claim a row had never been edited.
+  const model = buildGiftSubmissionsExport({ rows: [srow()], totalSubmissions: 1 });
+  const rows = parseCsv(giftSubmissionsToCsv(model));
+  const header = rows.find((r) => r[0] === '#')!;
+  const body = rows[rows.indexOf(header) + 1];
+  assert.equal(body[header.indexOf('Submitted At')], '-');
+  assert.equal(body[header.indexOf('Reviewer Note')], '-');
+  assert.equal(model.rows[0].firstSubmittedAt, '');
+});
+
+test('vestigial price fields never leak into the SUBMISSIONS csv either', () => {
+  const dirty = {
+    ...sub(),
+    gift_price_php: 1499,
+    gift_name: 'Branded Hoodie',
+    gift_catalog_item_id: 'cat-7',
+  } as GiftRosterSubmissionInput;
+  const csv = giftSubmissionsToCsv(
+    buildGiftSubmissionsExport({ rows: [srow({ submission: dirty })], totalSubmissions: 1 }),
+  );
+  assert.ok(!csv.includes('1499'));
+  assert.ok(!csv.includes('Branded Hoodie'));
+  assert.ok(!csv.includes('cat-7'));
+});
+
+test('a Philippine address full of commas survives the round trip', () => {
+  const model = buildGiftSubmissionsExport({
+    rows: [
+      srow({
+        submission: sub({
+          preferred_delivery_location: '12 Rizal St, Barangay Uno, Cebu City, 6000',
+          notes: 'Leave with the guard, please',
+        }),
+      }),
+    ],
+    totalSubmissions: 1,
+  });
+  const rows = parseCsv(giftSubmissionsToCsv(model));
+  const header = rows.find((r) => r[0] === '#')!;
+  const body = rows[rows.indexOf(header) + 1];
+  assert.equal(
+    body[header.indexOf('Shipping Address')],
+    '12 Rizal St, Barangay Uno, Cebu City, 6000',
+  );
+  assert.equal(body[header.indexOf('Employee Notes')], 'Leave with the guard, please');
 });

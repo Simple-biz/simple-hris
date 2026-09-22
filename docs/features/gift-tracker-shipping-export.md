@@ -1,7 +1,12 @@
-# Gift Tracker — Tenure Gift Roster export (CSV / XLSX / PDF)
+# Gift Tracker exports — Roster (CSV / XLSX / PDF) and Submissions (CSV)
 
-An **Export** dropdown on HR → Gift Tracker → **Roster** sub-tab that downloads the
-complete tenure-gift roster in three formats. Shipped 2026-08-19, session `dd69f0d4`.
+**Two exports, two grains, both correct.** An **Export** dropdown on HR → Gift
+Tracker → **Roster** downloads the complete tenure-gift roster in three formats
+(shipped 2026-08-19, session `dd69f0d4`); an **Export CSV** button on HR → Gift
+Tracker → **Submissions** downloads the submissions in view (shipped 2026-09-22).
+The Roster file answers *who have we not heard from*; the Submissions file answers
+*what did these people send us*. Neither is the other one done wrong — see
+[§ The Submissions export](#the-submissions-export--the-other-grain-on-purpose).
 
 > **The Google Sheet is no longer the ledger of record (2026-09-11).** This
 > document used to open by saying the export exists so Kane could reconcile it
@@ -21,8 +26,10 @@ the roster and the submissions are already loaded in the tab.
 | Piece | File |
 | --- | --- |
 | Export model + all three serializers | `src/lib/gift-tracker/shipping-export.ts` |
+| Submission-grain model + CSV | same file — `buildGiftSubmissionsExport` / `giftSubmissionsToCsv` |
+| Column list shared by both submission outputs | same file — `GIFT_SUBMISSION_COLUMNS` |
 | Tests | `src/lib/gift-tracker/shipping-export.test.ts` |
-| `GiftExportMenu` + toolbar wiring | `src/components/orphanage/GiftTracker.tsx` |
+| `GiftExportMenu` (Roster) + `SubmissionsPanel` button | `src/components/orphanage/GiftTracker.tsx` |
 | Milestone math (shared, not duplicated) | `src/lib/gift-milestones.ts` |
 | Fulfilment state (shared, not duplicated) | `src/lib/gift-tracker/receipts.ts` |
 | Submission read (paged) | `src/lib/supabase/employee-gift-shipping.ts` |
@@ -168,6 +175,77 @@ list, so this is not an optimization.
 The Roster `Card` carries `overflow-visible` — `components/ui/card.tsx` is
 `overflow-hidden` by default and would clip the dropdown when the roster is short.
 
+## The Submissions export — the other grain, on purpose
+
+HR → Gift Tracker → **Submissions** has its own **Export CSV** button:
+`buildGiftSubmissionsExport` → `giftSubmissionsToCsv` →
+`downloadGiftSubmissionsCsv`, filename `tenure-gift-submissions-YYYY-MM-DD.csv`.
+One row per submission actually on file.
+
+Read § *The grain is the master list* above before touching either file. That
+section forbids reducing the **Roster** export to the submissions table, and the
+reason still holds: a person who never filled the form in is the finding, and a
+submissions-only roster file would hide them by omission. **That rule is about
+the Roster file.** It is not an argument that a submission-grain file must not
+exist — the Submissions sub-tab is a work queue, every row is something somebody
+typed that somebody else must approve, reject or ship, and "what did these people
+send us" is a shipping-desk question rather than a reconciliation one.
+
+The failure mode is not the two files disagreeing. It is a future reader finding
+one of them and *fixing* the other to match. If you are about to make the Roster
+export submissions-only, or make the Submissions export list people who never
+submitted, you are deleting one of the two products.
+
+They cannot drift in their vocabulary, because there is only one:
+`GiftSubmissionRecord` and `GIFT_SUBMISSION_COLUMNS` serve both this CSV and the
+Roster workbook's `All submissions` sheet. Add a column once and both gain it.
+
+### What you see is what you get
+
+The file is the panel's `filtered` array, **in its on-screen order**. The builder
+never re-sorts — the panel's pending-first-then-newest-edit order *is* the review
+order the team works in, and a file that re-sorted itself would stop matching the
+screen it was taken from.
+
+**The scope is stated, never implied.** The filter pills default to **Pending**,
+so an unstamped file would read as the whole queue while holding a fraction of
+it. Three guards, and none of them is decorative: the scope label
+(`Pending · search "cebu"`) is a preamble line, the summary prints `N of TOTAL`,
+and the button carries the count of the rows it will write.
+
+### Identity is the work email, here too
+
+`summary.people` counts distinct **work** emails, falling back to the submission
+key only when there is no roster match. `personal_email` — which is what
+submissions are keyed on — is not injective on this roster: two colleagues share
+one. Counting distinct submission keys would silently merge them into a single
+"person", the same bug § *The grain is the master list* records being fixed in the
+roster builder.
+
+### Off-roster is passed in, never guessed
+
+`GiftSubmissionsRowInput.offRoster` is set by the caller from the same
+`rowsByEmail` map the list renders from, so the file and the screen cannot
+disagree about who is a ghost. Such a row prints `Off-roster` in **Department**
+and `-` in **Work Email** — a person with no roster row has no work email, and
+printing their personal address in a company-email column would be a lie the
+shipping desk cannot see through. `Department` **is** the flag; do not add a
+second boolean column saying the same thing.
+
+### Two timestamps, never one
+
+`Submitted At` is `created_at`; `Last Submitted` is `updated_at`. Both are
+**optional** on `GiftRosterSubmissionInput` because it is the loose structural
+subset the roster's rows are assigned to — an absent value prints `-` and must
+**never** be back-filled from the other, which would claim a row had never been
+edited after somebody read it. `Reviewer Note` is `decision_note`, the reviewer's
+own words. The three columns were added 2026-09-22 and the Roster workbook's
+history sheet gained them in the same change, because the list is shared.
+
+`SUBMISSION_COLUMN_WIDTHS` must stay the same length as
+`GIFT_SUBMISSION_COLUMNS`. It held 14 entries for 17 columns until 2026-09-22, so
+every width from `Alternate Recipient` rightwards was landing on the wrong column.
+
 ## Deploy notes
 
 **No migration for this module.** Every column it reads already existed; no env
@@ -177,9 +255,16 @@ var, cron, or n8n import. The fulfilment columns added 2026-09-11 depend on
 table is absent the columns simply read `0` / `Not Recorded`, which is the
 correct answer rather than a crash.
 
+The Submissions CSV added 2026-09-22 needs **nothing** — no migration, no env
+var, no route, no gate of its own. It is an in-memory Blob built from rows the
+tab has already loaded and already gates on `hr / gift_tracker`, and the button
+carries `data-readonly-allow` because downloading what you can already see is not
+a write.
+
 `npx tsc --noEmit` is clean and the module tests pass (21 at 2026-08-19, 31 after
-the fulfilment work). `next build` was **not** run in either session — a
-`next dev` was live on :3000 and they share `.next/`.
+the fulfilment work, **53 after the submissions CSV** — 171 across
+`src/lib/gift-tracker/`). `next build` was **not** run in any of the three
+sessions — a `next dev` was live on :3000 each time and they share `.next/`.
 
 Sibling: [hr-global-master-list-export.md](hr-global-master-list-export.md) — this
 module is modeled on it and the two should stay structurally in step.
