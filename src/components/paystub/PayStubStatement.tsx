@@ -252,10 +252,14 @@ export function ProratedRateDetail({
  * `aria-hidden` on the bar with the state in text beside it, so a screen reader
  * hears "still loading" rather than nothing at all.
  */
-function PendingBar({ w = 'w-[62px]', h = 'h-[11px]' }: { w?: string; h?: string }) {
+function PendingBar() {
   return (
     <>
-      <span className={`paystub-pending-bar ${h} ${w}`} aria-hidden="true" />
+      {/* No sizing utilities on purpose — `.paystub-pending-bar` carries its own
+          `em`-relative width and height, so the bar can never render zero-size
+          and scales itself to the cell it sits in (Kane: "it just blanked
+          itself"). Do not add `w-[…]`/`h-[…]` back. */}
+      <span className="paystub-pending-bar" aria-hidden="true" />
       <span className="sr-only">still loading</span>
     </>
   );
@@ -281,13 +285,11 @@ function UnavailableMark() {
 function AmountCell({
   amount,
   state,
-  barWidth,
 }: {
   amount: string;
   state: PayStubFieldState;
-  barWidth?: string;
 }) {
-  if (state === 'pending') return <PendingBar w={barWidth} />;
+  if (state === 'pending') return <PendingBar />;
   if (state === 'unavailable') return <UnavailableMark />;
   return <>{amount}</>;
 }
@@ -326,7 +328,7 @@ function EarningRow({
   // On `unavailable` it goes blank rather than repeating the word: the amount
   // cell beside it already says it once, and twice reads as two problems.
   const detailCell =
-    state === 'pending' ? <PendingBar w="w-[74px]" /> : state === 'unavailable' ? null : detail;
+    state === 'pending' ? <PendingBar /> : state === 'unavailable' ? null : detail;
   // `amountClass` carries the signed teal/red of the MESA and Orphanage rows.
   // Dropping it while unsettled is deliberate: a red placeholder would assert a
   // deduction, and a teal one a credit, before either is known.
@@ -459,7 +461,7 @@ export function PayStubStatement({
                   /* Sized to the NUMBER it replaces (30/34px), not to a line of
                      text — a hairline under the statement's largest figure reads
                      as a rule, not as "this is still coming". */
-                  <PendingBar w="w-[170px] sm:w-[196px]" h="h-[26px] sm:h-[30px]" />
+                  <PendingBar />
                 ) : fs.total === 'unavailable' ? (
                   <UnavailableMark />
                 ) : (
@@ -473,7 +475,7 @@ export function PayStubStatement({
                     cycle rate is absent, so this figure is plausible, wrong and
                     indistinguishable from a real one. */}
                 <span className="whitespace-nowrap text-[12px] font-bold leading-[17px] text-[#26384d]">
-                  <AmountCell amount={usd(view.totalPayUsd)} state={fs.totalUsd} barWidth="w-[58px]" />
+                  <AmountCell amount={usd(view.totalPayUsd)} state={fs.totalUsd} />
                 </span>
               </div>
               {/* Colombian (COP-country) payees: the native figure their bank
@@ -483,7 +485,7 @@ export function PayStubStatement({
                 <div className="mt-1 flex items-center justify-between gap-3">
                   <span className="text-[12px] leading-[17px] text-[#556377]">COP equivalent</span>
                   <span className="whitespace-nowrap text-[12px] font-bold leading-[17px] text-[#26384d]">
-                    <AmountCell amount={cop(view.totalPayCop)} state={fs.totalCop} barWidth="w-[66px]" />
+                    <AmountCell amount={cop(view.totalPayCop)} state={fs.totalCop} />
                   </span>
                 </div>
               )}

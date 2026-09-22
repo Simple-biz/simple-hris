@@ -163,12 +163,20 @@ const FIELD_SOURCES: Readonly<Record<PayStubFieldKey, readonly PayStubSourceKey[
   // The delta is (approved day hours − raw tracked hours), so it needs both the
   // approved rows AND the hours they are differenced against, then a rate to price it.
   timeAdjustment: ['timeAdjustments', 'weekHours', 'rates'],
+  // All three bonus lines also ride `additions`, and missing that was a real gap
+  // (Kane, 2026-09-22: "performance bonus is not showing a loading animation").
+  // The dispatch row reads `const toggles = employeeBonuses[r.email] ?? {}` for
+  // every one of them, and `employeeBonuses` IS the additions blob — so until it
+  // hydrates every toggle is absent, which reads as "off", which is ₱0.00. The
+  // KPI markers settle long before the blob does, so Performance Bonus sat at a
+  // confident zero while Adjustment and Orphanage beside it shimmered.
   // The 30-days-of-service gate reads `start_date` off the master roster.
-  techBonus: ['rates', 'masterRoster'],
-  attendanceBonus: ['rates', 'pabPeriod', 'pabMerge'],
+  techBonus: ['rates', 'masterRoster', 'additions'],
+  attendanceBonus: ['rates', 'pabPeriod', 'pabMerge', 'additions'],
   // "Performance Bonus" is `other_bonuses` — the department/KPI amounts, which
-  // arrive from the manager submissions and the HSL entries on separate clocks.
-  performanceBonus: ['rates', 'managerKpi', 'hslKpi'],
+  // arrive from the manager submissions and the HSL entries on separate clocks,
+  // and are then summed by `bonusTotals`, whose deps include `employeeBonuses`.
+  performanceBonus: ['rates', 'managerKpi', 'hslKpi', 'additions'],
   adjustment: ['rates', 'additions'],
   orphanage: ['rates', 'additions'],
   mesaDisbursement: ['mesaDisbursements'],

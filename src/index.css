@@ -991,6 +991,15 @@
   .paystub-pending-bar {
     display: inline-block;
     vertical-align: middle;
+    /* Sized HERE, in `em`, and never by utility classes. Two reasons, both
+       learned the hard way (Kane, 2026-09-22: "it just blanked itself"):
+       an empty inline element whose only size comes from `w-[62px] h-[11px]`
+       is INVISIBLE if either utility fails to generate — and invisible is the
+       one thing a placeholder may never be. In `em` it also scales itself to
+       whatever cell it sits in: ~11px beside a 13px line amount, ~26px under
+       the 30/34px Net figure, with no per-call sizing to get wrong. */
+    width: 4.6em;
+    height: 0.82em;
     border-radius: 3px;
     background-color: rgb(226 232 240); /* the statement's own #e2e8f0 rule colour */
     background-image: linear-gradient(

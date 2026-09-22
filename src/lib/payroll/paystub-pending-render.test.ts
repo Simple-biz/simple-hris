@@ -194,8 +194,12 @@ describe('unavailable is terminal — it says the word and never animates', () =
   });
 
   it('unavailable outranks pending on the same statement', () => {
+    // `weekHours` and not `pabMerge` for the pending half: since every line that
+    // reads `pabMerge` also reads `additions`, a failed blob makes those lines
+    // unavailable outright and there is no shimmer left to observe. The hours
+    // lines are the ones genuinely independent of the additions blob.
     const view = mapPayloadToPayStub(plainPayload());
-    const html = render(view, states({ additions: 'unavailable', pabMerge: 'pending' }));
+    const html = render(view, states({ additions: 'unavailable', weekHours: 'pending' }));
     assert.ok(html.includes(UNAVAILABLE_MARK));
     assert.ok(html.includes(PENDING_MARK), 'the still-loading line keeps its shimmer');
     // Net inherits the WORST of the two.
@@ -236,6 +240,26 @@ describe('the three ABSENT-not-zero lines render while unsettled (Kane 2026-09-2
     assert.ok(rich.includes('Orphanage'));
     assert.ok(rich.includes('Weekend Hours'));
     assert.ok(rich.includes('Time Adjustment'));
+  });
+});
+
+describe('the bar must be able to be SEEN — Kane: "it just blanked itself"', () => {
+  it('carries no sizing utilities, so it cannot render zero-size', () => {
+    // The first cut sized it with `w-[62px] h-[11px]` on an empty <span>. An
+    // empty inline element whose only size comes from two arbitrary utilities is
+    // INVISIBLE the moment either fails to generate — and the whole job of a
+    // placeholder is to be visible. `.paystub-pending-bar` now carries its own
+    // em-relative width/height in CSS. Do not put sizing classes back.
+    const html = render(mapPayloadToPayStub(plainPayload()), states({ pabMerge: 'pending' }));
+    const bar = /<span class="([^"]*paystub-pending-bar[^"]*)"/.exec(html);
+    assert.ok(bar, 'the bar renders');
+    assert.equal(bar[1].trim(), 'paystub-pending-bar', 'no extra classes carry its size');
+  });
+
+  it('is marked aria-hidden and paired with readable text', () => {
+    const html = render(mapPayloadToPayStub(plainPayload()), states({ pabMerge: 'pending' }));
+    assert.ok(html.includes('aria-hidden="true"'));
+    assert.ok(html.includes('still loading'), 'a screen reader hears the state');
   });
 });
 

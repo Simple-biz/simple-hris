@@ -999,6 +999,23 @@ coming. It would also miss the opposite case, which is worse: `isMesaOptedOut` r
 empty set, so an unread MESA ledger prints a confident **−₱100.00 on someone who has left MESA** —
 a wrong NON-zero.
 
+**Every bonus line rides the additions blob, and missing that was the first bug.** Kane, same day:
+*"performance bonus is not showing a loading animation."* The dispatch row reads
+`const toggles = employeeBonuses[r.email] ?? {}` for **Tech, Attendance AND Performance**, and
+`employeeBonuses` **is** the additions blob — so until it hydrates every toggle is absent, which
+reads as off, which is `₱0.00`. The two KPI markers settle long before the blob does, so Performance
+Bonus sat at a confident zero while Adjustment and Orphanage beside it shimmered. `bonusTotals`
+lists `employeeBonuses` in its own dependency array; that array is the check.
+
+**The placeholder must be able to be SEEN, which is not automatic.** The first cut sized it with
+`w-[62px] h-[11px]` on an empty `<span>` and Kane got *"it just blanked itself"* — an empty inline
+element whose only size comes from two arbitrary utilities is **invisible** if either fails to
+generate, and invisible is the one thing a placeholder may never be. `.paystub-pending-bar` now
+carries its own **`em`-relative** width and height, so it cannot render zero-size and it scales to
+whatever cell it sits in (≈11 px beside a 13 px line amount, ≈26 px under the 30/34 px Net figure)
+with no per-call sizing to get wrong. **Do not put sizing classes back** — a test asserts the span
+carries that one class and nothing else.
+
 **Net inherits the worst of every line beneath it.** A shimmering Attendance Incentive under a
 confident total would re-open the exact defect closed the same day: a pay document that does not
 add up to its own total. `totalUsd` / `totalCop` are never better than Net **and** never better
@@ -1040,8 +1057,8 @@ land" from "has not landed yet".
 Files: `src/lib/payroll/paystub-field-state.ts` (pure, tested) · `PayStubStatement.tsx`
 (`fieldStates` prop) · `PayrollWizard.tsx` `paystubSourceStates` (beside `isStepDataLoading`, so
 the step rail's mapping and this one can be read together) · `src/index.css`
-`.paystub-pending-bar`. Tests: `paystub-field-state.test.ts` (29) ·
-`paystub-pending-render.test.ts` (21 — including the byte-identical pair, the all-unavailable
+`.paystub-pending-bar`. Tests: `paystub-field-state.test.ts` (31) ·
+`paystub-pending-render.test.ts` (23 — including the byte-identical pair, the all-unavailable
 no-shimmer proof, and the email/view escape hatches held shut).
 
 ## The Time Adjustment line — 2026-09-22

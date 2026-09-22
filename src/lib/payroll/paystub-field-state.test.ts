@@ -76,13 +76,31 @@ describe('the defect this closes — an in-flight loader never reads as a settle
     assert.equal(s.performanceBonus, 'settled');
   });
 
-  it('the additions blob in flight makes Adjustment AND Orphanage pending', () => {
+  it('the additions blob in flight reaches Adjustment, Orphanage AND all three bonuses', () => {
     // The same condition publishFinalPaySnapshot already refuses to write on:
-    // "dispatchData would still carry zeroed adjustments/orphanage/bonus toggles".
+    // "dispatchData would still carry zeroed adjustments/orphanage/BONUS TOGGLES".
+    // That last clause is the one the first cut of this map missed — Kane,
+    // 2026-09-22: "performance bonus is not showing a loading animation". Every
+    // bonus line reads `employeeBonuses[r.email]`, which IS the additions blob,
+    // so an unhydrated blob means every toggle is absent, i.e. off, i.e. PHP 0.00.
     const s = resolvePayStubFieldStates(sources({ additions: 'pending' }));
     assert.equal(s.adjustment, 'pending');
     assert.equal(s.orphanage, 'pending');
-    assert.equal(s.attendanceBonus, 'settled');
+    assert.equal(s.performanceBonus, 'pending');
+    assert.equal(s.attendanceBonus, 'pending');
+    assert.equal(s.techBonus, 'pending');
+    // ...but not the hours lines, which are priced before any toggle applies.
+    assert.equal(s.regular, 'settled');
+    assert.equal(s.mesaDisbursement, 'settled');
+  });
+
+  it('the KPI markers settling early does NOT settle Performance Bonus on its own', () => {
+    // The exact shape of the reported bug: both KPI reads land fast, the
+    // additions blob is still out, and the line printed a confident zero.
+    const s = resolvePayStubFieldStates(
+      sources({ additions: 'pending' }), // managerKpi + hslKpi settled
+    );
+    assert.equal(s.performanceBonus, 'pending');
   });
 
   it('either KPI loader alone makes Performance Bonus pending', () => {
@@ -116,6 +134,19 @@ describe('the defect this closes — an in-flight loader never reads as a settle
     const s = resolvePayStubFieldStates(sources({ masterRoster: 'pending' }));
     assert.equal(s.techBonus, 'pending');
     assert.equal(s.attendanceBonus, 'settled');
+  });
+
+  it('every bonus line names `additions` among its sources', () => {
+    // A structural guard, not a scenario: the three bonus lines and the two
+    // additions-column lines must ALL move when the blob does, or one of them
+    // silently prints a settled zero again.
+    for (const k of ['techBonus', 'attendanceBonus', 'performanceBonus', 'adjustment', 'orphanage'] as const) {
+      assert.equal(
+        resolvePayStubFieldStates(sources({ additions: 'unavailable' }))[k],
+        'unavailable',
+        `${k} must follow the additions blob`,
+      );
+    }
   });
 
   it('the time-adjustment rows gate their own line and nothing else', () => {
