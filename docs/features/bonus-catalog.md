@@ -352,6 +352,16 @@ US Manager Bonus · USEE**.
     and **come back to life if the same bonus id is ever re-assigned to that
     branch.** Until the function is wired, a retirement script strips them
     explicitly (`scripts/retire-filing-team-library-bonus.mts`).
+  - **A branch may hand its whole programme to the Library** *(2026-09-22)*.
+    The other resolution of the duplication below: instead of retiring the
+    bonus, retire the CODE. `intake_specialist` now carries `rules: []` +
+    `rulesFromCatalog: true` (`hsl-subdepartments.md` §7d) — a real card, a real
+    readiness row, every peso from its `hsl:<key>` assignment, and an accountant
+    can change the rule without an engineer. The flag is what stops `rules: []`
+    being read as "roster-only"; `noKpi` would hide the card and the Library
+    column with it. **Which way a duplication is resolved is a pay decision:**
+    Filing went one way (bands into code, assignment retired) and Intake the
+    other, both by ruling on the same day.
   - **A Library bonus must never re-express a programme that already exists in
     code** *(the invariant this section was missing, 2026-09-22)*. `scoreEntry`
     returns `calcBonus(schema rules) + calcHslCatalogTotal(catalog)` with **no

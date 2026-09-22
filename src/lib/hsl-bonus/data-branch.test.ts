@@ -47,7 +47,17 @@ test('code vs data is decidable, and a data key can never shadow a code team', (
   // redirect Intake's real rules to an empty config.
   const configs = hslBranchConfigs([{ key: 'intake_specialist', name: 'Hijack' }, SUB]);
   assert.equal(configs.intake_specialist!.name, HSL_DEPTS.intake_specialist.name);
-  assert.equal(configs.intake_specialist!.rules.length > 0, true, 'the code rules survive');
+  // STRONGER than the old `rules.length > 0` witness, which quietly stopped
+  // meaning anything on 2026-09-22 when intake_specialist became
+  // rulesFromCatalog and its rules array went empty — a hijack would have
+  // sailed through. Identity is the real property: the code config survives
+  // WHOLE, not merely with a non-empty field.
+  assert.equal(configs.intake_specialist, HSL_DEPTS.intake_specialist, 'the code config survives, by identity');
+  assert.equal(configs.intake_specialist!.rulesFromCatalog, true);
+  // And a code team that DOES carry rules still keeps them.
+  const withRules = hslBranchConfigs([{ key: 'filing_specialist', name: 'Hijack' }, SUB]);
+  assert.equal(withRules.filing_specialist, HSL_DEPTS.filing_specialist);
+  assert.equal(withRules.filing_specialist!.rules.length > 0, true, 'the code rules survive');
   assert.equal(configs.healthcare_specialist!.name, 'Healthcare Specialist');
 });
 

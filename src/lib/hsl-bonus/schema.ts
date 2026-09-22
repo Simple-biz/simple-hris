@@ -97,6 +97,25 @@ export interface DeptConfig {
   rules: BonusRule[];
   monthlyMax?: number;     // PHP cap per employee
   noKpi?: boolean;         // roster-only, no inputs
+  /**
+   * This dept has NO code rules on purpose — everything it pays comes from
+   * Bonus Library assignments on its `hsl:<key>` branch.
+   *
+   * It is the third state, and it has to be DECLARED rather than inferred.
+   * `rules: []` alone is ambiguous: it is also what
+   * `executive_guest_services` looks like, where nobody has defined a bonus
+   * programme at all and the right answer is `noKpi` — a roster-only card and
+   * a `no_bonus` readiness row. The two want opposite treatment from the same
+   * shape, so `hsl-subdept.test.ts` requires one of the two flags and fails on
+   * a dept that declares neither. Never infer this from an assignment lookup:
+   * the config is pure and client-safe, and a dept whose scoreability depended
+   * on a database read would flicker.
+   *
+   * `data-branch.ts` produces the same shape for an accountant-created sub-team
+   * and needs no flag — it is not in `HSL_DEPTS`, so the invariant does not
+   * reach it.
+   */
+  rulesFromCatalog?: boolean;
   // A MONTHLY dept whose Ready/Locked period is auto-dispatched in the payroll week
   // it was scored for, summed with the person's weekly HSL amounts (Carla,
   // 2026-09-08: SSD "is a monthly payment", "typically processed in the first week
@@ -271,10 +290,33 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#14b8a6',
     headerBg: 'bg-teal-950/40',
     badgeCls: 'bg-teal-900/60 text-teal-300',
-    rules: [
-      { type: 'per_unit', key: 'signed_rep_docs',   label: 'Signed Rep Docs',    rate: 250 },
-      { type: 'per_unit', key: 'five_star_reviews',  label: '5-Star Reviews',     rate: 100 },
-    ],
+    // Kane, 2026-09-22: *"the signed up rep docs and 5 star reviews columns are
+    // hard coded and not from the Payment catalog make sure we delete these
+    // columns"*, after Carla and Alivia flagged the card was showing the same
+    // work twice — *"the hardcoded stuff is still visible"*, *"we don't need the
+    // other 4 on the left"*. The branch is scored from its Bonus Library
+    // assignment now ("Intake": a five-band Signups ladder 10/15/20/25/30 paying
+    // ₱250→₱500 per signup, plus Reviews × ₱100), which is a DIFFERENT and
+    // richer rule than the flat ₱250/doc + ₱100/review these two encoded.
+    //
+    // The switchover already happened in the data, which is what makes deleting
+    // them safe rather than merely tidy: measured read-only 2026-09-22
+    // (`scripts/probe-intake-hardcoded-columns.mts`), week 2026-09-13 is
+    // ₱282,700 of which **₱0** comes from these two rules and 76 rows carry a
+    // `catalog:` key — while all 13 earlier weeks are the exact reverse, 100 %
+    // these rules and no catalog at all.
+    //
+    // WHAT THIS DOES NOT DO: it does not move a peso. A stored
+    // `calculated_bonus` is frozen and is what the wizard dispatches, so the
+    // ₱3,440,500 those 13 weeks were paid stands. The exposure is a REOPEN —
+    // rescoring one of those weeks now yields ₱0 for these keys. 1,367 rows are
+    // in that position (4 weeks / ₱558,450 carry no status row and are editable;
+    // 9 weeks / ₱2,882,050 are `ready` and need a deliberate Mark as Unready).
+    // Recorded as audit item 154 rather than guessed at — there is no per-week
+    // rule versioning in this engine, and inventing one here would be a bigger
+    // change than the one that was asked for.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   post_hearing_prep: {

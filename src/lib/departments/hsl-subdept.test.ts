@@ -18,7 +18,7 @@ import {
   isHslPlacementOnlySubKey,
   hslSubTeamName,
 } from './hsl-subdept';
-import { HSL_DEPT_KEYS, HSL_DEPTS } from '@/lib/hsl-bonus/schema';
+import { HSL_DEPT_KEYS, HSL_DEPTS, calcBonus } from '@/lib/hsl-bonus/schema';
 
 test('hslSubKeyFromRaw parses canonical and sloppy labels', () => {
   assert.equal(hslSubKeyFromRaw('hsl:intake_specialist'), 'intake_specialist');
@@ -149,6 +149,33 @@ test('the two sub-team keyspaces stay disjoint — a placement-only team NEVER g
   assert.deepEqual(callbackRates, [50, 250]);
 });
 
+test('intake_specialist is scored from the Bonus Library, not from code (Kane, 2026-09-22)', () => {
+  // Carla and Alivia: the card was showing the same work twice — a flat
+  // P250/doc + P100/review in code, beside a Library formula with a five-band
+  // Signups ladder. Kane: *"the signed up rep docs and 5 star reviews columns
+  // are hard coded and not from the Payment catalog make sure we delete these
+  // columns"*. The branch keeps its card and its readiness row; only the source
+  // of the rules moved.
+  const cfg = HSL_DEPTS.intake_specialist;
+  assert.deepEqual(cfg.rules, []);
+  assert.equal(cfg.rulesFromCatalog, true);
+  assert.equal(cfg.noKpi, undefined, 'it is SCOREABLE — noKpi would hide the card and with it the Library column');
+  assert.ok(isHslKpiDeptKey('intake_specialist'), 'it still owns a calculator card');
+  assert.ok(isPlaceableDeptLabel('hsl:intake_specialist'));
+});
+
+test('intake_specialist: legacy signed_rep_docs / five_star_reviews values now score P0', () => {
+  // The documented consequence, asserted rather than discovered later. A row
+  // saved before 2026-09-22 carries these keys; calcBonus no longer reads them,
+  // so REOPENING one of those weeks reprices it downward. 1,367 rows across 13
+  // weeks (P3,440,500) are in that position — audit item 154. Nothing is moved
+  // by this change on its own: a stored calculated_bonus is what gets paid.
+  assert.equal(
+    calcBonus({ signed_rep_docs: 18, five_star_reviews: 7 }, HSL_DEPTS.intake_specialist, false),
+    0,
+  );
+});
+
 test('a rules-less HSL dept is roster-only on purpose — never an empty calculator by accident', () => {
   // executive_guest_services shipped 2026-08-14 with NO scoring rules: the
   // cohort is real (~31 people) but nobody has defined a bonus program, and
@@ -163,10 +190,33 @@ test('a rules-less HSL dept is roster-only on purpose — never an empty calcula
       assert.equal(cfg.rules.length, 0, `${key} is noKpi (roster-only) — it must not carry scoring rules`);
     }
     if (cfg.rules.length === 0 && !cfg.perEmployee) {
-      assert.ok(cfg.noKpi, `${key} has no rules and no per-employee sets — it must declare noKpi or gain real rules`);
+      // Two legitimate reasons to carry no rules, and they want OPPOSITE
+      // treatment, so the dept has to say which one it is:
+      //   noKpi            — nobody has defined a bonus programme (roster-only
+      //                      card, 'no_bonus' readiness). executive_guest_services.
+      //   rulesFromCatalog — the programme exists, it just lives in the Bonus
+      //                      Library (real card, real readiness row, scored from
+      //                      its hsl:<key> assignment). intake_specialist, 2026-09-22.
+      // Declaring NEITHER is the accident this test has always existed to catch.
+      assert.ok(
+        cfg.noKpi || cfg.rulesFromCatalog,
+        `${key} has no rules and no per-employee sets — it must declare noKpi (roster-only) or rulesFromCatalog (scored from the Bonus Library), or gain real rules`,
+      );
+      assert.ok(
+        !(cfg.noKpi && cfg.rulesFromCatalog),
+        `${key} declares BOTH noKpi and rulesFromCatalog — roster-only and catalog-scored are opposites`,
+      );
+    }
+    if (cfg.rulesFromCatalog) {
+      assert.equal(
+        cfg.rules.length,
+        0,
+        `${key} declares rulesFromCatalog — it must not ALSO carry code rules, or the same work is scored twice`,
+      );
     }
   }
   assert.ok(HSL_DEPTS.executive_guest_services.noKpi);
+  assert.equal(HSL_DEPTS.executive_guest_services.rulesFromCatalog, undefined);
   assert.ok(isHslKpiDeptKey('executive_guest_services'));
   assert.ok(isPlaceableDeptLabel('hsl:executive_guest_services'));
   // Executive Assistants, added 2026-08-14, is the second dept of this shape.

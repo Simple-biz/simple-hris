@@ -328,7 +328,44 @@ Attestation tier guess mispriced 11 rows). For that shape, take §7a but set
   permanent weekly `draft` — `payroll-readiness.ts` special-cases `noKpi` in its
   HSL branch, so the readiness cost above does NOT apply;
 - `hsl-subdept.test.ts` pins the pairing both ways: a `noKpi` dept must have zero
-  rules, and a rules-less dept must declare `noKpi` (or `perEmployee`).
+  rules, and a rules-less dept must declare `noKpi`, `perEmployee`, **or
+  `rulesFromCatalog`** (§7d), and never two of them at once.
+
+#### 7d-catalog-scored: the programme exists, it just isn't in code (`rulesFromCatalog`)
+
+Added 2026-09-22 for **Intake Specialist**. Kane: *"the signed up rep docs and 5
+star reviews columns are hard coded and not from the Payment catalog make sure we
+delete these columns"*, after Carla — *"the hardcoded stuff is still visible"* —
+and Alivia — *"better but we don't need the other 4 on the left"* — found the card
+showing the same work twice: a flat ₱250/doc + ₱100/review in `schema.ts`, beside
+a Bonus Library formula with a five-band Signups ladder.
+
+`rules: []` with **`rulesFromCatalog: true`**, and deliberately **not** `noKpi`:
+
+- the KPI Calculator renders a **real card** — `KpiTable` with no schema columns
+  and the Library column(s) from the branch's `hsl:<key>` assignments. Setting
+  `noKpi` here would be the trap: it renders the roster-only card instead, so the
+  Library column would vanish with it and the branch would be unscoreable;
+- Payroll Readiness keeps a real weekly row — the team **is** scored, so it must
+  be submitted like any other. (A branch with no assignment at all reads
+  `no_bonus`, the behaviour `data-branch.ts` already had.);
+- the flag is **declared, never inferred**. `rules: []` alone is ambiguous — it is
+  also exactly what §7a looks like — and the two want opposite treatment. The
+  config is pure and client-safe, so scoreability must never depend on a database
+  read.
+
+`data-branch.ts` produces the same shape for an accountant-created sub-team and
+carries no flag: it is not in `HSL_DEPTS`, so the invariant does not reach it.
+
+**Deleting code rules does not move a peso, and does not protect the past
+either.** A stored `calculated_bonus` is frozen and is what the wizard dispatches.
+The exposure is a **reopen**: rescoring a week that was scored under the old rules
+now yields ₱0 for those keys. Measured for Intake on 2026-09-22
+(`scripts/probe-intake-hardcoded-columns.mts`): **1,367 rows across 13 weeks,
+₱3,440,500** — 4 weeks (₱558,450) carry no `hsl_bonus_period_status` row and are
+editable, 9 (₱2,882,050) are `ready` and need a deliberate *Mark as Unready*.
+There is **no per-week rule versioning in this engine**; that is audit item 154,
+not something to invent inside a column deletion.
 
 **Executive Assistants** (`executive_assistants`) is the second dept of this
 shape, added 2026-08-14 — Kane: *"Lets create a new department called HSL -
