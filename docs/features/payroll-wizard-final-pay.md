@@ -16,6 +16,104 @@ Last substantive update: **2026-09-09**.
 
 ---
 
+## 2026-09-22 — Step 2 labels a FIRST PAYCHECK, off-boarded or not
+
+> Carla (relayed by Kane): new hires who leave or are off-boarded **inside their first
+> week** — often after only a few hours — are frequently missed on the payroll dashboard.
+> Every new-hire list the team pulls is built from **active** rosters and excludes the
+> off-boarded list, so Accounting finds them by hand and adds rows manually. She asked for
+> an option in the wizard that identifies **everyone's first paycheck** for the cycle,
+> regardless of whether they were subsequently off-boarded.
+> Meeting note: [2026-09-22-carla-first-paycheck-one-week-hires.md](../meetings/2026-09-22-carla-first-paycheck-one-week-hires.md).
+
+**The wizard already had the row.** Pay rides Hubstaff hours, not the roster: anyone with
+hours in the week's file has a calc row on Step 2 whether or not HR has stamped them
+off-boarded, and the final-pay overlay ([[final-pay-roster-overlay]]) resolves their
+department and rate. What was missing was any way to *see* which rows were first checks.
+So this change adds no payee anywhere — it labels rows that were already there.
+
+### The rule — hours, never a date
+
+**A calc row is a first paycheck when no earlier Hubstaff upload on record carries any of
+the person's known email aliases.** Pure module `src/lib/payroll/first-paycheck.ts`
+(`classifyFirstPaycheck`, 13 tests). Verdicts:
+
+| Verdict | Meaning | Rendered as |
+| --- | --- | --- |
+| `first` | earliest upload week for every alias = the week in view | sky **"First paycheck"** pill under the name |
+| `first` + `alsoLeaving` | the same row is also in the final-pay overlay — the one-week hire | rose **"First & final pay"** pill |
+| `not_first` | some alias has hours in an earlier upload | nothing |
+| `unknown` | no upload carries any alias (cannot happen for a row in this file unless the index is stale) | nothing; counted in the header tooltip |
+| `history_floor` | the week in view **is** the oldest upload on record — everyone is trivially "first" | label suppressed; header reads "first paychecks n/a (oldest upload)" |
+
+Why not the master-list **Start Date**: it is sparse (690 of 4,045 off-boarded rows carry
+one — [people-offboarded-pay.md](./people-offboarded-pay.md)), hand-typed, and absent for
+exactly the people this label exists for. Hours in an earlier timesheet cannot be forged by
+a bad date. The start date rides along as **detail** in the pill's tooltip
+("Started 2026-09-14" / "No start date on file"), never as the criterion — the same
+direction Readiness takes when it fails safe on a missing start date.
+
+**Aliases.** `personAliasesByEmail` folds the master list first and then the final-pay
+overlay with a `has()` guard (an active person's alias set is never replaced by a
+leaver's), so a person whose Hubstaff address differs from their master work email
+(master `cathyp@` vs Hubstaff `cathypa@`) is bridged to their own history and not read as
+brand-new. A person with **no roster row under either address** whose Hubstaff email
+changed would read as first; that residue is disclosed as `unknown`/over-flagging, never
+hidden — over-flagging is the safe direction for a display-only label.
+
+### The index — `GET /api/payroll-wizard/first-hours-week`
+
+`src/lib/payroll/first-hours-index.ts` reads two columns (`Email`, `source_file`) across the
+**whole** `hubstaff_hours` table, paged (`selectAllPaged`; 40,509 rows / 31 uploads on
+2026-09-22), and keeps the minimum parsed `_to_` period start per normalized email.
+**Every upload with a parseable range counts as history** — backfills, the four-week
+`time-activity-report`, and junk-suffixed names like ` (1).csv` included: for "have they
+worked before?" more history is the safe direction, and a `(1)` week was genuinely paid
+([[hubstaff-filename-junk-heuristic-hides-paid-week]]). The junk regex is never applied
+here. Cached in-process per upload-list signature (ids + `is_current`) with a 10-minute
+TTL — a new upload is the only event that can move anyone's first week, and the wizard
+re-fetches when its upload list changes. Same gate as every other wizard read
+(`requireFeatureAccess('accounting','payroll_wizard','view')`), no query parameters.
+
+**Never 500s.** A failed read returns `200` with an EMPTY `byEmail` and `error` set. The
+wizard keeps `firstHoursIndex` **null**, the header reads **"first-paycheck labels
+unavailable"** (tooltip carries the error), nothing is labelled and the filter chip is
+hidden. A failed read is never rendered as "0 first paychecks".
+
+### What Step 2 shows
+
+- **Header line** (beside "N matched · M missing rate"): `· N first paychecks (K also leaving)`
+  — the count lives in the header, never only behind the chip, because a one-week hire is
+  exactly the row this table used to hide. Tooltip spells out the definition, the
+  also-leaving count and any `unknown` residue.
+- **Filter chip** "First paycheck (N)" beside the Dept select — toggles the table to first
+  paychecks only (off-boarded included); hidden on the history floor or while unavailable.
+  The "Showing X of Y rows" line says "· first paychecks only" while it is on.
+- **Search** matches `first paycheck` / `final pay` / `leaving` as words, so the search box
+  finds them too.
+- **Colour**: sky for a first check, rose for first-and-final. Amber remains **warning
+  only** on this step ([[wizard-step2-header-cards]]).
+
+**Display-only, by construction.** The verdict is computed in `firstPaycheckByEmail`
+(after `effectiveCalcResults`, `startDateByEmail` and `finalPayEmails`) and read by the
+Step 2 render and filter only. It is not on `CalcRow`, not in `dispatchData`, not in the
+`payroll.wizard.final_pay.<file>` snapshot, and not on the Reports step. Replay: hours
+history is immutable for a closed week, so a past week's label is stable; a backfill
+uploaded later for an earlier period can only turn a label **off** (more truthfully).
+
+Measure a week's cohort read-only with `scripts/probe-first-paycheck-cohort.mts [source_file]`
+(rebuilds the same index and intersects it with the master list and off-board stamps).
+**Measured 2026-09-22 on the live week `2026-09-13`: 1,119 payroll rows, 58 first paychecks,
+17 of them already off-boarded** — all Lead Gen, started 09/14, stamped off 09-18 → 09-22,
+5.5 h to 34 h each. That is the cohort Carla described, on the table with no label until
+now. 0 `unknown`, 0 on the history floor. (The probe judges *also off-boarded* by the master
+`off_boarded_at` stamp; the wizard judges it by the final-pay overlay, which is additionally
+relevance- and eligibility-gated — the two should agree for this cohort, unmeasured.)
+
+**Not verified in a browser this session** — `tsc` clean, rule module unit-tested.
+
+---
+
 ## 2026-09-22 — the wizard pays every HSL BRANCH, not just the 14 code teams
 
 > *"Are we absolutely sure that the new updates for the HSL Bonuses are updating

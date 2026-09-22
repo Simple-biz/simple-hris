@@ -263,6 +263,11 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { addHslKpiBonuses } from '@/lib/payroll/hsl-kpi-payout';
 import type { OffboardedRosterRow } from '@/lib/roster/offboarded-roster-row';
 import {
+  classifyFirstPaycheck,
+  type FirstHoursIndex,
+  type FirstPaycheckVerdict,
+} from '@/lib/payroll/first-paycheck';
+import {
   deptPayPausedSettingKey,
   otDeptSettingKey,
   parsePausedDeptKeys,
@@ -2117,6 +2122,15 @@ export default function PayrollWizard({
    *  and this list is only ever consulted after an active lookup has already
    *  missed. See src/lib/roster/offboarded-roster-row.ts. */
   const [offboardedRoster, setOffboardedRoster] = useState<OffboardedRosterRow[]>([]);
+  /** "First paycheck" index — every email's EARLIEST Hubstaff upload week, across
+   *  all uploads on record (`GET /api/payroll-wizard/first-hours-week`). Step 2
+   *  labels a calc row whose first-ever hours fall in the week in view, so a hire
+   *  who worked a few hours and was off-boarded inside their first week is
+   *  visible on the payroll table itself (Carla, 2026-09-22). Display-only:
+   *  never a payee, never in the payload or the final_pay snapshot.
+   *  `null` = not loaded / failed — labels are then UNAVAILABLE, never "none". */
+  const [firstHoursIndex, setFirstHoursIndex] = useState<FirstHoursIndex | null>(null);
+  const [firstHoursIndexError, setFirstHoursIndexError] = useState<string | null>(null);
   const [hubstaffDisplayColumns, setHubstaffDisplayColumns] = useState<string[] | null>(null);
   const [hubstaffDisplayRows, setHubstaffDisplayRows] = useState<Record<string, unknown>[] | null>(null);
   /** All rows across ALL uploaded CSVs — used for full-month PAB eligibility check. */
@@ -2229,6 +2243,8 @@ export default function PayrollWizard({
   const [hubstaffSearch, setHubstaffSearch] = useState('');
   const [initialCalcSearch, setInitialCalcSearch] = useState('');
   const [initialCalcDept, setInitialCalcDept] = useState('all');
+  /** Step 2 filter chip: show only rows whose FIRST-ever Hubstaff hours are this week. */
+  const [initialCalcFirstOnly, setInitialCalcFirstOnly] = useState(false);
   const [initialCalcPage, setInitialCalcPage] = useState(1);
   const [hslSearch, setHslSearch] = useState('');
   const [hslPage, setHslPage] = useState(1);
@@ -4039,6 +4055,44 @@ export default function PayrollWizard({
   useEffect(() => {
     void loadOffboardedRoster();
   }, [loadOffboardedRoster]);
+
+  /** The first-paycheck index is week-independent (it is the whole hours history),
+   *  so it loads once and again whenever the upload list changes — a new upload
+   *  is the only event that can move anyone's first week. A failed read leaves
+   *  the index `null` with the error kept, so Step 2 says "unavailable" rather
+   *  than labelling nobody. Sequenced like the roster loader: a late response
+   *  never overwrites a newer one. */
+  const firstHoursIndexSeqRef = useRef(0);
+  const loadFirstHoursIndex = React.useCallback(async () => {
+    const seq = ++firstHoursIndexSeqRef.current;
+    try {
+      const res = await fetch('/api/payroll-wizard/first-hours-week', { cache: 'no-store' });
+      const json = (await res.json()) as {
+        byEmail?: Record<string, string>;
+        oldestWeek?: string | null;
+        error?: string | null;
+      };
+      if (seq !== firstHoursIndexSeqRef.current) return;
+      if (!res.ok || json.error) {
+        setFirstHoursIndex(null);
+        setFirstHoursIndexError(json.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      setFirstHoursIndex({
+        firstWeekByEmail: new Map(Object.entries(json.byEmail ?? {})),
+        oldestWeek: json.oldestWeek ?? null,
+      });
+      setFirstHoursIndexError(null);
+    } catch (e) {
+      if (seq !== firstHoursIndexSeqRef.current) return;
+      setFirstHoursIndex(null);
+      setFirstHoursIndexError(e instanceof Error ? e.message : 'Could not load the first-paycheck index');
+    }
+  }, []);
+  useEffect(() => {
+    void loadFirstHoursIndex();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadFirstHoursIndex, uploadedSourceFiles.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -10626,6 +10680,84 @@ export default function PayrollWizard({
     [initialCalcDept, initialCalcDeptOptions],
   );
 
+  /**
+   * Every email the wizard knows a person by, keyed by each of those emails —
+   * master list first, then the final-pay overlay with a `has()` guard, so an
+   * active person's alias set is never replaced by a leaver's. This is what
+   * lets the first-paycheck rule bridge a Hubstaff address to its master
+   * siblings (master `cathyp@` vs Hubstaff `cathypa@`): a person whose Hubstaff
+   * email changed must not read as brand-new.
+   */
+  const personAliasesByEmail = useMemo(() => {
+    const m = new Map<string, string[]>();
+    const add = (raw: (string | null | undefined)[]) => {
+      const aliases = raw.map((x) => normEmail(x ?? '')).filter((x): x is string => !!x);
+      if (aliases.length === 0) return;
+      for (const a of aliases) if (!m.has(a)) m.set(a, aliases);
+    };
+    for (const e of masterEmployees) {
+      add([e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]);
+    }
+    for (const r of offboardedRoster) {
+      add([r.hubstaff_email, r.work_email, r.personal_email, r.alternate_work_email, r.alternate_work_email_2]);
+    }
+    return m;
+  }, [masterEmployees, offboardedRoster]);
+
+  /**
+   * Step 2 "First paycheck" verdict per calc row, keyed by the row's own
+   * normalized email (`src/lib/payroll/first-paycheck.ts`). The criterion is
+   * HOURS — no earlier upload carries any of the person's aliases — never a
+   * start date; the start date rides along as detail. `alsoLeaving` marks the
+   * one-week hire: first check AND final check in the same row, the case that
+   * was being missed by every active-roster new-hire list.
+   *
+   * `null` while the index is unavailable: the header then says the labels are
+   * unavailable, nothing is labelled and the filter chip is hidden — a failed
+   * read must never present as "no first paychecks this week".
+   */
+  const firstPaycheckByEmail = useMemo(() => {
+    if (!firstHoursIndex || !hubstaffWeekStart) return null;
+    const isoDay = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const m = new Map<string, FirstPaycheckVerdict>();
+    for (const row of effectiveCalcResults) {
+      const em = normEmail(row.email);
+      if (!em || m.has(em)) continue;
+      const sd = startDateByEmail.get(em);
+      m.set(
+        em,
+        classifyFirstPaycheck({
+          weekStart: hubstaffWeekStart,
+          aliases: [em, ...(personAliasesByEmail.get(em) ?? [])],
+          index: firstHoursIndex,
+          alsoLeaving: finalPayEmails.has(em),
+          startDate: sd ? isoDay(sd) : null,
+        }),
+      );
+    }
+    return m;
+  }, [firstHoursIndex, hubstaffWeekStart, effectiveCalcResults, startDateByEmail, personAliasesByEmail, finalPayEmails]);
+
+  /** Header figures for the label: how many first paychecks this week, how many
+   *  of those are also a final check, and whether the week sits on the history
+   *  floor (oldest upload on record ⇒ "first" carries no information). */
+  const firstPaycheckSummary = useMemo(() => {
+    if (!firstPaycheckByEmail) return null;
+    let first = 0;
+    let alsoLeaving = 0;
+    let unknown = 0;
+    let floor = false;
+    for (const v of firstPaycheckByEmail.values()) {
+      if (v.kind === 'first') {
+        first++;
+        if (v.alsoLeaving) alsoLeaving++;
+      } else if (v.kind === 'unknown') unknown++;
+      else if (v.kind === 'history_floor') floor = true;
+    }
+    return { first, alsoLeaving, unknown, floor };
+  }, [firstPaycheckByEmail]);
+
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
     // Every department shows here, Hogan Smith Law included — its KPI bonuses
@@ -10635,12 +10767,19 @@ export default function PayrollWizard({
       : effectiveCalcResults.filter(
           row => (initialCalcDeptByEmail.get(row.email)?.key ?? 'unassigned') === initialCalcDeptSafe,
         );
-    if (!needle) return deptScoped;
-    return deptScoped.filter((row) => {
+    // "First paycheck" chip: only rows whose first-ever Hubstaff hours are this
+    // week. With the index unavailable the chip is hidden, so this is a no-op.
+    const firstScoped = initialCalcFirstOnly && firstPaycheckByEmail
+      ? deptScoped.filter(row => firstPaycheckByEmail.get(normEmail(row.email) ?? '')?.kind === 'first')
+      : deptScoped;
+    if (!needle) return firstScoped;
+    return firstScoped.filter((row) => {
+      const fp = firstPaycheckByEmail?.get(normEmail(row.email) ?? '');
       const haystack = [
         row.name,
         row.email,
         initialCalcDeptByEmail.get(row.email)?.name ?? '',
+        fp?.kind === 'first' ? (fp.alsoLeaving ? 'first paycheck final pay leaving' : 'first paycheck') : '',
         row.totalHours.toFixed(2),
         row.regularHours.toFixed(2),
         row.otHours.toFixed(2),
@@ -10654,7 +10793,7 @@ export default function PayrollWizard({
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [effectiveCalcResults, initialCalcSearch, initialCalcDeptSafe, initialCalcDeptByEmail]);
+  }, [effectiveCalcResults, initialCalcSearch, initialCalcDeptSafe, initialCalcDeptByEmail, initialCalcFirstOnly, firstPaycheckByEmail]);
 
   const loadHubstaffPreview = React.useCallback(async () => {
     if (sourceFilesLoading) return;
@@ -14360,10 +14499,13 @@ export default function PayrollWizard({
                 {/* Detached from table: stays visible while the sheet scrolls; not inside the table scrollport */}
                 <div className="sticky top-0 z-30 -mx-4 mb-3 flex shrink-0 flex-col gap-2 rounded-xl border border-zinc-200 bg-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm sm:flex-row sm:items-center sm:justify-between md:-mx-8 md:px-8 dark:border-zinc-800 dark:bg-zinc-950/95">
                   <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                    {initialCalcSearch.trim() || initialCalcDeptSafe !== 'all' ? (
+                    {initialCalcSearch.trim() || initialCalcDeptSafe !== 'all' || initialCalcFirstOnly ? (
                       <>
                         Showing <span className="font-medium text-zinc-800 dark:text-zinc-200">{filteredCalcResults.length}</span> of{' '}
                         {effectiveCalcResults.length} rows
+                        {initialCalcFirstOnly && (
+                          <span className="ml-1 text-sky-700 dark:text-sky-300">· first paychecks only</span>
+                        )}
                       </>
                     ) : (
                       <>
@@ -14381,10 +14523,69 @@ export default function PayrollWizard({
                             </>
                           );
                         })()}
+                        {/* First paychecks — the count is in the header, never only
+                            behind the chip: a one-week hire is exactly the row this
+                            table used to hide. Unavailable is said out loud; it is
+                            never rendered as zero. */}
+                        {firstPaycheckSummary ? (
+                          firstPaycheckSummary.floor ? (
+                            <span
+                              className="ml-1 text-zinc-400 dark:text-zinc-500"
+                              title="This is the oldest Hubstaff upload on record, so everyone's first hours are here — the label would say nothing."
+                            >
+                              · first paychecks n/a (oldest upload)
+                            </span>
+                          ) : (
+                            <span
+                              className="ml-1 text-sky-700 dark:text-sky-300"
+                              title={
+                                `${firstPaycheckSummary.first} ${firstPaycheckSummary.first === 1 ? 'person has' : 'people have'} no Hubstaff hours in any earlier upload` +
+                                (firstPaycheckSummary.alsoLeaving > 0
+                                  ? ` — ${firstPaycheckSummary.alsoLeaving} of them ${firstPaycheckSummary.alsoLeaving === 1 ? 'is' : 'are'} also on the final-pay list (first and last check in one).`
+                                  : '.') +
+                                (firstPaycheckSummary.unknown > 0
+                                  ? ` ${firstPaycheckSummary.unknown} ${firstPaycheckSummary.unknown === 1 ? 'row is' : 'rows are'} unknown to the hours history (no upload carries that address).`
+                                  : '')
+                              }
+                            >
+                              · {firstPaycheckSummary.first} first {firstPaycheckSummary.first === 1 ? 'paycheck' : 'paychecks'}
+                              {firstPaycheckSummary.alsoLeaving > 0 && (
+                                <span className="text-rose-600 dark:text-rose-400"> ({firstPaycheckSummary.alsoLeaving} also leaving)</span>
+                              )}
+                            </span>
+                          )
+                        ) : (
+                          <span
+                            className="ml-1 text-zinc-400 dark:text-zinc-500"
+                            title={firstHoursIndexError ?? 'Loading the Hubstaff hours history…'}
+                          >
+                            · first-paycheck labels {firstHoursIndexError ? 'unavailable' : 'loading…'}
+                          </span>
+                        )}
                       </>
                     )}
                   </div>
                   <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                    {firstPaycheckSummary && !firstPaycheckSummary.floor && (
+                      <button
+                        type="button"
+                        onClick={() => { setInitialCalcFirstOnly(v => !v); setInitialCalcPage(1); }}
+                        aria-pressed={initialCalcFirstOnly}
+                        title="Show only people whose first-ever Hubstaff hours are in this pay week — including anyone already off-boarded"
+                        className={cn(
+                          'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors',
+                          initialCalcFirstOnly
+                            ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-200'
+                            : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900',
+                        )}
+                      >
+                        <Sparkles className="h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-400" aria-hidden />
+                        First paycheck
+                        <span className="rounded bg-sky-100 px-1 font-mono text-[10px] tabular-nums text-sky-800 dark:bg-sky-900/50 dark:text-sky-200">
+                          {firstPaycheckSummary.first}
+                        </span>
+                      </button>
+                    )}
                     <Select
                       value={initialCalcDeptSafe}
                       onValueChange={(v) => { setInitialCalcDept(v ?? 'all'); setInitialCalcPage(1); }}
@@ -14524,6 +14725,29 @@ export default function PayrollWizard({
                             <span className="block truncate" title={row.name || undefined}>
                               {row.name || '—'}
                             </span>
+                            {(() => {
+                              // "First paycheck" — first-ever Hubstaff hours are in this
+                              // week. Sky for a plain first check; rose when the same row
+                              // is also a FINAL check (the one-week hire). Display only.
+                              const fp = firstPaycheckByEmail?.get(normEmail(row.email) ?? '');
+                              if (!fp || fp.kind !== 'first') return null;
+                              const started = fp.startDate ? `Started ${fp.startDate}. ` : 'No start date on file. ';
+                              return fp.alsoLeaving ? (
+                                <span
+                                  title={`First AND final check — no Hubstaff hours in any earlier upload, and on this week's final-pay list. ${started}Make sure this row is paid.`}
+                                  className="mt-0.5 inline-block whitespace-nowrap rounded bg-rose-100 px-1 py-px text-[9px] font-semibold leading-tight text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"
+                                >
+                                  First &amp; final pay
+                                </span>
+                              ) : (
+                                <span
+                                  title={`First paycheck — no Hubstaff hours in any earlier upload. ${started}`}
+                                  className="mt-0.5 inline-block whitespace-nowrap rounded bg-sky-100 px-1 py-px text-[9px] font-semibold leading-tight text-sky-700 dark:bg-sky-500/15 dark:text-sky-300"
+                                >
+                                  First paycheck
+                                </span>
+                              );
+                            })()}
                             <span
                               className="block truncate text-[10px] font-normal text-zinc-400 dark:text-zinc-500"
                               title={initialCalcDeptByEmail.get(row.email)?.name ?? 'Unassigned'}
