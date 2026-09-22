@@ -32,6 +32,9 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import { toCachedMasterRows, type CachedMasterRow } from '@/lib/employee/master-row-cache';
+import { useAdminCachedState } from '@/hooks/useAdminCachedState';
+import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { formatLastSeen } from '@/components/team/team-ui';
@@ -137,9 +140,30 @@ function Field({
   );
 }
 
+/* Module-scope so the cached-state hook's initial value is referentially stable. */
+const NO_ROSTER_ROWS: CachedMasterRow[] = [];
+
 export default function AdminGlobalMasterList() {
-  const [roster, setRoster] = useState<EmployeeRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // SHARED with AdminRoles and the Admin Overview — same URL, same rows (the
+  // blueprint's Q3, answered "shared"). Projected through `toCachedMasterRows`:
+  // an `EmployeeRow` also carries home address, contact phone, pay rates and a
+  // `bankInfo` block, and this tab renders none of them (see
+  // `src/lib/employee/master-row-cache.ts`).
+  const [roster, setRoster] = useAdminCachedState<CachedMasterRow[]>(
+    ADMIN_CACHE_KEYS.roster,
+    NO_ROSTER_ROWS,
+  );
+  // Derived, never stored, never reset.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && roster.length === 0;
+  // Home addresses, held ONLY in memory and keyed by the same email key the
+  // table uses. This is the one Admin surface that renders an address, and it
+  // renders it for the SELECTED person alone — so the list paints from the
+  // cache instantly while the address waits for the live row, exactly as the
+  // Employee Profile's payout pane waits behind `bankInfoLoaded`. Putting these
+  // three fields in the cached projection instead would mirror ~2,800 home
+  // addresses to disk to save one round trip on a detail pane.
+  const [addressByKey, setAddressByKey] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Bumped on manual Refresh + the auto-telemetry tick. Drives the last-seen
@@ -173,13 +197,25 @@ export default function AdminGlobalMasterList() {
       const res = await fetch('/api/employees', { cache: 'no-store' });
       const json = (await res.json()) as { employees?: EmployeeRow[]; error?: string };
       if (json.error) throw new Error(json.error);
-      setRoster(Array.isArray(json.employees) ? json.employees : []);
+      const rows = Array.isArray(json.employees) ? json.employees : [];
+      setRoster(toCachedMasterRows(rows));
+      const addresses: Record<string, string> = {};
+      for (const row of rows) {
+        const key = (row.work_email ?? row.personal_email ?? '').trim().toLowerCase();
+        if (!key) continue;
+        const text =
+          [row.city, row.province].map((v) => v?.trim()).filter(Boolean).join(', ') ||
+          row.full_address?.trim() ||
+          '';
+        if (text) addresses[key] = text;
+      }
+      setAddressByKey(addresses);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load the master list');
     } finally {
-      setLoading(false);
+      setSettled(true);
     }
-  }, []);
+  }, [setRoster]);
 
   useEffect(() => {
     void fetchRoster();
@@ -499,9 +535,8 @@ export default function AdminGlobalMasterList() {
     .map((e) => e?.trim())
     .filter(Boolean)
     .join(', ');
-  const location = [selected?.city, selected?.province].map((s) => s?.trim()).filter(Boolean).join(', ') ||
-    selected?.full_address?.trim() ||
-    '';
+  // From the in-memory map, never from the cached row — see `addressByKey`.
+  const location = selected ? addressByKey[emailKeyFor(selected)] ?? '' : '';
 
   return (
     <div className="flex flex-col gap-4 bg-gradient-to-b from-zinc-50/80 to-transparent p-4 sm:p-6 lg:h-full lg:min-h-0 lg:overflow-hidden dark:from-zinc-950/50">

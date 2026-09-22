@@ -226,3 +226,47 @@ test('class 8 — no key names a credential, bank field or signed URL', () => {
     .join(' ');
   assert.ok(!/api[_-]?key|secret|token|bank|account|signed|presence/i.test(spelled), spelled);
 });
+
+test('class 9 — the roster key is only ever fed a PROJECTED master row', async () => {
+  // Classes 1-8 above all pin KEY SPELLINGS. That is exactly the blind spot that
+  // let `employee:profile-rate` mirror payment routing for three weeks: the leak
+  // was not a badly-named key, it was a bank field nested inside a row cached
+  // under a perfectly innocent one.
+  //
+  // An `EmployeeRow` carries the person's home address, contact phone, pay rates
+  // and a `bankInfo` block. `toCachedMasterRow` strips all of it and its key
+  // lists are partitioned at compile time — but nothing stops a future call site
+  // from writing `useAdminCachedState<EmployeeRow[]>(ADMIN_CACHE_KEYS.roster)`
+  // and handing the raw rows straight through. This is what stops that.
+  const { readdirSync, readFileSync, statSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) return walk(full);
+      return full.endsWith('.tsx') || full.endsWith('.ts') ? [full] : [];
+    });
+
+  // Comments are stripped first. The first version of this test looked for the
+  // bare identifier and passed against a file whose projection had been deleted,
+  // because the comment ABOVE the call still named it — a test that greps source
+  // has to grep code, not prose.
+  const stripComments = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  const offenders: string[] = [];
+  for (const file of [...walk('src/components/admin'), ...walk('app/admin')]) {
+    const src = stripComments(readFileSync(file, 'utf8'));
+    if (!src.includes('ADMIN_CACHE_KEYS.roster')) continue;
+    // Whatever reads the roster key must also CALL the projection.
+    if (!/toCachedMasterRows?\s*\(/.test(src)) {
+      offenders.push(`${file}: reads ADMIN_CACHE_KEYS.roster without calling toCachedMasterRow*`);
+    }
+    // ...and must not declare the cached state as the RAW row type.
+    if (/useAdminCachedState<\s*EmployeeRow\[\]\s*>/.test(src)) {
+      offenders.push(`${file}: caches raw EmployeeRow[] — project it first`);
+    }
+  }
+  assert.deepEqual(offenders, []);
+});

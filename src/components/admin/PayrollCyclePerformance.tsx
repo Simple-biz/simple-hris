@@ -22,6 +22,8 @@
 'use client';
 
 import * as React from 'react';
+import { useAdminCachedState } from '@/hooks/useAdminCachedState';
+import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
 import { cn } from '@/lib/utils';
 import {
   ACCENT,
@@ -66,8 +68,18 @@ const ACCENT_KEY = 'accounting' as const;
 const POLL_MS = 120_000;
 
 export default function PayrollCyclePerformance() {
-  const [data, setData] = React.useState<CyclePerformanceSummary | null>(null);
-  const [generatedAt, setGeneratedAt] = React.useState<string | null>(null);
+  // Seeded from the tab-switch/reload cache. A heavy read-only aggregate with
+  // its own `generatedAt` stamp ON SCREEN, so a cached copy is self-declaring
+  // rather than passing as fresh — and the 120s poll below still runs from
+  // mount, unconditionally.
+  const [data, setData] = useAdminCachedState<CyclePerformanceSummary | null>(
+    ADMIN_CACHE_KEYS.diagnosticsCyclePerformance,
+    null,
+  );
+  const [generatedAt, setGeneratedAt] = useAdminCachedState<string | null>(
+    ADMIN_CACHE_KEYS.diagnosticsCyclePerformanceGeneratedAt,
+    null,
+  );
   const [unreadable, setUnreadable] = React.useState<string[]>([]);
   const [inventoryError, setInventoryError] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -118,7 +130,7 @@ export default function PayrollCyclePerformance() {
       setRefreshing(false);
       setEverLoaded(true);
     }
-  }, []);
+  }, [setData, setGeneratedAt]);
 
   const loadRef = React.useRef(load);
   loadRef.current = load;

@@ -26,6 +26,8 @@
 'use client';
 
 import * as React from 'react';
+import { useAdminCachedState } from '@/hooks/useAdminCachedState';
+import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
 import { cn } from '@/lib/utils';
 import {
   ACCENT,
@@ -49,8 +51,18 @@ const ACCENT_KEY = 'hr' as const;
 const POLL_MS = 120_000;
 
 export default function HrPipelinePerformance() {
-  const [data, setData] = React.useState<HrPipelineSummary | null>(null);
-  const [generatedAt, setGeneratedAt] = React.useState<string | null>(null);
+  // Seeded from the tab-switch/reload cache. A heavy read-only aggregate with
+  // its own `generatedAt` stamp ON SCREEN, so a cached copy is self-declaring
+  // rather than passing as fresh — and the  poll below still runs from
+  // mount, unconditionally.
+  const [data, setData] = useAdminCachedState<HrPipelineSummary | null>(
+    ADMIN_CACHE_KEYS.diagnosticsHrPipeline,
+    null,
+  );
+  const [generatedAt, setGeneratedAt] = useAdminCachedState<string | null>(
+    ADMIN_CACHE_KEYS.diagnosticsHrPipelineGeneratedAt,
+    null,
+  );
   const [error, setError] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState(false);
   const [everLoaded, setEverLoaded] = React.useState(false);
@@ -73,7 +85,7 @@ export default function HrPipelinePerformance() {
       setRefreshing(false);
       setEverLoaded(true);
     }
-  }, []);
+  }, [setData, setGeneratedAt]);
 
   const loadRef = React.useRef(load);
   loadRef.current = load;

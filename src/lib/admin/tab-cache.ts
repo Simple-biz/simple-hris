@@ -336,4 +336,43 @@ export const ADMIN_CACHE_KEYS = {
    * that survived a reload would paint under a "Saved" button.
    */
   webhooksEntries: 'webhooks:entries',
+
+  /* ── Wired 2026-09-22, on Kane's ruling against the blueprint's open Qs ──── */
+
+  /**
+   * `GET /api/employees` — the master-list roster, **projected through
+   * `toCachedMasterRow`**.
+   *
+   * ONE key shared by every Admin tab that needs the roster (the blueprint's
+   * **Q3**, answered *shared*): the rows are identical, the fetch is the same
+   * URL, and two keys would mean two copies of ~2,800 rows in a storage budget
+   * measured in megabytes — with the second copy free to drift.
+   *
+   * The projection is not optional. A raw `EmployeeRow` carries the person's
+   * home address, contact phone, pay rates and a `bankInfo` block; see
+   * `src/lib/employee/master-row-cache.ts` for why that may not be mirrored and
+   * how the partition is enforced at compile time.
+   */
+  roster: 'roster',
+  /** `GET /api/employee-roles` — RAW assignment rows (email + role key). */
+  rolesAssignments: 'roles:assignments',
+  /** `GET /api/departments` — RAW `{ departments, builtinSubs }`. */
+  rolesDepartments: 'roles:departments',
+  /** `GET /api/department-managers` — RAW manager assignment rows. */
+  rolesDeptManagers: 'roles:dept-managers',
+  /** Overview → headcount only. The Overview pulls the roster to `.length` it and
+   *  throws the rows away, so the COUNT is what is stored, not 2,800 rows. */
+  overviewEmployeeCount: 'overview:employee-count',
+  /** Overview → the parsed `webhooks.config` entries (plain JSON). */
+  overviewWebhooks: 'overview:webhooks',
+  /** Overview → `GET /api/admin/data-tables-status` — the core-table status card. */
+  overviewCoreTables: 'overview:core-tables',
+  /** Diagnostics → Payroll Cycles: the aggregate summary and the stamp it was
+   *  generated at. Two keys because the stamp is rendered ON SCREEN — a cached
+   *  aggregate is self-declaring rather than passing as fresh. */
+  diagnosticsCyclePerformance: 'diagnostics:cycle-performance',
+  diagnosticsCyclePerformanceGeneratedAt: 'diagnostics:cycle-performance:generated-at',
+  /** Diagnostics → HR Pipeline: same shape, same reason. */
+  diagnosticsHrPipeline: 'diagnostics:hr-pipeline',
+  diagnosticsHrPipelineGeneratedAt: 'diagnostics:hr-pipeline:generated-at',
 } as const;

@@ -31,6 +31,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { EmployeeRow } from '@/lib/supabase/employees';
+import { toCachedMasterRows, type CachedMasterRow } from '@/lib/employee/master-row-cache';
+import { useAdminCachedState } from '@/hooks/useAdminCachedState';
+import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
 import EmployeeAvatar from '@/components/employee/EmployeeAvatar';
 import { FEATURE_CATALOG, ROLE_TO_FEATURE_VIEW, type FeatureAccess, type FeatureViewKey } from '@/lib/rbac/feature-permissions';
 import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
@@ -177,18 +180,123 @@ interface DepartmentManagerRow {
 
 const PAGE_SIZE = 10;
 
+/** `GET /api/departments`, exactly as it is cached. */
+interface DepartmentsPayload {
+  departments: string[];
+  builtinSubs: BuiltinSubMap;
+}
+
+/* Module-scope so the cached-state hooks' initial values are referentially stable. */
+const NO_ROSTER_ROWS: CachedMasterRow[] = [];
+const NO_ROLE_ROWS: RoleRow[] = [];
+const NO_DEPT_MANAGER_ROWS: DepartmentManagerRow[] = [];
+const EMPTY_DEPARTMENTS_PAYLOAD: DepartmentsPayload = { departments: [], builtinSubs: {} };
+
+/**
+ * Build the People directory from the two cached payloads plus the addresses
+ * typed into "Add by email" this session.
+ *
+ * Module scope and pure on purpose: the directory is DERIVED rather than stored,
+ * so the path that seeds from cache and the path that just fetched produce the
+ * same list by construction. It also keeps `customEmails` — a `Set`, which
+ * `JSON.stringify` flattens to `{}` — out of storage entirely.
+ *
+ * Off-roster addresses are surfaced, not hidden: an email that holds a role
+ * assignment but is not on the master list (service accounts, founders,
+ * contractors) gets a synthetic row, so an admin can keep managing its
+ * permissions instead of it ghosting out of the UI on reload.
+ */
+/** The key a directory row is identified by — the same one the merge maps on. */
+function rowIdentityKey(row: CachedMasterRow): string {
+  return (row.work_email ?? row.personal_email ?? row.name ?? '').toString().trim().toLowerCase();
+}
+
+function mergeRosterWithAssignments(
+  rosterRows: readonly CachedMasterRow[],
+  assignments: readonly RoleRow[],
+  manualEmails: ReadonlySet<string>,
+): { employees: CachedMasterRow[]; customEmails: Set<string> } {
+  // ONE key derivation, shared with the selection lookup. Two spellings of
+  // "which row is this" is how a selected person stops matching their own row.
+  const merged = new Map<string, CachedMasterRow>();
+
+  for (const e of rosterRows) {
+    const k = rowIdentityKey(e);
+    if (!k) continue;
+    merged.set(k, e);
+  }
+
+  const customEmails = new Set<string>();
+  const addOffRoster = (rawEmail: string | null | undefined) => {
+    const k = (rawEmail ?? '').trim().toLowerCase();
+    if (!k || merged.has(k)) return;
+    customEmails.add(k);
+    merged.set(k, {
+      name: null,
+      work_email: k,
+      personal_email: null,
+      department: null,
+      start_date: null,
+      employee_id: null,
+    });
+  };
+
+  for (const a of assignments) addOffRoster(a.work_email);
+  for (const email of manualEmails) addOffRoster(email);
+
+  return { employees: Array.from(merged.values()), customEmails };
+}
+
 export default function AdminRoles() {
-  const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  // The four mount payloads are cached RAW and everything below is DERIVED from
+  // them, so the seeded and the fetched paths cannot disagree. The roster goes
+  // through `toCachedMasterRows` first: an `EmployeeRow` also carries the
+  // person's home address, contact phone, pay rates and a `bankInfo` block, and
+  // none of that may reach `sessionStorage` (see `master-row-cache.ts`).
+  const [rosterRows, setRosterRows] = useAdminCachedState<CachedMasterRow[]>(
+    ADMIN_CACHE_KEYS.roster,
+    NO_ROSTER_ROWS,
+  );
+  const [allAssignments, setAllAssignments] = useAdminCachedState<RoleRow[]>(
+    ADMIN_CACHE_KEYS.rolesAssignments,
+    NO_ROLE_ROWS,
+  );
+  // Emails typed into "Add by email" in THIS page session. Deliberately not
+  // cached: until the grant lands they exist nowhere else, and a reload that
+  // resurrected them would show addresses nobody can explain.
+  const [manualCustomEmails, setManualCustomEmails] = useState<Set<string>>(new Set());
+  // The directory and the off-roster set are both DERIVED from the two cached
+  // payloads plus the manual set — module scope and pure, so a reload builds the
+  // same directory the fetch just did. `customEmails` is a `Set`, which
+  // serialises to `{}`; deriving it is what keeps it off storage.
+  const { employees, customEmails } = useMemo(
+    () => mergeRosterWithAssignments(rosterRows, allAssignments, manualCustomEmails),
+    [rosterRows, allAssignments, manualCustomEmails],
+  );
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<EmployeeRow | null>(null);
+  // Selection is held as an EMAIL and the row is re-resolved from the derived
+  // directory. Holding the row object itself broke twice over once the directory
+  // became derived: the background refetch rebuilds every row, so a stored
+  // reference stopped matching `selected === e` (the highlight vanished) and
+  // went on rendering the pre-refresh copy of that person.
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const selected = useMemo(
+    () =>
+      selectedEmail === null
+        ? null
+        : employees.find((e) => rowIdentityKey(e) === selectedEmail) ?? null,
+    [employees, selectedEmail],
+  );
   const [roles, setRoles] = useState<RoleRow[]>([]);
-  const [allAssignments, setAllAssignments] = useState<RoleRow[]>([]);
   // Per-feature access for the currently selected user. Keyed view -> feature.
   // Default `{}` is read as "every feature hidden" by the gating helpers.
   const [featurePerms, setFeaturePerms] = useState<Partial<Record<FeatureViewKey, Record<string, FeatureAccess>>>>({});
   const [featurePermsLoading, setFeaturePermsLoading] = useState(false);
   const [featurePermMutating, setFeaturePermMutating] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Derived, never stored, never reset: the skeleton is for having nothing to
+  // paint, not for a request being in flight.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && employees.length === 0;
   const [rolesLoading, setRolesLoading] = useState(false);
   const [mutating, setMutating] = useState<RoleKey | null>(null);
   // When granting a role would create a QC↔Manager conflict, hold the pending
@@ -205,14 +313,20 @@ export default function AdminRoles() {
   const [roleFilter, setRoleFilter] = useState<'all' | RoleKey>('all');
   // Department picker for the People list. 'all' = no department filter.
   const [deptFilter, setDeptFilter] = useState<string>('all');
-  const [departments, setDepartments] = useState<string[]>([]);
-  const [deptAssignments, setDeptAssignments] = useState<DepartmentManagerRow[]>([]);
+  const [departmentsPayload, setDepartmentsPayload] = useAdminCachedState<DepartmentsPayload>(
+    ADMIN_CACHE_KEYS.rolesDepartments,
+    EMPTY_DEPARTMENTS_PAYLOAD,
+  );
+  const departments = departmentsPayload.departments;
+  const builtinSubs = departmentsPayload.builtinSubs;
+  const [deptAssignments, setDeptAssignments] = useAdminCachedState<DepartmentManagerRow[]>(
+    ADMIN_CACHE_KEYS.rolesDeptManagers,
+    NO_DEPT_MANAGER_ROWS,
+  );
   const [deptMutating, setDeptMutating] = useState<string | null>(null);
   // Set of lowercased emails that aren't in master list / rates / Hubstaff —
   // either added manually here or surfaced from existing role assignments
   // pointing at off-roster addresses (founders, bots, contractors, etc.).
-  const [customEmails, setCustomEmails] = useState<Set<string>>(new Set());
-  const [builtinSubs, setBuiltinSubs] = useState<BuiltinSubMap>({});
   /** Every HSL sub-team a grant can name: the 14 KPI code teams, the 2
    *  placement-only code teams, then the DATA teams. One list so the chip grid
    *  and the "active" count agree. */
@@ -242,56 +356,36 @@ export default function AdminRoles() {
         const rolesJson = (await rolesRes.json()) as { rows?: RoleRow[] };
         const deptJson = (await deptRes.json()) as { departments?: string[]; builtinSubs?: BuiltinSubMap };
         const mgrDeptJson = (await mgrDeptRes.json()) as { rows?: DepartmentManagerRow[] };
-        setDepartments(deptJson.departments ?? []);
-        // Data sub-teams (Payment Catalog → Departments → Edit), so a team like
-        // Carla's `hsl:healthcare_specialist` is grantable the moment it exists.
-        if (deptJson.builtinSubs && typeof deptJson.builtinSubs === 'object') setBuiltinSubs(deptJson.builtinSubs);
+
+        setDepartmentsPayload({
+          departments: deptJson.departments ?? [],
+          // Data sub-teams (Payment Catalog → Departments → Edit), so a team like
+          // Carla's `hsl:healthcare_specialist` is grantable the moment it exists.
+          builtinSubs:
+            deptJson.builtinSubs && typeof deptJson.builtinSubs === 'object'
+              ? deptJson.builtinSubs
+              : {},
+        });
         setDeptAssignments(mgrDeptJson.rows ?? []);
 
         // Directory is the Master List only (`/api/employees` → active_employees
         // view). We deliberately do NOT merge the rates CSV or Hubstaff sources
         // here — those surface people who aren't on the master list and bloat
         // the picker. Off-roster service accounts / contractors are added
-        // explicitly via "Add by email" (tracked in customEmails below).
-        const merged = new Map<string, EmployeeRow>();
-        const keyFor = (we: string | null | undefined, pe: string | null | undefined, nm?: string | null) =>
-          (we ?? pe ?? nm ?? '').toString().trim().toLowerCase();
-
-        for (const e of empJson.employees ?? []) {
-          const k = keyFor(e.work_email, e.personal_email, e.name);
-          if (!k) continue;
-          merged.set(k, e);
-        }
-
-        // Surface every email that already has a role assignment but isn't on
-        // the master list. Lets admins keep managing permissions for off-roster
-        // addresses (service accounts, founders, contractors, etc.) without
-        // ghosting them from the UI on reload.
-        const customSet = new Set<string>();
-        for (const a of rolesJson.rows ?? []) {
-          const k = (a.work_email ?? '').toLowerCase();
-          if (!k || merged.has(k)) continue;
-          customSet.add(k);
-          merged.set(k, {
-            name: null,
-            work_email: a.work_email,
-            personal_email: null,
-            department: null,
-            start_date: null,
-            employee_id: null,
-          } as EmployeeRow);
-        }
-
-        setEmployees(Array.from(merged.values()));
+        // explicitly via "Add by email".
+        //
+        // RAW rows in (projected), merged by `mergeRosterWithAssignments` — the
+        // merge is module scope and pure so a reload derives the same directory
+        // the fetch just did.
+        setRosterRows(toCachedMasterRows(empJson.employees ?? []));
         setAllAssignments(rolesJson.rows ?? []);
-        setCustomEmails(customSet);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to load');
       } finally {
-        setLoading(false);
+        setSettled(true);
       }
     })();
-  }, []);
+  }, [setRosterRows, setAllAssignments, setDepartmentsPayload, setDeptAssignments]);
 
   const identity = employeeIdentityEmail(selected);
   const selWork = selected?.work_email ?? null;
@@ -629,7 +723,7 @@ export default function AdminRoles() {
         (e.personal_email ?? '').toLowerCase() === raw,
     );
     if (existing) {
-      setSelected(existing);
+      setSelectedEmail(rowIdentityKey(existing));
       setSearch('');
       setPage(1);
       setCustomInput('');
@@ -637,7 +731,7 @@ export default function AdminRoles() {
       toast.info(`${raw} is already in the directory — selected.`);
       return;
     }
-    const newRow: EmployeeRow = {
+    const newRow: CachedMasterRow = {
       name: null,
       work_email: raw,
       personal_email: null,
@@ -645,13 +739,17 @@ export default function AdminRoles() {
       start_date: null,
       employee_id: null,
     };
-    setEmployees((prev) => [...prev, newRow]);
-    setCustomEmails((prev) => {
+    // Recorded as a MANUAL address only. The directory itself is derived from
+    // the two cached payloads, so pushing a row into it would be overwritten on
+    // the next derive; `mergeRosterWithAssignments` folds this address back in
+    // as soon as the grant it is about to receive exists, and until then the
+    // manual set keeps it on screen.
+    setManualCustomEmails((prev) => {
       const next = new Set(prev);
       next.add(raw);
       return next;
     });
-    setSelected(newRow);
+    setSelectedEmail(rowIdentityKey(newRow));
     setSearch('');
     setPage(1);
     setCustomInput('');
@@ -1049,7 +1147,7 @@ export default function AdminRoles() {
             <ul className="space-y-1.5" role="list">
               {pageSlice.map((e, i) => {
                 const assignedRoles = assignmentsForEmployee(e, allAssignments);
-                const isSel = selected === e;
+                const isSel = selectedEmail !== null && rowIdentityKey(e) === selectedEmail;
                 const isCustom = customEmails.has(
                   (e.work_email ?? '').toLowerCase(),
                 );
@@ -1057,7 +1155,7 @@ export default function AdminRoles() {
                   <li key={`${employeeIdentityEmail(e) || e.name}-${pageStart + i}`}>
                     <button
                       type="button"
-                      onClick={() => setSelected(e)}
+                      onClick={() => setSelectedEmail(rowIdentityKey(e))}
                       className={cn(
                         'flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all',
                         isSel

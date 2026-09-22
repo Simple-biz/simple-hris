@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { resolveFirstName } from '@/lib/name/first-name';
+import { useAdminCachedState } from '@/hooks/useAdminCachedState';
+import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
 import {
   type LucideIcon,
   Activity,
@@ -130,16 +132,45 @@ const panelHead =
 const statCard =
   'group relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200/90 bg-white/95 p-2.5 shadow-sm transition-colors hover:border-zinc-300/90 [@media(max-height:900px)]:p-2 xl:p-3 dark:border-zinc-800/80 dark:bg-zinc-900/50 dark:hover:border-zinc-700/80';
 
+/* Module-scope so the cached-state hooks' initial values are referentially stable. */
+const NO_ROLE_ROWS: RoleRow[] = [];
+const NO_WEBHOOKS: WebhookEntry[] = [];
+
 export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewProps) {
-  const [employeeCount, setEmployeeCount] = useState<number | null>(null);
-  const [roleRows, setRoleRows] = useState<RoleRow[]>([]);
-  const [webhooks, setWebhooks] = useState<WebhookEntry[]>([]);
+  // Seeded from the tab-switch/reload cache; the fetch below still runs on every
+  // mount. The roster is pulled here only to `.length` it, so the COUNT is what
+  // is stored — writing 2,800 rows from a headcount card would be the whole
+  // storage budget for one number.
+  const [employeeCount, setEmployeeCount] = useAdminCachedState<number | null>(
+    ADMIN_CACHE_KEYS.overviewEmployeeCount,
+    null,
+  );
+  // SHARED with AdminRoles — same URL, same rows (the blueprint's Q3, answered
+  // "shared"). Whichever tab loads first warms it for the other.
+  const [roleRows, setRoleRows] = useAdminCachedState<RoleRow[]>(
+    ADMIN_CACHE_KEYS.rolesAssignments,
+    NO_ROLE_ROWS,
+  );
+  const [webhooks, setWebhooks] = useAdminCachedState<WebhookEntry[]>(
+    ADMIN_CACHE_KEYS.overviewWebhooks,
+    NO_WEBHOOKS,
+  );
+  // The audit strip is deliberately NOT cached — see the store's doc. `details`
+  // is a free-form blob whose contents vary by event family, so nothing here can
+  // promise a bank field is not inside one. The 24 rows on screen are a slice of
+  // a 500-row fetch that runs regardless, so caching them saves no round trip.
   const [auditRows, setAuditRows] = useState<AuditLogEntry[]>([]);
   const [auditTotalHint, setAuditTotalHint] = useState<number>(0);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [timeZone, setTimeZone] = useState('');
-  const [coreTables, setCoreTables] = useState<CoreTablesPayload | null>(null);
+  const [coreTables, setCoreTables] = useAdminCachedState<CoreTablesPayload | null>(
+    ADMIN_CACHE_KEYS.overviewCoreTables,
+    null,
+  );
+  // Derived, never stored, never reset. `coreTables` stands for "the wave
+  // landed" because it is the one payload with no legitimate empty value.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && coreTables === null;
   const [masterUploading, setMasterUploading] = useState(false);
   const masterFileInputRef = useRef<HTMLInputElement>(null);
   const [ratesUploading, setRatesUploading] = useState(false);
@@ -163,7 +194,6 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
   }, [userEmail]);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const [empRes, rolesRes, hookRes, auditRes, tablesRes] = await Promise.all([
         fetch('/api/employees', { cache: 'no-store' }),
@@ -215,9 +245,9 @@ export default function AdminOverview({ userEmail, onNavigate }: AdminOverviewPr
         usedServiceRole: false,
       });
     } finally {
-      setLoading(false);
+      setSettled(true);
     }
-  }, []);
+  }, [setEmployeeCount, setRoleRows, setWebhooks, setCoreTables]);
 
   useEffect(() => {
     void load();
