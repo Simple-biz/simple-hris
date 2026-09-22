@@ -345,8 +345,26 @@ US Manager Bonus · USEE**.
       the currency.
   - Editing an assignment does **not** rewrite an already-scored week: the
     wizard pays the stored `calculated_bonus`, per
-    [[payroll-rule-changes-forward-only]]. `withoutCatalogKeys` strips a removed
-    bonus's stale inputs the next time the card is touched.
+    [[payroll-rule-changes-forward-only]]. `withoutCatalogKeys` exists to strip a
+    removed bonus's stale inputs — **but it is called from nowhere** (verified by
+    grep 2026-09-22), so in practice a removed bonus's `catalog:` keys survive in
+    `kpi_data` indefinitely. They score nothing while no assignment resolves them,
+    and **come back to life if the same bonus id is ever re-assigned to that
+    branch.** Until the function is wired, a retirement script strips them
+    explicitly (`scripts/retire-filing-team-library-bonus.mts`).
+  - **A Library bonus must never re-express a programme that already exists in
+    code** *(the invariant this section was missing, 2026-09-22)*. `scoreEntry`
+    returns `calcBonus(schema rules) + calcHslCatalogTotal(catalog)` with **no
+    dedupe of any kind** — the two are different bonuses by construction, which is
+    correct right up until they are not. Kane assigned a "Filing Team" formula to
+    `hsl:filing_specialist` that reproduced all four of that branch's code rules
+    (`PPL*100`, `BBB*250`, `Referral_Leads*250` and its own Attested Cases
+    ladder); a manager filling both sets of boxes would have paid every unit
+    **twice**. Nothing warned, because nothing compares a formula's terms with the
+    branch's rules. Resolved by ruling: the formula's bands moved into
+    `schema.ts` and the assignment was retired, so the programme exists once.
+    **When a Library formula and a code rule describe the same work, one of them
+    has to go — and which one is a pay decision, never a cleanup.**
 
 - **Sub-team-targeted assignments** *(2026-09-21, second pass the same day)*.
   When master-list departments gained data sub-teams

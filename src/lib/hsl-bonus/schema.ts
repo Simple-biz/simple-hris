@@ -237,11 +237,27 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
         type: 'tiered',
         key: 'attested_cases',
         label: 'Attested Cases',
+        // Kane's ruling, 2026-09-22. He authored the branch's pay rule as a Bonus
+        // Library formula and assigned it to `hsl:filing_specialist`, which
+        // re-expressed this whole department — PPL, BBB, Referral Leads and these
+        // bands — a second time, ON TOP of these rules (`scoreEntry` sums both).
+        // Ruled: the formula's bands are the real ones, they move here, and the
+        // Library assignment is retired so the programme exists once.
+        //   Filed_Cases * IF(Filed_Cases>=40,100,IF(Filed_Cases>=30,75,IF(Filed_Cases>=20,50,0)))
+        // This CLOSES the "Kane has never confirmed" item that stood since
+        // 2026-07-27 — and it does NOT adopt attestation's 25/35/50. The two
+        // departments were divergent before and are divergent still; the
+        // divergence just moved. `hsl-catalog-migration.md` requires it be
+        // reproduced verbatim, never normalised.
+        // FORWARD-ONLY: 75 already-saved rows across 2026-06-14…2026-09-06 would
+        // score higher under these bands (₱68,825) and are deliberately NOT
+        // recalculated — a saved `calculated_bonus` is what was paid
+        // ([[payroll-rule-changes-forward-only]], session log item 151).
         tiers: [
-          { min: 0,  max: 29, rate: 0 },
-          { min: 30, max: 39, rate: 50 },
-          { min: 40, max: 49, rate: 75 },
-          { min: 50, max: null, rate: 100 },
+          { min: 0,  max: 19, rate: 0 },
+          { min: 20, max: 29, rate: 50 },
+          { min: 30, max: 39, rate: 75 },
+          { min: 40, max: null, rate: 100 },
         ],
       },
       { type: 'per_unit', key: 'converted_referral', label: 'Converted Referral', rate: 250 },

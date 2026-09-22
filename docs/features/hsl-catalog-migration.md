@@ -226,7 +226,10 @@ this direction **nothing moves**, which is the strongest form of not losing it.
       structural — `medical_records` encodes `100` verbatim (what produced every stored
       value) until Kane rules. **Do not normalise it to the doc's number.**
 - [ ] Build the definitions overlay (§4). `src/lib/hsl-bonus-catalog/` still does not exist.
-- [ ] `filing_specialist` still carries the old 30/40/50 Attested Cases bands and did not
-      receive the Referral Leads / SSA.Gov terms. A re-expression must **reproduce that
-      divergence verbatim**, not normalise it.
+- [x] `filing_specialist` carries **20/30/40** since 2026-09-22 (Kane's ruling, from the
+      Bonus Library formula he authored for the branch) — **not** attestation's 25/35/50.
+      The rule that a re-expression must **reproduce the divergence verbatim, never
+      normalise it**, still stands and is now pinned by a test: 24 cases pays ₱1,200 on
+      Filing and ₱0 on Attestation. It still did not receive Referral Leads / SSA.Gov —
+      `converted_referral` already was its referral term.
 - [ ] Stranded `ssd_medical_records` draft at 2026-06-01 (54 rows, ₱3,500) — never submitted.

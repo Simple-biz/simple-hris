@@ -77,6 +77,68 @@ test('attestation: the additive terms pay even when the tiered term is zero', ()
   );
 });
 
+/** Kane's Filing Team formula, 2026-09-22, verbatim — the authority for the
+ *  bands below. Whole count x the landed rate, exactly like the sheet. */
+function filingSheet(filedCases: number, ppl: number, bbb: number, referralLeads: number): number {
+  const rate = filedCases >= 40 ? 100 : filedCases >= 30 ? 75 : filedCases >= 20 ? 50 : 0;
+  return filedCases * rate + ppl * 100 + (bbb + referralLeads) * 250;
+}
+
+test('filing_specialist: Attested Cases bands are 20/30/40 (Kane, 2026-09-22)', () => {
+  const cases = (n: number) => calcBonus({ attested_cases: n }, HSL_DEPTS.filing_specialist, false);
+  assert.equal(cases(19), 0);
+  assert.equal(cases(20), 1_000);   // 20 x 50 — whole count, not marginal
+  assert.equal(cases(29), 1_450);
+  assert.equal(cases(30), 2_250);   // 30 x 75
+  assert.equal(cases(39), 2_925);
+  assert.equal(cases(40), 4_000);   // 40 x 100
+  assert.equal(cases(50), 5_000);
+});
+
+test('filing_specialist reproduces the whole Filing Team formula, 0..60 cases', () => {
+  // The formula was authored in the Bonus Library and assigned to this branch,
+  // which paid it a SECOND time on top of these rules. The assignment is retired;
+  // this test is what now holds the rule, so the two can never drift apart again.
+  for (let n = 0; n <= 60; n += 1) {
+    for (const [ppl, bbb, leads] of [[0, 0, 0], [3, 2, 1], [11, 0, 4]] as const) {
+      assert.equal(
+        calcBonus(
+          { attested_cases: n, portal_login: ppl, bbb_reviews: bbb, converted_referral: leads },
+          HSL_DEPTS.filing_specialist,
+          false,
+        ),
+        filingSheet(n, ppl, bbb, leads),
+        `filing_specialist mismatch at ${n} cases / ${ppl} ppl / ${bbb} bbb / ${leads} leads`,
+      );
+    }
+  }
+});
+
+test('filing_specialist and attestation are DIFFERENT ladders, and must stay different', () => {
+  // filing 20/30/40 vs attestation 25/35/50. hsl-catalog-migration.md:229 —
+  // "A re-expression must reproduce that divergence verbatim, not normalise it."
+  // 24 cases is the cleanest witness: it pays on Filing and nothing on Attestation.
+  assert.equal(calcBonus({ attested_cases: 24 }, HSL_DEPTS.filing_specialist, false), 1_200);
+  assert.equal(calcBonus({ attested_cases: 24 }, HSL_DEPTS.attestation, false), 0);
+  assert.notDeepEqual(
+    HSL_DEPTS.filing_specialist.rules.find((r) => r.key === 'attested_cases'),
+    HSL_DEPTS.attestation.rules.find((r) => r.key === 'attested_cases'),
+  );
+});
+
+test('filing_specialist exposes exactly one scoring column per formula term', () => {
+  assert.deepEqual(
+    HSL_DEPTS.filing_specialist.rules.map((r) => [r.key, r.type]),
+    [
+      ['portal_login', 'per_unit'],
+      ['bbb_reviews', 'per_unit'],
+      ['attested_cases', 'tiered'],
+      ['converted_referral', 'per_unit'],
+    ],
+  );
+  assert.equal(HSL_DEPTS.filing_specialist.monthlyMax, undefined);
+});
+
 test('attestation: the 2026-07-27 bands are unchanged (whole count x landed rate)', () => {
   const cases = (n: number) => calcBonus({ attested_cases: n }, HSL_DEPTS.attestation, false);
   assert.equal(cases(24), 0);
