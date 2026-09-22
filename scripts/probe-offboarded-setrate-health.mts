@@ -70,6 +70,18 @@ function main() {
       if (!touched.has(em)) touched.set(em, []);
       touched.get(em)!.push(a);
     }
+    // The baseline for "did it stick" is the newest save from ANY source, never the
+    // fixer's own. A later Payment Catalog edit legitimately outranks it: on the
+    // first run of this probe, four people (michaelsy@ / vanessas@ / cinderellar@ /
+    // ronaldt@) read as "*** HISTORY DISAGREES ***" purely because carla@ re-rated
+    // them from the catalog on 09-21, six days after the fixer save.
+    const newestAny = new Map<string, AuditRow>();
+    for (const a of audits) {
+      const em = norm(a.details?.employee_email ?? a.resource_id);
+      if (!em || !touched.has(em)) continue;
+      const prev = newestAny.get(em);
+      if (!prev || String(a.created_at) > String(prev.created_at)) newestAny.set(em, a);
+    }
     console.log(`  distinct people re-rated by the fixer: ${touched.size}`);
     for (const [em, rows] of touched) {
       const last = rows[rows.length - 1];
@@ -115,7 +127,7 @@ function main() {
         ...(await paged<HistRow>((f, t) =>
           sb
             .from('employee_rate_history')
-            .select('employee_email, regular_rate, ot_rate, effective_from, created_by, note')
+            .select('employee_email, regular_rate, ot_rate, effective_from, created_by, note, created_at')
             .in('employee_email', slice)
             .order('effective_from', { ascending: true })
             .range(f, t),
@@ -135,11 +147,17 @@ function main() {
     for (const em of emails) {
       const rows = (histBy.get(em) ?? []).slice().sort((a, b) => a.effective_from.localeCompare(b.effective_from));
       const last = rows[rows.length - 1];
-      const struct = (byEmail.get(em) ?? [])[0];
-      const audit = touched.get(em)!;
-      const wanted = Number(audit[audit.length - 1].details?.regular_rate);
+      const decisive = newestAny.get(em)!;
+      const bySomeoneElse = String(decisive.details?.source ?? '') !== 'payroll_wizard_readiness';
+      const wanted = Number(decisive.details?.regular_rate);
       const got = last ? Number(last.regular_rate) : null;
       const agree = got != null && Math.abs(got - wanted) < 0.005;
+      // ANY of the person's structures may be the one the resolver lands on
+      // (newest-created wins), so agreement means the newest-created one agrees.
+      const mine = (byEmail.get(em) ?? [])
+        .slice()
+        .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+      const struct = mine[mine.length - 1];
       const structRate = struct ? Number(struct.regular_rate) : null;
       const structAgree = structRate != null && Math.abs(structRate - wanted) < 0.005;
       // Same effective_from twice = the stacking the override was built to end.
@@ -148,7 +166,8 @@ function main() {
       if (!agree || !structAgree) mismatched += 1;
       if (dupEff) stacked += 1;
       console.log(
-        `    ${em.padEnd(34)} saved ₱${wanted} · history ${rows.length} row(s), newest ₱${got ?? '—'} eff ${last?.effective_from ?? '—'}` +
+        `    ${em.padEnd(34)} newest save ₱${wanted}${bySomeoneElse ? ' (Payment Catalog, AFTER the fixer)' : ''}` +
+          ` · history ${rows.length} row(s), newest ₱${got ?? '—'} eff ${last?.effective_from ?? '—'}` +
           ` ${agree ? 'OK' : '*** HISTORY DISAGREES ***'} · structure ₱${structRate ?? '—'} ${structAgree ? 'OK' : '*** STRUCTURE DISAGREES ***'}` +
           `${dupEff ? ' *** DUPLICATE effective_from ***' : ''}`,
       );
@@ -176,8 +195,7 @@ function main() {
     let noWorkRow = 0;
     let cacheStale = 0;
     for (const em of emails) {
-      const audit = touched.get(em)!;
-      const wanted = Number(audit[audit.length - 1].details?.regular_rate);
+      const wanted = Number(newestAny.get(em)!.details?.regular_rate);
       const byWork = cacheByWork.get(em);
       const byAny = cacheByAny.get(em);
       const cached = byWork ? Number(byWork['Regular Rate']) : null;
@@ -196,12 +214,70 @@ function main() {
       `  cache: ${emails.length - noWorkRow - cacheStale}/${emails.length} agree · ${noWorkRow} with no Work-Email row · ${cacheStale} stale`,
     );
 
+    // ── 5. Did the MONEY follow? ────────────────────────────────────────────
+    // `disbursement_records.regular_rate_php` is the rate FROZEN when the week was
+    // staged. A save made after that timestamp cannot reach the row — the week must
+    // be re-locked (payroll-rule-changes-forward-only). This is where a save that is
+    // correct in every table above still pays the old figure.
+    type DisbRow = {
+      cycle_period_start: string; cycle_period_end: string; recipient_email: string;
+      total_hours: number | string | null; regular_rate_php: number | string | null;
+      amount_php: number | string | null; status: string | null; kind: string | null;
+      created_at: string | null;
+    };
+    const disb: DisbRow[] = [];
+    for (let i = 0; i < emails.length; i += 100) {
+      const slice = emails.slice(i, i + 100);
+      disb.push(
+        ...(await paged<DisbRow>((f, t) =>
+          sb
+            .from('disbursement_records')
+            .select('cycle_period_start, cycle_period_end, recipient_email, total_hours, regular_rate_php, amount_php, status, kind, created_at')
+            .in('recipient_email', slice)
+            .gte('cycle_period_start', SINCE.slice(0, 7) + '-01')
+            .order('cycle_period_start', { ascending: true })
+            .range(f, t),
+        )),
+      );
+    }
+    console.log(`\n=== did the money follow? (disbursement_records since ${SINCE.slice(0, 7)}) ===`);
+    let staleRows = 0;
+    let stalePesos = 0;
+    for (const d of disb) {
+      if (d.kind === 'special') continue;
+      const em = norm(d.recipient_email);
+      if (!em) continue;
+      // The rate in force for that week, per the history, as of today.
+      const rows = (histBy.get(em) ?? []).filter((h) => h.effective_from <= d.cycle_period_end);
+      const inForce = rows.length ? Number(rows[rows.length - 1].regular_rate) : null;
+      const frozen = d.regular_rate_php == null ? null : Number(d.regular_rate_php);
+      if (inForce == null || frozen == null) continue;
+      const gap = frozen - inForce;
+      const hours = Number(d.total_hours) || 0;
+      if (Math.abs(gap) < 0.005) continue;
+      staleRows += 1;
+      stalePesos += gap * hours;
+      // Which save the row missed, and whether it could ever have caught it.
+      const missed = (histBy.get(em) ?? []).find(
+        (h) => h.effective_from <= d.cycle_period_end && Number(h.regular_rate) === inForce,
+      );
+      const stagedFirst = missed?.created_at && d.created_at ? String(d.created_at) < String(missed.created_at) : null;
+      console.log(
+        `    ${em.padEnd(24)} ${d.cycle_period_start}→${d.cycle_period_end.slice(5)} ${String(d.status).padEnd(8)}` +
+          ` ${hours.toFixed(2).padStart(6)}h · frozen ₱${frozen} vs in-force ₱${inForce}` +
+          ` = ₱${(gap * hours).toFixed(2)} ${gap > 0 ? 'OVER' : 'UNDER'}` +
+          (stagedFirst === true ? ' · STAGED BEFORE THE SAVE — needs a re-lock' : stagedFirst === false ? ' *** staged AFTER the save and still missed it ***' : ''),
+      );
+    }
+    if (staleRows === 0) console.log('    none — every week prices from the rate in force');
+
     console.log(
       `\n=== verdict inputs ===\n  fixer saves: ${fixer.length} · people: ${touched.size}` +
         `\n  people still holding 2+ employee structures: ${dupes.length}` +
         `\n  fixer people whose history/structure disagrees with the saved figure: ${mismatched}` +
         `\n  fixer people with a duplicate effective_from: ${stacked}` +
-        `\n  fixer people the cache write could not reach: ${noWorkRow}`,
+        `\n  fixer people the cache write could not reach: ${noWorkRow}` +
+        `\n  pay rows frozen at a superseded rate: ${staleRows} · net ₱${stalePesos.toFixed(2)}`,
     );
   })();
 }
