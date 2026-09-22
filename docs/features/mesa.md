@@ -265,9 +265,17 @@ roster**, still `mesa_member=false` on his single rate row, account `26-06-00027
 2026-06-22, ₱3,600 across 9 deposits, `hsl:case_managers`. The uncollected money since the
 2026-08-28 backfill is **₱400 of worker contribution and ₱1,200 of unmatched company money**
 over 4 Fridays. The other five are the same departed people with no rate row under any
-address, holding **₱101,600** with no obligation raised. The dry run stands ready
-(`--only dales@simple.biz`); it reports **1 rate row to stamp**, not 24 — the flag is
-denormalised per upload and he has one.
+address, holding **₱101,600** with no obligation raised.
+
+**APPLIED 2026-09-22 on Kane's word: `dales@simple.biz`** — **1** rate row stamped
+`mesa_member=true · since 2026-06-22 · account 26-06-00027` (not 24 like `jimg@`; the flag is
+denormalised per upload and he has one row), backup at
+`references/backups/mesa_aliased_membership_pre_fix_2026-09-22T19-57-28-340Z.json`,
+verified by re-read and by `employee_hourly_rates_current`. **Re-measured after the write:
+5 of 237 open accounts unflagged, 0 alias cases, 0 on the active roster** — the remaining five
+are the departed people with no rate row under any address. The Wizard charges his ₱100 from
+the next cycle it computes; **no past week was recomputed and no missed deposit was backfilled
+into `mesa_ledger`**.
 
 ### It is no longer silent (2026-09-22)
 
