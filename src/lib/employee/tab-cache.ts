@@ -344,4 +344,54 @@ export const EMPLOYEE_CACHE_KEYS = {
    *  rows (plain JSON: strings, numbers, nulls). Bank/payout rows are deliberately
    *  NOT cached: account numbers stay out of storage. */
   paystubSummary: 'employee:paystub-summary',
+  /** KPI Results → `GET /api/kpi-results?email=` — the RAW published periods. */
+  kpiResults: 'employee:kpi-results',
+  /** Leaves → `GET /api/leave-requests?...` — the viewer's OWN request rows, RAW. */
+  leaveRequests: 'employee:leave-requests',
+  /** Team → `GET /api/team-roster?department=` — RAW teammates for the viewer's
+   *  department. Presence/"last seen" is deliberately NOT cached beside it. */
+  teamRoster: 'employee:team-roster',
+  /** Team → `GET /api/team-rankings?department=` — RAW weeks, newest first. */
+  teamRankings: 'employee:team-rankings',
+  /** Team → `GET /api/employee-skill-sets` — the by-email map, plain JSON. */
+  teamSkillSets: 'employee:team-skill-sets',
+  /** MESA → `GET /api/mesa-membership?email=` — membership flag + the two dates
+   *  as RAW ISO strings; `new Date(...)` never goes in (see the JSON note above). */
+  mesaMembership: 'employee:mesa-membership',
+  /** MESA → `GET /api/mesa-requests?email=` — the viewer's own request rows, RAW. */
+  mesaRequests: 'employee:mesa-requests',
+  /** MESA → `GET /api/mesa-ledger?email=&events=0` — the balance-only read. */
+  mesaBalance: 'employee:mesa-balance',
+  /** MESA → `GET /api/mesa-ledger?email=` — the full ledger payload, RAW. */
+  mesaLedger: 'employee:mesa-ledger',
+  /** My Hours → `GET /api/employees` — the viewer's start date, as a RAW ISO
+   *  string. A `Date` must never be stored: it returns as a string and the next
+   *  `.getTime()` throws. */
+  myHoursStartDate: 'employee:my-hours-start-date',
+  /** My Hours → `GET /api/hubstaff-hours?merge_all=1` — the RAW per-file payload.
+   *  The merged row and its column list are DERIVED (`deriveMergedHours`), because
+   *  resolving canonical weekday columns to ISO dates needs the source FILENAME,
+   *  which only the raw payload carries. */
+  myHoursMerged: 'employee:my-hours-merged',
+  /** My Hours → `GET /api/employee-hourly-rates` — the rate row NARROWED by
+   *  `toCachedEmployeeRate`. The live row also carries payment routing; the
+   *  projection is the only way in and its key lists are partitioned at compile
+   *  time (`src/lib/employee/rate-row-cache.ts`). */
+  myHoursRate: 'employee:my-hours-rate',
+  /** My Hours → `GET /api/manager/member-monthly-pay` for ONE month. Per month,
+   *  because switching months is the common move and a shared key would evict
+   *  the month you are about to go back to. Built by {@link employeeMemberPayKey}. */
+  memberPay: 'employee:member-pay',
 } as const;
+
+/**
+ * Cache key for one month of the My Hours pay summary.
+ *
+ * The month is in the KEY, not inside the value: unlike the Manager Overview's
+ * pay week — which is paint-only and labelled on screen — this figure is read
+ * beside a month the viewer chose, so a value from a different month would be a
+ * WRONG answer rather than a stale one.
+ */
+export function employeeMemberPayKey(year: number, month: number): string {
+  return `${EMPLOYEE_CACHE_KEYS.memberPay}:${year}-${String(month + 1).padStart(2, '0')}`;
+}

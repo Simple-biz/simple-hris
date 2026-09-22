@@ -24,6 +24,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { formatPeso } from '@/lib/hsl-bonus/schema';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
+import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 
 interface KpiResultItem {
   label: string;
@@ -181,12 +183,25 @@ function PeriodCard({ period, featured }: { period: KpiResultPeriod; featured?: 
   );
 }
 
+/** Module-scope so the cached-state hook's initial value is referentially stable. */
+const NO_PERIODS: KpiResultPeriod[] = [];
+
 export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: string }) {
-  const [periods, setPeriods] = useState<KpiResultPeriod[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the reload/dashboard-switch cache so a return visit paints the
+  // last published periods instead of a spinner. The fetch below still runs
+  // unconditionally — `employee-dashboard-cache.md`: a cached value PAINTS, it
+  // never DECIDES. These are money figures a manager republishes.
+  const [periods, setPeriods] = useEmployeeCachedState<KpiResultPeriod[]>(
+    EMPLOYEE_CACHE_KEYS.kpiResults,
+    NO_PERIODS,
+  );
+  // Derived, never stored: the skeleton is for having nothing to paint, not for
+  // a request being in flight. `settled` is never seeded and never reset.
+  const [settled, setSettled] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadedOnce = useRef(false);
+  const loading = !settled && periods.length === 0;
 
   const fetchResults = useCallback(
     async (signal?: AbortSignal) => {
@@ -208,7 +223,7 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
         if (!signal?.aborted) setError(e instanceof Error ? e.message : 'Failed to load KPI results');
       } finally {
         if (!signal?.aborted) {
-          setLoading(false);
+          setSettled(true);
           setRefreshing(false);
           loadedOnce.current = true;
         }
@@ -287,9 +302,16 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
           </Button>
         </div>
         {periods.length > 0 && (
-          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-            <TrendingUp className="h-3.5 w-3.5" />
-            {formatPeso(totalEarned)} across {periods.length} period{periods.length === 1 ? '' : 's'}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <TrendingUp className="h-3.5 w-3.5" />
+              {formatPeso(totalEarned)} across {periods.length} period{periods.length === 1 ? '' : 's'}
+            </span>
+            {error && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                Showing your last loaded results — refresh failed
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -300,7 +322,10 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
             <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
             Loading your KPI results…
           </div>
-        ) : error ? (
+        ) : error && periods.length === 0 ? (
+          /* Full-height card ONLY when there is nothing to paint. A blip over
+             already-painted periods becomes the inline strip in the header
+             instead — blanking the tab is worse than the blip. */
           <div className="mx-auto max-w-md rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
             Could not load your KPI results: {cleanErrorMessage(error)}
           </div>

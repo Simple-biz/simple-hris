@@ -33,8 +33,13 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
+import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+
+/** Module-scope so the cached-state hook's initial value is referentially stable. */
+const NO_LEAVE_ROWS: LeaveRequestRow[] = [];
 type LeaveTypeMeta = {
   value: string;
   label: string;
@@ -147,8 +152,18 @@ export default function EmployeeLeaves({
   employeeName: string | null;
   department: string | null;
 }) {
-  const [rows, setRows] = useState<LeaveRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the reload/dashboard-switch cache; the fetch below still runs
+  // unconditionally (`employee-dashboard-cache.md`: a cached value PAINTS, it
+  // never DECIDES — a manager decides these rows from another screen).
+  const [rows, setRows] = useEmployeeCachedState<LeaveRequestRow[]>(
+    EMPLOYEE_CACHE_KEYS.leaveRequests,
+    NO_LEAVE_ROWS,
+  );
+  // Derived, never stored, never reset: the skeleton is for having nothing to
+  // paint. `setLoading(true)` at the top of every load is what repainted the
+  // skeleton over rows that were already on screen.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && rows.length === 0;
   const [submitting, setSubmitting] = useState(false);
   const [leaveType, setLeaveType] = useState<string>('Vacation');
   const [startDate, setStartDate] = useState('');
@@ -161,7 +176,6 @@ export default function EmployeeLeaves({
   const reduceMotion = useReducedMotion();
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const res = await fetch(
         `/api/leave-requests?employee_email=${encodeURIComponent(employeeEmail)}`,
@@ -172,11 +186,15 @@ export default function EmployeeLeaves({
       setRows(json.rows ?? []);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load leave history');
-      setRows([]);
+      // Blank ONLY when there was nothing painted. A blip over rows seeded from
+      // the cache keeps them — the toast already reports it, and blanking the
+      // history on a network hiccup is worse than the hiccup
+      // (`hr-dashboard-cache.md` § Every revalidate is silent).
+      setRows((previous) => (previous.length > 0 ? previous : NO_LEAVE_ROWS));
     } finally {
-      setLoading(false);
+      setSettled(true);
     }
-  }, [employeeEmail]);
+  }, [employeeEmail, setRows]);
 
   useEffect(() => {
     void load();

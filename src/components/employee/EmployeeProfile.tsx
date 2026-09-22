@@ -68,6 +68,7 @@ import {
 import { compressProfilePhotoForUpload } from '@/lib/images/compress-profile-photo';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import { toCachedEmployeeRate, type CachedEmployeeRate } from '@/lib/employee/rate-row-cache';
 import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { ResignationRequestRow } from '@/lib/supabase/resignation-requests';
 import {
@@ -888,7 +889,14 @@ export default function EmployeeProfile({
     EMPLOYEE_CACHE_KEYS.profileMaster,
     null,
   );
-  const [rate, setRate] = useEmployeeCachedState<EmployeeHourlyRateRow | null>(
+  // NARROWED before it can be stored. The rate row also carries the person's
+  // payment ROUTING (bank_preferred, the wallet emails, phone, home address,
+  // MESA account number); caching it whole put all of that in `sessionStorage`
+  // under `employee:profile-rate` — the very thing the paragraph above says this
+  // page does not do. `toCachedEmployeeRate` is the only way in, and the two key
+  // lists behind it are partitioned at COMPILE time, so a routing column added
+  // upstream cannot ride in unnoticed. See `src/lib/employee/rate-row-cache.ts`.
+  const [rate, setRate] = useEmployeeCachedState<CachedEmployeeRate | null>(
     EMPLOYEE_CACHE_KEYS.profileRate,
     null,
   );
@@ -1582,7 +1590,7 @@ export default function EmployeeProfile({
 
         if (rateJson.error && !empJson.error) setError(rateJson.error ?? null);
         const myRate = (rateJson.rows ?? [])[0];
-        setRate(myRate ?? null);
+        setRate(toCachedEmployeeRate(myRate));
 
         if (idsJson.error && !empJson.error && !rateJson.error) {
           setError(idsJson.error);

@@ -35,6 +35,8 @@ import { DatePicker, toIso } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
+import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import {
   checkDisbursementAmount,
   sumOutstandingDisbursements,
@@ -62,15 +64,45 @@ const WEEKLY_TOTAL = WEEKLY_EMPLOYEE_CONTRIB + WEEKLY_COMPANY_MATCH;
 const formatPHP = (n: number) =>
   `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
+/**
+ * The RAW membership fields, cached as one unit.
+ *
+ * Deliberately NOT `boolean | null`: that shape's `null` arm means "still
+ * loading", and a cached loading arm paints as a settled fact on the next
+ * reload. Here `null` means "nothing cached yet" and every other value is a
+ * settled answer, so the render's three states stay honest.
+ */
+interface MesaMembership {
+  isMember: boolean;
+  enrolledSince: string | null;
+  fpuCompletedOn: string | null;
+}
+const NOT_A_MEMBER: MesaMembership = {
+  isMember: false,
+  enrolledSince: null,
+  fpuCompletedOn: null,
+};
+/** Module-scope so the cached-state hook's initial value is referentially stable. */
+const NO_MESA_REQUESTS: MesaRequestRow[] = [];
+
 export default function EmployeeMesa({
   employeeEmail,
   employeeName,
   department,
   startDate,
 }: Props) {
-  const [isMember, setIsMember] = useState<boolean | null>(null);
-  const [enrolledSince, setEnrolledSince] = useState<string | null>(null);
-  const [fpuCompletedOn, setFpuCompletedOn] = useState<string | null>(null);
+  // The RAW membership fields are what is cached; `isMember` is DERIVED below.
+  // Caching `isMember` directly would cache a three-armed value whose `null` arm
+  // means "still loading" — `manager-dashboard-cache.md` § Shapes: a reload must
+  // never paint a loading arm as a settled fact. The fetch still runs every
+  // mount, so an opt-out landing elsewhere corrects this within the same load.
+  const [membership, setMembership] = useEmployeeCachedState<MesaMembership | null>(
+    EMPLOYEE_CACHE_KEYS.mesaMembership,
+    null,
+  );
+  const isMember = membership === null ? null : membership.isMember;
+  const enrolledSince = membership?.enrolledSince ?? null;
+  const fpuCompletedOn = membership?.fpuCompletedOn ?? null;
   const [subTab, setSubTab] = useState<SubTab>('about');
 
   // Look up the current user's mesa_member flag — server-side ?email= filter
@@ -84,18 +116,20 @@ export default function EmployeeMesa({
           { cache: 'no-store' },
         );
         if (!res.ok) {
-          if (!cancelled) setIsMember(false);
+          if (!cancelled) setMembership(NOT_A_MEMBER);
           return;
         }
         const json = (await res.json()) as { rows?: EmployeeHourlyRateRow[] };
         const mine = (json.rows ?? [])[0];
         if (!cancelled) {
-          setIsMember(!!mine?.mesa_member);
-          setEnrolledSince(mine?.mesa_member_since ?? null);
-          setFpuCompletedOn(mine?.mesa_fpu_completed_on ?? null);
+          setMembership({
+            isMember: !!mine?.mesa_member,
+            enrolledSince: mine?.mesa_member_since ?? null,
+            fpuCompletedOn: mine?.mesa_fpu_completed_on ?? null,
+          });
         }
       } catch {
-        if (!cancelled) setIsMember(false);
+        if (!cancelled) setMembership(NOT_A_MEMBER);
       }
     })();
     return () => { cancelled = true; };
@@ -947,9 +981,22 @@ function MesaRequestForm({
    *  the form then stays permissive and lets the SERVER decide, because the
    *  server is the guard and it fails closed. Blocking here on an unknown
    *  balance would refuse legitimate draws over a transient fetch error. */
-  const [mesaBalance, setMesaBalance] = React.useState<number | null>(null);
-  const [pastRequests, setPastRequests] = React.useState<MesaRequestRow[]>([]);
-  const [loadingHistory, setLoadingHistory] = React.useState(true);
+  // Seeded from the reload/dashboard-switch cache; both fetches below still run
+  // unconditionally. The balance is a money figure and a draw can be dispatched
+  // by Accounting from another screen, so it may PAINT from cache but may never
+  // gate the fetch (`employee-dashboard-cache.md` § The rule that makes this
+  // safe on a money surface). The server enforces the limit regardless.
+  const [mesaBalance, setMesaBalance] = useEmployeeCachedState<number | null>(
+    EMPLOYEE_CACHE_KEYS.mesaBalance,
+    null,
+  );
+  const [pastRequests, setPastRequests] = useEmployeeCachedState<MesaRequestRow[]>(
+    EMPLOYEE_CACHE_KEYS.mesaRequests,
+    NO_MESA_REQUESTS,
+  );
+  // Derived, never stored, never reset.
+  const [historySettled, setHistorySettled] = React.useState(false);
+  const loadingHistory = !historySettled && pastRequests.length === 0;
   /** The disbursement whose receipts are open in the upload dialog. */
   const [receiptTarget, setReceiptTarget] = React.useState<MesaRequestRow | null>(null);
 
@@ -1002,16 +1049,15 @@ function MesaRequestForm({
 
   React.useEffect(() => {
     let cancelled = false;
-    setLoadingHistory(true);
     fetch(`/api/mesa-requests?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { rows?: MesaRequestRow[] }) => {
-        if (!cancelled) setPastRequests(j.rows ?? []);
+        if (!cancelled) setPastRequests(j.rows ?? NO_MESA_REQUESTS);
       })
       .catch(() => {})
-      .finally(() => { if (!cancelled) setLoadingHistory(false); });
+      .finally(() => { if (!cancelled) setHistorySettled(true); });
     return () => { cancelled = true; };
-  }, [employeeEmail]);
+  }, [employeeEmail, setPastRequests]);
 
   // Drawable balance, scoped to the member's open account by the API. Left null
   // on any failure — the server still enforces the limit.
@@ -1631,24 +1677,26 @@ function MesaHistory({
 }) {
   // Real contribution history from the mesa_ledger backfill. When present, this
   // is authoritative and replaces the projected ledger below.
-  const [ledger, setLedger] = React.useState<{
+  const [ledger, setLedger] = useEmployeeCachedState<{
     summary: MesaMemberSummary | null;
     events: MesaLedgerEvent[];
-  } | null>(null);
-  const [ledgerLoading, setLedgerLoading] = React.useState(true);
+  } | null>(EMPLOYEE_CACHE_KEYS.mesaLedger, null);
+  // Derived, never stored, never reset. `null` is the "nothing to paint" arm, so
+  // a cached ledger clears the "Loading your MESA history…" card immediately.
+  const [ledgerSettled, setLedgerSettled] = React.useState(false);
+  const ledgerLoading = !ledgerSettled && ledger === null;
 
   React.useEffect(() => {
     let cancelled = false;
-    setLedgerLoading(true);
     fetch(`/api/mesa-ledger?email=${encodeURIComponent(employeeEmail)}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { summary: null, events: [] }))
       .then((j: { summary?: MesaMemberSummary | null; events?: MesaLedgerEvent[] }) => {
         if (!cancelled) setLedger({ summary: j.summary ?? null, events: j.events ?? [] });
       })
       .catch(() => { if (!cancelled) setLedger({ summary: null, events: [] }); })
-      .finally(() => { if (!cancelled) setLedgerLoading(false); });
+      .finally(() => { if (!cancelled) setLedgerSettled(true); });
     return () => { cancelled = true; };
-  }, [employeeEmail]);
+  }, [employeeEmail, setLedger]);
 
   if (isMember === null || ledgerLoading) {
     return (

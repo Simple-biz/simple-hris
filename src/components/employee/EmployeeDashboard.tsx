@@ -5,6 +5,11 @@ import { resolveFirstName } from '@/lib/name/first-name';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import {
+  parseRateHistoryRows,
+  type RateHistoryEntry,
+  type RawRateHistoryRow,
+} from '@/lib/employee/rate-history';
+import {
   AlertCircle,
   CalendarDays,
   ChevronDown,
@@ -473,52 +478,6 @@ function EmployeeSpecialTransfers({ employeeEmail }: { employeeEmail: string | n
   );
 }
 
-/** One row exactly as `GET /api/employee-rate-history` returns it. */
-interface RateHistoryApiRow {
-  regular_rate: string | null;
-  ot_rate: string | null;
-  effective_from: string;
-}
-
-/** A rate change resolved to a local-midnight Date, newest first. */
-interface RateHistoryEntry {
-  effectiveFrom: Date;
-  regularRate: number | null;
-  otRate: number | null;
-}
-
-/**
- * Parse the rate-history API rows into the shape `resolveDayRate` walks.
- *
- * Module-scope and pure so the reload cache can hold the RAW api rows and
- * re-derive from them. Caching the parsed form instead would be a bug: a `Date`
- * does not survive `JSON.stringify` — it comes back as a string, and
- * `row.effectiveFrom.getTime()` in `resolveDayRate` would throw on the first
- * render after a refresh.
- *
- * `effective_from` is read as a LOCAL calendar date (not `new Date(iso)`, which
- * is UTC and lands on the previous day in Manila), matching how the PAB calendar
- * builds the cell dates it is compared against.
- */
-function parseRateHistoryRows(rows: RateHistoryApiRow[]): RateHistoryEntry[] {
-  const parsed: RateHistoryEntry[] = [];
-  for (const r of rows) {
-    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
-    if (!m) continue;
-    const num = (s: string | null) => {
-      if (s == null) return null;
-      const v = parseFloat(String(s).replace(/,/g, ''));
-      return Number.isFinite(v) ? v : null;
-    };
-    parsed.push({
-      effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
-      regularRate: num(r.regular_rate),
-      otRate: num(r.ot_rate),
-    });
-  }
-  parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
-  return parsed;
-}
 
 export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
@@ -544,7 +503,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   // a rate change took effect, and as a faint label on every other day.
   // Cached as the RAW api rows — see parseRateHistoryRows for why the parsed
   // form (which holds Dates) must never be what goes into storage.
-  const [rateHistoryRows, setRateHistoryRows] = useEmployeeCachedState<RateHistoryApiRow[]>(
+  const [rateHistoryRows, setRateHistoryRows] = useEmployeeCachedState<RawRateHistoryRow[]>(
     EMPLOYEE_CACHE_KEYS.rateHistory,
     [],
   );
@@ -760,7 +719,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     }
     fetch(`/api/employee-rate-history?email=${encodeURIComponent(email)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { rows?: RateHistoryApiRow[] }) => {
+      .then((j: { rows?: RawRateHistoryRow[] }) => {
         if (cancelled) return;
         // The raw rows go in; parseRateHistoryRows derives the Dates for render.
         setRateHistoryRows(j.rows ?? []);

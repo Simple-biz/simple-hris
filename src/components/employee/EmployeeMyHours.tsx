@@ -25,6 +25,15 @@ import {
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
+import { toCachedEmployeeRate, type CachedEmployeeRate } from '@/lib/employee/rate-row-cache';
+import {
+  parseRateHistoryRows,
+  parseRateText,
+  type RateHistoryEntry,
+  type RawRateHistoryRow,
+} from '@/lib/employee/rate-history';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
+import { EMPLOYEE_CACHE_KEYS, employeeMemberPayKey } from '@/lib/employee/tab-cache';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
   effectiveUsdToPhpRateFromStored,
@@ -536,20 +545,8 @@ function WeeklyEarningsRail({
   );
 }
 
-/** One row from `/api/employee-rate-history`. */
-type RateHistoryEntry = {
-  effectiveFrom: Date;
-  regularRate: number | null;
-  otRate: number | null;
-};
-
-function parseRateText(v: unknown): number | null {
-  if (v == null) return null;
-  const s = String(v).trim().replace(/,/g, '');
-  if (!s) return null;
-  const n = parseFloat(s);
-  return Number.isFinite(n) ? n : null;
-}
+/** Module-scope so the cached-state hook's initial value is referentially stable. */
+const NO_RATE_HISTORY_ROWS: RawRateHistoryRow[] = [];
 
 /** Resolve the rate row that was in effect on `date`. Caller passes the
  *  per-employee history list sorted desc by `effectiveFrom`. */
@@ -567,11 +564,74 @@ function resolveRateAsOfLocal(
   return null;
 }
 
+/** The RAW `?merge_all=1` response, exactly as it is cached. */
+interface MergeAllPayload {
+  perFile: { source_file: string; row: Record<string, unknown> | null }[];
+}
+
+/**
+ * Turn the raw `merge_all` payload into the merged row + its column list.
+ *
+ * Module scope and pure on purpose: the seeded path and the fetched path both
+ * go through it, so a reload cannot paint a table derived a different way.
+ * Canonical weekday columns are resolved to ISO dates here because the resolver
+ * needs the source FILENAME, which only the raw payload still carries — the
+ * reason the raw payload is what gets cached rather than the merged row.
+ */
+function deriveMergedHours(payload: MergeAllPayload | null): {
+  row: Record<string, unknown> | null;
+  columns: string[];
+} {
+  const perFile = payload?.perFile ?? [];
+  if (perFile.length === 0) return { row: null, columns: [] };
+
+  const allCols = new Set<string>();
+  let merged: Record<string, unknown> = {};
+  let found = false;
+
+  for (const { source_file: file, row: myRow } of perFile) {
+    if (!myRow) continue;
+    found = true;
+    const rowCols = Object.keys(myRow);
+    const needsResolve = columnsAreAllCanonical(rowCols);
+    const resolved = needsResolve ? resolveCanonicalColumnsToIso(myRow, file) : myRow;
+    for (const col of needsResolve ? Object.keys(resolved) : rowCols) allCols.add(col);
+    merged = { ...merged, ...resolved };
+  }
+  return { row: found ? merged : null, columns: [...allCols] };
+}
+
+/** The cached ISO start date back to a `Date`, or null when it is unusable. */
+function parseStartDate(iso: string | null): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps) {
   const [aliasEmails, setAliasEmails] = useState<string[]>([]);
-  const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
-  const [mergedRow, setMergedRow] = useState<Record<string, unknown> | null>(null);
-  const [mergedColumns, setMergedColumns] = useState<string[]>([]);
+  // The START DATE is cached as its RAW ISO string and the `Date` is DERIVED.
+  // `JSON.stringify` turns a `Date` into a string, so a cached one comes back as
+  // text and the next `.getTime()` throws — `employee-dashboard-cache.md`
+  // § Shapes that do not survive JSON.stringify.
+  const [startDateIso, setStartDateIso] = useEmployeeCachedState<string | null>(
+    EMPLOYEE_CACHE_KEYS.myHoursStartDate,
+    null,
+  );
+  const employeeStartDate = useMemo(() => parseStartDate(startDateIso), [startDateIso]);
+  // The Hubstaff merge is the dominant cost on this tab — one row per upload
+  // batch for this person, across every batch. The RAW `merge_all` payload is
+  // what is cached; `mergedRow`/`mergedColumns` are derived from it by the same
+  // module-scope function the fetch path uses, so seeded and fetched cannot
+  // disagree. The fetch still runs on every mount.
+  const [mergedPayload, setMergedPayload] = useEmployeeCachedState<MergeAllPayload | null>(
+    EMPLOYEE_CACHE_KEYS.myHoursMerged,
+    null,
+  );
+  const { row: mergedRow, columns: mergedColumns } = useMemo(
+    () => deriveMergedHours(mergedPayload),
+    [mergedPayload],
+  );
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>([]);
   const [timeAdjustments, setTimeAdjustments] = useState<TimeAdjustmentRow[]>([]);
   const [timeAdjustDialog, setTimeAdjustDialog] = useState<{ date: string; seconds: number; existing: TimeAdjustmentRow | null } | null>(null);
@@ -598,23 +658,52 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   // Per-month Tech Bonus payout-week picks from the wizard's System Bonus modal
   // (`tech_bonus_week_overrides`). Empty map → the automatic 3rd-week rule.
   const [techWeekOverrides, setTechWeekOverrides] = useState<TechWeekOverridesMap>(new Map());
-  const [rate, setRate] = useState<EmployeeHourlyRateRow | null>(null);
-  const [rateHistory, setRateHistory] = useState<RateHistoryEntry[]>([]);
+  // NARROWED before it can be stored: the rate row also carries payment routing
+  // (bank_preferred, wallet emails, phone, home address, MESA account number)
+  // and none of that may reach `sessionStorage`. `toCachedEmployeeRate` is the
+  // only way in — see `src/lib/employee/rate-row-cache.ts`.
+  const [rate, setRate] = useEmployeeCachedState<CachedEmployeeRate | null>(
+    EMPLOYEE_CACHE_KEYS.myHoursRate,
+    null,
+  );
+  // RAW history rows in; the `Date`-bearing render shape is derived. Caching
+  // `RateHistoryEntry[]` directly would return `effectiveFrom` as a STRING and
+  // the next `.getTime()` would throw.
+  const [rateHistoryRows, setRateHistoryRows] = useEmployeeCachedState<RawRateHistoryRow[]>(
+    EMPLOYEE_CACHE_KEYS.rateHistory,
+    NO_RATE_HISTORY_ROWS,
+  );
+  const rateHistory = useMemo(() => parseRateHistoryRows(rateHistoryRows), [rateHistoryRows]);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
-  const [ratesLoading, setRatesLoading] = useState(true);
+  // Derived, never stored, never reset.
+  const [ratesSettled, setRatesSettled] = useState(false);
+  const ratesLoading = !ratesSettled && rate === null;
   // Authoritative pay numbers from the SAME server calculator the manager
   // dashboard uses (member-monthly-pay.ts) — guarantees the pay summary matches
   // the manager view exactly: all 7 days counted, 40h/week regular cap, OT past
   // 40h, PAB/Tech bonuses + MESA, per-day rate proration.
-  const [memberPay, setMemberPay] = useState<MemberMonthlyPay | null>(null);
-  const [memberPayLoading, setMemberPayLoading] = useState(true);
-  const [memberPayError, setMemberPayError] = useState<string | null>(null);
 
   const initPab = getCurrentPabMonth();
   const [viewYear, setViewYear] = useState(initPab.year);
   const [viewMonth, setViewMonth] = useState(initPab.month);
   /** +1 when navigating to next month, -1 for previous; drives slide direction. */
   const [navDirection, setNavDirection] = useState<1 | -1>(1);
+
+  // Cached PER MONTH — see `employeeMemberPayKey`. Paint-only: a pay figure may
+  // seed the screen but may never gate the fetch, because the wizard re-stages
+  // `payload`/`amount_php` onto an already-PAID row with no post-pay detector
+  // ([[paystub-staged-snapshot-stale]]).
+  const [memberPay, setMemberPay] = useEmployeeCachedState<MemberMonthlyPay | null>(
+    employeeMemberPayKey(viewYear, viewMonth),
+    null,
+  );
+  // Derived, never stored. Reset per month is CORRECT here (unlike the other
+  // `settled` flags): a different month is a different dataset, and a settled
+  // flag carried across would clear the skeleton for a month not yet loaded.
+  const [memberPaySettledFor, setMemberPaySettledFor] = useState<string | null>(null);
+  const memberPayLoading =
+    memberPaySettledFor !== `${viewYear}-${viewMonth}` && memberPay === null;
+  const [memberPayError, setMemberPayError] = useState<string | null>(null);
 
   const email = useMemo(
     () => normEmail(employeeEmail) ?? employeeEmail.toLowerCase(),
@@ -666,23 +755,19 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
           }
         }
         setAliasEmails([...aliases]);
-        if (!me?.start_date) {
-          setEmployeeStartDate(null);
-          return;
-        }
-        const d = new Date(me.start_date);
-        setEmployeeStartDate(isNaN(d.getTime()) ? null : d);
+        // RAW string in, `Date` derived out — see the state declaration.
+        setStartDateIso(me?.start_date ?? null);
       } catch {
         if (!cancelled) {
           setAliasEmails([...candidates]);
-          setEmployeeStartDate(null);
+          setStartDateIso(null);
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [email, rate]);
+  }, [email, rate, setStartDateIso]);
 
   const fetchMerged = useCallback(async () => {
     // One email-filtered server query for this employee's rows across every
@@ -697,33 +782,12 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       `/api/hubstaff-hours?merge_all=1&email=${encodeURIComponent(email)}&_=${Date.now()}`,
       { cache: 'no-store' },
     );
-    const json = (await res.json()) as {
-      columns?: string[] | null;
-      perFile?: { source_file: string; row: Record<string, unknown> | null }[] | null;
-    };
-    const perFile = json.perFile ?? [];
-    if (perFile.length === 0) {
-      setMergedRow(null);
-      setMergedColumns([]);
-      return;
-    }
-
-    const allCols = new Set<string>();
-    let merged: Record<string, unknown> = {};
-    let found = false;
-
-    for (const { source_file: file, row: myRow } of perFile) {
-      if (!myRow) continue;
-      found = true;
-      const rowCols = Object.keys(myRow);
-      const needsResolve = columnsAreAllCanonical(rowCols);
-      const resolved = needsResolve ? resolveCanonicalColumnsToIso(myRow, file) : myRow;
-      for (const col of needsResolve ? Object.keys(resolved) : rowCols) allCols.add(col);
-      merged = { ...merged, ...resolved };
-    }
-    setMergedColumns([...allCols]);
-    setMergedRow(found ? merged : null);
-  }, [email]);
+    const json = (await res.json()) as MergeAllPayload;
+    // The RAW payload is what is stored; `deriveMergedHours` (module scope,
+    // pure) turns it into the row + column list for BOTH the seeded and the
+    // fetched path, so a reload cannot paint a differently-derived table.
+    setMergedPayload({ perFile: json.perFile ?? [] });
+  }, [email, setMergedPayload]);
 
   /**
    * Live overlay: this person's real tracked time straight from the Hubstaff API
@@ -765,7 +829,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   }, [fetchLiveHours]);
 
   const fetchRatesAndFx = useCallback(async () => {
-    setRatesLoading(true);
     try {
       const [ratesRes, fxRes, historyRes, empRes] = await Promise.all([
         fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
@@ -794,6 +857,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         }>;
       };
       setUsdToPhpRate(effectiveUsdToPhpRateFromStored(fxJson.value));
+      // RAW rows in; `parseRateHistoryRows` derives the Date-bearing entries for
+      // render, on both the seeded and the fetched path.
+      setRateHistoryRows(historyJson.rows ?? NO_RATE_HISTORY_ROWS);
       const allRates = ratesJson.rows ?? [];
       // Build the alias set from the login email + this employee's master row
       // (work / personal / alternate work emails). The rate row may be keyed on
@@ -815,27 +881,14 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
         const pe = normEmail(r.personal_email);
         return (we != null && aliasSet.has(we)) || (pe != null && aliasSet.has(pe));
       });
-      setRate(myRate ?? null);
-      const parsed: RateHistoryEntry[] = [];
-      for (const r of historyJson.rows ?? []) {
-        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(r.effective_from ?? '');
-        if (!m) continue;
-        parsed.push({
-          effectiveFrom: new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])),
-          regularRate: parseRateText(r.regular_rate),
-          otRate: parseRateText(r.ot_rate),
-        });
-      }
-      // API already sorts desc, but be defensive.
-      parsed.sort((a, b) => b.effectiveFrom.getTime() - a.effectiveFrom.getTime());
-      setRateHistory(parsed);
+      setRate(toCachedEmployeeRate(myRate));
     } catch {
       setRate(null);
-      setRateHistory([]);
+      setRateHistoryRows(NO_RATE_HISTORY_ROWS);
     } finally {
-      setRatesLoading(false);
+      setRatesSettled(true);
     }
-  }, [email]);
+  }, [email, setRate, setRateHistoryRows]);
 
   useEffect(() => {
     void fetchRatesAndFx();
@@ -844,7 +897,6 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
   /** Pull this month's pay from the manager dashboard's calculator so the
    *  numbers are identical to what a manager would see for this employee. */
   const fetchMemberPay = useCallback(async () => {
-    setMemberPayLoading(true);
     setMemberPayError(null);
     try {
       const res = await fetch(
@@ -858,9 +910,9 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       setMemberPayError(e instanceof Error ? e.message : 'Failed to load pay summary');
       setMemberPay(null);
     } finally {
-      setMemberPayLoading(false);
+      setMemberPaySettledFor(`${viewYear}-${viewMonth}`);
     }
-  }, [email, viewYear, viewMonth]);
+  }, [email, viewYear, viewMonth, setMemberPay]);
 
   useEffect(() => {
     void fetchMemberPay();

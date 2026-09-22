@@ -47,6 +47,8 @@ import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { collapseHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
+import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
+import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
@@ -78,8 +80,6 @@ interface Teammate {
   suspended: boolean;
   /** True when this person manages the selected department (department_managers). */
   isManager: boolean;
-  /** Presence resolved server-side over both of their addresses. */
-  lastSeenAt: string | null;
   /** True when this card is the viewer's own — decided server-side. */
   isSelf: boolean;
 }
@@ -258,11 +258,27 @@ function PoliciesPane({ deptKey }: { deptKey: string | null }) {
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
 
+/* Module-scope so the cached-state hooks' initial values are referentially stable. */
+const NO_TEAMMATES: Teammate[] = [];
+const NO_RANKING_WEEKS: TeamRankingWeek[] = [];
+const NO_SKILL_SETS: Record<string, SkillSetEntry> = {};
+
 export default function EmployeeTeam({ employeeEmail, department }: Props) {
   const reduce = useReducedMotion();
 
-  const [teammates, setTeammates] = useState<Teammate[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the reload/dashboard-switch cache. Presence is stripped on the
+  // way IN (`cacheableTeammates`) — `manager-dashboard-cache.md` § Not cached,
+  // on purpose: "a liveness signal repainted from a 12-hour-old copy is a WRONG
+  // answer, not a stale one". The roster fetch below still runs unconditionally
+  // and restores real `lastSeenAt` values with it.
+  const [teammates, setTeammates] = useEmployeeCachedState<Teammate[]>(
+    EMPLOYEE_CACHE_KEYS.teamRoster,
+    NO_TEAMMATES,
+  );
+  // Derived, never stored, never reset. The 500ms skeleton hold below is a
+  // deliberate polish delay on a COLD load; it must not blank a cached paint.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && teammates.length === 0;
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -271,8 +287,12 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   const [tab, setTab] = useState<SubTab>('directory');
   const [tabDir, setTabDir] = useState(1);
 
-  const [rankingWeeks, setRankingWeeks] = useState<TeamRankingWeek[]>([]);
-  const [rankingsLoading, setRankingsLoading] = useState(true);
+  const [rankingWeeks, setRankingWeeks] = useEmployeeCachedState<TeamRankingWeek[]>(
+    EMPLOYEE_CACHE_KEYS.teamRankings,
+    NO_RANKING_WEEKS,
+  );
+  const [rankingsSettled, setRankingsSettled] = useState(false);
+  const rankingsLoading = !rankingsSettled && rankingWeeks.length === 0;
   const [rankingsError, setRankingsError] = useState<string | null>(null);
   // Which week the Rankings pane is showing. Held here (not in the pane) so it
   // survives sub-tab swaps, which unmount the pane via AnimatePresence.
@@ -288,8 +308,15 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   const onlineEmails = useOnlineEmails();
   const selfNorm = normEmail(employeeEmail ?? '') ?? employeeEmail?.trim().toLowerCase() ?? null;
 
+  // Both presence maps stay OFF the cache, deliberately — see the roster
+  // comment above. `skillSets` is a shared profile field, never pay.
   const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
-  const [skillSets, setSkillSets] = useState<Record<string, SkillSetEntry>>({});
+  /** Server-resolved last-seen floor, by profile id. Lifted off the cached rows. */
+  const [rosterPresence, setRosterPresence] = useState<Record<string, string>>({});
+  const [skillSets, setSkillSets] = useEmployeeCachedState<Record<string, SkillSetEntry>>(
+    EMPLOYEE_CACHE_KEYS.teamSkillSets,
+    NO_SKILL_SETS,
+  );
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   // Sticky teammate keeps the modal content rendered through the close
   // animation, so base-ui plays its exit against real content.
@@ -314,7 +341,6 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   useEffect(() => {
     let cancelled = false;
     const startedAt = Date.now();
-    setLoading(true);
     setError(null);
     fetch(`/api/team-roster?department=${encodeURIComponent(deptLabel)}`, { cache: 'no-store' })
       .then((r) => r.json())
@@ -335,18 +361,24 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
         }) => {
           if (cancelled) return;
           if (j.error) setError(j.error);
+          const profiles = j.profiles ?? [];
+          // `lastSeenAt` is lifted OFF the row here: the rows go to storage and
+          // presence must not. It is not dropped — it lands in `rosterPresence`
+          // below, which is plain state and dies with the page.
           setTeammates(
-            (j.profiles ?? []).map((p) => ({
+            profiles.map((p) => ({
               id: p.id,
               displayName: p.displayName,
               workEmail: p.workEmail,
               department: p.department,
               suspended: false,
               isManager: p.isManager,
-              lastSeenAt: p.lastSeenAt,
               isSelf: p.isSelf,
             })),
           );
+          const presence: Record<string, string> = {};
+          for (const p of profiles) if (p.lastSeenAt) presence[p.id] = p.lastSeenAt;
+          setRosterPresence(presence);
           setSkillSets(j.skillSets ?? {});
           setLastSeen(j.lastSeen ?? {});
         },
@@ -356,9 +388,11 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
       })
       .finally(() => {
         // Hold skeletons ~500ms so the shimmer reads as polish, not a flash.
+        // Only a COLD load ever sees it: with a cached roster `loading` is
+        // already false, so this delay cannot hold rows off the screen.
         const wait = Math.max(0, 500 - (Date.now() - startedAt));
         window.setTimeout(() => {
-          if (!cancelled) setLoading(false);
+          if (!cancelled) setSettled(true);
         }, wait);
       });
     return () => {
@@ -369,20 +403,19 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   /* Weekly rankings. Same stable key — one fetch per department, not per visit. */
   useEffect(() => {
     let cancelled = false;
-    setRankingsLoading(true);
     setRankingsError(null);
     fetch(`/api/team-rankings?department=${encodeURIComponent(deptLabel)}`, { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { weeks?: TeamRankingWeek[]; error?: string | null }) => {
         if (cancelled) return;
         if (j.error) setRankingsError(j.error);
-        setRankingWeeks(j.weeks ?? []);
+        setRankingWeeks(j.weeks ?? NO_RANKING_WEEKS);
       })
       .catch((e) => {
         if (!cancelled) setRankingsError(e instanceof Error ? e.message : 'Failed to load rankings');
       })
       .finally(() => {
-        if (!cancelled) setRankingsLoading(false);
+        if (!cancelled) setRankingsSettled(true);
       });
     return () => {
       cancelled = true;
@@ -433,9 +466,16 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
   };
   // The 60s poll refreshes what it can (work emails); the server-resolved stamp
   // is the floor, so nobody's last-seen disappears on the first refresh.
+  //
+  // That floor lives in `rosterPresence`, keyed by profile id, rather than on
+  // the `Teammate` rows — because the rows are CACHED and presence may not be.
+  // It is the newest of the person's work AND personal stamps, so it is the only
+  // value that covers someone who only ever signs in under a personal address;
+  // dropping it (rather than moving it off the cached row) would have read as
+  // "never signed in" for the seven USEE people in exactly that position.
   const lastSeenFor = (t: Teammate): string | null => {
     const w = normEmail(t.workEmail ?? '');
-    return (w && lastSeen[w]) || t.lastSeenAt || null;
+    return (w && lastSeen[w]) || rosterPresence[t.id] || null;
   };
   const isSelf = (t: Teammate): boolean => t.isSelf;
 
