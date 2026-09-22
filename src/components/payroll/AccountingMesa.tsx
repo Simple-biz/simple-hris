@@ -65,6 +65,11 @@ import { normEmail } from '@/lib/email/norm-email';
 import { offboardReasonLabel } from '@/lib/hr/offboard-reasons';
 import type { MesaLedgerEvent, MesaMemberSummary } from '@/lib/mesa/ledger';
 import {
+  isMesaNeverCharged,
+  scanMesaMembershipDrift,
+  type MesaLedgerRead,
+} from '@/lib/mesa/membership-drift';
+import {
   formatReceiptSize,
   isMesaReceiptImage,
   mesaReceiptDownloadUrl,
@@ -2184,7 +2189,21 @@ interface MesaRosterRow {
   ledger: MesaMemberSummary | null;
 }
 
-async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
+/**
+ * The roster join plus WHETHER THE LEDGER WAS ACTUALLY READ.
+ *
+ * `/api/mesa-ledger` is best-effort here — a failure must not blank the roster
+ * — but its absence is not the same as "nothing to report". With the ledger
+ * down every row arrives `ledger: null`, every membership drift evaluates to
+ * "none", and a screen that counted them would assert an all-clear it never
+ * measured. Callers get the read state so they can say which one it is.
+ */
+interface MesaRosterFetch {
+  rows: MesaRosterRow[];
+  ledgerRead: MesaLedgerRead;
+}
+
+async function fetchMesaRoster(): Promise<MesaRosterFetch> {
   const [employeesRes, ratesRes, ledgerRes] = await Promise.all([
     fetch('/api/employees', { cache: 'no-store' }),
     fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
@@ -2200,10 +2219,13 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
   if ((employeesJson.employees ?? []).length === 0) {
     throw new Error(employeesJson.error ?? 'Employee roster unavailable');
   }
-  // Ledger is best-effort — a failure here shouldn't blank out the roster.
+  // Ledger is best-effort — a failure here shouldn't blank out the roster —
+  // but it IS recorded, because a missing ledger silently disables the
+  // membership-drift check below.
   const ledgerJson = ledgerRes.ok
     ? ((await ledgerRes.json()) as { members?: MesaMemberSummary[] })
     : { members: [] };
+  const ledgerRead: MesaLedgerRead = ledgerRes.ok ? 'ok' : 'failed';
 
   const ledgerByEmail = new Map<string, MesaMemberSummary>();
   for (const m of ledgerJson.members ?? []) {
@@ -2217,7 +2239,7 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
     if (pe) rateByEmail.set(pe, r);
   }
 
-  return (employeesJson.employees ?? [])
+  const rows = (employeesJson.employees ?? [])
     .map((e) => {
       const we = e.work_email?.toLowerCase().trim() || null;
       const pe = e.personal_email?.toLowerCase().trim() || null;
@@ -2249,6 +2271,7 @@ async function fetchMesaRoster(): Promise<MesaRosterRow[]> {
     })
     .filter((r): r is MesaRosterRow => r !== null)
     .sort((a, b) => a.name.localeCompare(b.name));
+  return { rows, ledgerRead };
 }
 
 /** Stub summary for a roster row with no mesa_ledger history yet, so the
@@ -2345,7 +2368,9 @@ function MesaNonMembers() {
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const data = await fetchMesaRoster();
+      // The FULL roster is cached here, not just the non-members: this tab's
+      // stat cards count the enrolled off the same rows.
+      const { rows: data } = await fetchMesaRoster();
       setTabCache(TAB_CACHE_KEYS.mesaNonMembers, data);
       setRows(data);
     } catch (e) {
@@ -2758,13 +2783,19 @@ function MesaActiveMembers() {
   const [viewTarget, setViewTarget] = useState<MesaRosterRow | null>(null);
   const [optOutTargets, setOptOutTargets] = useState<MesaRosterRow[] | null>(null);
   const [toggling, setToggling] = useState(false);
+  // Whether THIS session actually read the ledger. Deliberately NOT cached with
+  // the rows: a repaint from cache has measured nothing yet, and 'unknown'
+  // renders as silence rather than as an all-clear.
+  const [ledgerRead, setLedgerRead] = useState<MesaLedgerRead>('unknown');
 
   const load = async (showSpinner = true) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const data = (await fetchMesaRoster()).filter(isActiveMember);
+      const { rows: all, ledgerRead: read } = await fetchMesaRoster();
+      const data = all.filter(isActiveMember);
       setTabCache(TAB_CACHE_KEYS.mesaActiveMembers, data);
       setRows(data);
+      setLedgerRead(read);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to load MESA balances');
     } finally {
@@ -2883,6 +2914,7 @@ function MesaActiveMembers() {
         { header: 'Disbursed', align: 'right', pdfWeight: 54, xlsxWidth: 15 },
         { header: 'Balance', align: 'right', pdfWeight: 56, xlsxWidth: 15 },
         { header: 'Member since', pdfWeight: 56, xlsxWidth: 14 },
+        { header: 'Payroll deducting', pdfWeight: 58, xlsxWidth: 17 },
       ],
       rows: filtered.map((r) => [
         r.name,
@@ -2896,15 +2928,66 @@ function MesaActiveMembers() {
         r.mesaMemberSince
           ? (parseDateOnlyLocal(r.mesaMemberSince) ?? new Date(r.mesaMemberSince)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           : '-',
+        isMesaNeverCharged({ mesaMember: r.mesaMember, ledger: r.ledger }) ? 'NO - not deducted' : 'Yes',
       ]),
       notes: [
+        "\"Payroll deducting\" reads NO when the member's savings are recorded but no rate row carries mesa_member — the Payroll Wizard takes no PHP100 from their pay. Repair with scripts/fix-mesa-aliased-membership.mjs; do NOT use Opt In, which mints a second account and hides the balance.",
         "Figures are scoped to each member's current (open) MESA account number. Opting out closes that account — its history is retained in the MESA ledger under the previous account number (nothing is deleted) — and a re-join opens a fresh account number starting from PHP 0.00.",
       ],
     };
   }, [filtered, filterDepartment, query]);
 
+  // ── Is payroll actually charging these people? ───────────────────────────
+  //
+  // This tab shows a member when the LEDGER says they are saving, and that leg
+  // is alias-resolved (`summarizeMembers` → `resolveMesaEmail`). The ₱100
+  // deduction reads `employee_hourly_rates.mesa_member`, which nothing
+  // alias-resolves. When the two disagree the row below renders a balance and
+  // payroll takes nothing — `jimg@` and `dales@` each went 14 staged paystubs
+  // that way, and this screen showed them in good standing the whole time.
+  //
+  // Both facts are already on the row. Until now the tab held them and said
+  // nothing; the only thing that could see the contradiction was a hand-run
+  // probe. See src/lib/mesa/membership-drift.ts.
+  const drift = useMemo(
+    () => scanMesaMembershipDrift(rows, (r) => ({ mesaMember: r.mesaMember, ledger: r.ledger }), ledgerRead),
+    [rows, ledgerRead],
+  );
+
   return (
     <div className="space-y-5">
+      {/* Payroll is not charging some of these members — the alias drift. */}
+      {drift.neverCharged.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
+          <span>
+            <strong className="font-semibold">
+              {drift.neverCharged.length} member{drift.neverCharged.length === 1 ? ' is' : 's are'} saving but not being
+              deducted.
+            </strong>{' '}
+            Their MESA account is open and contributions are recorded, but no rate row carries{' '}
+            <code className="rounded bg-amber-100 px-1 py-px font-mono text-[11px] dark:bg-amber-900/40">mesa_member</code>,
+            so the Payroll Wizard takes no ₱100 from their pay — usually because their MESA identity is an earlier email
+            address. Repair with{' '}
+            <code className="rounded bg-amber-100 px-1 py-px font-mono text-[11px] dark:bg-amber-900/40">
+              scripts/fix-mesa-aliased-membership.mjs
+            </code>
+            , never with Opt In (which would mint a second account and hide this balance).
+          </span>
+        </div>
+      )}
+      {/* A failed ledger read is NOT an all-clear — say so instead of showing nothing. */}
+      {ledgerRead === 'failed' && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
+          <span>
+            <strong className="font-semibold">The MESA ledger did not load.</strong> Balances below are incomplete, members
+            known only by their contributions are missing from this list, and no check was made for members payroll is
+            failing to deduct. Refresh before acting on these figures.
+          </span>
+        </div>
+      )}
+
       {/* Summary cards */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <BalanceStat icon={PiggyBank} label="Members contributed" value={formatPHP(totals.contributed)} tone="zinc" />
@@ -2992,7 +3075,18 @@ function MesaActiveMembers() {
                         <SelectCheckbox checked={sel.selectedKeys.has(r.key)} onChange={() => sel.toggle(r.key)} ariaLabel={`Select ${r.name}`} />
                       </td>
                       <td className="px-4 py-3" data-label="Member">
-                        <div className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-medium text-zinc-900 dark:text-zinc-100">{r.name}</span>
+                          {isMesaNeverCharged({ mesaMember: r.mesaMember, ledger: r.ledger }) && (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-700/50 dark:bg-amber-950/40 dark:text-amber-300"
+                              title="This member is saving, but no rate row carries mesa_member — the Payroll Wizard is not deducting their ₱100. Repair with scripts/fix-mesa-aliased-membership.mjs; do NOT use Opt In, which would mint a second account."
+                            >
+                              <AlertTriangle className="h-3 w-3" />
+                              Not deducted
+                            </span>
+                          )}
+                        </div>
                         <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{r.workEmail ?? r.personalEmail}</div>
                       </td>
                       <td className="px-4 py-3" data-label="Account #">

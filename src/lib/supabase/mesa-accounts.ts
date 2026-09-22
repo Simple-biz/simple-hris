@@ -1,3 +1,4 @@
+import { mesaEmailAliasesFor } from "@/lib/mesa/email-aliases";
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "./server";
 
 /**
@@ -139,6 +140,61 @@ export async function closeMesaAccounts(email: string, closedOn: string): Promis
     .select("account_number");
   if (error) return [];
   return ((data ?? []) as { account_number: string }[]).map((r) => r.account_number);
+}
+
+export type AliasOpenLookup =
+  | { ok: true; found: { email: string; account: MesaAccount } | null }
+  | { ok: false; error: string };
+
+/**
+ * An OPEN account held under one of the member's EARLIER addresses.
+ *
+ * `getOpenMesaAccount` resolves by the single email it is handed. A member
+ * whose MESA identity drifted — the ledger and `mesa_accounts` know `dale@`,
+ * the roster and rate rows know `dales@` — therefore looks unenrolled to it,
+ * and opting them in MINTS A SECOND ACCOUNT dated today, hiding the balance
+ * they already hold (docs/features/mesa.md:225). The read path has bridged
+ * those addresses since the alias map existed; this is the enrollment path
+ * catching up, in the REFUSAL direction only — nothing here writes, and no
+ * enrollment is ever redirected into an account belonging to another address.
+ *
+ * `email` itself is excluded from the search: an open account under the SAME
+ * address is `getOpenMesaAccount`'s business (`openAccountConflict`), and
+ * reporting it here would turn an idempotent re-enrollment into a refusal.
+ *
+ * A missing table (migration pending) is "no alias account". Any OTHER read
+ * failure is reported as a failure, never as "none" — this decides whether a
+ * second account gets minted over someone's savings, and an unreadable
+ * registry must not read as a clear one.
+ */
+export async function getOpenMesaAccountAcrossAliases(email: string): Promise<AliasOpenLookup> {
+  const supabase = db();
+  if (!supabase) return { ok: false, error: "Supabase client not initialized" };
+  const self = email.trim().toLowerCase();
+  const others = mesaEmailAliasesFor(self).filter((e) => e !== self);
+  if (others.length === 0) return { ok: true, found: null };
+
+  // One `ilike` query per alias rather than a single `in` — `mesa_accounts.email`
+  // is matched case-insensitively everywhere else in this file, and an `in`
+  // list cannot be. The list is the repo's own alias map, so it is at most a
+  // handful of rows and only read on opt-in.
+  for (const alias of others) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select(ACCOUNT_SELECT)
+      .ilike("email", alias)
+      .is("closed_on", null)
+      .order("opened_on", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      if (isMissingSchema(error.message)) return { ok: true, found: null };
+      return { ok: false, error: error.message };
+    }
+    const account = (data as MesaAccount | null) ?? null;
+    if (account) return { ok: true, found: { email: account.email, account } };
+  }
+  return { ok: true, found: null };
 }
 
 export type LatestClosedLookup =

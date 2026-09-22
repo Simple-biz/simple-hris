@@ -5,10 +5,16 @@ import {
   closeMesaAccounts,
   getLatestClosedMesaAccount,
   getOpenMesaAccount,
+  getOpenMesaAccountAcrossAliases,
   openMesaAccount,
 } from '@/lib/supabase/mesa-accounts';
 import { releaseMesaBalanceOnClose } from '@/lib/mesa/release-balance';
-import { closedStintConflict, openAccountConflict, resolveEnrollmentDate } from '@/lib/mesa/enrollment-date';
+import {
+  aliasAccountConflict,
+  closedStintConflict,
+  openAccountConflict,
+  resolveEnrollmentDate,
+} from '@/lib/mesa/enrollment-date';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NextResponse } from 'next/server';
 
@@ -120,6 +126,32 @@ export async function POST(req: Request) {
         const closedConflict = closedStintConflict(sinceIso, latest.account?.closed_on ?? null);
         if (closedConflict) {
           return NextResponse.json({ error: closedConflict }, { status: 400 });
+        }
+
+        // ...and no account open under an EARLIER address of the same person.
+        // The lookup above keys on the one email it was handed, so a member
+        // whose MESA identity drifted (`dale@` on the ledger, `dales@` on the
+        // roster) reads as never-enrolled and gets a SECOND account minted,
+        // dated today, hiding the balance they already hold — every balance is
+        // the ledger sliced to `opened_on`. This was latent while such people
+        // sat on Active Members (out of the Opt In button's reach) and goes
+        // live the moment `/api/mesa-ledger` fails and drops them onto Non
+        // Members. Fails CLOSED, like the check above it: an unreadable
+        // registry does not get to read as a clear one.
+        const aliasOpen = await getOpenMesaAccountAcrossAliases(accountEmail);
+        if (!aliasOpen.ok) {
+          return NextResponse.json(
+            {
+              error:
+                `Could not check this member's earlier MESA addresses, so they were NOT opted in. ` +
+                `Nothing was changed. (${aliasOpen.error})`,
+            },
+            { status: 503 },
+          );
+        }
+        const aliasConflict = aliasAccountConflict(accountEmail, aliasOpen.found);
+        if (aliasConflict) {
+          return NextResponse.json({ error: aliasConflict }, { status: 409 });
         }
       }
       const account = await openMesaAccount(accountEmail, name ?? null, sinceIso);

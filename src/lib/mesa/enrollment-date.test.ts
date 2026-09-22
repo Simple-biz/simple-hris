@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  aliasAccountConflict,
   closedStintConflict,
   isCalendarDate,
   openAccountConflict,
@@ -140,4 +141,35 @@ test('the comparison is on the calendar, not on string length or locale', () => 
   // Lexical compare of YYYY-MM-DD is calendar order; a year boundary proves it.
   assert.equal(closedStintConflict('2027-01-01', '2026-12-31'), null);
   assert.ok(closedStintConflict('2026-12-31', '2027-01-01'));
+});
+
+// ── aliasAccountConflict ───────────────────────────────────────────────────
+//
+// A member whose MESA identity drifted holds their account under an EARLIER
+// address (`dale@simple.biz` for `dales@simple.biz`). `getOpenMesaAccount`
+// keys on the one email it is handed, finds nothing, and the route mints a
+// SECOND account dated today — hiding the balance they already hold, because
+// every balance is the ledger sliced to `opened_on` (mesa.md:225). These pin
+// the refusal that replaced that.
+
+const ALIAS_ACCT = { account_number: '26-06-00027', opened_on: '2026-06-22' };
+
+test('no alias account open — enrollment proceeds', () => {
+  assert.equal(aliasAccountConflict('dales@simple.biz', null), null);
+});
+
+test('an alias holds an open account — refused, and nothing is written', () => {
+  const msg = aliasAccountConflict('dales@simple.biz', {
+    email: 'dale@simple.biz',
+    account: ALIAS_ACCT,
+  });
+  assert.ok(msg, 'expected a refusal');
+  // The reviewer must be able to act on it without reading the source: whose
+  // account, which number, since when, and what to run instead.
+  assert.match(msg, /26-06-00027/);
+  assert.match(msg, /2026-06-22/);
+  assert.match(msg, /dale@simple\.biz/);
+  assert.match(msg, /SECOND account/);
+  assert.match(msg, /fix-mesa-aliased-membership\.mjs --only dales@simple\.biz --apply/);
+  assert.match(msg, /Nothing was changed/);
 });

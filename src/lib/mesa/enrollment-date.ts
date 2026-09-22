@@ -83,6 +83,41 @@ export function openAccountConflict(
 }
 
 /**
+ * The member holds an open account under an ALIAS of the address being opted
+ * in — their MESA identity is an old email (`dale@` for `dales@`) that
+ * `src/data/mesa-email-aliases.json` bridges on the read path.
+ *
+ * `getOpenMesaAccount` resolves the open account by the ONE email it is handed,
+ * finds none for a drifted member, and mints a SECOND account whose window
+ * starts today — hiding the balance they already hold, because every balance is
+ * the ledger sliced to `opened_on` (docs/features/mesa.md:225). That was a
+ * latent hazard while these people sat on Active Members, out of reach of the
+ * Opt In button; a failed `/api/mesa-ledger` drops them onto Non Members, where
+ * the button IS reachable, so it is refused here instead of being left to
+ * chance.
+ *
+ * The refusal is deliberate and total: this route does not enrol into someone
+ * else's account row either. The repair is
+ * `scripts/fix-mesa-aliased-membership.mjs`, which stamps the rate rows from
+ * the EXISTING account and mints nothing.
+ *
+ * Returns the refusal, or null when no alias holds an open account.
+ */
+export function aliasAccountConflict(
+  email: string,
+  aliasOpen: { email: string; account: AccountRef } | null,
+): string | null {
+  if (!aliasOpen) return null;
+  return (
+    `${email} already holds MESA account ${aliasOpen.account.account_number}, open since ` +
+    `${aliasOpen.account.opened_on}, under their earlier address ${aliasOpen.email}. ` +
+    `Opting in here would mint a SECOND account starting today and hide the balance they already hold. ` +
+    `Nothing was changed — repair the payroll flag with ` +
+    `\`node scripts/fix-mesa-aliased-membership.mjs --only ${email} --apply\`.`
+  );
+}
+
+/**
  * The member's most recent CLOSED stint ended on `latestClosedOn`. A new
  * account opening on or before that day would have a window
  * (events >= opened_on) reaching back into the closed stint, so its deposits

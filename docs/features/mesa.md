@@ -228,6 +228,28 @@ future week qualifies.
 > already holds. Latent rather than live, because contributions alone put them on **Active
 > Members** (`isActiveMember` counts deposits), so the Non Members Opt In button cannot be
 > reached for them; the opt-**out** path is alias-aware (`mesaEmailAliasesFor`) and safe.
+>
+> **That "latent" held only while the ledger loaded. Closed at the route, 2026-09-22.** The
+> Opt In button is out of reach *because* `isActiveMember`'s ledger leg puts these people on
+> Active Members — and `/api/mesa-ledger` is best-effort on that tab. A ledger failure gives
+> every row `ledger: null`, which drops a drifted member onto **Non Members**, where the
+> button is one click away. The route no longer relies on the UI for this:
+> `getOpenMesaAccountAcrossAliases` (`src/lib/supabase/mesa-accounts.ts`) checks every address
+> `mesaEmailAliasesFor` returns before minting, and `aliasAccountConflict`
+> (`src/lib/mesa/enrollment-date.ts`, tested) **refuses with 409**, naming the account number,
+> its `opened_on`, the alias holding it and the repair command. An unreadable registry is a
+> **503** — it fails closed, exactly like the closed-stint check above it, because "could not
+> read" must never be spent as "no account". The route still **never** enrols anyone into an
+> account belonging to another address; the repair remains the script.
+>
+> Measured read-only against production the same day
+> (`scripts/probe-mesa-alias-account-guard.mts`, over all 12 alias pairs plus a control):
+> **2 of them — `dales@` and `jimg@` — would have had a second account minted by one Opt In
+> click**, and both are now refused. `jimg@` is among them *although his rate rows were
+> repaired on 2026-09-15*: the repair stamps the flag and deliberately leaves `mesa_accounts`
+> alone, so his account is still filed under `jim@` and the minting hazard outlived the fix.
+> The other ten pairs hold their open account under their current address and are untouched by
+> the guard.
 
 **Applied 2026-09-15: `jimg@simple.biz` only** — 24 rate rows stamped `mesa_member=true ·
 since 2026-06-22 · account 26-06-00059`, verified by re-read. `dales@simple.biz` is
@@ -235,6 +257,47 @@ since 2026-06-22 · account 26-06-00059`, verified by re-read. `dales@simple.biz
 ledger was touched, so the three weekly deposits each missed while unflagged (2026-08-28,
 09-04, 09-11) are **not** backfilled — that is a separate decision, tied to the open
 question of whether their imported balance already credits contributions nobody collected.
+
+**Re-measured read-only 2026-09-22** (`scripts/probe-mesa-flag-vs-account.mts`), after Kane
+reported `dales@` a second time: **6 of 237 open accounts are unflagged**, down from 7 of 238
+— `jimg@` is the one that closed. **`dales@simple.biz` is the only one left on the active
+roster**, still `mesa_member=false` on his single rate row, account `26-06-00027` open since
+2026-06-22, ₱3,600 across 9 deposits, `hsl:case_managers`. The uncollected money since the
+2026-08-28 backfill is **₱400 of worker contribution and ₱1,200 of unmatched company money**
+over 4 Fridays. The other five are the same departed people with no rate row under any
+address, holding **₱101,600** with no obligation raised. The dry run stands ready
+(`--only dales@simple.biz`); it reports **1 rate row to stamp**, not 24 — the flag is
+denormalised per upload and he has one.
+
+### It is no longer silent (2026-09-22)
+
+The defect above was found by a hand-run probe, after Kane asked about one man by name. Every
+MESA surface showed both men as members in good standing for fourteen staged paystubs each,
+and **nothing in the app ever said the two sources disagreed** — that silence, not the alias
+map, is what let it run for three months.
+
+`src/lib/mesa/membership-drift.ts` (pure, 17 tests) states the comparison once:
+`mesaPayrollWillCharge` restates the pay rule (`mesa_member === true && !isMesaOptedOut`),
+`mesaLedgerSaysSaving` restates the ledger's (deposits, no trailing opt-out), and
+`mesaMembershipDrift` names the two ways they part — **`never_charged`** (this defect) and
+**`flag_not_cleared`** (the opposite drift, already suppressed, pinned by test so the two are
+never confused). **It decides nothing about money**: it is wired into no compute path, and
+membership is still the FLAG, never the ledger.
+
+**Accounting → MESA → Active Members renders it.** A drifted row carries a **"Not deducted"**
+badge beside the member's name, a banner counts them with the repair named (and names Opt In
+as the wrong tool), and the CSV/XLSX/PDF export carries a **Payroll deducting** column. Both
+facts were already on the row — the tab simply held them and said nothing.
+
+**A failed ledger read is not an all-clear.** `fetchMesaRoster` now returns whether
+`/api/mesa-ledger` answered, and `scanMesaMembershipDrift` refuses to report a clean scan it
+did not measure: with the ledger down the tab says **"The MESA ledger did not load"** and that
+no check was made, rather than showing a quiet zero over balances that are themselves
+incomplete.
+
+**Still not covered:** HR → MESA Eligible reads the rates row only and makes no ledger call
+(Kane's 2026-09-17 ruling), so it continues to miss a drifted member entirely — by design,
+and the reason membership there is the flag. Accounting owns this signal.
 
 **The audit follows the alias map too, as of the same day.**
 `scripts/verify-mesa-backfill.mjs` keyed rate rows by the CSV/ledger email, so it **skipped
@@ -336,7 +399,11 @@ Approving a disbursement in Accounting is a *signal*, not a payment. The actual 
 | `app/api/mesa-requests/[id]/dispatch/route.ts` | Pay out an approved disbursement |
 | `app/api/mesa-ledger/route.ts` | Per-member or program-wide contribution rollup |
 | `app/api/mesa-notes/route.ts` | GET (list) + POST (add) a member's internal notes |
-| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary Non Members Opt In/Out buttons. Opt-in opens a `mesa_accounts` row (minting the next `YY-MM-#####`) effective `since` (strictly validated; never on/before the previous `closed_on`), opt-out closes it and clears `mesa_account_number` |
+| `app/api/toggle-mesa-member/route.ts` | Direct enrollment flip — used by request approvals and the temporary Non Members Opt In/Out buttons. Opt-in opens a `mesa_accounts` row (minting the next `YY-MM-#####`) effective `since` (strictly validated; never on/before the previous `closed_on`; **never when an ALIAS of the address already holds an open account — 409, and 503 if that cannot be read**), opt-out closes it and clears `mesa_account_number` |
+| `src/lib/mesa/membership-drift.ts` | Does the PHP100 deduction agree with the ledger about who is a member? `mesaPayrollWillCharge` / `mesaLedgerSaysSaving` / `mesaMembershipDrift` / `scanMesaMembershipDrift` — pure, tested, wired into **no** compute path (`membership-drift.test.ts`) |
+| `scripts/probe-mesa-flag-vs-account.mts` | Read-only: every OPEN account with no `mesa_member=true` rate row — who the program thinks is saving and payroll is not charging |
+| `scripts/probe-mesa-alias-account-guard.mts` | Read-only: which alias pairs would have had a SECOND account minted by an Opt In click, and the refusal each now gets |
+| `scripts/fix-mesa-aliased-membership.mjs` | The repair — stamps `mesa_member` / `_since` / `_account_number` from the EXISTING open account onto every rate row for the roster email. Dry-run default, `--apply`, `--only <email>`, `SELECT` backup before the first write, re-read verification. Mints nothing |
 | `src/lib/supabase/mesa-accounts.ts` | Account registry helpers: list/get open accounts, `openMesaAccount` (serial minting, collision-retried), `closeMesaAccounts` — all tolerant of the migration not having run |
 | `references/sql/migrate/2026-07-16_mesa_accounts.sql` | `mesa_accounts` DDL + `employee_hourly_rates.mesa_account_number` + view recreate (run in the SQL Editor) |
 | `scripts/seed-mesa-accounts.mjs` | Backfills one account per historical enrollment stint + stamps open account numbers onto rates rows (dry-run default, `--apply` to write) |
