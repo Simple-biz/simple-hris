@@ -1,6 +1,6 @@
 # Gift Tracker Orders — approved tenure gifts locked into a priced PDF invoice
 
-HR → Gift Tracker → **Orders** (the sub-tab beside Roster). Every approved shipping
+HR → Gift Tracker → **Orders** (the sub-tab after Submissions — Roster · Submissions · Orders; it sat beside Roster until Kane swapped it the same day). Every approved shipping
 submission lands in **Open orders** the moment it is approved, whatever month it was
 earned. HR ticks the gifts to send, the **Invoice preview** prices them from Gift items
 (item · size · qty · unit · amount · total), and **Lock order & build PDF** writes the

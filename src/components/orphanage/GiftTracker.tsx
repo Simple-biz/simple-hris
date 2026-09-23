@@ -319,7 +319,7 @@ export type SubTab = 'roster' | 'orders' | 'submissions' | 'recent' | 'catalog';
 /** Left-to-right order of the sub-tabs — the axis the panel transition travels. */
 /** Submissions sub-tab page size (Kane, 2026-09-23). */
 const SUBMISSIONS_PAGE_SIZE = 20;
-const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'orders', 'submissions', 'recent', 'catalog'];
+const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'submissions', 'orders', 'recent', 'catalog'];
 
 /**
  * How a sub-tab panel enters and leaves.
@@ -1188,13 +1188,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             Icon={Users}
             label="Roster"
           />
-          {/* Beside Roster (Kane, 2026-09-23): approved gifts → locked, priced invoice. */}
-          <SubTabButton
-            active={subTab === 'orders'}
-            onClick={() => goToSubTab('orders')}
-            Icon={ShoppingCart}
-            label="Orders"
-          />
           <SubTabButton
             active={subTab === 'submissions'}
             onClick={() => goToSubTab('submissions')}
@@ -1207,6 +1200,14 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                 0,
               ) || undefined
             }
+          />
+          {/* After Submissions (Kane, 2026-09-23 — swapped from beside Roster):
+              approve there, the gift lands here. */}
+          <SubTabButton
+            active={subTab === 'orders'}
+            onClick={() => goToSubTab('orders')}
+            Icon={ShoppingCart}
+            label="Orders"
           />
           <SubTabButton
             active={subTab === 'recent'}
