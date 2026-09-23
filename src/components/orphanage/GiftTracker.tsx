@@ -773,10 +773,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   }, [search, owedFilter, altRecipientOnly]);
 
   const stats = useMemo(() => {
-    let red = 0;
-    let orange = 0;
-    let green = 0;
-    let overdue = 0;
     // Gifts, people, and unknowns are counted SEPARATELY and never netted: one
     // person owed three gifts is not the same finding as three people owed one.
     let giftsOwed = 0;
@@ -788,10 +784,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     // person can be in any of the other four states at the same time.
     let peopleAltRecipient = 0;
     for (const r of rows) {
-      if (r.status === 'red') red += 1;
-      else if (r.status === 'orange') orange += 1;
-      else if (r.status === 'green') green += 1;
-      else if (r.status === 'overdue') overdue += 1;
       giftsOwed += r.receipts.owedCount;
       if (r.receipts.owedCount > 0) peopleOwed += 1;
       if (r.receipts.unknownCount > 0) peopleUnknown += 1;
@@ -801,11 +793,6 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       }
     }
     return {
-      total: rows.length,
-      red,
-      orange,
-      green,
-      overdue,
       giftsOwed,
       peopleOwed,
       peopleUnknown,
@@ -1176,47 +1163,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       className="flex min-h-0 flex-1 flex-col overflow-y-auto"
     >
       <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
-        <header className="relative overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-emerald-600/20 dark:border-emerald-900/50 dark:from-emerald-600 dark:via-teal-900 dark:to-black sm:px-7">
-          <div
-            className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/15 blur-3xl"
-            aria-hidden
-          />
-          <div
-            className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-teal-300/25 blur-2xl"
-            aria-hidden
-          />
-          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-            <div className="flex min-w-0 flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-emerald-100/95">
-                <Sparkles className="h-3 w-3 shrink-0" />
-                Gift tracker
-              </div>
-              <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-                Six-month gifts &amp; tenure milestones
-              </h1>
-              <p className="max-w-2xl text-sm leading-relaxed text-emerald-100/90">
-                Every 6 months an employee stays with the company they earn a gift. Color-coded badges flag who&apos;s
-                close — green at 3 months out, orange at 1 month, red within a week.
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-                onClick={() => void load({ force: true })}
-                disabled={refreshing}
-              >
-                <RefreshCw
-                  className={refreshing ? 'mr-1.5 h-3.5 w-3.5 animate-spin' : 'mr-1.5 h-3.5 w-3.5'}
-                />
-                Refresh
-              </Button>
-            </div>
-          </div>
-        </header>
-
-        {/* Sub-tab toggle — Roster vs editable Catalog. */}
+        {/* Sub-tab toggle — Roster vs editable Catalog. Refresh sits beside it
+            since the hero banner that used to carry it was removed (2026-09-23). */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
         <nav
           role="tablist"
           className="inline-flex w-full flex-wrap items-center gap-1 rounded-lg border border-emerald-100/80 bg-white/80 p-1 sm:w-fit dark:border-emerald-950/45 dark:bg-zinc-950/60"
@@ -1254,6 +1203,18 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             label="Catalog"
           />
         </nav>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void load({ force: true })}
+            disabled={refreshing}
+          >
+            <RefreshCw
+              className={refreshing ? 'mr-1.5 h-3.5 w-3.5 animate-spin' : 'mr-1.5 h-3.5 w-3.5'}
+            />
+            Refresh
+          </Button>
+        </div>
 
         {/* The panel area reserves the outgoing panel's height for the length of
             the swap, so a short tab following a tall one cannot yank the page up
@@ -1321,16 +1282,9 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           className="flex flex-col gap-6 lg:gap-8"
         >
         <section
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+          className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
           aria-label="Gift summary"
         >
-          <StatTile
-            label="Tracked employees"
-            value={stats.total}
-            hint="From Global Master List"
-            icon={Users}
-            tone="pink"
-          />
           <StatTile
             label="Gifts owed"
             value={stats.giftsOwed}
@@ -1366,24 +1320,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             tone="slate"
           />
           <StatTile
-            label="Within 1 week"
-            value={stats.red + stats.overdue}
-            hint={stats.overdue > 0 ? `${stats.overdue} overdue` : 'Get the gift ready'}
+            label="Received"
+            value={stats.peopleReceived}
+            hint="People with a gift recorded as given"
             icon={Gift}
-            tone="red"
-          />
-          <StatTile
-            label="Within 1 month"
-            value={stats.orange}
-            hint="Plan ahead this month"
-            icon={CalendarDays}
-            tone="orange"
-          />
-          <StatTile
-            label="Within 3 months"
-            value={stats.green}
-            hint="On the horizon"
-            icon={Sparkles}
             tone="green"
           />
         </section>
