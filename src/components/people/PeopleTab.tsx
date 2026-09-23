@@ -512,8 +512,8 @@ export default function PeopleTab({
   view: 'accounting' | 'ceo';
   viewerEmail: string | null;
   canEdit: boolean;
-  /** CEO + Accounting: show the "Pay" action (files a one-off Urgent payment).
-   *  Separate from canEdit — the CEO is otherwise read-only on People. */
+  /** CEO only (Kane, 2026-09-23): show the "Pay" action (files a one-off Urgent
+   *  payment). Separate from canEdit — the CEO is otherwise read-only on People. */
   canPay?: boolean;
 }) {
   void viewerEmail; // identity is derived server-side from the session

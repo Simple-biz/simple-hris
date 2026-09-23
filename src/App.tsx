@@ -369,7 +369,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             view="accounting"
             viewerEmail={sessionEmail}
             canEdit={canEditAccountingTab('people', roles, featurePerms)}
-            canPay={canEditAccountingTab('people', roles, featurePerms) || roles.includes('ceo')}
+            canPay={roles.includes('ceo')}
           />
         );
       case 'bonus-catalog':

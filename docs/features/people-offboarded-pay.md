@@ -3,7 +3,7 @@
 A fourth mode on the People tab (Accounting AND CEO): a search-first view over the
 **whole `offboarded_sheet` ledger** (~4,000 records). Search by name or work email,
 see Name / Work Email / Personal Email / Start Date / off date per record, a bank
-chip, a **Pay** button that files the existing one-off payment flow, and **Set/Edit
+chip, a **Pay** button (CEO role only since 2026-09-23 — Kane) that files the existing one-off payment flow, and **Set/Edit
 bank** via the shared SetBankDialog. Shipped 2026-09-01, commit `5a7c066b`, with the
 companion change that moved one-off payment cards out of Payment Dispatch → Urgent
 and into the recipient's **processor bucket**.

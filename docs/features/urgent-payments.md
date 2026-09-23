@@ -157,7 +157,8 @@ Two safety choices worth preserving:
 ## Urgent filed → email alert to Accounting *(2026-07-30, `3f4240b`)*
 
 Urgent payment requests are **only ever created by the People tab's "Pay" button**
-(`POST /api/people/pay`), so that route now fires an n8n webhook best-effort right after
+(`POST /api/people/pay`) — shown to the **CEO role only** since 2026-09-23 (Kane; Accounting
+editors lost it; the server gate `requireRateVisibilitySession` was NOT narrowed), so that route now fires an n8n webhook best-effort right after
 the request row is inserted — a webhook hiccup can never fail the payment itself
 ([`src/lib/people/urgent-payment-notify.ts`](../../src/lib/people/urgent-payment-notify.ts)).
 
