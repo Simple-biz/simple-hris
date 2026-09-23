@@ -17,10 +17,12 @@ import {
   Search,
   Sparkles,
   Table2,
+  ShoppingCart,
   Users,
 } from 'lucide-react';
 import GiftCatalog from '@/components/orphanage/GiftCatalog';
 import GiftRecentSubmissions from '@/components/orphanage/GiftRecentSubmissions';
+import GiftOrders from '@/components/orphanage/GiftOrders';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -312,12 +314,12 @@ function classifyDaysUntil(daysUntil: number | null): GiftStatus {
   return 'far';
 }
 
-export type SubTab = 'roster' | 'submissions' | 'recent' | 'catalog';
+export type SubTab = 'roster' | 'orders' | 'submissions' | 'recent' | 'catalog';
 
 /** Left-to-right order of the sub-tabs — the axis the panel transition travels. */
 /** Submissions sub-tab page size (Kane, 2026-09-23). */
 const SUBMISSIONS_PAGE_SIZE = 20;
-const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'submissions', 'recent', 'catalog'];
+const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'orders', 'submissions', 'recent', 'catalog'];
 
 /**
  * How a sub-tab panel enters and leaves.
@@ -672,6 +674,13 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       return aRank - bRank;
     });
   }, [employees, today, receiptsByWorkEmail]);
+
+  // Orders tab inputs, memoised so its line resolution does not re-run every render.
+  const orderSubmissions = useMemo(() => Array.from(shippingByEmail.values()).flat(), [shippingByEmail]);
+  const orderPeople = useMemo(
+    () => new Map(rows.map((r) => [r.key, { name: r.name, department: r.department }])),
+    [rows],
+  );
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1179,6 +1188,13 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             Icon={Users}
             label="Roster"
           />
+          {/* Beside Roster (Kane, 2026-09-23): approved gifts → locked, priced invoice. */}
+          <SubTabButton
+            active={subTab === 'orders'}
+            onClick={() => goToSubTab('orders')}
+            Icon={ShoppingCart}
+            label="Orders"
+          />
           <SubTabButton
             active={subTab === 'submissions'}
             onClick={() => goToSubTab('submissions')}
@@ -1232,6 +1248,23 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             exit="exit"
           >
             <GiftCatalog viewerEmail={viewerEmail} />
+          </motion.div>
+        ) : subTab === 'orders' ? (
+          <motion.div
+            key="orders"
+            custom={subTabDir}
+            variants={panelVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+          >
+            {/* Reads the submissions the tracker already loaded, so an approval
+                lands in Open orders the instant it succeeds. Orders + catalog are
+                its own no-store fetch: lock state must never paint from a cache. */}
+            <GiftOrders
+              submissions={orderSubmissions}
+              people={orderPeople}
+            />
           </motion.div>
         ) : subTab === 'recent' ? (
           <motion.div

@@ -31,6 +31,7 @@ import {
   tierGiftFields,
   tierGiftItems,
 } from '@/lib/gift-tracker/anniversary-items';
+import { isSizedItem } from '@/lib/gift-tracker/orders';
 import { cn } from '@/lib/utils';
 
 export type CatalogItem = {
@@ -38,6 +39,8 @@ export type CatalogItem = {
   item: string;
   description: string;
   price_php: number;
+  /** Apparel: Orders prints the employee's size for it. Absent ⇒ inferred (`isSizedItem`). */
+  sized?: boolean;
 };
 
 export type AnniversaryGift = {
@@ -213,6 +216,16 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
       items: p.items.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     }));
   };
+  /** Sized is a property of the ITEM NAME, so it is written to every row sharing it. */
+  const setSized = (name: string, sized: boolean) => {
+    const key = name.trim().toLowerCase();
+    setPayload((p) => ({
+      ...p,
+      items: p.items.map((row) => (row.item.trim().toLowerCase() === key ? { ...row, sized } : row)),
+    }));
+  };
+  const sizedOf = (name: string) =>
+    isSizedItem(payload.items.filter((r) => r.item.trim().toLowerCase() === name.trim().toLowerCase()));
   const removeItem = (id: string) => {
     setPayload((p) => ({ ...p, items: p.items.filter((row) => row.id !== id) }));
   };
@@ -321,20 +334,25 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
               </Button>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Catalog of items that can be sent as a gift. Prices in PHP, for reference.
+              Catalog of items that can be sent as a gift. Prices in PHP — the Orders invoice uses them at lock time.
             </p>
           </CardHeader>
           <CardContent className="pt-4">
             <div className="overflow-x-auto rounded-lg border border-pink-100/80 dark:border-pink-900/50">
-              <table className="w-full min-w-[560px] text-left text-sm">
+              <table className="w-full min-w-[620px] text-left text-sm">
                 <thead className="bg-gradient-to-r from-sky-50 via-white to-sky-50/80 text-xs text-zinc-600 dark:from-sky-950/40 dark:via-zinc-950 dark:to-sky-950/30 dark:text-zinc-400">
                   <tr>
                     <th className="px-3 py-2 font-semibold">Item</th>
                     <th className="px-3 py-2 font-semibold">Description</th>
-                    {/* Reference only (Kane, 2026-09-23): what an item costs. It
-                        never reaches approval, the export or payroll — gifts
-                        stay information-only (memory gift-feature-info-only). */}
+                    {/* What an item costs (Kane, 2026-09-23). Read by exactly ONE
+                        output: the Orders invoice, which snapshots it at lock time.
+                        It never reaches approval, the Roster/Submissions exports or
+                        payroll (docs/features/gift-tracker-orders.md). */}
                     <th className="px-3 py-2 font-semibold w-[120px]">Price (PHP)</th>
+                    {/* Apparel: Orders prints each employee's size for it. */}
+                    <th className="px-2 py-2 font-semibold w-[64px] text-center" title="Apparel — the order invoice prints the employee's size">
+                      Sized
+                    </th>
                     <th className="px-2 py-2 w-[1%]" />
                   </tr>
                 </thead>
@@ -378,6 +396,16 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                           aria-label={`Price in PHP for ${row.item || 'item'}`}
                         />
                       </td>
+                      <td className="px-2 py-1.5 text-center align-middle">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-pink-600"
+                          checked={row.item.trim() ? sizedOf(row.item) : false}
+                          disabled={!row.item.trim()}
+                          onChange={(e) => setSized(row.item, e.target.checked)}
+                          aria-label={`${row.item || 'Item'} is apparel (sized)`}
+                        />
+                      </td>
                       <td className="px-2 py-1.5">
                         <Button
                           variant="ghost"
@@ -393,7 +421,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                   ))}
                   {payload.items.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-6 text-center text-xs text-zinc-400">
+                      <td colSpan={5} className="px-3 py-6 text-center text-xs text-zinc-400">
                         No items yet — click "Add item".
                       </td>
                     </tr>

@@ -154,11 +154,17 @@ them, and two tests pin it: one rejects any column header containing
 price/cost/amount/PHP/catalog, the other feeds a submission carrying all three
 fields and asserts none reach the CSV.
 
-**The Catalog shows a price again, and this rule is unchanged** (2026-09-23,
+**The Catalog shows a price again, and THESE exports still carry none** (2026-09-23,
 `d4cf4d17`, Kane ruled (b)): the Gift items table has an editable **Price (PHP)**
-column bound to the catalog's stored `price_php`, **for reference only**. It is on
-Gift items alone (Anniversary Gifts has no price). It never reaches approval, the
-shipping export, the submissions export, or payroll, and both tests above still hold.
+column bound to the catalog's stored `price_php`. It is on Gift items alone
+(Anniversary Gifts has no price). It never reaches approval, the shipping export, the
+submissions export, or payroll, and both tests above still hold.
+
+**Exactly ONE output carries that price: the Orders invoice** (Kane ruled 2026-09-23,
+session `95df963a`: *"There should be a price on that Invoice obviously on how many
+was ordered"*). It snapshots the price at lock time and lives in its own module — see
+[gift-tracker-orders.md](gift-tracker-orders.md). That ruling does not reach these two
+exports: a price column here is still a defect, and the tests above still fail on one.
 
 ## The submission read must stay paged
 

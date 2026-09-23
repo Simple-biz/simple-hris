@@ -5,6 +5,8 @@ export type GiftCatalogItem = {
   item: string;
   description: string;
   price_php: number;
+  /** Apparel — the invoice prints the employee's size (gift-tracker/orders.ts `isSizedItem`). */
+  sized?: boolean;
 };
 
 export type GiftAnniversaryTier = {

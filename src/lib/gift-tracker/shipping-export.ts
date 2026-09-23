@@ -969,10 +969,10 @@ const CONTENT_W = PAGE_W - MARGIN * 2; // 720
 const BOTTOM = 52;
 
 // Palette lifted from the Gift Tracker's own emerald/teal card chrome.
-type RGB = readonly [number, number, number];
-const C_EMERALD: RGB = [0.024, 0.588, 0.412]; // #059669  emerald-600
-const C_EMERALD_500: RGB = [0.063, 0.725, 0.506]; // #10B981  emerald-500
-const C_TEAL: RGB = [0.055, 0.58, 0.533]; // #0E9488  teal-600
+export type RGB = readonly [number, number, number];
+export const C_EMERALD: RGB = [0.024, 0.588, 0.412]; // #059669  emerald-600
+export const C_EMERALD_500: RGB = [0.063, 0.725, 0.506]; // #10B981  emerald-500
+export const C_TEAL: RGB = [0.055, 0.58, 0.533]; // #0E9488  teal-600
 const C_AMBER: RGB = [0.961, 0.62, 0.043]; // #F59E0B  amber-500
 const tup = (c: RGB) => rgb(c[0], c[1], c[2]);
 
@@ -987,7 +987,7 @@ const BORDER = rgb(0.827, 0.906, 0.871); // cool hairline
 // pdf-lib's Helvetica is WinAnsi-encoded; characters outside it throw. Replace
 // the few symbols that show up (smart punctuation, peso) with safe equivalents,
 // and anything else unencodable with '?'.
-function sanitize(text: string): string {
+export function sanitize(text: string): string {
   let out = '';
   for (const ch of text) {
     const code = ch.codePointAt(0) ?? 63;
@@ -1003,7 +1003,7 @@ function sanitize(text: string): string {
 }
 
 /** Wrap text to a width, hard-breaking tokens that are themselves too long. */
-function wrapText(raw: string, font: PDFFont, size: number, maxWidth: number): string[] {
+export function wrapText(raw: string, font: PDFFont, size: number, maxWidth: number): string[] {
   const text = sanitize(raw).trim();
   if (!text) return [''];
   const fits = (s: string) => font.widthOfTextAtSize(s, size) <= maxWidth;
@@ -1027,7 +1027,7 @@ function wrapText(raw: string, font: PDFFont, size: number, maxWidth: number): s
 
 /** Draw a horizontal gradient bar by slicing into thin rectangles — pdf-lib has
  *  no native gradients, so this reproduces the tab's emerald→teal accent. */
-function drawHGradient(
+export function drawHGradient(
   page: PDFPage, x: number, y: number, w: number, h: number,
   from: RGB, to: RGB, steps = 60,
 ): void {
@@ -1050,7 +1050,7 @@ function drawHGradient(
 
 type Col = { header: string; width: number; align?: 'left' | 'right' };
 
-async function loadLogoBytes(url: string): Promise<ArrayBuffer | null> {
+export async function loadLogoBytes(url: string): Promise<ArrayBuffer | null> {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -1295,7 +1295,7 @@ function dateSuffix(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function downloadBlob(filename: string, blob: Blob): void {
+export function downloadBlob(filename: string, blob: Blob): void {
   if (typeof window === 'undefined') return;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

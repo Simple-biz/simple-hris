@@ -4,6 +4,7 @@ import {
   editShippingDetailFields,
 } from '@/lib/supabase/employee-gift-shipping';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { liveOrderForSubmission } from '@/lib/supabase/gift-orders';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { auditFrom } from '@/lib/audit/context';
@@ -14,6 +15,27 @@ import {
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+/**
+ * A gift on a LOCKED order is frozen: its invoice may already be with a vendor,
+ * and editing the address or deleting the row would leave the two disagreeing.
+ * Reopen the order first (docs/features/gift-tracker-orders.md). A read failure
+ * refuses too — "could not tell" is never "not locked".
+ */
+async function refuseIfOnLockedOrder(id: string): Promise<NextResponse | null> {
+  const { orderNo, error } = await liveOrderForSubmission(id);
+  if (error) {
+    return NextResponse.json({ row: null, error: `Could not check Gift Orders: ${error}` }, { status: 500 });
+  }
+  if (orderNo !== null) {
+    const label = orderNo > 0 ? `GO-${String(orderNo).padStart(6, '0')}` : 'a locked order';
+    return NextResponse.json(
+      { row: null, error: `This gift is on ${label}. Reopen that order in Orders before changing it.` },
+      { status: 409 },
+    );
+  }
+  return null;
+}
 
 interface EditBody {
   /** Ignored for identity — the audit actor is the verified session. Kept only
@@ -40,6 +62,9 @@ export async function PATCH(
   if (!id) {
     return NextResponse.json({ row: null, error: 'Missing id' }, { status: 400 });
   }
+  const held = await refuseIfOnLockedOrder(id);
+  if (held) return held;
+
   let body: EditBody;
   try {
     body = (await req.json()) as EditBody;
@@ -110,6 +135,9 @@ export async function DELETE(
   } catch {
     // Body is optional for DELETE — fine to swallow.
   }
+
+  const held = await refuseIfOnLockedOrder(id);
+  if (held) return held;
 
   const { error } = await deleteShippingDetail(id);
   if (error) {
