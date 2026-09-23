@@ -4,9 +4,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  AlertTriangle, AppWindow, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  AlertTriangle, AppWindow, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   Download, Eye, History, Loader2, Lock, Maximize2, Minus, PanelRight, Plus,
-  RefreshCw, RotateCcw, Search, Trash2, UserPlus, Users, X,
+  RefreshCw, RotateCcw, Search, Trash2, UserPlus, Users, X, Zap,
 } from 'lucide-react';
 
 const COLLAPSE_EASE = [0.22, 1, 0.36, 1] as const;
@@ -29,6 +29,7 @@ import {
   pickCurrentSourceFile,
   type HubstaffSourceFilesResponse,
 } from '@/lib/hubstaff/current-upload';
+import { nextPayWeek, upcomingWeekFor, weekEndFromStart, type PayWeek } from '@/lib/hubstaff/use-pay-weeks';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
 import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
@@ -206,6 +207,11 @@ function ViewSwitch({
       })}
     </div>
   );
+}
+
+/** A local calendar date as YYYY-MM-DD. */
+function isoDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** Monday-of-week containing `d`, formatted as YYYY-MM-DD in *local* time.
@@ -609,11 +615,41 @@ interface HslBonusCalculatorProps {
    *  Omit for the manager's own KPI tab (defaults to "manager_kpi" server-side);
    *  the Payroll Wizard Readiness modal passes its own source. */
   submissionSource?: string;
+  /**
+   * Offer the ONE week after the live batch, so a manager can score it before its
+   * Hubstaff file exists (Kane, 2026-09-10 — `hsl-kpi-calculator-2026-07.md`
+   * §Scoring the upcoming week). Only the manager's own KPI tab passes it; the
+   * Readiness "fix it from here" modal is about the live week and stays pinned.
+   */
+  offerUpcomingWeek?: boolean;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function HslBonusCalculator({
+/**
+ * Which week the calculator scores: the live batch, or the one after it.
+ *
+ * The choice lives OUT HERE and the calculator is remounted on it (`key`), rather
+ * than `weekStart` being switched in place. Every piece of branch state — entries,
+ * `dirty`, the autosave timers, the failed-write hold, the tab-cache seed — belongs
+ * to ONE (department, period_start) address, and a debounced write armed on the
+ * live week must never fire against the upcoming one. A remount makes that
+ * structural: the old instance flushes its own pending edits to its own week on
+ * unmount (the existing flush), and the new one starts from nothing.
+ */
+export default function HslBonusCalculator(props: HslBonusCalculatorProps) {
+  const [ahead, setAhead] = useState(false);
+  return (
+    <HslBonusCalculatorForWeek
+      key={ahead ? 'upcoming' : 'live'}
+      {...props}
+      ahead={props.offerUpcomingWeek ? ahead : false}
+      onAheadChange={props.offerUpcomingWeek ? setAhead : undefined}
+    />
+  );
+}
+
+function HslBonusCalculatorForWeek({
   viewerEmail,
   managedDepts,
   isElevated,
@@ -621,7 +657,14 @@ export default function HslBonusCalculator({
   dispatchLock: dispatchLockFromShell,
   initialFilter,
   submissionSource,
-}: HslBonusCalculatorProps) {
+  ahead,
+  onAheadChange,
+}: HslBonusCalculatorProps & {
+  /** Score the week AFTER the live batch. Fixed for this instance's life. */
+  ahead: boolean;
+  /** Present only when the upcoming week may be offered. */
+  onAheadChange?: (ahead: boolean) => void;
+}) {
   // Bind the tab cache to this manager BEFORE any seeding below reads it. Two
   // managers on one machine must never paint each other's branches, and the
   // cache is inert until this runs.
@@ -640,9 +683,13 @@ export default function HslBonusCalculator({
    * replaces: this value is a real Sunday-anchored upload week, and the guess is
    * Monday-anchored — the exact mismatch that stranded rows before.
    */
-  const [cachedWeek] = useState<string | null>(
-    () => getKpiCache<string>(KPI_CACHE_KEYS.presumedWeek('hsl')) ?? null,
-  );
+  const [cachedWeek] = useState<string | null>(() => {
+    // The presumed-week cache always holds the LIVE week. Scoring ahead paints
+    // the week after it — still paint only; nothing is writable until the live
+    // resolve below confirms both.
+    const live = getKpiCache<string>(KPI_CACHE_KEYS.presumedWeek('hsl')) ?? null;
+    return live && ahead ? nextPayWeek(live).start : live;
+  });
   const today = new Date();
   const [weekStart, setWeekStart] = useState(() => cachedWeek ?? isoWeekStart(today));
 
@@ -741,6 +788,10 @@ export default function HslBonusCalculator({
    * `periodStart` below).
    */
   const [weekResolved, setWeekResolved] = useState(false);
+  /** The live batch's Sunday, and the one week after it while no file covers it
+   *  (`upcomingWeekFor`). Both null until the resolve below lands. */
+  const [liveWeekStart, setLiveWeekStart] = useState<string | null>(null);
+  const [upcomingWeekStart, setUpcomingWeekStart] = useState<string | null>(null);
   /** Resolution failed outright (after retries) — say so instead of silently
    *  scoring the wrong week. */
   const [weekError, setWeekError] = useState(false);
@@ -1220,15 +1271,36 @@ export default function HslBonusCalculator({
           const latest = pickCurrentSourceFile(json.uploads, json.files);
           const range = latest ? parseDateRangeFromFilename(latest) : null;
           if (range) {
-            const d = range.start;
-            const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const iso = isoDate(range.start);
+            // Every uploaded week, so the upcoming one is offered only while no
+            // file covers it — the same list `usePayWeeks` builds.
+            const uploaded: PayWeek[] = [];
+            for (const f of [...(json.uploads?.map((u) => u.source_file ?? '') ?? []), ...(json.files ?? [])]) {
+              const r = f ? parseDateRangeFromFilename(f) : null;
+              if (r) uploaded.push({ start: isoDate(r.start), end: weekEndFromStart(isoDate(r.start)) });
+            }
+            // Live Sunday + 7 — never the clock (`use-pay-weeks.ts`).
+            const next = upcomingWeekFor(iso, uploaded);
             if (cancelled) return;
-            setWeekStart(iso);
+            setLiveWeekStart(iso);
+            setUpcomingWeekStart(next?.start ?? null);
+            // Remember the LIVE week, so the next mount knows which week's
+            // cached branches it may paint while this resolve re-runs.
+            setKpiCache(KPI_CACHE_KEYS.presumedWeek('hsl'), iso);
+            if (ahead) {
+              // Its file landed since the choice was made: it is the live week
+              // now (or already past). Go back to live rather than score a week
+              // this picker no longer offers.
+              if (!next) {
+                onAheadChange?.(false);
+                return;
+              }
+              setWeekStart(next.start);
+            } else {
+              setWeekStart(iso);
+            }
             setWeekResolved(true);
             setWeekError(false);
-            // Remember which week this was, so the next mount knows which
-            // week's cached branches it may paint while this resolve re-runs.
-            setKpiCache(KPI_CACHE_KEYS.presumedWeek('hsl'), iso);
             return;
           }
         } catch {
@@ -1418,6 +1490,50 @@ export default function HslBonusCalculator({
     };
   }, []);
 
+  /**
+   * Switch between the live week and the upcoming one. The parent remounts this
+   * calculator on the choice, so everything on screen belongs to the week it was
+   * typed into — which is why pending edits are written HERE, awaited, before the
+   * switch: the unmount flush is fire-and-forget, and a failed write would vanish
+   * with the instance. Any edit that cannot be written keeps the manager on this
+   * week instead (the per-card Refresh precedent in DeptBonusCalculator).
+   */
+  const [switchingWeek, setSwitchingWeek] = useState(false);
+  async function switchWeek(nextAhead: boolean) {
+    if (!onAheadChange || nextAhead === ahead || switchingWeek) return;
+    const st = deptStateRef.current;
+    if (visibleDepts.some((k) => st[k]?.saving)) {
+      toast.info('Saving your edits — switch weeks again in a moment.');
+      return;
+    }
+    const pending = visibleDepts.filter((k) => {
+      const d = st[k];
+      return !!d && d.dirty && d.status === 'draft' && d.entries.length > 0;
+    });
+    setSwitchingWeek(true);
+    try {
+      const timers = autosaveTimers.current;
+      for (const k of pending) {
+        const t = timers[k];
+        if (t) clearTimeout(t);
+        delete timers[k];
+        delete autosaveArmedRef.current[k];
+      }
+      const results = pending.length === 0 || payrollLocked || !weekResolved
+        ? pending.map(() => pending.length === 0)
+        : await Promise.all(pending.map((k) => saveDept(k, { silent: true })));
+      if (results.some((ok) => !ok)) {
+        toast.error('Week not switched', {
+          description: 'Your latest edits on this week could not be saved yet, so you were left on it. Check your connection and try again.',
+        });
+        return;
+      }
+      onAheadChange(nextAhead);
+    } finally {
+      setSwitchingWeek(false);
+    }
+  }
+
   async function setStatus(key: HslDeptKey, next: BonusStatus): Promise<boolean> {
     const dept = cfgOf(key);
     // Same reason as saveDept: a status row on an unresolved week is a dept-week
@@ -1441,6 +1557,8 @@ export default function HslBonusCalculator({
           status: next,
           locked_by: viewerEmail ?? undefined,
           source: submissionSource,
+          // Wording only, on Accounting's kpi.published card. No gate reads it.
+          ahead_of_hubstaff: ahead,
         }),
       });
       const json = (await res.json()) as { error?: string };
@@ -1768,12 +1886,26 @@ export default function HslBonusCalculator({
               <span className="ml-2 font-mono text-xs font-normal text-zinc-500">
                 week of {weekStart}
               </span>
+              {ahead && (
+                <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 align-middle font-mono text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                  upcoming
+                </span>
+              )}
             </h2>
           </div>
           <div className="flex items-center gap-2">
             {/* How many branches are signed off. First in the cluster on both
                 calculators — it is the thing a manager opens this tab to check. */}
             <KpiReadinessChip ready={readyBranches} total={visibleDepts.length} />
+            {onAheadChange && liveWeekStart && (ahead || upcomingWeekStart) && (
+              <HslWeekSwitch
+                ahead={ahead}
+                liveWeekStart={liveWeekStart}
+                upcomingWeekStart={ahead ? weekStart : upcomingWeekStart}
+                busy={switchingWeek}
+                onChange={(next) => void switchWeek(next)}
+              />
+            )}
             <div className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60">
               <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">Total</span>
               <span className="font-mono text-sm font-bold text-emerald-600 dark:text-emerald-400">
@@ -1840,6 +1972,28 @@ export default function HslBonusCalculator({
             branches are paused — anything scored now would be saved under the wrong week and
             wouldn&apos;t be visible to Accounting or the other managers. Reload the page to try
             again.
+          </div>
+        )}
+
+        {/* Scoring ahead of the Hubstaff report. Wording only — no gate reads
+            `ahead` (hsl-kpi-calculator-2026-07.md §Scoring the upcoming week). */}
+        {ahead && weekResolved && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200">
+            <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
+            <span className="font-semibold">Scoring ahead: week of {fmtWeekRange(weekStart)}.</span>
+            <span className="opacity-80">
+              No Hubstaff report for this week yet{liveWeekStart ? ` (the live week is ${fmtWeekRange(liveWeekStart)})` : ''}.
+              Bonuses you enter are saved under this week and will be paid with it once its report is
+              uploaded. Mark Ready or Lock when you are done — Accounting is notified.
+            </span>
+            <button
+              type="button"
+              onClick={() => void switchWeek(false)}
+              disabled={switchingWeek}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-0.5 font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:bg-transparent dark:text-amber-200 dark:hover:bg-amber-900/40"
+            >
+              <Zap className="h-3 w-3" /> Back to live
+            </button>
           </div>
         )}
 
@@ -4811,5 +4965,71 @@ function HslAddMemberModal({
         )}
       </motion.div>
     </motion.div>
+  );
+}
+
+// ── Week switch (live | upcoming) ─────────────────────────────────────────────
+
+/** "Sep 20 – Sep 26" for a Sunday key. Parsed as a LOCAL date, never through
+ *  `new Date('YYYY-MM-DD')`, which is UTC and shifts a day west of Greenwich. */
+function fmtWeekRange(start: string): string {
+  const fmt = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y!, m! - 1, d!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  return `${fmt(start)} – ${fmt(weekEndFromStart(start))}`;
+}
+
+/** Two weeks only, by ruling: the live batch and the ONE after it (Q3). */
+function HslWeekSwitch({
+  ahead,
+  liveWeekStart,
+  upcomingWeekStart,
+  busy,
+  onChange,
+}: {
+  ahead: boolean;
+  liveWeekStart: string;
+  upcomingWeekStart: string | null;
+  busy: boolean;
+  onChange: (ahead: boolean) => void;
+}) {
+  const options: { ahead: boolean; label: string; week: string | null }[] = [
+    { ahead: false, label: 'Live', week: liveWeekStart },
+    { ahead: true, label: 'Upcoming', week: upcomingWeekStart },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Pay week"
+      className="flex items-center rounded-lg border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/60"
+    >
+      {options.map((o) => {
+        const active = o.ahead === ahead;
+        return (
+          <button
+            key={o.label}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={busy || !o.week}
+            onClick={() => onChange(o.ahead)}
+            title={o.week ? `Week of ${fmtWeekRange(o.week)}` : undefined}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide transition-colors disabled:cursor-not-allowed',
+              active
+                ? o.ahead
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'
+                  : 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                : 'text-zinc-500 hover:text-zinc-800 disabled:opacity-50 dark:hover:text-zinc-200',
+            )}
+          >
+            {busy && !active ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+            {o.label}
+            {o.week && <span className="font-normal normal-case tracking-normal opacity-70">{fmtWeekRange(o.week)}</span>}
+          </button>
+        );
+      })}
+    </div>
   );
 }

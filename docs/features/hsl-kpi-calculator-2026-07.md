@@ -649,6 +649,26 @@ file exists. It wears an amber **upcoming** chip and an `UpcomingWeekBanner`; it
 labelled *past* (which would be a lie). Managers may score it, Mark Ready and Lock it in
 advance (Q1); QC officers may score it too (Q2); one week only, never two (Q3).
 
+### The HSL Branches tab got it 2026-09-23 — it had been left out
+
+"Both pickers" above were the **Departments** calculator and QC. `HslBonusCalculator` had **no
+week control at all** — it pinned itself to the live batch — so a manager on an HSL branch could
+not enter next week's bonus (Kane, 2026-09-23: *"HSL branch doesnt let me enter bonus for next
+week"*). It now offers a **Live | Upcoming** switch in the top bar, same rule, same
+`upcomingWeekFor`, same amber chip + banner, `ahead_of_hubstaff` on its period-status POST.
+
+- **The switch REMOUNTS the calculator** (`key` on the inner `HslBonusCalculatorForWeek`); it never
+  flips `weekStart` in place. Every branch's entries, `dirty`, autosave timers and failed-write hold
+  belong to ONE `(department, period_start)` address — switched in place, a debounce armed on the
+  live week would fire against the upcoming one. Pending edits are saved and **awaited** before the
+  switch; if any write fails the manager stays on the week they typed into.
+- **Only the manager's own KPI tab offers it** (`offerUpcomingWeek` from `ManagerApp`). The Payroll
+  Readiness "fix it from here" modal stays pinned to the live week — it exists to clear the batch
+  Accounting is processing.
+- If the upcoming week's file uploads while a manager is on it, the next resolve finds no upcoming
+  week and returns them to live (the week they scored is now the live week — same key, same rows).
+- The choice is not persisted: leaving the tab and coming back opens the live week.
+
 ### The "sync" already existed — only the picker withheld the week
 
 Nothing new joins the bonuses to the file. Applied rows and `hsl_bonus_period_status` are
