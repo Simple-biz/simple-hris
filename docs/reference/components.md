@@ -84,7 +84,7 @@ The top-level `"use client"` component. Owns the `activeTab` state (string), `mo
 
 On viewports narrower than `md` (768px), a top bar with a menu button opens the sidebar as a fixed drawer; backdrop tap or **Escape** closes it. `navigate()` wraps tab changes and closes the drawer.
 
-Also renders a global `<Toaster>` (sonner) for toast notifications that can be triggered from any child component.
+Renders **no** `<Toaster>` of its own since 2026-09-23 (`217544cd`): the single sonner Toaster is mounted once in `app/layout.tsx` (`top-right`, `richColors`, `closeButton`) and serves every dashboard. Never mount a second one — sonner's state is a module singleton, so each extra Toaster renders every toast again.
 
 See [RESPONSIVE-DESIGN.md](../design/responsive-design.md) for breakpoints, safe areas, and testing notes.
 

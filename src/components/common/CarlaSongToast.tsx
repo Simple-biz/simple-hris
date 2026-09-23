@@ -30,9 +30,10 @@ const THUMB_FALLBACK = '/carla-song-thumb.svg';
  * (z-[120]). Sound is on by default; the speaker button mutes/unmutes and
  * the ✕ stops the song outright.
  *
- * Deliberately NOT a sonner toast: each dashboard mounts its own <Toaster>
- * on top of the root one, so a sonner toast would render duplicated — and
- * none of them would outlive a route change.
+ * Deliberately NOT a sonner toast: it must outlive a route change and float
+ * above the switch loader, which a toast in the root Toaster's stack does not.
+ * (The per-dashboard Toasters that once duplicated every toast were removed
+ * 2026-09-23, 217544cd.)
  */
 export default function CarlaSongToast() {
   const state = useSyncExternalStore(subscribeCarlaSong, getCarlaSongState, getCarlaSongServerState);

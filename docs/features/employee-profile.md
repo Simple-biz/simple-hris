@@ -415,9 +415,9 @@ call site passes nothing and is byte-identical.
   TabBar's bank dot, Accounting's rose escalation and the Compensation strip's Payout chip all
   assert "needs setup" **on screen** to an employee who already has details. Pre-existing and
   byte-identical through this merge.
-- **`/employee` mounts sonner's `<Toaster>` twice** (`app/layout.tsx:60` and
-  `EmployeeApp.tsx:686`), so every toast on this surface renders twice — including this
-  surface's own copy-failure toast.
+- **~~`/employee` mounts sonner's `<Toaster>` twice~~ — fixed 2026-09-23 by Kane's `217544cd`.**
+  The `EmployeeApp` mount is gone; only `app/layout.tsx:60` remains, so each toast renders once.
+  The root Toaster carries no `theme` prop, so dark-mode appearance is unverified (audit item 188).
 - **Visual verification is owed.** No browser pass was possible during the build; port 3000 was
   held by another session throughout. Unobserved: the 0.18s section slide and its direction,
   the layout at phone width, the throttled-network proof that the payout skeleton wins over the

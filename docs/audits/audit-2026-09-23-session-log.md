@@ -1,0 +1,47 @@
+# Session log — 2026-09-23
+
+Log of the **20 most recent Claude sessions** (Sep 21 14:59Z → Sep 23 17:47Z), written by session
+`d5ce30e6` from the transcripts. **No product code.** Continues the
+[Sep 16 log](./audit-2026-09-16-session-log.md), which served as the running log for a week and
+holds **Open items 90–186**; those rows are **not** repeated or re-verified here. Rows **187+** are new.
+
+Every session below except `99a33e61` (read-only) had already written its own record into the Sep 16
+log, a feature doc, or memory. This log adds the session index that log's header table stopped
+keeping after row 9, and the three things no session wrote down.
+
+| # | Session | When (UTC) | Shipped |
+|---|---|---|---|
+| 1 | `60121c22` | Sep 21 14:59 → Sep 22 18:00 | **Master-list departments made editable like app ones, then sub-departments everywhere.** HSL manager access per sub-team (`e7cb87ac`), People step writes a real transfer (`efcbeaf0`), built-ins get sub-departments (`5bffa558`, `88067b71`), HSL data sub-teams (`a362e0cd`, `6077da7d`), sub-team bonus targets (`40c35b7b`, `ac934997`), transfers/grants read the map (`b3be176d`), data branch scoreable (`f92cbe52`) and finally **paid by the wizard** (`0f32d323`). Items 132, 139–143, 159, 160 (the second) |
+| 2 | `02fffc8d` | Sep 22 15:30 → 17:44 | **HSL Filing/Intake cards.** Library inputs named (`0927290a`); Filing duplicate retired (`b3dc6a98`) then **reversed within the hour**; Intake (`f8ef11a4`) and Filing (`e230972d`) scored from the Payment Catalog, code rules deleted. Sep 16 log rows 6–9; items 150–155 |
+| 3 | `4717f1d6` | Sep 22 16:20 → 18:41 | **Employee → Compensation → Current Paycycle** (`e3ee5541`); item 161 corrected to "not public" (`6bc14901`); the day ladder's duration-string bug (`b351bdd7`). Items 160 (the first), 161, 167, 168 |
+| 4 | `df025564` | Sep 22 16:53 → 17:02 | **Transfers "Request transfer in" search returned the whole roster**, one swapped response key from `b3be176d`; fixed by typing the body (`f7acb469`). Items 156–158 |
+| 5 | `99a33e61` | Sep 22 17:04 | Read-only: the 30 active AI/API Team work emails for Gmail. Nothing written, nothing to record |
+| 6 | `e738fb6f` | Sep 22 17:42 → 18:04 | **Wizard Step 2 labels a FIRST PAYCHECK** (`e33e3cfd`, INDEX `dce1bb03`, `611d9c47`). Item 164 |
+| 7 | `798b4b71` | Sep 22 17:55 → 18:44 | **Gift Tracker "Recently filled / updated" + HR alert** (`7ee98b64`); the one-letter alternate-recipient stub found. Items 165, 166 (the second) |
+| 8 | `228a2532` | Sep 22 18:01 → 18:14 | **Offboarded "Set rate" verified sticking**; staged week keeps the old rate (₱8,655.70) (`eaa06077`). Its probe `scripts/probe-offboarded-setrate-health.mts` was committed by Kane's `cf61088a` ("s"). Item 166 (the first) |
+| 9 | `c3da0c72` | Sep 22 18:36 → 18:57 | **Gift Tracker Submissions → Export CSV**, submission grain (`b3d5d05e`). No Open item; memory `gift-tracker-submissions-export` |
+| 10 | `1ae91f6f` | Sep 22 19:38 → 19:58 | **MESA: `dales@` charged; a saving member payroll never charges is no longer silent** (`85e9fe76`, `3a97d121`). Item 170 (the first) |
+| 11 | `75f027fd` | Sep 22 19:39 → 20:09 | **A time adjustment is paid on ONE week, and the paystub says so** (`6f2bdc32`). Item 171 (the first) |
+| 12 | `ac4b6f8d` | Sep 22 19:47 → 21:18 | **Dashboard-switch caching.** Premise measured false (`0bf6682a`); Employee cold tabs cached (`58d62793`); Admin store widened on Kane's (b) (`1714a096`); Orphanage store doc (`b01853ba`); QC/Contractor/Tickets stores (`cb0895df`). Items 169, 170–173 (the second of each duplicate) |
+| 13 | `87e50399` | Sep 22 20:10 → 20:38 | **Wizard HSL KPI Bonus column shows what dispatch pays** (`db5e87ff`); one person scored in two departments sums. Item 173 (the first) |
+| 14 | `97d96d13` | Sep 22 20:42 → 20:47 | **"Whole Jellyfish Jam song" brief hard-stopped** (`dbceca1f`). Items 174, 175 |
+| 15 | `32049db7` | Sep 22 20:21 → 21:25 | **Step-8 paystub preview stops printing a figure it lacks** (`38b9df2d`, `855caa92`); MEMORY.md compaction measured lossy (`f982f918`). Items 176–181 |
+| 16 | `8fd3171f` | Sep 23 16:35 → 16:45 | **Monday pass 33** staged (`feab043f`) and approved, 9 of 33 rows written before the budget died (`2ee7e02a`). Items 181 (fixed), 183, 184 |
+| 17 | `c91f3e1d` | Sep 23 17:12 → 17:19 | **HSL Branches calculator can score the upcoming week** (`00cd5eac`); hide-unassigned-KPI-depts brief hard-stopped (`b06d79bd`). Item 185 |
+| 18 | `734bd7c0` | Sep 23 17:26 → 17:27 | **Accounting → People: Pay button CEO-only** (`131289f7`). UI only; see item 189 |
+| 19 | `9777f778` | Sep 23 17:37 → 17:41 | **Rehire lands invisible** (Irene Fabian), brief hard-stopped (`603d9f8a`). Item 186 |
+| 20 | `7107106d` | Sep 23 14:09 → 17:47 | **Gift link and Gift Tracker.** Alternate work email ignored, found (`1455c485`), re-measured (`dc0a8540`), fixed (`123b6457`); hero banner dropped, four stat tiles (`ca8bbcb2`); Catalog **Price (PHP)** restored on Kane's (b), reference only (`d4cf4d17`). Item 182 |
+
+Also in the window, not from any of the 20 sessions: Kane's own `217544cd` ("d", Sep 23 15:53Z)
+removed the per-dashboard sonner `<Toaster>`s (item 188).
+
+---
+
+## Open items (new this session)
+
+| # | Item | State |
+|---|---|---|
+| **187** | **The Sep 16 log's Open items reuse SEVEN numbers — 154, 155, 160, 166, 170, 171, 173 each name two different rows** | Measured 2026-09-23 by listing every `\| **N** \|` row. Concurrent sessions each took "the next number" from a stale read (the same race `88b06f2d` fixed once by hand for 136). The pairs: **154** Total Project SP stale / Intake's ₱3,440,500 reprice · **155** Monday pass 31 applied / Filing's ₱967,600 reprice · **160** Current Paycycle shipped / stale HSL entry paid twice after transfer · **166** Offboarded Set rate verified / Gift "Recently filled" shipped · **170** `dales@` MESA / Employee cold tabs cached · **171** time adjustment paid every week / Admin store widened · **173** one person two departments (money) / QC-Contractor-Tickets stores. Plus **100** and **101** earlier in the same file. **Not renumbered:** memory hooks and commit messages cite these numbers, so a renumber would silently repoint them. Cite a duplicate as *number + session id* (the session table above names which is which). **OPEN — the fix is procedural:** re-read the file's highest number immediately before appending, the way CLAUDE.md already demands for `git status` |
+| **188** | **~~Toasts render twice~~ — Sep 12 item 58 was FIXED by Kane's `217544cd`, with three side effects nobody has looked at** | `217544cd` ("d", 2026-09-23) deleted the `<Toaster>` from all nine dashboards, `app/login/page.tsx` and both in `app/onboarding/[token]/page.tsx`. Only `app/layout.tsx:60` (`position="top-right" richColors closeButton`) survives, which is the ruling item 58 asked for. What moved with it, read from the diff, **not seen in a browser**: (1) **no `theme` prop** on the root — Accounting's was `theme={isDark ? 'dark' : 'light'}`, so dark-mode toasts may now render light; (2) **login and onboarding moved `top-center` → `top-right`**; (3) `richColors` + `closeButton` now apply on every dashboard that had neither. Doc references to "renders twice" corrected in this commit (`employee-profile.md`, `components.md`, `CarlaSongToast.tsx` comment, Sep 12 item 58). **OPEN — visual check of dark mode owed** |
+| **189** | **The CEO-only Pay button is UI-only; `/api/people/pay` still admits every Accounting editor** | Session `734bd7c0` (`131289f7`) hid the button from non-CEO roles on Accounting → People. The route's gate is still `requireRateVisibilitySession` (`app/api/people/pay/route.ts:5`), and `urgent-payments.md:160-161` says so plainly. The session offered the one-line server narrowing; **Kane has not answered.** A money-moving action whose only guard is a hidden button. **OPEN — Kane's call** |
+| **190** | **The Sep 16 log was never indexed in `docs/README.md`** | The audits table jumped from the Sep 14 row to nothing for the log holding items 90–186. Both it and this log are indexed in this commit. **DONE** |
