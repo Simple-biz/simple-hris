@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
+  AlertTriangle,
   Cake,
+  Check,
+  ChevronDown,
   Lightbulb,
   Loader2,
   Package,
@@ -21,6 +24,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  canonicalizeTierItems,
+  catalogItemNames,
+  missingTierItems,
+  tierGiftFields,
+  tierGiftItems,
+} from '@/lib/gift-tracker/anniversary-items';
 import { cn } from '@/lib/utils';
 
 export type CatalogItem = {
@@ -34,7 +45,10 @@ export type AnniversaryGift = {
   id: string;
   year: number; // e.g. 0.5, 1, 1.5
   month_label: string; // e.g. "6 Month Gift"
+  /** `gift_items` joined with " & " — kept for anything reading the old free text. */
   gift: string;
+  /** Item NAMES from Gift items this tier sends (anniversary-items.ts). Absent on tiers saved before 2026-09-23. */
+  gift_items?: string[];
   usd_est: number;
 };
 
@@ -166,6 +180,8 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
     };
   }, []);
 
+  const itemNames = useMemo(() => catalogItemNames(payload.items), [payload.items]);
+
   const dirty = useMemo(() => JSON.stringify(payload) !== originalJson, [payload, originalJson]);
 
   const save = useCallback(async () => {
@@ -214,6 +230,9 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
       anniversaries: p.anniversaries.map((row) => (row.id === id ? { ...row, ...patch } : row)),
     }));
   };
+  const setAnnivItems = (id: string, names: string[]) => {
+    updateAnniv(id, tierGiftFields(names));
+  };
   const removeAnniv = (id: string) => {
     setPayload((p) => ({ ...p, anniversaries: p.anniversaries.filter((row) => row.id !== id) }));
   };
@@ -231,6 +250,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
             year: nextYear,
             month_label: `${nextMonth} Month Gift`,
             gift: '',
+            gift_items: [],
             usd_est: 0,
           },
         ],
@@ -419,7 +439,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
               </Button>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Maps each tenure milestone to the gift sent that month.
+              Maps each tenure milestone to the gift sent that month, picked from Gift items.
             </p>
           </CardHeader>
           <CardContent className="pt-4">
@@ -460,11 +480,11 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <Input
-                          value={row.gift}
-                          onChange={(e) => updateAnniv(row.id, { gift: e.target.value })}
-                          className="h-8 border-zinc-200 text-xs dark:border-zinc-700"
-                          placeholder="Gift name"
+                        <AnniversaryGiftPicker
+                          selected={canonicalizeTierItems(tierGiftItems(row), itemNames)}
+                          options={itemNames}
+                          onChange={(names) => setAnnivItems(row.id, names)}
+                          label={row.month_label || 'tier'}
                         />
                       </td>
                       <td className="px-2 py-1.5">
@@ -553,5 +573,107 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
         </CardContent>
       </Card>
     </motion.div>
+  );
+}
+
+/**
+ * Multi-pick of Gift items names for one tier. A selected name missing from Gift
+ * items stays selected and is flagged; it can be unticked but not newly added.
+ */
+function AnniversaryGiftPicker({
+  selected,
+  options,
+  onChange,
+  label,
+}: {
+  selected: string[];
+  options: string[];
+  onChange: (names: string[]) => void;
+  label: string;
+}) {
+  const missing = missingTierItems(selected, options);
+  const selectedLower = new Set(selected.map((n) => n.toLowerCase()));
+  const toggle = (name: string) => {
+    const on = selectedLower.has(name.toLowerCase());
+    onChange(on ? selected.filter((n) => n.toLowerCase() !== name.toLowerCase()) : [...selected, name]);
+  };
+  // Options in Gift items order, then any stale names so they can be unticked.
+  const rows = [...options.map((n) => ({ name: n, stale: false })), ...missing.map((n) => ({ name: n, stale: true }))];
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        aria-label={`Gift for ${label}`}
+        className={cn(
+          'flex min-h-8 w-full items-center gap-1.5 rounded-md border bg-transparent px-2 py-1 text-left text-xs transition-colors hover:border-pink-300 dark:hover:border-pink-800',
+          missing.length > 0 ? 'border-amber-300 dark:border-amber-800/70' : 'border-zinc-200 dark:border-zinc-700',
+        )}
+      >
+        <span className="flex min-w-0 flex-1 flex-wrap gap-1">
+          {selected.length === 0 ? (
+            <span className="text-zinc-400">Pick from Gift items</span>
+          ) : (
+            selected.map((n) => {
+              const stale = missing.includes(n);
+              return (
+                <span
+                  key={n}
+                  title={stale ? 'Not in Gift items' : undefined}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium',
+                    stale
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                      : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300',
+                  )}
+                >
+                  {stale && <AlertTriangle className="h-3 w-3" aria-hidden />}
+                  {n}
+                </span>
+              );
+            })
+          )}
+        </span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 p-1.5">
+        {rows.length === 0 ? (
+          <p className="px-2 py-3 text-center text-xs text-zinc-500">
+            No items yet. Add some under Gift items.
+          </p>
+        ) : (
+          <ul className="flex flex-col" role="listbox" aria-multiselectable="true">
+            {rows.map(({ name, stale }) => {
+              const on = selectedLower.has(name.toLowerCase());
+              return (
+                <li key={`${stale ? 's' : 'o'}:${name}`}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={on}
+                    onClick={() => toggle(name)}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-pink-50 dark:hover:bg-pink-950/30"
+                  >
+                    <span
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                        on ? 'border-pink-600 bg-pink-600 text-white' : 'border-zinc-300 dark:border-zinc-600',
+                      )}
+                    >
+                      {on && <Check className="h-3 w-3" aria-hidden />}
+                    </span>
+                    <span className="flex-1">{name}</span>
+                    {stale && (
+                      <span className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                        not in Gift items
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

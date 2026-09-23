@@ -11,7 +11,10 @@ export type GiftAnniversaryTier = {
   id: string;
   year: number;
   month_label: string;
+  /** `gift_items` joined with " & " (legacy free-text reader). */
   gift: string;
+  /** Item NAMES from `items` this tier sends; absent on tiers saved before 2026-09-23. */
+  gift_items?: string[];
   usd_est: number;
 };
 
