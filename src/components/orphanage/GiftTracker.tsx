@@ -315,6 +315,8 @@ function classifyDaysUntil(daysUntil: number | null): GiftStatus {
 export type SubTab = 'roster' | 'submissions' | 'recent' | 'catalog';
 
 /** Left-to-right order of the sub-tabs — the axis the panel transition travels. */
+/** Submissions sub-tab page size (Kane, 2026-09-23). */
+const SUBMISSIONS_PAGE_SIZE = 20;
 const SUB_TAB_ORDER: readonly SubTab[] = ['roster', 'submissions', 'recent', 'catalog'];
 
 /**
@@ -2507,6 +2509,25 @@ function SubmissionsPanel({
     });
   }, [all, filter, search]);
 
+  // 20 per page (Kane, 2026-09-23). Paging is display-only: the counts, the
+  // pills and the CSV export all read the FULL `filtered`, never the page.
+  const [subPage, setSubPage] = useState(0);
+  useEffect(() => {
+    setSubPage(0);
+  }, [filter, search]);
+  const subPageCount = Math.max(1, Math.ceil(filtered.length / SUBMISSIONS_PAGE_SIZE));
+  // Clamped at read time: approving the last row on the last page shrinks the
+  // list under the cursor, and an empty page would read as "nothing pending".
+  const subPageSafe = Math.min(subPage, subPageCount - 1);
+  const pagedFiltered = useMemo(
+    () =>
+      filtered.slice(
+        subPageSafe * SUBMISSIONS_PAGE_SIZE,
+        (subPageSafe + 1) * SUBMISSIONS_PAGE_SIZE,
+      ),
+    [filtered, subPageSafe],
+  );
+
   const counts = useMemo(() => {
     const c = { pending: 0, approved: 0, rejected: 0, all: all.length };
     for (const item of all) c[item.sub.status] += 1;
@@ -2661,7 +2682,7 @@ function SubmissionsPanel({
             </p>
           ) : (
             <ul className="divide-y divide-emerald-100/70 dark:divide-emerald-900/35">
-              {filtered.map(({ sub, emailKey, name, department }) => {
+              {pagedFiltered.map(({ sub, emailKey, name, department }) => {
                 const isDeciding = decidingId === sub.id;
                 const isDeleting = deletingId === sub.id;
                 const isLocked = sub.status === 'approved';
@@ -2841,6 +2862,34 @@ function SubmissionsPanel({
                 );
               })}
             </ul>
+          )}
+          {filtered.length > SUBMISSIONS_PAGE_SIZE && (
+            <div data-readonly-allow className="flex items-center justify-between border-t border-emerald-100/60 bg-white/70 px-4 py-3 dark:border-emerald-900/40 dark:bg-zinc-950/40">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Page {subPageSafe + 1} of {subPageCount}
+                {' · '}{filtered.length.toLocaleString()} total
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 text-xs border-emerald-100/70 dark:border-emerald-900/50"
+                  disabled={subPageSafe === 0}
+                  onClick={() => setSubPage(Math.max(0, subPageSafe - 1))}
+                >
+                  ← Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 text-xs border-emerald-100/70 dark:border-emerald-900/50"
+                  disabled={subPageSafe >= subPageCount - 1}
+                  onClick={() => setSubPage(Math.min(subPageCount - 1, subPageSafe + 1))}
+                >
+                  Next →
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

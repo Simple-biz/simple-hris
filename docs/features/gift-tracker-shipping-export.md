@@ -4,6 +4,9 @@
 Tracker → **Roster** downloads the complete tenure-gift roster in three formats
 (shipped 2026-08-19, session `dd69f0d4`); an **Export CSV** button on HR → Gift
 Tracker → **Submissions** downloads the submissions in view (shipped 2026-09-22).
+"In view" means the status pill + search, **never the page**: the Submissions list
+pages at 20 (2026-09-23), and the export, the pill counts and the total all read
+the full filtered list, not the 20 on screen.
 The Roster file answers *who have we not heard from*; the Submissions file answers
 *what did these people send us*. Neither is the other one done wrong — see
 [§ The Submissions export](#the-submissions-export--the-other-grain-on-purpose).
