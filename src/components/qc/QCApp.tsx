@@ -29,7 +29,6 @@ import {
   Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Toaster } from '@/components/ui/sonner';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import { resolveFirstName } from '@/lib/name/first-name';
@@ -515,7 +514,6 @@ export default function QCApp() {
         </div>
       </main>
 
-      <Toaster richColors position="top-center" />
     </div>
   );
 }

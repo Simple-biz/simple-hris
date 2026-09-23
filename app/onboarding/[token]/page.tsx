@@ -26,7 +26,6 @@ import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Toaster } from '@/components/ui/sonner';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import type { OnboardingPaymentMethod } from '@/lib/supabase/hr-onboarding-submissions';
@@ -1009,7 +1008,6 @@ export default function OnboardingFormPage() {
         onConfirm={confirmNameCheck}
       />
 
-      <Toaster richColors position="top-center" />
     </main>
   );
 }
@@ -2412,7 +2410,6 @@ function SubmittedScreen({
           </button>
         )}
       </div>
-      <Toaster richColors position="top-center" />
     </main>
   );
 }

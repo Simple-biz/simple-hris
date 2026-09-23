@@ -27,7 +27,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
@@ -310,7 +309,6 @@ export default function HrApp() {
         />
       </main>
 
-      <Toaster richColors position="top-center" />
     </div>
   );
 }

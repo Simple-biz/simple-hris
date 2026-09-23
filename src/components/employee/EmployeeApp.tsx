@@ -21,7 +21,6 @@ import CeoChatBubble from '@/components/ceo/CeoChatBubble';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 // import MyDisputes from './MyDisputes'; // hidden — disputes now go through Orphanage Manager → Accounting flow
 import PayrollLockBanner from './PayrollLockBanner';
-import { Toaster } from '@/components/ui/sonner';
 import { Lock, Menu, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -684,7 +683,6 @@ export default function EmployeeApp() {
           }}
         />
       )}
-      <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </motion.div>
 
       {/* Matched white veil for the sign-in hand-off: starts opaque (continuing the video's

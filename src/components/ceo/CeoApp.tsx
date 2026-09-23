@@ -6,7 +6,6 @@ import AppFooter from '@/components/AppFooter';
 import { AnimatePresence, motion } from 'motion/react';
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Toaster } from '@/components/ui/sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
 import { bindAccountingCacheIdentity } from '@/lib/accounting/tab-cache';
@@ -216,7 +215,6 @@ export default function CeoApp() {
         <AppFooter />
       </main>
 
-      <Toaster richColors position="top-center" />
 
       {/* Floating AI assistant — CEO dashboard only. Hidden on the Penny AI tab,
           where the full-page chat takes over. The expand button jumps to that

@@ -6,7 +6,6 @@ import AppFooter from '@/components/AppFooter';
 import { Lock, Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
-import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
@@ -439,7 +438,6 @@ export default function PayrollClerkApp() {
         withCobrowseDriver
       />
 
-      <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );
 }

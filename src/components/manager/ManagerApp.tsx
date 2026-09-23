@@ -35,7 +35,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Toaster } from '@/components/ui/sonner';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normEmail } from '@/lib/email/norm-email';
 import { SESSION_EMAIL_KEY, type Role } from '@/lib/rbac/views';
@@ -984,7 +983,6 @@ export default function ManagerApp() {
         <AppFooter />
       </main>
 
-      <Toaster richColors position="top-center" />
     </div>
   );
 }

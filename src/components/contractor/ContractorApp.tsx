@@ -8,7 +8,6 @@ import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Toaster } from '@/components/ui/sonner';
 import ContractorSidebar from './ContractorSidebar';
 import ContractorOverview from './ContractorOverview';
 import ContractorInvoices from './ContractorInvoices';
@@ -262,7 +261,6 @@ export default function ContractorApp() {
         <AppFooter />
       </main>
 
-      <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );
 }

@@ -7,7 +7,6 @@ import { AnimatePresence, motion, useReducedMotion, type Variants } from 'motion
 import { Loader2, LogIn, AlertCircle, Volume2, VolumeX, ShieldAlert, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 import { startCarlaSongIfEligible } from '@/lib/sound/carla-song';
 import {
@@ -723,7 +722,6 @@ function LoginPageInner() {
           </div>
         </div>
       </main>
-      <Toaster position="top-right" />
 
       {/* Seamless sign-in hand-off: full-screen video bridges the gap while the destination
           route warms in the background. Always in DOM (hidden) so videoRef is valid at click-time,

@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import SWall, { SWallNavLabel } from '@/components/swall/SWall';
 import { withViewTransition } from '@/lib/theme/with-view-transition';
-import { toast, Toaster } from 'sonner';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -1195,7 +1195,6 @@ export default function OrphanageApp() {
         </ReadOnlyTab>
         <AppFooter />
       </main>
-      <Toaster position="top-right" />
 
       <Dialog
         open={!!confirm}

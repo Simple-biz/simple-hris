@@ -15,7 +15,6 @@ import Sidebar from './components/Sidebar';
 import Overview from './components/Overview';
 import PayrollWizard from './components/PayrollWizard';
 import InternsPayrollView from '@/components/accounting/interns/InternsPayrollView';
-import { Toaster } from '@/components/ui/sonner';
 import SystemSettings from './components/SystemSettings';
 import PabDisputeQueue from './components/payroll/PabDisputeQueue';
 import PayrollDispatch from './components/payroll-clerk/PayrollDispatch';
@@ -592,7 +591,6 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             />
           )}
       </main>
-      <Toaster position="top-right" theme={isDark ? 'dark' : 'light'} />
     </div>
   );
 }
