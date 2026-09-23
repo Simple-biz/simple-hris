@@ -629,3 +629,49 @@ One new dependency: `@pdf-lib/fontkit` (font embedding). Whoever signs COEs need
 signature row — their printed **name and title** appear on the certificate, so granting
 Accounting → Documents to Payroll makes it read `Alissa Re · Payroll Coordinator` with no
 hardcoding.
+
+## Termination Letters — ledger-only leavers (`no_master`)
+
+Added 2026-09-23. A leaver who left **before the master list began (its first row is
+2026-04-21)** exists only on the `offboarded_sheet` ledger, so the Termination tab refuses them
+with `no_master`: it identifies on a master row, and none exists. Measured 2026-09-23: about
+**2,532 ledger addresses carry no master row** in any of the four email columns (counted by
+email, not folded by person).
+
+**Nothing in the app can repair this.** The app never inserts `global_master_list` rows; only the
+sheet sync does. **Do not send HR to re-add the person to the master sheet:** the sync inserts
+them ACTIVE and unstamped, and the tab then refuses them as `still_active`, and they are
+counted in active headcount.
+
+The repair is [`scripts/insert-ledger-only-master-row.mts`](../../scripts/insert-ledger-only-master-row.mts),
+**one work email per run**, dry run by default and `--apply` to write. It INSERTs one master row
+copied from the ledger and pre-stamped with the LATEST ledger departure (reason verbatim), then
+reads it back. Rules it holds:
+
+- **Refuses if any master row carries the work OR personal email** in any email column. A
+  recycled work email would otherwise stamp its live holder by association.
+- **Refuses if the ledger names more than one personal email for the work email, or that
+  inbox under another work email.** Which human it is cannot be known.
+- **Runs the proposed row through `arbitrateTerminationFacts` and writes nothing unless the
+  verdict is facts.** Hours are passed as `unavailable`, and the live tab still runs T4 itself.
+- `last_seen_upload_id` / `first_seen_upload_id` are **NULL**, which never equals the current
+  upload, so the row is never active and never outranks a sheet row. `source_file` =
+  `manual_ledger_only_<date>`, `off_boarded_by` = `system:ledger-only-master-row`. The sync never
+  deletes or un-stamps it (`global-master-list-db.ts:1007-1025`).
+- `Start Date` and `Department` are NULL unless passed (`--start-date MM/DD/YY` must fall before
+  the departure; `--department` must be a label some master row already carries). A NULL start
+  date is a blank the rep fills through the blank-only write-back. Department is never written
+  back, so the rep types it on the letter.
+- **Not a batch tool.** It was approved for one person (Raph Sepnio, `raphs@`). Folding the
+  ~2,532 needs its own dedupe (by personal email) and a separate decision.
+
+The rep-facing `no_master` copy ("HR has to repair the roster row first",
+`TerminationDocsPanel.tsx:151`) is misleading for this case, because there is no row to repair.
+It is logged as an open item, not changed here.
+
+### Deploy notes — ledger-only insert
+
+No migration. `raphs@simple.biz`: dry run clean 2026-09-23 (verdict FACTS, "Raphael Sepnio",
+March 2, 2026, Performance; start date and department blank). **`--apply` PENDING. Kane runs it:**
+`$env:TSX_TSCONFIG_PATH="tsconfig.readiness-verify.json"; node --import tsx scripts/insert-ledger-only-master-row.mts --work-email raphs@simple.biz --apply`.
+Revert = delete the one printed row id.
