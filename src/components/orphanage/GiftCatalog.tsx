@@ -7,7 +7,6 @@ import {
   Cake,
   Check,
   ChevronDown,
-  Lightbulb,
   Loader2,
   Package,
   Plus,
@@ -258,19 +257,6 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
     });
   };
 
-  const updateSuggestion = (idx: number, value: string) => {
-    setPayload((p) => ({
-      ...p,
-      suggestions: p.suggestions.map((s, i) => (i === idx ? value : s)),
-    }));
-  };
-  const removeSuggestion = (idx: number) => {
-    setPayload((p) => ({ ...p, suggestions: p.suggestions.filter((_, i) => i !== idx) }));
-  };
-  const addSuggestion = () => {
-    setPayload((p) => ({ ...p, suggestions: [...p.suggestions, ''] }));
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500">
@@ -514,64 +500,6 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
         </Card>
       </div>
 
-      {/* Suggestions */}
-      <Card className="border-pink-100/80 bg-gradient-to-br from-white via-pink-50/30 to-white shadow-md ring-1 ring-pink-500/8 dark:border-pink-950/55 dark:from-zinc-950 dark:via-pink-950/12 dark:to-zinc-950 dark:ring-pink-400/10">
-        <CardHeader className="flex flex-col gap-1 border-b border-pink-100/60 pb-4 dark:border-pink-900/40">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-600 text-white shadow-sm shadow-amber-500/25">
-                <Lightbulb className="h-4 w-4" />
-              </div>
-              <CardTitle className="text-base font-semibold">Suggestions</CardTitle>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 border-pink-100/70 dark:border-pink-900/50"
-              onClick={addSuggestion}
-            >
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              Add suggestion
-            </Button>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Free-form ideas not yet in the catalog.
-          </p>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2 pt-4">
-          {payload.suggestions.length === 0 ? (
-            <p className="rounded-md border border-dashed border-pink-200 bg-white/60 px-3 py-4 text-center text-xs text-zinc-500 dark:border-pink-900/50 dark:bg-zinc-950/40">
-              No suggestions yet.
-            </p>
-          ) : (
-            payload.suggestions.map((s, idx) => (
-              <motion.div
-                key={`${idx}-${s.length}`}
-                initial={{ opacity: 0, x: -6 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.18 }}
-                className="flex items-center gap-2"
-              >
-                <Input
-                  value={s}
-                  onChange={(e) => updateSuggestion(idx, e.target.value)}
-                  className="h-8 border-zinc-200 text-xs dark:border-zinc-700"
-                  placeholder="Suggestion text"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 shrink-0 text-rose-500 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
-                  onClick={() => removeSuggestion(idx)}
-                  aria-label="Remove suggestion"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </motion.div>
-            ))
-          )}
-        </CardContent>
-      </Card>
     </motion.div>
   );
 }
