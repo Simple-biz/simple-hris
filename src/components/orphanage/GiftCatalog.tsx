@@ -315,7 +315,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
               </Button>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Catalog of items that can be sent as a gift.
+              Catalog of items that can be sent as a gift. Prices in PHP, for reference.
             </p>
           </CardHeader>
           <CardContent className="pt-4">
@@ -325,6 +325,10 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                   <tr>
                     <th className="px-3 py-2 font-semibold">Item</th>
                     <th className="px-3 py-2 font-semibold">Description</th>
+                    {/* Reference only (Kane, 2026-09-23): what an item costs. It
+                        never reaches approval, the export or payroll — gifts
+                        stay information-only (memory gift-feature-info-only). */}
+                    <th className="px-3 py-2 font-semibold w-[120px]">Price (PHP)</th>
                     <th className="px-2 py-2 w-[1%]" />
                   </tr>
                 </thead>
@@ -354,6 +358,21 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                         />
                       </td>
                       <td className="px-2 py-1.5">
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          min={0}
+                          step="0.01"
+                          value={row.price_php}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            updateItem(row.id, { price_php: Number.isFinite(n) && n >= 0 ? n : 0 });
+                          }}
+                          className="h-8 border-zinc-200 text-right text-xs tabular-nums dark:border-zinc-700"
+                          aria-label={`Price in PHP for ${row.item || 'item'}`}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -368,7 +387,7 @@ export default function GiftCatalog({ viewerEmail }: { viewerEmail?: string | nu
                   ))}
                   {payload.items.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="px-3 py-6 text-center text-xs text-zinc-400">
+                      <td colSpan={4} className="px-3 py-6 text-center text-xs text-zinc-400">
                         No items yet — click "Add item".
                       </td>
                     </tr>

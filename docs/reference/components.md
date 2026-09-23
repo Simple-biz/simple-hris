@@ -1716,7 +1716,7 @@ Read-only (approve/reject happens on the Accounting side).
 
 ### `src/components/orphanage/GiftCatalog.tsx`
 
-Editable catalog of giftable items, anniversary-tier mappings, and free-form suggestions (`GiftTracker` -> Catalog sub-tab). This catalog drives auto-derivation of which gift an approved tenure milestone gets. `CatalogPayload = { items, anniversaries, suggestions }`; seeds `DEFAULT_PAYLOAD` when empty. `dirty` = JSON diff. Data: `GET /api/gift-catalog`, `PUT /api/gift-catalog`. The anniversary `year` (0.5/1/1.5...) and item name are the join keys `GiftTracker.deriveGiftForMilestone` uses.
+Editable catalog of giftable items, anniversary-tier mappings, and free-form suggestions (`GiftTracker` -> Catalog sub-tab). This catalog drives auto-derivation of which gift an approved tenure milestone gets. `CatalogPayload = { items, anniversaries, suggestions }`; seeds `DEFAULT_PAYLOAD` when empty. `dirty` = JSON diff. Data: `GET /api/gift-catalog`, `PUT /api/gift-catalog`. The anniversary `year` (0.5/1/1.5...) and item name are the join keys `GiftTracker.deriveGiftForMilestone` uses. **Gift items show an editable `Price (PHP)` column** bound to `price_php` (restored 2026-09-23 on Kane's ask, after its 2026-07-14 removal). It is **reference only**: what an item costs. It never reaches approval, the shipping export or payroll ([gift-tracker-shipping-export.md](../features/gift-tracker-shipping-export.md) § *Tenure gifts carry no price*). The Anniversary Gifts table's USD estimate stays hidden.
 
 ### `src/components/orphanage/GiftPayments.tsx`
 
