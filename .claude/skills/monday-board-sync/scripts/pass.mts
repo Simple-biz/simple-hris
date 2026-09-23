@@ -702,9 +702,9 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-22';
-export const AUDIT_RANGE = 'c58e0f6c..7c880535 (Sep 17 - Sep 21)';
-export const AUDIT_COMMITS = 22;
+export const PASS_DATE = '2026-09-23';
+export const AUDIT_RANGE = '7c880535..217544cd (Sep 21 - Sep 23)';
+export const AUDIT_COMMITS = 76;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -731,215 +731,220 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 31 · 2026-09-21 · THE Sep 17-21 RANGE, NINE ROWS, AND NOT ONE OF THEM IS DONE ──────
-  //
-  // Kane: "All committed features lets push it with the Monday Board and Skill please."
-  //
-  // WHAT THE RANGE IS. `c58e0f6c..7c880535` = 22 commits. Note the range is NOT what a first look
-  // says: `c58e0f6c..origin/main` is 20, and the 21st — `fe37d2fa`, Open item 121 — was committed
-  // by a CONCURRENT SESSION while this pass's evidence was being gathered, and is UNPUSHED. It is
-  // record-keeping for another row's work and takes no row. A SECOND concurrent commit, 7c880535
-  // (items 122-123), landed LATER IN THE SAME SESSION and is likewise docs-only with no row.
-  // Three of the derived rows had already written "0 unpushed" into their basis as a MEASURED
-  // fact, and it was false by the time it was written. Corrected before staging, and every
-  // conclusion re-checked per sha rather than on the aggregate count — all nine survived on their
-  // own ancestor evidence. The shared-checkout hazard is not theoretical, and the skill's
-  // pre-flight did not catch it: mtimes and a clean tree both passed, because the other session
-  // was in docs/audits/ and nowhere near the board-sync files.
-  //
-  // WHY NOTHING IS DONE. Every one of the nine is code-complete and every sha is an ancestor of
-  // origin/main, so nothing is In Progress on push grounds. All SEVEN migrations the range
-  // introduced are measured APPLIED — read-only probes on 2026-09-21 against production, each
-  // with a negative control that correctly errored (42703 for a missing column, PGRST205 for a
-  // missing table), because a probe that cannot fail proves nothing. Zero n8n workflows in the
-  // range. So NO external step holds any row here.
-  //
-  // What holds all nine is the gate's last line: nobody has recorded looking at any of them in
-  // production. "All committed features" is a statement about git, not about a browser. The gate's
-  // answer to a blanket Done is to ask WHICH ONES and record the answer as the basis — so these go
-  // on as Pending Deploy carrying ESTIMATED SP, and a second, one-line pass moves the ones Kane
-  // names. 43 SP of Actual is not written on an inference.
-  //
-  // TWO ROWS CANNOT GO DONE EVEN IF HE SAYS SO, and they are named so the question is precise:
-  //   · the Gift Tracker toggle — MEASURED: 57 gift-shipping rows in production, ZERO with a named
-  //     recipient, and the control is gated `peopleAltRecipient > 0` BY DESIGN. It renders nowhere.
-  //     Nobody can click through a control that is correctly suppressing itself.
-  //   · the staff read/triage API — `grep` finds ZERO callers and there is no tab body, so the
-  //     834-line route is dead code in production. Real work, really merged, not reachable.
-  //
-  // WHAT THE ADVERSARIAL PASS CHANGED, because the first draft of this pass was wrong in ways that
-  // would have gone onto a shared board as fact. Six of seven derived rows were REFUTED:
-  //   · the security row claimed "all 80 re-read", "fourteen newly closed" and "ten partly" — the
-  //     artifact's own preamble says rows not re-verified keep their old status, five of the
-  //     fourteen were already closed on 2026-08-10 by an S26 row that banked 5 SP for them, and
-  //     `grep -c "| PARTIAL |"` = 13. Name corrected to nine/thirteen; SP corrected 3 → 2.
-  //   · the gift row's entire basis was "migration un-run" — it is applied. Measured, twice.
-  //   · two names overclaimed a surface that does not exist ("gets its API", "triage line").
-  //   · `26292c44` ("push") is TWO features in one commit — 834 insertions of staff tickets route
-  //     against 714 of live chat. It is listed under both rows WITH THE SPLIT NAMED in each basis,
-  //     because excluding a sha is not what prevents a double-count; saying which half is whose is.
-  //   · `2e542207` was in NO cluster and is real work — a regression fix for damage a sibling row
-  //     caused. `comm -12` against the employee-side commit returns EMPTY. It gets its own Bug row.
+  // —── PASS 33 · 2026-09-23 · 7c880535..217544cd, 76 commits, 33 rows / 129 SP ─────────────────
+  // Kane: "All withheld SP lets push to Sprint 29". Ledger owed 0; pass 31 already applied (hash
+  // bbd873731858). So the withheld SP was 76 commits with no row. Pass 31's nine rows are in git.
+  // NO ROW, by design (23): dc0a8540 1455c485 f982f918 2ab2755d 0bf6682a c9c58b29 88b06f2d f1aff5ba
+  // 39317a47 747f67c4 db96eb5c (audit-log lines) · d6910031 7427c41a eaa06077 cf61088a (read-only
+  // probes; cf61088a "s" is a probe + .impeccable config + tsbuildinfo) · dbceca1f (cue doc) ·
+  // f8db0012 (a plan, no code) · feda6da5 2f41577b b5d61fda 25a3cbff 9499ef53 558d6e8a (board passes).
+  // MEASURED 2026-09-23 read-only (control table correctly PGRST205): the gift_shipping.submitted
+  // widen is NOT APPLIED — 79 rejected inserts since 2026-09-22 20:19Z.
   {
-    name: 'The security audit re-read against current source — nine findings newly closed, thirteen only partly closed, and the worst hole is not one of the eighty',
-    status: 'Done',
-    completed: '2026-09-17',
-    shas: ['480d31dc', '3119740e'],
-    basis:
-      'A re-read that CHANGED the record, so it is work: 480d31dc adds a 66-line second re-verification ' +
-      'block to SECURITY_AUDIT.md and 3119740e adds an 81-row per-row status checklist, turning "is #32 ' +
-      'fixed" into a lookup. Zero lines of application code, zero migrations, zero fixes. Every count in ' +
-      'the name is measured, not quoted: the commit prose says fourteen newly closed and ten partial, but ' +
-      'five of the fourteen (#34/35/36/43/62) were already closed on 2026-08-10 by the S26 row that banked ' +
-      '5 SP for them, and grep -c on the shipped table returns 13 PARTIAL, not 10. Pending Deploy, not ' +
-      'Done: nobody has recorded reviewing the output, and the row it describes is a measurement, not a fix. ' +
-      'No external step exists for a doc-only Spike — no migration, no workflow, no grant — so the confirmation is the whole gate. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
-  },
-  {
-    name: 'Diagnostics draws three dashboard-scoped service maps from one probe response — a scoped map reports only on the nodes it draws',
-    status: 'Done',
-    completed: '2026-09-18',
-    shas: ['8ea8ecf2', '65a199bb'],
-    basis:
-      'One probe response fans into three dashboard-scoped maps, each reporting only on the nodes it ' +
-      'draws. 8ea8ecf2 is the build (10 files: the diagnostics route, SystemDiagnostics.tsx, ' +
-      'diagnostics-probes.ts and diagnostics-scopes.ts with its test); 65a199bb propagates it through 12 ' +
-      'reference docs in the same session. The only row in pass 31 that survived adversarial verification ' +
-      'with no correction to name, SP, status, date or sprint. Pending Deploy because the three new probes ' +
-      'have never executed against production — the first admin to open the tabs is the confirmation. ' +
-      'No migration, no webhook slug and no role grant in this row\'s diff, so nothing external was outstanding; the open question was only whether the three new probes had ever executed against production, which the click-through settles. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
-  },
-  {
-    name: 'An employee can name somebody else to receive a tenure gift — the courier still calls the employee, and the three recipient columns move as a set',
-    status: 'Done',
-    completed: '2026-09-18',
-    shas: ['6dba7f86', 'c606d742'],
-    basis:
-      'Three structured columns replace a Notes box whose placeholder had read "alternative recipient" ' +
-      'since the form shipped. Kane ruled all three questions on 2026-09-18: active_contact_number stays ' +
-      'THE EMPLOYEE\'S number — the one the courier calls — and recipient_contact is an additional fallback ' +
-      'that never substitutes, pinned by a test. No backfill of the prose spouse names already in notes: ' +
-      'guessing intent out of free text redirects real parcels on a regex. THE MIGRATION IS APPLIED — ' +
-      'measured read-only 2026-09-21, all three columns returning 200, with a control column correctly ' +
-      'erroring 42703. The feature doc said "PENDING — Kane runs this" and was STALE; corrected in this ' +
-      'same commit. So the only thing between this row and Done is somebody looking at it. ' +
-      'The migration is MEASURED APPLIED (2026-09-21, read-only, negative control errored 42703), which was this row\'s only named blocker and was FALSE when derived — the feature doc had said PENDING for three days. With it measured and the surface confirmed, nothing is open. The three CHECK constraints remain honestly UNVERIFIED (no read path to pg_constraint, and proving a CHECK bites needs a write) — stated, not counted as closed. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
-  },
-  {
-    name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it',
+    name: 'Discovery can add an external member to its KPI calculator',
     status: 'Pending Deploy',
-    shas: ['06137741'],
-    basis:
-      'The alternate-recipient feature shipped 2026-09-18 with no way to ASK the question on screen — the ' +
-      'count lived only in the export summary band, so "which parcels go to a spouse?" could not be ' +
-      'answered before packing. Now a tile and a toggle. Deliberately NOT a fifth fulfilment facet: ' +
-      'All/We owe/Not recorded/Received are mutually exclusive states of one question, and this ANDs with ' +
-      'whichever is selected. CANNOT REACH DONE ON A CLICK-THROUGH, and that is not a defect: measured ' +
-      '2026-09-21, production holds 57 gift-shipping rows with ZERO named recipients, and the toggle is ' +
-      'gated peopleAltRecipient > 0 by design, because a permanently-zero control teaches people to ' +
-      'ignore the toolbar. The tile renders at zero; the toggle correctly does not render at all.',
+    shas: ['769328a0'],
+    basis: 'DeptBonusCalculator lets Discovery add a member from outside its roster, pinned by 54 lines of kpi-calculator-depts tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket',
+    status: 'Pending Deploy',
+    shas: ['240192e2'],
+    basis: 'SupportTicketsTab.tsx (953 lines) replaces the dev Kanban data the tab used to show, plus app/api/support/tickets/[id]/reply (641 lines) and ticket-live.ts. This is what retired the dead-code blocker on the pass-31 staff API row. Pending Deploy, held by a measured external step below.',
     blockers: [
-      'Self-suppressing at zero BY DESIGN: 57 production gift-shipping rows, 0 with a named recipient, so the toggle renders nowhere and cannot be clicked through until somebody names one',
-      'The three CHECK constraints and the partial index are UNVERIFIED — PostgREST gives no read path to pg_constraint and proving a CHECK bites needs a write, which is not authorised',
+      'Carried from pass 31, last measured 2026-09-22 read-only: ZERO employee_support grants in employee_roles or employee_feature_permissions (paged), so no answerer can open the board',
+      'webhooks.config holds none of the five support slugs, so support_replied (the email leg of a staff reply) resolves to nothing',
     ],
   },
   {
-    name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it',
+    name: 'Edit Department manager access is scoped — one list per HSL sub-team, never one collapsed family list',
     status: 'Pending Deploy',
-    shas: ['00faf88f', 'e59a16ea', 'd5ad2d72', 'a9b291f7', 'b0c8df48', '26292c44'],
-    basis:
-      'The largest thing in the range: e59a16ea alone is 36 files / 11,264 insertions — three chat tables ' +
-      '(RLS on, deliberately out of supabase_realtime), a new employee_support role and FeatureViewKey, ' +
-      'the queue, the on-queue agents and the availability route. d5ad2d72 closes seven review findings ' +
-      'and gives the chat sweep a second caller; b0c8df48 adds the chat category column and repairs a ' +
-      'migration that wrongly claimed its trigger already covered triaged_by — caught by a control, and ' +
-      'fixed in the TRIGGER rather than by weakening the control. SHA SPLIT DECLARED: 26292c44 is a mixed ' +
-      '"push" commit and only its 714 live-chat insertions belong to this row (queue route 328, ' +
-      'abandonment.ts 82 + its test 100, chat-sweep.ts 204); its 834-line staff tickets route belongs to ' +
-      'the staff API row. Named for BOTH conversion paths because the code now converts a chat to a ' +
-      'ticket when nobody answers AND when an agent addresses it. Kane overrode Carla\'s signed Decision 2 ' +
-      'to build this before the ticket side — a named, dated reversal, recorded so it is never ' +
-      'rediscovered as drift. Migrations measured APPLIED 2026-09-21, 171 checks.',
-    blockers: [
-      'No recorded production click-through of the chat by anyone',
-      'The five employee_support grants (Carla, Claire, Ainsley, Grace, Alivia) are a manual step with no confirmation — until they exist no agent can open the queue and the employee half talks to an empty room',
-      'MEASURED 2026-09-22 read-only: the live webhooks.config app_setting holds 25 entries and NONE of the five support slugs  support_chat_queued and support_chat_replied are both ABSENT (controls ticket_replied and ticket_moved both PRESENT), so the n8n email leg of the chat resolves to nothing',
-    ],
+    shas: ['e7cb87ac'],
+    basis: 'EditBuiltinManagersDialog and registry.ts: a flat built-in is one scope claiming every alias, HSL is one scope per hsl:sub matched exactly, because collapsing them would be a family-wide revoke. scripts/audit-department-manager-grants.mts measures the live grants read-only. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
   },
   {
-    name: 'The Employee Support triage and lifecycle rules and the columns behind them — ranking is the promotion, and whoever touches a ticket first holds it',
+    name: 'The Edit Department People step moves someone as a real department transfer, never a registry note',
+    status: 'Pending Deploy',
+    shas: ['efcbeaf0'],
+    basis: 'The People step writes a real transfer (master list, Sheet, applied row) through direct-transfer.ts, never a registry member record; bare "HSL" is refused. The feature doc says it has never been run against production. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Built-in departments can have sub-departments, HSL included — code teams pinned, data teams under hsl: labels',
+    status: 'Pending Deploy',
+    shas: ['5bffa558', '88067b71', 'a362e0cd'],
+    basis: 'Three commits sharing builtin-subs.ts / EditBuiltinManagersDialog / registry.ts: 5bffa558 adds sub-departments to built-ins (app_settings keyed builtinKey:subKey), 88067b71 fixes a sub-departments-only save reporting "Nothing has changed", a362e0cd extends it to HSL with the 16 code teams pinned and data teams kept under hsl: labels. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'A Bonus Library bonus can target one sub-team — it lands on the parent card and reaches only that team’s members',
+    status: 'Pending Deploy',
+    shas: ['6077da7d', '40c35b7b'],
+    basis: 'CURRENT RULE ONLY: 6077da7d first kept sub-teams off Assignments and System Bonuses, and 40c35b7b reversed that the same day. assignment-scope.ts resolves a sub-team target per member on the parent card, additive, applied rows keeping the parent key. One row, describing the rule that ships. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'A data HSL sub-team can be transferred into and granted — every transfer, HR and roles surface reads the sub-team map',
+    status: 'Pending Deploy',
+    shas: ['b3be176d', 'f7acb469'],
+    basis: 'b3be176d makes every surface (transfer dialog + POST, HR onboarding, Admin Roles chips, pay-structures) read the sub-team map; f7acb469 fixes the regression it introduced in transfer-candidates, where people and builtinSubs were swapped and the search returned the whole roster. Same file, so one row, last sha the fix. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'A Bonus Library bonus assigned to an HSL sub-team is scored on that team’s KPI card, with its inputs named',
+    status: 'Pending Deploy',
+    shas: ['ac934997', '0927290a'],
+    basis: 'catalog-bonus.ts (186 lines + 202 of tests) scores a Library bonus on an HSL sub-team card; 0927290a names its inputs on HslBonusCalculator. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'A data HSL sub-team is a scoreable branch, so it appears in KPI Submissions',
+    status: 'Pending Deploy',
+    shas: ['f92cbe52'],
+    basis: 'data-branch.ts gives a data sub-team a DeptConfig with no rules, so it shows in KPI Submissions and reads no_bonus when nothing is assigned; payroll-readiness learns it too. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The Payroll Wizard pays a data HSL sub-team — staffed, railed and paid, not just scoreable',
+    status: 'Pending Deploy',
+    shas: ['0f32d323'],
+    basis: 'Closes audit item 159: the card, the roster and the payout were three separate gates and the wizard paid a data sub-team through none of them. manager-week-amount.ts + roster-merge.ts + PayrollWizard, 186 lines of new tests. Money path, hence Critical. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Intake and Filing Specialist are scored from the Payment Catalog — the code rules are retired and the Library programme is the one rule',
+    status: 'Pending Deploy',
+    shas: ['b3dc6a98', 'f8ef11a4', 'e230972d'],
+    basis: 'CURRENT RULE ONLY: b3dc6a98 set Filing Attested Cases to 20/30/40 and added a script to retire the duplicate Library programme; e230972d DELETED that script and went the other way (code rules out via rules: [] + rulesFromCatalog, Library in), following f8ef11a4, which did the same for Intake. Probes are read-only. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'A department transfer no longer forks a second master-list row',
+    status: 'Pending Deploy',
+    shas: ['ea980676'],
+    basis: 'sheet-assignment.ts stops the master sync keying a transfer as a new (personal_email, department) row, which is what orphaned 304 of 314 duplicate groups. 131 lines of tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'One definition of an active employee — the master list reconciled and the upload gate dropped, both counts equal',
     status: 'Done',
     completed: '2026-09-21',
-    shas: ['ba1b132f', '8c7d1be0'],
-    basis:
-      'Pure modules and columns, no screen — and the name says so on purpose. ba1b132f ships triage.ts ' +
-      'with its test plus the triage columns (priority, triaged_at, triaged_by) and the notification-type ' +
-      'widen including task 3; 8c7d1be0 ships lifecycle.ts with its test and records two rulings for the ' +
-      'next build. Both migrations measured APPLIED 2026-09-21. The first draft of this row was called ' +
-      '"the triage LINE", which reads on a shared board as a shipped queue screen — src/components/tickets/ ' +
-      'holds no SupportTicketsTab, so that name was a scope overclaim and was corrected. Pending Deploy ' +
-      'because the rules are real, tested and live in the database, and the surface they exist for is not. ' +
-      'Both of this row\'s blockers are now settled by measurement rather than by assertion. The triage columns are APPLIED, and the `triaged_by` lower-casing repair — the one the original ALTER falsely claimed its trigger already covered — was confirmed landed by reading pg_proc directly: employee_support_tickets_normalize mentions triaged_by, so the CREATE OR REPLACE took. NOT a blocker and deliberately not treated as one: the staff screen these rules serve does not exist. This row is named for the rules and the columns precisely so Done cannot be read as a shipped queue screen — the same way the Employee Support data layer row went Done with no surface. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
+    shas: ['8635cb07', '5163c5b4', '35f6a5ab', '6738bf90', '8703f737', '5bd59ed0'],
+    basis: 'The 1,667-vs-1,143 investigation (8635cb07), the rehearsal-by-default reconcile (5163c5b4), the active_employees upload-gate drop with its restore file (35f6a5ab), the flip-back doc (6738bf90), a gate-check fix (8703f737) and the APPLIED record (5bd59ed0): 457 rows stamped, both counts 1,266 on 2026-09-21. Done ON MEASUREMENT, not on anyone\'s word: re-measured read-only 2026-09-23, active_employees and the unstamped master list both count 1,247, so the gap is still 0 two days after the apply (1,266 then; the drop is leavers, and the point is that the two agree). A data reconcile has no screen to click; the equality is the proof.',
   },
   {
-    name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them',
+    name: 'A diagnostics probe catches the two definitions of an active employee drifting apart',
     status: 'Pending Deploy',
-    shas: ['386c5c10', 'b5f82467'],
-    basis:
-      '12 files / 4,524 insertions: a Help button beside FAQs that REPLACED the chat button rather than ' +
-      'joining it, opening two doors — Chat Support and Raise a ticket — plus EmployeeSupportTickets ' +
-      '(form, history, track map) and the session-scoped routes behind it. Verified by hand at build ' +
-      'time, not by agent summary: the body email never writes the row (work_email is master-resolved, ' +
-      'filed_by_email comes from the session, and body.email reaches only authorizeEmailAccess); another ' +
-      'employee\'s id is a 404 and not a 403; an employee reply to a closed ticket reopens it as a CAS on ' +
-      'status with the message written first, while a staff reply does not — the asymmetry is deliberate ' +
-      'and lives in lifecycle.ts. A screening flag never blocks, because a blocking filter turns a false ' +
-      'positive into an employee who cannot report harassment on the channel built for it.',
+    shas: ['610adf41'],
+    basis: 'roster-drift.ts + a diagnostics node that fails when active_employees and the unstamped master list disagree: the regression guard for the reconcile row. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The external API pages on a UUID cursor — REST and MCP paging had never worked past the first page',
+    status: 'Pending Deploy',
+    shas: ['8160d05e'],
+    basis: 'The GML id is a UUID and the cursor was typed integer, so 1,141 of 1,641 active people were unreachable on REST and MCP since 09-16. Five test files updated. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Payment Catalog paints from the Accounting tab cache',
+    status: 'Pending Deploy',
+    shas: ['1758cdc2'],
+    basis: 'catalog-cache.ts (178 lines + 160 of tests) joined to the Accounting tab cache. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Employee Current Paycycle — the in-flight week broken down beside an eight-step payroll track',
+    status: 'Pending Deploy',
+    shas: ['e3ee5541', '6bc14901', 'b351bdd7'],
+    basis: 'current-paycycle route (401), CurrentPaycycle.tsx (514), paycycle-steps/arrival with tests; b351bdd7 fixes the hours (Hubstaff day cells are duration strings, now parsed via hubstaff/duration.ts). 6bc14901 is its doc correction. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Payroll Wizard Step 2 labels a first paycheck from Hubstaff history, never from a start date',
+    status: 'Pending Deploy',
+    shas: ['e33e3cfd', 'dce1bb03', '611d9c47'],
+    basis: 'first-paycheck.ts + first-hours-index.ts + a route: no Hubstaff hours for any alias in any earlier upload, display-only, a failed read is unavailable never zero. Carla meeting 2026-09-22 recorded. dce1bb03 also carries an unrelated read-only gift probe (no row). Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Gift Tracker Recently filled / updated — who used the link, and an alert to HR',
+    status: 'Pending Deploy',
+    shas: ['7ee98b64'],
+    basis: 'recent-submissions route + GiftRecentSubmissions.tsx + live hook, and a gift_shipping.submitted notification to grant holders. Pending Deploy, held by a measured external step below.',
     blockers: [
-      'No recorded click-through of the Help button in production',
-      'The staff-only trial gate Carla signed is STILL only a comment in EmployeeHelpMenu.tsx — with the migrations applied the Help button is live to every employee, not to a trial group',
-      'MEASURED 2026-09-22: zero employee_support grants in employee_roles (208 rows) or employee_feature_permissions (1,464 rows, PAGED past the 1000 cap), so none of the five named answerers can open the queue and the employee half still talks to an empty room',
-      'Manual deploy step with no script: the five holders were granted employee_support before the support_tickets key existed, so an admin must add the key by hand or re-grant',
+      'MEASURED 2026-09-23 read-only: references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql is NOT APPLIED. audit_log holds 79 notification.insert_failed rows, every one gift_shipping.submitted rejected by employee_notifications_type_check (23514), first 2026-09-22 20:19Z, latest 2026-09-23 16:31Z. The tab works (it reads audit_log); the HR alert is dead until the widen runs',
     ],
   },
   {
-    name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set',
+    name: 'The Gift Tracker Submissions tab exports its own CSV at submission grain',
     status: 'Pending Deploy',
-    shas: ['26292c44'],
-    basis:
-      'The 834-line app/api/support/tickets/route.ts out of the mixed "push" commit — the paused partial ' +
-      'that Open item 118 recorded as still sitting in the working tree actually LANDED here, which is ' +
-      'exactly the trap the skill warns about: a one-word commit message carrying a whole surface. SHA ' +
-      'SPLIT DECLARED: only the 834 staff-tickets insertions belong to this row; the same commit\'s 714 ' +
-      'live-chat insertions belong to the live-chat row, and both rows name the split so the sha appearing ' +
-      'twice cannot read as the work being counted twice. Two stages (line and board) and every claim, ' +
-      'rank and reassign is a compare-and-set. NAMED NARROWLY on purpose: the first draft said the staff ' +
-      'board "gets its API", and it does not — app/api/support/tickets/ holds route.ts ALONE, the plan\'s ' +
-      '[id]/reply route does not exist, so no staff member can ANSWER a ticket through any API.',
-    blockers: [
-      'RE-MEASURED 2026-09-22 and NO LONGER DEAD: src/components/tickets/SupportTicketsTab.tsx exists and calls api/support/tickets at four sites. What holds this row now is only that nobody has recorded opening the board in production',
-      'RE-MEASURED 2026-09-22: app/api/support/tickets/[id]/reply/route.ts DOES exist now, so task 7 has landed  this blocker is retired, and the row is held only for want of a production click-through',
-      'Doc rot to re-check: INDEX.md and employee-support.md described the routes as a paused partial; the routes and the tab both exist as of 2026-09-22',
-    ],
+    shas: ['b3d5d05e'],
+    basis: 'shipping-export.ts gains the submission-grain file with one shared column list; the roster file keeps never-submitted people, this one does not. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
   },
   {
-    name: 'The dev Kanban stopped waiting on a roles fetch to render, and Support Tickets joined the rail as its own tab',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['2e542207'],
-    basis:
-      'A REGRESSION FIX for damage a sibling row in this same pass caused, which is why it is a Bug and ' +
-      'not part of the employee-side row — comm -12 against that commit\'s file list returns EMPTY, so it ' +
-      'is independent work by the skill\'s own file-overlap test. Hosting Employee Support at /tickets ' +
-      '(e59a16ea) had tied the dev Kanban\'s rendering to a client-side roles fetch: activeView seeded ' +
-      'null, the Board\'s nav and its data fetch both gated on permsReady, and useFeaturePermissions seeds ' +
-      'roles empty until its round trip settles — so whenever that was slow the Board vanished for the ' +
-      'people it belongs to. Kane: "put back the BOARD SECTION … undo your shit". Now overview lands ' +
-      'first, nav paints from the first frame, the fetch runs on mount, and the component\'s one remaining ' +
-      'decision can move a support-only holder onto their tab but never hide the board. Kane\'s standing ' +
-      'rule recorded with it: do not touch the original ticket Kanban — its guarding is the route gate and ' +
-      'the tickets feature key, never a component waiting on a fetch. ' +
-      'A pure frontend repair with no migration, no workflow and no grant, so the confirmation is the whole gate — and it is the right evidence for this row specifically, because the bug was that the Board intermittently did not render. Somebody looking at it is the proof. Kane confirmed the click-through on 2026-09-21, asked as \'which of the nine\' rather than assumed from \'all committed features\' — he named everything except the Gift Tracker toggle and the staff triage API. That confirmation is the Done basis for this row.',
+    name: 'The Gift Tracker drops its hero banner for four stat tiles',
+    status: 'Pending Deploy',
+    shas: ['ca8bbcb2'],
+    basis: 'GiftTracker.tsx, 79 lines out, 19 in. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The gift address link finds its owner by an alternate work email, and the code goes to that address',
+    status: 'Pending Deploy',
+    shas: ['123b6457'],
+    basis: 'match.ts looks up all four email columns; identity stays the primary, the alternate company address receives the code. 98 lines of tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'A MESA member the ledger says is saving but payroll never charges is badged, not silent',
+    status: 'Pending Deploy',
+    shas: ['85e9fe76', '3a97d121'],
+    basis: 'membership-drift.ts badges the drift and toggle-mesa-member 409s an aliased opt-in; 3a97d121 records dales@ applied and 0 cases left. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'An approved time adjustment is paid on one week only, and the pay stub prints it as its own line',
+    status: 'Pending Deploy',
+    shas: ['6f2bdc32'],
+    basis: 'time-adjustment-week-scope.ts scopes the fold to activeBatchDateRange instead of the PAB month, which paid one approved day on every week of it; the stub gains a Time Adjustment line on statement, email and XLSX/PDF. Money path. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Five cold Employee dashboard tabs join the reload cache, and the cached rate row carries no bank routing',
+    status: 'Pending Deploy',
+    shas: ['58d62793'],
+    basis: 'KPI Results, Leaves, MESA, My Hours and Team join tab-cache.ts; rate-row-cache.ts keeps bank routing out of sessionStorage. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The Admin tab cache widens to Roles and one projected roster key, with the audit log kept out',
+    status: 'Pending Deploy',
+    shas: ['1714a096'],
+    basis: 'admin tab-cache.ts + master-row-cache.ts on Kane\'s (b) ruling: Roles in, AuditLogPanel out, one projected roster key. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'QC, Contractor and Tickets get cache stores from one shared factory',
+    status: 'Pending Deploy',
+    shas: ['cb0895df'],
+    basis: 'dashboard-cache/create-tab-cache.ts (316 lines + 261 of tests), the factory, with QC, Contractor and Tickets as its first users. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The Orphanage cache store gets its doc, Recent Submissions and Gift Catalog join it, and the bank-row tabs stay out on purpose',
+    status: 'Pending Deploy',
+    shas: ['b01853ba'],
+    basis: 'Doc for the seventh store plus two wires; four tabs carry account numbers on their primary row and stay uncached on purpose. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The wizard’s HSL KPI Bonus column shows the amount dispatch actually pays',
+    status: 'Pending Deploy',
+    shas: ['db5e87ff'],
+    basis: 'The Additions cell and footer read the raw work-email map against a Hubstaff-email row, showing zero where dispatch paid; now resolvedHslKpi. Two read-only audit scripts. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The Step-8 pay stub preview marks a figure it does not have as pending or unavailable instead of printing it',
+    status: 'Pending Deploy',
+    shas: ['38b9df2d', '855caa92'],
+    basis: 'paystub-field-state.ts: settled / pending / unavailable per line, from the loader never the amount; 855caa92 routes every bonus line through the additions blob. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The hardening skill closes the documentation in the same commit as the code',
+    status: 'Pending Deploy',
+    shas: ['ef6bca26'],
+    basis: 'Skill doc change: .claude/skills/hardening/SKILL.md, +80 lines. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'The reference docs index every route and component, and three false coverage claims become measured counts',
+    status: 'Pending Deploy',
+    shas: ['30d38244', '8d2f7930', '6a776c7f'],
+    basis: 'docs/reference api-reference + components indexed in full, 37 moved paths repointed, three coverage claims replaced by measured counts. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
+  },
+  {
+    name: 'Toasts no longer render twice — the per-dashboard Toasters that duplicated the root one are gone',
+    status: 'Pending Deploy',
+    shas: ['217544cd'],
+    basis: 'app/layout.tsx already mounts the root Toaster; 11 dashboards mounted their own on top. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet.',
   },
 ];
 
