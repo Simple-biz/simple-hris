@@ -151,6 +151,12 @@ them, and two tests pin it: one rejects any column header containing
 price/cost/amount/PHP/catalog, the other feeds a submission carrying all three
 fields and asserts none reach the CSV.
 
+**The Catalog shows a price again, and this rule is unchanged** (2026-09-23,
+`d4cf4d17`, Kane ruled (b)): the Gift items table has an editable **Price (PHP)**
+column bound to the catalog's stored `price_php`, **for reference only**. It is on
+Gift items alone (Anniversary Gifts has no price). It never reaches approval, the
+shipping export, the submissions export, or payroll, and both tests above still hold.
+
 ## The submission read must stay paged
 
 `listShippingDetails` uses `selectAllPaged`. It was a bare `.select()`; PostgREST

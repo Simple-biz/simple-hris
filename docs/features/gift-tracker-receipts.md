@@ -62,6 +62,13 @@ an absence, and the two would immediately drift apart.
 the export all carry them as separate counts, because one is a debt the company
 knows about and the other is a question nobody has answered.
 
+**The Gift Tracker header is exactly four tiles** (2026-09-23, `ca8bbcb2`, Kane:
+*"only show 4 KPI Cards that are useful"*): **Gifts owed · Not recorded · Received ·
+Received by someone else**. The first three mirror the roster toolbar's filters;
+the fourth stays slate like its toggle ([[gift-alternate-recipient]]). The gradient
+hero card and the *Tracked employees / Within 1 week / 1 month / 3 months* tiles
+were removed. A new tile must answer a receipt question, not re-count the roster.
+
 ## The key is `work_email`, and that is not cosmetic
 
 `employee_gift_shipping_details` is `UNIQUE (personal_email, milestone_index)`.
