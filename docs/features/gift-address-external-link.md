@@ -15,6 +15,7 @@ Built 2026-09-12 on Kane's approval of the posted blueprint.
 | Migration runner | `scripts/apply-gift-address-migration.mts` |
 | OTP core (generic, tested) | `src/lib/otp/otp-core.ts` + `otp-core.test.ts` |
 | OTP bound to this table | `src/lib/gift-address/otp.ts` |
+| Typed email → person + inbox (pure, tested) | `src/lib/gift-address/match.ts` + `match.test.ts` |
 | n8n code email | `src/lib/gift-address/otp-email.ts` |
 | What to show / collect for | `src/lib/gift-address/owed.ts` + `owed.test.ts` |
 | Submission-key guard | `src/lib/gift-address/save.ts` |
@@ -37,9 +38,44 @@ generic-response discipline, same host isolation.
 
 ## Identity comes from the session token. Never from the request body.
 
-The flow is: type an email → a code is mailed to the roster's **Work Email** for
-that person → the code is exchanged for a session token → **every later step
-re-derives the work email from that token**.
+The flow is: type an email → a code is mailed to a **company inbox** of that
+person → the code is exchanged for a session token → **every later step
+re-derives the primary work email from that token**.
+
+### Which inbox the code goes to — and which email is the person
+
+The typed address is matched against **all four** roster email columns
+(`src/lib/gift-address/match.ts`, tested in `match.test.ts`):
+
+| Typed address matched | Code is mailed to | Identity (OTP row, session, saves) |
+| --- | --- | --- |
+| `"Work Email"` | that address | that address |
+| `"Alternate Work Email"` / `"Alternate Work Email 2"` | **the typed alternate**, if it is `@simple.biz`; the primary otherwise | the row's primary `"Work Email"` |
+| `"Personal Email"` | the primary `"Work Email"`, **never** the personal inbox | the primary `"Work Email"` |
+
+Kane, 2026-09-23: *"redirect Alternate Emails and connect it with their actual
+emails so we can give them the code"*. Until then only Work and Personal Email
+were matched. An alternate matched nobody, no code was minted, and the page still
+printed its generic "a code is on its way". **25 people** hit this between 09-01
+and 09-23. The reported case was `travis@`, Arcy Bucu's alternate. Mailing the
+primary instead would not have helped: two codes sent to `arcyb@` (n8n
+`sent:true`) were never used. So a matched alternate gets the code itself.
+
+The guarantee is unchanged: **a code only ever reaches a simple.biz inbox the
+roster ties to that person.** An alternate cell holding a non-company address
+falls back to the primary, the same way a personal address does.
+
+**Precedence, so an alternate can never take someone else's code.** A person's
+own Work Email outranks being someone else's alternate. Measured 2026-09-23:
+four live alternates (`seungyong@`, `aaronr@`, `gabrielp@`, `steve@`) are another
+active row's Work Email, and each still resolves to its owner. An alternate
+claimed by **two different people is refused** (none today), because a guess mails
+a colleague's code to the wrong human. A failed read on **any** of the four
+columns is a refusal too: resolving on a partial candidate set could miss the
+Work Email row that outranks an alternate.
+
+`gift_address.otp_requested` records `matched_on` (`work_email` ·
+`alternate_work_email` · `personal_email`), never the delivery address.
 
 This is the whole security model. A body that could name its own email is the
 redirect-someone-else's-parcel hole — the same shape as the salary-redirect hole
@@ -306,6 +342,13 @@ today.** It was not measured and not changed here; it is an Open item.
 
 - **The submissions table keys on `personal_email`.** Until it keys on work
   email like the receipts ledger, ~11 active people cannot use this page at all.
+- **The bank-update flow has not been checked for the alternate-email gap.**
+  `/update-bank-info` has its own lookup (`src/lib/bank-update/otp.ts`). It is a
+  live money path and was deliberately left alone in the 2026-09-23 fix.
+- **HR cannot enter an address for someone.** The Gift Tracker UI only edits an
+  existing submission. The staff branch of `PUT /api/employee-gift-shipping`
+  exists, but no screen calls it, so someone the link cannot serve has no
+  fallback.
 - **Two copies of the OTP machinery.** `src/lib/bank-update/otp.ts` predates
   `src/lib/otp/otp-core.ts` and was deliberately not migrated in this change — it
   is a live money path. Fix a bug in one and check the other until they converge.

@@ -98,12 +98,14 @@ export async function POST(req: Request) {
   let sent = false;
   if (webhook) {
     try {
-      sent = (await sendGiftAddressOtpEmail(person.workEmail, person.name, code)).ok;
+      // `deliverTo` is the typed company alternate when one matched, else the
+      // primary. The code row above is keyed to the PRIMARY either way.
+      sent = (await sendGiftAddressOtpEmail(person.deliverTo, person.name, code)).ok;
     } catch {
       sent = false;
     }
   } else if (isDev) {
-    console.info(`[gift-address] OTP for ${person.workEmail}: ${code}`);
+    console.info(`[gift-address] OTP for ${person.workEmail} (to ${person.deliverTo}): ${code}`);
     sent = true;
   }
 
@@ -115,7 +117,9 @@ export async function POST(req: Request) {
     resource_id: person.workEmail,
     // The CODE is never audited — the trail would otherwise hand a reader a
     // live credential. Only that one was sent, and whether it left.
-    details: { found: true, sent, channel: 'external_link' },
+    // `matched_on` says which roster column the typed address hit — the
+    // alternate-email population is the one that was silently locked out.
+    details: { found: true, sent, matched_on: person.matchedOn, channel: 'external_link' },
     ip_address: ip,
   });
 

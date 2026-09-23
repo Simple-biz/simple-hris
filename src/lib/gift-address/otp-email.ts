@@ -64,9 +64,12 @@ function renderGiftOtpEmailHtml(name: string, code: string): string {
  * all, which is a deployment misconfiguration rather than anything about this
  * particular person, and is therefore safe to report without leaking whether
  * the address belongs to an employee.
+ *
+ * `inbox` is a company address the caller already resolved from the roster —
+ * the person's primary Work Email or the company alternate they typed.
  */
 export async function sendGiftAddressOtpEmail(
-  workEmail: string,
+  inbox: string,
   name: string,
   code: string,
 ): Promise<{ ok: boolean }> {
@@ -79,7 +82,7 @@ export async function sendGiftAddressOtpEmail(
 
   const greetingName = name ? name.split(/\s+/)[0] : '';
   const payload = {
-    to: workEmail,
+    to: inbox,
     recipient_name: name,
     otp_code: code,
     subject: 'Your Simple.biz tenure gift — confirmation code',
