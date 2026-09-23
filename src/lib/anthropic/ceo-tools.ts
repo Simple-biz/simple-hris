@@ -52,6 +52,16 @@ import {
 } from '@/lib/rbac/feature-permissions';
 import { hasElevatedRole, hasRateVisibility } from '@/lib/auth/elevated-roles';
 import { ROUTE_REQUIRED_ROLES } from '@/lib/auth/route-access';
+import {
+  accessOverPerson,
+  accessSummary,
+  dashboardAccess,
+  holdersOfRole,
+  managersOfDepartment,
+  type ManagerGrant,
+  type RoleGrant,
+  type TabGrant,
+} from '@/lib/penny/access-graph';
 
 /** Hubstaff exports append a ~30k-hour grand-total row that parses as a fake
  *  person; drop any row over this when aggregating across everyone. */
@@ -205,6 +215,24 @@ export const CEO_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'get_access_map',
+    description:
+      "WHO HOLDS ACCESS OVER WHOM — the reverse of get_employee_access. Pass ONE of: work_email → who can see or act on that person (the managers whose department grants cover them, plus everyone whose role reaches every employee: admins, accounting, HR, and who can see their pay rate); department → who manages that department; role → everyone holding a role (admin, ceo, accounting, hr_coordinator, manager, orphanage_manager, qc, tickets, contractor, employee_support); dashboard → who can open that dashboard and who holds view/edit on each of its tabs (accounting, hr, manager, orphanage, ceo, qc, contractor, tickets, employee_support, admin). Pass nothing for the org-wide map: holders per role and managers per department. Read live from the grant tables on every call; department coverage uses the exact matcher the manager routes enforce.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        work_email: {
+          type: 'string',
+          description: "The person's work email, exactly as returned by find_employee.",
+        },
+        department: { type: 'string', description: 'A department name, e.g. "Lead Gen" or "hsl:intake_specialist".' },
+        role: { type: 'string', description: 'A role name, e.g. "admin" or "manager".' },
+        dashboard: { type: 'string', description: 'A dashboard, e.g. "accounting", "hr", "manager".' },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'get_hours_uploads',
     description:
       'List the weekly hours batches uploaded through the Payroll Wizard (newest first) — the raw Hubstaff time data each pay run is built from. Use for "is this week\'s hours data in yet", "when was the latest upload and who uploaded it", or to find the exact source_file to pass to get_uploaded_hours. Returns each batch\'s source_file, pay-period label and dates, upload time, uploader, row count, and which batch is the wizard\'s CURRENT working one.',
@@ -286,6 +314,8 @@ export async function runCeoTool(
         return await getEmployeeProfile(str(input.work_email));
       case 'get_employee_access':
         return await getEmployeeAccess(str(input.work_email));
+      case 'get_access_map':
+        return await getAccessMap(input);
       case 'get_financial_summary':
         return await getFinancialSummary(input.month);
       case 'get_hours_uploads':
@@ -1323,12 +1353,29 @@ async function getEmployeeAccess(workEmailInput: string): Promise<ToolResult> {
     '/hr': 'HR',
     '/orphanage': 'Orphanage',
     '/manager': 'Manager',
+    '/qc': 'QC',
+    '/tickets': 'Tickets',
   };
   const dashboards = ROUTE_REQUIRED_ROLES.filter((r) =>
     r.roles.some((role) => roles.includes(role)),
   ).map((r) => DASHBOARD_LABELS[r.prefix] ?? r.prefix);
 
   // (4) Per-tab feature-permission overlay (hidden/view/edit) on top of roles.
+  //     fetchFeaturePermissionsForEmail returns {} on a read error — which reads
+  //     as "no tab grants", a wrong answer rather than a missing one. Probe the
+  //     table first so a failed read is reported as unavailable. Not head:true:
+  //     a HEAD request hides a missing-table error.
+  const { error: grantProbeErr } = await supabase
+    .from('employee_feature_permissions')
+    .select('id')
+    .in('work_email', [...aliases])
+    .is('revoked_at', null)
+    .limit(1);
+  if (grantProbeErr) {
+    return {
+      error: `Tab permissions could not be read (${grantProbeErr.message}). Do not report this person as having no tab access — the grants are unknown, not empty.`,
+    };
+  }
   const perms: FeaturePermissionsMap = {};
   for (const a of aliases) {
     const m = await fetchFeaturePermissionsForEmail(a);
@@ -1381,6 +1428,133 @@ async function getEmployeeAccess(workEmailInput: string): Promise<ToolResult> {
     field_notes:
       "ACCESS MODEL — three layers. (1) roles (from employee_roles) decide which staff DASHBOARDS a person can open (see dashboards_can_open); no role = a regular employee who only sees their own /employee self-service portal. (2) feature_permissions is a per-TAB overlay on top of the role: each tab is 'hidden' (not visible at all — the default for any tab without an explicit grant), 'view' (read-only), or 'edit' (can change things). (3) admin holds the keys to the castle: is_admin=true means every tab in every dashboard is effectively edit regardless of grants (shown as 'edit (admin bypass)'). is_elevated=true means they may view/act on OTHER employees' data (admin, accounting, hr_coordinator). can_see_pay_rates=true means they're allowed to see numeric pay rates (admin, accounting, ceo — NOT hr_coordinator). managed_departments lists the teams a manager oversees. This describes what the person CAN access, not what they have done.",
   };
+}
+
+/**
+ * Roles that open each permission catalog's dashboard. From ROUTE_REQUIRED_ROLES
+ * where the view has its own route; `contractor` has no gated prefix (a
+ * contractor-only login is redirected to /contractor), and `tickets` /
+ * `employee_support` share /tickets but are separate catalogs, each opened by
+ * its own role (route-access.ts:43-56).
+ */
+function openingRolesForView(view: string): readonly string[] | null {
+  const byPrefix = (p: string) => ROUTE_REQUIRED_ROLES.find((r) => r.prefix === p)?.roles ?? null;
+  switch (view) {
+    case 'accounting': return byPrefix('/accounting');
+    case 'hr': return byPrefix('/hr');
+    case 'manager': return byPrefix('/manager');
+    case 'orphanage': return byPrefix('/orphanage');
+    case 'ceo': return byPrefix('/ceo');
+    case 'qc': return byPrefix('/qc');
+    case 'contractor': return ['contractor'];
+    case 'tickets': return ['tickets', 'admin'];
+    case 'employee_support': return ['employee_support', 'admin'];
+    case 'admin': return byPrefix('/admin');
+    default: return null;
+  }
+}
+
+const DASHBOARD_ALIASES: Record<string, string> = {
+  'hr coordinator': 'hr', 'human resources': 'hr', 'payroll clerk': 'accounting',
+  'payroll-clerk': 'accounting', 'employee support': 'employee_support', support: 'employee_support',
+  'ticket board': 'tickets', 'penny': 'ceo',
+};
+
+async function getAccessMap(input: Record<string, unknown>): Promise<ToolResult> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { error: 'Service-role client unavailable — access grants cannot be read.' };
+
+  // Paged: the grant tables are small today (123 / 290 / 735 active rows on
+  // 2026-09-23) but PostgREST truncates at 1000 even with .range().
+  const [roles, managers, tabs, roster] = await Promise.all([
+    selectAllPaged<RoleGrant>((from, to) =>
+      supabase
+        .from('employee_roles')
+        .select('work_email, role, assigned_by, assigned_at')
+        .is('revoked_at', null)
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPaged<ManagerGrant>((from, to) =>
+      supabase
+        .from('department_managers')
+        .select('manager_email, department, assigned_by, assigned_at')
+        .is('revoked_at', null)
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    selectAllPaged<TabGrant>((from, to) =>
+      supabase
+        .from('employee_feature_permissions')
+        .select('work_email, view_key, feature, access, granted_by, granted_at')
+        .is('revoked_at', null)
+        .order('id', { ascending: true })
+        .range(from, to),
+    ),
+    getEmployeesForAuthorizedServerRoute(),
+  ]);
+  // Any failed read is fatal: a partial grant set would answer "nobody else can
+  // see this" when the truth is "some rows were not read".
+  const readErr = roles.error ?? managers.error ?? tabs.error ?? roster.error;
+  if (readErr) return { error: `Access grants could not be fully read (${readErr}). Nothing is reported rather than a partial list.` };
+
+  const data = {
+    roles: roles.rows,
+    managers: managers.rows,
+    tabs: tabs.rows,
+    roster: roster.employees.map((e) => ({
+      name: e.name ?? null,
+      work_email: e.work_email ?? null,
+      personal_email: e.personal_email ?? null,
+      alternate_work_email: e.alternate_work_email ?? null,
+      alternate_work_email_2: e.alternate_work_email_2 ?? null,
+      department: e.department ?? null,
+    })),
+  };
+
+  const fieldNotes =
+    'ACCESS OVER PEOPLE — two ways to reach someone. (1) department_managers: a manager sees the people in the departments their grants cover (matched exactly as the manager routes match them); a grant only opens the Manager dashboard when holds_manager_role is true. (2) company_wide_access: a ROLE that reaches every employee — is_admin = everything; can_act_on_any_employee = admin/accounting/hr_coordinator; can_see_pay_rates = admin/accounting/ceo (HR never sees rates). on_active_roster=false means the address holding the grant matches nobody on the active roster (a leaver or an unrecognised account) — call that out. dormant=true on a tab grant means the person holds no role that opens that dashboard, so the grant reaches nothing. Per-tab detail for any single holder: get_employee_access.';
+
+  const email = normEmail(str(input.work_email));
+  if (email) {
+    if (!isSafeEmail(email)) return { error: 'Invalid work_email.' };
+    const r = accessOverPerson(email, data);
+    return {
+      ...r,
+      note: !r.person.on_active_roster
+        ? 'This address is not on the ACTIVE roster, so no department managers can be derived for it (an off-boarded person is not in any department). Company-wide roles still reach their records.'
+        : r.department_managers.length === 0
+          ? `No department manager grant covers ${r.departments.join(' / ') || 'their department'} — only the company-wide roles below can see them.`
+          : undefined,
+      field_notes: fieldNotes,
+    };
+  }
+
+  const department = str(input.department).trim();
+  if (department) return { ...managersOfDepartment(department, data), field_notes: fieldNotes };
+
+  const role = str(input.role).trim();
+  if (role) return { ...holdersOfRole(role, data), field_notes: fieldNotes };
+
+  const dashRaw = str(input.dashboard).trim().toLowerCase().replace(/^\//, '');
+  if (dashRaw) {
+    const view = DASHBOARD_ALIASES[dashRaw] ?? dashRaw.replace(/\s+/g, '_');
+    const openingRoles = openingRolesForView(view);
+    if (!openingRoles) {
+      return {
+        error: `Unknown dashboard "${dashRaw}".`,
+        known_dashboards: [...Object.keys(FEATURE_CATALOG), 'admin'],
+      };
+    }
+    const catalog = FEATURE_CATALOG[view as FeatureViewKey] ?? [];
+    return {
+      ...dashboardAccess(view, data, { catalog, openingRoles }),
+      note: view === 'admin' ? 'The Admin dashboard has no per-tab grants — every admin sees all of it.' : undefined,
+      field_notes: fieldNotes,
+    };
+  }
+
+  return { ...accessSummary(data), field_notes: fieldNotes };
 }
 
 /** The `YYYY-MM-DD_to_YYYY-MM-DD` block every wizard batch filename carries

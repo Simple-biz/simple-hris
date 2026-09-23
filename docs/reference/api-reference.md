@@ -2602,8 +2602,8 @@ none of them writes to the database.
 
 | Route | Gate | Model | Tools |
 |---|---|---|---|
-| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-sonnet-4-6` | `CEO_TOOLS` (11) |
-| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (22) |
+| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-opus-5-5` *(since 2026-09-23; was `claude-sonnet-4-6`)* | `CEO_TOOLS` + `CEO_ADMIN_TOOLS` (24) — every Admin tool except `list_employee_attachments` |
+| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (25) |
 | `POST /api/employee/penny-chat` | `authorizeEmailAccess(email)` | `claude-haiku-4-5` | employee set, **no identity argument** |
 
 ### `POST /api/ceo/chat`
@@ -2611,6 +2611,10 @@ none of them writes to the database.
 **Body**: `{ messages: [{ role: 'user' | 'assistant', content: string }] }`. History is sanitized server-side: empties
 dropped, content sliced to 8000 chars, last 20 turns kept, leading assistant turns dropped after the slice (an alternating
 transcript sliced to an even count starts on an assistant turn, which the API rejects with a 400), trailing turn must be `user`.
+
+`maxDuration = 300`, `MAX_TOKENS = 32000`, `MAX_TURNS = 10`, effort `high`, no `thinking` field (Opus 5.5 always thinks —
+`disabled` is a 400), server-side refusal fallback to `claude-opus-4-8`. Emits **no** activity frames. Every tool result is
+stamped `fetched_at`.
 
 **Errors**: `401` not signed in · `403` not ceo/admin · `503` no Anthropic key configured (points at Admin → API tokens) ·
 `400` invalid body or no trailing user message. Once streaming starts the status is already `200`, so mid-stream failures

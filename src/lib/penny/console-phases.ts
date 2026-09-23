@@ -20,6 +20,7 @@ export const TOOL_PHASES: Record<string, string> = {
   find_employee: 'Matching the name against the full roster',
   get_employee_profile: 'Opening the employee record',
   get_employee_access: 'Checking dashboard access and roles',
+  get_access_map: 'Mapping who holds access over whom',
 
   // ── Pay & payroll figures ────────────────────────────────────────────────
   get_employee_pay: 'Reading their pay weeks',

@@ -4,10 +4,20 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { resolveAnthropicApiKey } from '@/lib/anthropic/api-key';
 import { CEO_TOOLS, runCeoTool } from '@/lib/anthropic/ceo-tools';
+import {
+  CEO_ADMIN_TOOLS,
+  CEO_WITHHELD_ADMIN_TOOLS,
+  isAdminTool,
+  runAdminTool,
+} from '@/lib/anthropic/admin-tools';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+// Opus 5.5 thinks between tool calls and a "who can see X, and what changed on
+// them" question chains several tools; 60s risks the platform killing the
+// function mid-stream. Same ceiling as the Admin route.
+export const maxDuration = 300;
 
 /**
  * Backing endpoint for the CEO dashboard's floating chat assistant.
@@ -19,14 +29,41 @@ export const runtime = 'nodejs';
  * chunk-by-chunk.
  */
 
-const MODEL = 'claude-sonnet-4-6';
+/**
+ * Opus 5.5, upgraded from Sonnet 4.6 on 2026-09-23 (Kane: "Let the CEO use -
+ * Opus 5.5"; "make Penny … smarter … across all dashboards").
+ *
+ * What the model forces:
+ * - **Thinking cannot be disabled** — `{type: 'disabled'}` and `budget_tokens`
+ *   are both a 400 at every effort level, so the old `thinking: disabled` is
+ *   gone and `thinking` is omitted (adaptive). Effort is the only control.
+ * - **Effort defaults to `medium` on this model** (one below Opus 5's `high`),
+ *   so it is set explicitly: attributing who-can-see-whom and who-changed-what
+ *   across several sources is the intelligence-sensitive work the upgrade is
+ *   for. Dial to `medium` if latency bites.
+ * - Thinking and the answer share `max_tokens`, so the old 8000 would truncate
+ *   a biz-report fence that used to fit; 32000 matches the Admin route.
+ * - Sampling params and assistant prefill are 400s. This route sends neither.
+ * - Forced `tool_choice` (`any`/`tool`) is a 400. This route never forces one.
+ * - Thinking blocks are bound to the conversation. Within a request the loop
+ *   appends each assistant turn verbatim (never edits the prefix); across
+ *   requests the widget sends text only, so no thinking block is ever replayed.
+ *
+ * Cost: $4/MTok in, $20/MTok out (Sonnet 4.6 was $3/$15). The cached static
+ * system block and the short-answer instruction keep it in hand.
+ */
+const MODEL = 'claude-opus-5-5';
+const MAX_TOKENS = 32000;
 
-// Generous ceiling so a full report's JSON (paycheck history + KPI box +
-// description + roster) can finish in one turn — a too-small cap truncates the
-// ```biz-report block before its closing fence, which used to leave the widget
-// stuck on "Preparing report…". Streaming keeps latency fine for short replies;
-// thinking is off for low latency.
-const MAX_TOKENS = 8000;
+/**
+ * Server-side refusal fallback, same form as the Admin route: this SDK
+ * (@anthropic-ai/sdk 0.105) types only the ARRAY form, whose header is exactly
+ * `server-side-fallback-2026-06-01`; the scalar `"default"` form needs the
+ * `-07-01` header, and mixing the two is a 400. A fallback turn runs without
+ * Opus 5.5's thinking (other models cannot read its blocks) — harmless here.
+ */
+const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
+const FALLBACK_MODEL = 'claude-opus-4-8';
 
 const SYSTEM_PROMPT = [
   'You are Penny (also called Penny AI), the assistant for the CEO of Simple,',
@@ -80,7 +117,8 @@ const SYSTEM_PROMPT = [
   '  home address, hourly rates, skill sets, recognition (commendations) AND',
   '  concerns (manager red-flag/"flag for review" notes). Always call this before',
   '  assessing or giving an opinion on someone, so you see both sides. Requires',
-  '  the work_email from find_employee. (Bank/payout details are not available.)',
+  '  the work_email from find_employee. For who changed their bank details use',
+  '  get_bank_change_history (account numbers are masked).',
   '- Use get_financial_summary for a monthly company financial statement',
   '  ("financials for May 2026", "how much did payroll cost last month"). It also',
   '  returns the prior month\'s figures + % change so you can write an insight.',
@@ -103,9 +141,55 @@ const SYSTEM_PROMPT = [
   '  rate-visibility flags. Requires the work_email from find_employee. Admins',
   '  bypass all tab gating (shown as "edit (admin bypass)"); a person with no roles',
   '  only has their own self-service portal — say so plainly.',
+  '- Use get_access_map for the REVERSE direction — WHO has access OVER someone',
+  '  or something: "who can see X\'s data", "who manages X", "who manages Lead',
+  '  Gen" (department=), "who are all the admins" (role=), "who can edit the',
+  '  Accounting People tab" (dashboard=), or no argument for the whole map. For a',
+  '  person, report BOTH layers: the department managers whose grants cover them',
+  '  AND the company-wide roles (admins, accounting, HR; and who can see their pay',
+  '  rate). Call out any grant with on_active_roster=false (held by an address',
+  '  not on the active roster) and any dormant tab grant.',
+  '',
+  'Everything the Admin console knows is available to you too:',
+  "- find_employee also finds OFF-BOARDED people (status on every match) — an",
+  '  off-boarded match is a real person whose history you can still look up;',
+  '  say when they left. Only zero matches means someone is not in the system.',
+  '- WHO-DID-WHAT ("who changed that", "what happened yesterday", "who approved',
+  '  it") → search_audit_log (filter by action_prefix, target email, dates). If',
+  '  unsure of an action name, list_audit_actions. Retry once broader before',
+  '  saying there is no record.',
+  '- Open-ended history of ONE person ("what changed for X", "everything on X")',
+  '  → get_change_timeline (bank, rate, identity, access, employment, payroll',
+  '  changes merged). Narrow with kind= when the question is about one kind.',
+  '- Rate history and who set each rate → get_rate_history. Transfers →',
+  '  get_transfer_history. Onboarding / who invited → get_onboarding_info.',
+  '  Off-boarding (when, why, who) → get_offboarding_info.',
+  '- "Where did X\'s bonus come from / which KPI paid it / why 500 not 250" →',
+  '  get_bonus_breakdown. Lead with its reconciliation verdict; KPI saves are',
+  '  not audited, so never guess what a value used to be.',
+  '- Who changed bank info → get_bank_change_history. Read the channel per row:',
+  '  external_link = the employee themself; any other channel is a STAFF member',
+  '  acting for them — name that person from the matching audit event. Flag an',
+  "  account-holder name that does not match the employee's own.",
+  '- Who edited a payroll note → get_payroll_notes_history.',
+  '- Is payroll processing right now / how far along → get_payroll_wizard_status.',
+  '  System health → run_diagnostics (the auth-login probe always warns by',
+  '  design; mention it only if asked).',
+  '- Every history tool returns how far back it searched. If it found nothing,',
+  '  say "nothing on record since <date>", never "this never happened".',
   '- Call tools SILENTLY: do not write any text in the same turn as a tool',
   '  call (no "let me look that up"). Produce text only as your final answer,',
   '  once you have the data.',
+  '',
+  '## Always the latest data',
+  '',
+  'Every tool reads the live database at the moment you call it, and each result',
+  'carries fetched_at. Records change between messages — payments get sent,',
+  'roles get granted, people get off-boarded — so for EVERY new question call',
+  'the tools again, even when an earlier answer in this conversation covered the',
+  'same person or week. Never re-use a figure, status, or list from earlier in',
+  'the conversation as if it were current. If a tool errors or returns only part',
+  'of what was asked, say what is missing rather than filling the gap.',
   '',
   '## Assessing people — be fair, not flattering',
   '',
@@ -202,12 +286,14 @@ const SYSTEM_PROMPT = [
 ].join('\n');
 
 /**
- * The static prompt plus a per-request "today is …" section, so Penny can
- * resolve relative dates ("this week", "last month") instead of guessing.
- * Asia/Manila is the company clock — the same convention the rest of the
- * system uses (hire start dates, transfers).
+ * The per-request "today is …" section, so Penny can resolve relative dates
+ * ("this week", "last month") instead of guessing. Asia/Manila is the company
+ * clock — the same convention the rest of the system uses (hire start dates,
+ * transfers). Sent as a SECOND system block after the cached static prompt: it
+ * changes every minute, and inside the cached block it would invalidate the
+ * cache on every request.
  */
-function buildSystemPrompt(now: Date): string {
+function buildDateSection(now: Date): string {
   const manila = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Manila',
     weekday: 'long',
@@ -225,8 +311,6 @@ function buildSystemPrompt(now: Date): string {
     day: '2-digit',
   }).format(now);
   return [
-    SYSTEM_PROMPT,
-    '',
     '## Current date and time',
     '',
     `Right now it is ${manila} in Asia/Manila (the company's timezone). Today's`,
@@ -306,32 +390,53 @@ export async function POST(request: Request) {
   // 4. Run a tool-use loop and stream the final answer back as plain text.
   //    The model may call data tools (find_employee, get_employee_pay, …) for a
   //    turn or two with no visible output — the widget shows "Thinking…" until
-  //    the first text token arrives — then stream its written answer.
-  const convo: Anthropic.MessageParam[] = messages.map((m) => ({
+  //    the first text token arrives — then stream its written answer. This
+  //    route emits NO activity frames, so the widget's text is byte-for-byte
+  //    what the model wrote (admin-penny-console.md).
+  const convo: Anthropic.Beta.BetaMessageParam[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
   }));
 
-  const MAX_TURNS = 6; // safety backstop against a tool-call loop
+  // CEO payroll tools + every Admin tool except the ones the CEO surface cannot
+  // use (CEO_WITHHELD_ADMIN_TOOLS). The order is fixed, so the tools prefix of
+  // the prompt cache stays byte-identical across requests.
+  const TOOLS = [...CEO_TOOLS, ...CEO_ADMIN_TOOLS];
+  // Access and history questions chain find_employee → a history tool → an
+  // audit search, so allow more turns than the old payroll-only six.
+  const MAX_TURNS = 10;
   const encoder = new TextEncoder();
   const toolsUsed: string[] = [];
-  const systemPrompt = buildSystemPrompt(new Date()); // stamp once per request
+  const dateSection = buildDateSection(new Date()); // stamp once per request
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let answered = false;
       try {
         for (let turn = 0; turn < MAX_TURNS; turn++) {
+          // The widget went away (panel closed, navigation) — stop burning tokens.
+          if (request.signal.aborted) return;
+
           let turnText = '';
-          const claudeStream = client.messages.stream({
-            model: MODEL,
-            max_tokens: MAX_TOKENS,
-            thinking: { type: 'disabled' },
-            output_config: { effort: 'medium' },
-            system: systemPrompt,
-            tools: CEO_TOOLS,
-            messages: convo,
-          });
+          const claudeStream = client.beta.messages.stream(
+            {
+              model: MODEL,
+              max_tokens: MAX_TOKENS,
+              betas: [FALLBACK_BETA],
+              fallbacks: [{ model: FALLBACK_MODEL }],
+              // No `thinking` field: Opus 5.5 always thinks (adaptive), and
+              // sending `disabled` is a 400. Effort is set explicitly because
+              // this model's default is `medium`.
+              output_config: { effort: 'high' },
+              system: [
+                { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+                { type: 'text', text: dateSection },
+              ],
+              tools: TOOLS,
+              messages: convo,
+            },
+            { signal: request.signal },
+          );
 
           claudeStream.on('text', (delta) => {
             turnText += delta;
@@ -343,23 +448,53 @@ export async function POST(request: Request) {
           if (msg.stop_reason !== 'tool_use') {
             // Final turn — model has answered (or, rarely, produced nothing).
             if (turnText.trim().length > 0) answered = true;
+            // A refusal on the final response means the whole chain declined
+            // (the fallback model refused too). Say so, rather than the generic
+            // "couldn't finish", which reads as an outage.
+            if (msg.stop_reason === 'refusal') {
+              const category = msg.stop_details?.category ?? 'unspecified';
+              controller.enqueue(
+                encoder.encode(
+                  turnText.trim().length > 0
+                    ? `\n\n[Cut off — the model declined to continue (${category}).]`
+                    : `I can't answer that one — the model declined the request (${category}). Try rephrasing, or ask for the underlying records instead.`,
+                ),
+              );
+              answered = true;
+              break;
+            }
+            // Thinking + text share MAX_TOKENS — never let a capped reply pass
+            // as complete.
+            if (msg.stop_reason === 'max_tokens') {
+              controller.enqueue(
+                encoder.encode('\n\n[Reply was cut short — ask me to continue for the rest.]'),
+              );
+              answered = true;
+            }
             break;
           }
 
           // Execute every tool the model asked for, then feed results back.
           convo.push({ role: 'assistant', content: msg.content });
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
+          const toolResults: Anthropic.Beta.BetaToolResultBlockParam[] = [];
           for (const block of msg.content) {
             if (block.type === 'tool_use') {
               toolsUsed.push(block.name);
-              const result = await runCeoTool(
-                block.name,
-                (block.input ?? {}) as Record<string, unknown>,
-              );
+              const input = (block.input ?? {}) as Record<string, unknown>;
+              // A withheld tool is not declared, so the model cannot normally
+              // name one — refuse it anyway rather than trust the declaration.
+              const result = CEO_WITHHELD_ADMIN_TOOLS.has(block.name)
+                ? { error: `${block.name} is not available on the CEO dashboard.` }
+                : isAdminTool(block.name)
+                  ? await runAdminTool(block.name, input)
+                  : await runCeoTool(block.name, input);
               toolResults.push({
                 type: 'tool_result',
                 tool_use_id: block.id,
-                content: JSON.stringify(result),
+                // fetched_at: every tool reads live, and the prompt tells Penny
+                // to re-query each question instead of re-using an earlier
+                // answer; the stamp is what lets it say how fresh a figure is.
+                content: JSON.stringify({ fetched_at: new Date().toISOString(), ...result }),
               });
             }
           }
@@ -377,6 +512,7 @@ export async function POST(request: Request) {
         }
         controller.close();
       } catch (err) {
+        if (request.signal.aborted) return; // client gone — nothing to tell it
         const msg = err instanceof Error ? err.message : String(err);
         // Status is already 200 by the time we stream; surface the failure
         // inline so the widget can show it to the user.

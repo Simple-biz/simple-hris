@@ -2,7 +2,7 @@
 
 *Added 2026-06. A floating Claude-backed chat widget on the CEO dashboard with read-only payroll tools, an admin-managed API key, and an audit trail.*
 
-A floating `/chatbubble.png` image button pinned to the bottom-right of the CEO dashboard (it swaps to an `X` icon when the panel is open; the `Sparkles` icon shows only in the open panel's header avatar). It talks to Claude (Sonnet) over a streaming endpoint and can pull **real** payroll figures out of `disbursement_records` via three narrow, read-only tools — e.g. *"what was Kane's last pay"* or *"add up the last four weeks of Kane's pay"*. It can also do non-data work (draft announcements, summarize pasted text, think through decisions). Access is gated to `ceo` / `admin`, and every request that touches the tools is audit-logged.
+A floating `/chatbubble.png` image button pinned to the bottom-right of the CEO dashboard (it swaps to an `X` icon when the panel is open; the `Sparkles` icon shows only in the open panel's header avatar). It talks to Claude (**Opus 5.5** since 2026-09-23) over a streaming endpoint and can pull **real** figures through read-only tools — the CEO payroll set, `get_access_map` (who holds access over whom), and since 2026-09-23 **every Admin Penny tool except `list_employee_attachments`** (audit log, change timeline, rate / transfer / onboarding / off-boarding / bank history, bonus provenance, wizard status, diagnostics) — e.g. *"what was Kane's last pay"* or *"add up the last four weeks of Kane's pay"*. It can also do non-data work (draft announcements, summarize pasted text, think through decisions). Access is gated to `ceo` / `admin`, and every request that touches the tools is audit-logged.
 
 ---
 
@@ -32,7 +32,7 @@ route.ts
    3. resolveAnthropicApiKey() → 503 if no key configured
    4. sanitize history (drop empties, slice content 8000, keep last 20,
       require trailing user message)
-   5. tool-use loop (≤ 6 turns), streaming the final text back as
+   5. tool-use loop (≤ 10 turns), streaming the final text back as
       text/plain; charset=utf-8, Cache-Control: no-store
    ▼
 widget reads the body as a ReadableStream, appends each chunk to the
@@ -43,12 +43,12 @@ The response is a **plain UTF-8 text stream** (not SSE / not JSON). The widget r
 
 ### Tool-use loop
 
-The route runs Claude's tool loop server-side (`MAX_TURNS = 6` as a backstop):
+The route runs Claude's tool loop server-side (`MAX_TURNS = 10` as a backstop — 6 until 2026-09-23, raised because access and history questions chain find_employee → a history tool → an audit search):
 
-1. `client.messages.stream({ model, max_tokens, system, tools: CEO_TOOLS, messages })`.
+1. `client.beta.messages.stream({ model, max_tokens, betas, fallbacks, output_config, system, tools: [...CEO_TOOLS, ...CEO_ADMIN_TOOLS], messages }, { signal })` — aborted when the widget goes away.
 2. `text` deltas are enqueued to the client as they arrive.
-3. On `stop_reason === 'tool_use'`, every `tool_use` block is executed via `runCeoTool(name, input)`, the assistant turn + a `user` turn of `tool_result` blocks are pushed onto `convo`, and the loop continues.
-4. Any other `stop_reason` ends the loop. If no text was produced, the route emits a fallback line so the widget never freezes on "Thinking…".
+3. On `stop_reason === 'tool_use'`, every `tool_use` block is executed via `runAdminTool` (an Admin tool) or `runCeoTool`; a name in `CEO_WITHHELD_ADMIN_TOOLS` is refused even if the model names it; each result is stamped **`fetched_at`**; the assistant turn + a `user` turn of `tool_result` blocks are pushed onto `convo`, and the loop continues.
+4. Any other `stop_reason` ends the loop; `refusal` (the whole fallback chain declined) and `max_tokens` ("cut short") are said out loud rather than passed off as a finished answer. If no text was produced, the route emits a fallback line so the widget never freezes on "Thinking…".
 
 The system prompt instructs the model to **call tools silently** — no "let me look that up" text in the same turn as a tool call — so the widget shows "Thinking…" through the tool turns and only streams the written answer at the end.
 
@@ -56,6 +56,17 @@ The system prompt instructs the model to **call tools silently** — no "let me 
 
 | Setting | Value |
 |---|---|
+| `MODEL` | `claude-opus-5-5` *(2026-09-23, Kane: "Let the CEO use - Opus 5.5"; was `claude-sonnet-4-6`)* |
+| `max_tokens` | `32000` — thinking and the answer share it (was `8000` with thinking off) |
+| `thinking` | **omitted** — Opus 5.5 always thinks (adaptive); `{ type: 'disabled' }` and `budget_tokens` are a **400** at every effort level. A half-applied edit that still sent `disabled` 400'd the CEO's question mid-rollout on 2026-09-23 (*"thinking.type.disabled is not supported for this model"*) |
+| `output_config` | `{ effort: 'high' }` — set explicitly because this model's default is `medium` |
+| fallback | `betas: ['server-side-fallback-2026-06-01']` + `fallbacks: [{ model: 'claude-opus-4-8' }]` — the array form this SDK (0.105) types; the scalar `"default"` needs the `-07-01` header, and mixing them is a 400 |
+| `system` | two blocks: the static `SYSTEM_PROMPT` with `cache_control`, then the per-request date section **after** it (inside the cached block it changes every minute and voids the cache) |
+| `runtime` | `nodejs`, `dynamic = 'force-dynamic'`, `maxDuration = 300` |
+
+Opus 5.5 also rejects forced `tool_choice` (`any` / `tool`) and assistant prefill; the route sends neither. Its thinking blocks are bound to the conversation: within a request the loop appends each assistant turn verbatim, and across requests the widget sends text only, so no block is ever replayed or edited. Cost: $4 / $20 per MTok (Sonnet 4.6 was $3 / $15).
+
+---|---|
 | `MODEL` | `claude-sonnet-4-6` |
 | `max_tokens` | `1500` |
 | `thinking` | `{ type: 'disabled' }` (off for low latency) |
@@ -74,6 +85,25 @@ Defined in `src/lib/anthropic/ceo-tools.ts`. The model **never writes SQL** — 
 | `find_employee` | `query` *(string, required)* — name, partial name, or email | `{ match_count, active_matches, offboarded_matches, matches[≤8], truncated, lookup_errors?, note? }`. Each match: `{ name, work_email, department, employee_id, status }`, plus `off_boarded_at / off_boarded_reason / off_boarded_by / departments` when `status = 'offboarded'`. The model is told to call this **first** whenever a person is named, and to disambiguate (not guess) on multiple matches. |
 | `get_employee_pay` | `work_email` *(string, required)*, `weeks` *(int 1–26, default 1)* | One entry per pay week (most recent first) + a summed `totals`. Each week **reconciles** on the payroll's own identity, in both ₱ and $, with the bonus **itemised** into PAB / Tech / Other / Adjustment. |
 | `get_payroll_report` | `weeks` *(int 1–12, default 4)* | Company-wide weekly totals (paid / outstanding / owed) + a combined `totals`. |
+| `get_access_map` *(2026-09-23)* | one of `work_email` / `department` / `role` / `dashboard`, or none | **Who holds access over whom** — the reverse of `get_employee_access`. See below. |
+
+The other CEO tools (`get_overtime_leaders`, `get_department_bonuses`, `get_employee_profile`, `get_financial_summary`, `get_employee_access`, `get_hours_uploads`, `get_uploaded_hours`, `get_payroll_wizard_notes`) and the Admin tools this surface also carries are described in [admin-penny-tools.md](./admin-penny-tools.md) §1–§5.
+
+### Admin tools on the CEO surface *(2026-09-23)*
+
+The CEO: *"Penny should know everything like who has permissions on who and what not"*. Kane chose resolution **(b)**: the CEO's Penny carries **`CEO_ADMIN_TOOLS`** = every `ADMIN_TOOLS` entry except those in **`CEO_WITHHELD_ADMIN_TOOLS`** (`src/lib/anthropic/admin-tools.ts`), **`get_bonus_breakdown` included** — Admin-only by design until that day. The one tool withheld is `list_employee_attachments`: its refs open through `/api/admin/penny-chat/attachment`, which is admin-gated, and this widget renders no attachment frames, so a CEO-only holder would be shown files they cannot open. The route refuses a withheld name even if the model produces one.
+
+### `get_access_map`
+
+Pure rules in `src/lib/penny/access-graph.ts` (10 tests); the read lives in `ceo-tools.ts`, so Admin Penny has it too. Reads `employee_roles`, `department_managers` and `employee_feature_permissions` (active rows, **paged** — 123 / 290 / 735 on 2026-09-23) plus the active roster, live on every call.
+
+- **Department coverage uses the routes' own matcher**, `departmentMatchesManagedAssignments` — the one `/api/manager/department-members` and eight other routes enforce. A home-grown comparison would answer "who can see X" differently from what the routes allow, which a permissions answer must never do. A test pins that the matcher treats *Lead Gen* and *Lead Generation* as one department (negative control first).
+- **Grants join to a person, not an address.** A role on an alternate work email and a manager grant on the primary one belong to the same human; the roster's four email columns fold them.
+- For a person it returns both layers: the **department managers** whose grants cover them (with `holds_manager_role` — a grant opens `/manager` only with the `manager` or `admin` role) and the **company-wide** roles (admin; `can_act_on_any_employee` = admin / accounting / hr_coordinator; `can_see_pay_rates` = admin / accounting / ceo).
+- `on_active_roster: false` marks an address that holds a grant but matches nobody on the active roster; `dormant: true` marks a tab grant on someone with no role that opens that dashboard. Measured 2026-09-23: 3 such addresses (`accounting@`, `ainsleyw@`, `filinglead@hoganlegal.com` — none has a master-list row) and 16 dormant Accounting tab grants.
+- **Any failed read returns an error and nothing else** — a partial grant set would answer "nobody else can see this" when the truth is "some rows were not read". An off-roster person gets no department managers (they are in no department) and a note saying so, never every manager.
+
+`get_employee_access` gained the same discipline the same day: `fetchFeaturePermissionsForEmail` returns `{}` on a read error, which read as "no tab grants"; the tool now probes the table first (not `head: true`, which hides a missing-table error) and reports the grants as unknown. Its dashboard list also names QC and Tickets instead of the raw prefix.
 
 ### `find_employee`
 
@@ -214,6 +244,8 @@ Inline `SYSTEM_PROMPT` in the route. Key behaviours it pins down:
 
 - Persona: assistant for the CEO of Simple, embedded in the HRIS; the CEO is authorized to see all payroll/employee data. Warm, concise, lead with the answer, skip preamble.
 - Non-data help: draft announcements, summarize pasted text, explain the dashboard, general questions.
+- **Always the latest data** *(2026-09-23, Kane: "Make sure Penny responds with the most latest and accurate data")*: every tool reads live, each result carries `fetched_at`, and the prompt tells Penny to **call the tools again for every new question** — never re-use a figure, status or list from earlier in the conversation. The readers behind these tools hold no data cache (the only cache is a Hubstaff column-schema lookup) and the route is `force-dynamic`, so staleness could only come from the transcript.
+- **Everything the Admin console knows**: the prompt routes who-did-what, change history, off-boarding, bonus provenance, bank changes, wizard status and diagnostics to the Admin tools with the same reading rules Admin Penny follows (channel attribution on bank changes, "nothing on record since <date>", never guess a pre-overwrite KPI value).
 - **Financial discipline**: use tools for any pay question — *never guess, never answer a financial question from memory*. `find_employee` first; disambiguate on multiple matches; `get_employee_pay` for one person; `get_payroll_report` for org-level. Call tools **silently**.
 - **Fair assessments of people** (added 2026-06-25): when asked to assess/evaluate/give an opinion on a person, give an honest, balanced read — *not* flattery. Pull `get_employee_profile` first and present BOTH sides: it returns `recognition` (public commendations) **and** `concerns` (manager "flag for review" red-flag notes — CEO-visible only). State concerns plainly when they exist; don't bury them, and don't manufacture faults when there are none. The prompt also reminds the model how to read the signals honestly (commendations are opt-in praise so absence ≠ poor work; red flags are concerns for review, not verdicts).
 - Reading results: **show the workings — `hourly_pay + bonus − deduction = paid`** — and call `hourly_pay_*` **"Hourly Pay"**, never "computed" and never a total; report `unexplained_php` as unexplained rather than guessing at it; treat an **absent** money field as *not recorded*, never as ₱0 and never as "the system does not store this"; flag `pending` as owed-not-yet-paid; always state which pay week(s) a figure covers; format money with thousands separators + 2 decimals + currency symbol (₱ / $); report tool errors plainly.
@@ -280,5 +312,5 @@ The transcript is **ephemeral** — held in component state only, lost on unmoun
 
 - **Read-only.** No tool writes to the database; the model cannot run arbitrary SQL.
 - **No migration.** The feature reuses existing tables (`disbursement_records`, `app_settings`, `audit_log`) — nothing new to apply.
-- **Data scope.** `get_employee_pay` covers regular payroll disbursements. **Since 2026-09-17 a bonus is itemised (`bonus_php` / `bonus_label`, from `payment_dispatches.system_bonus_*`) and the MESA worker contribution is itemised (`deduction_php`, from `mesa_ledger.worker_contribution_php`)**, so a week reconciles on screen instead of leaving a gap the reader has to guess at — that guess is exactly what went wrong. What it still cannot see: **accounting adjustments and Payroll Notes entries**, so an unreconciled remainder is reported as `unexplained_php` and never attributed. For where a bonus *came from* (which calculator, which manager input) use Admin Penny's `get_bonus_breakdown` — deliberately **not** on this surface. `get_payroll_report` excludes MESA/orphanage urgent buckets by design.
+- **Data scope.** `get_employee_pay` covers regular payroll disbursements. **Since 2026-09-17 a bonus is itemised (`bonus_php` / `bonus_label`, from `payment_dispatches.system_bonus_*`) and the MESA worker contribution is itemised (`deduction_php`, from `mesa_ledger.worker_contribution_php`)**, so a week reconciles on screen instead of leaving a gap the reader has to guess at — that guess is exactly what went wrong. What it still cannot see: **accounting adjustments and Payroll Notes entries**, so an unreconciled remainder is reported as `unexplained_php` and never attributed. For where a bonus *came from* (which calculator, which manager input) use `get_bonus_breakdown` — Admin-only until 2026-09-23, on this surface since (Kane, resolution (b)). `get_payroll_report` excludes MESA/orphanage urgent buckets by design.
 - **Currency.** Figures carry both PHP and USD where present; the model is told to format with the right symbol. Disbursement amounts are stored per the payroll currency model (see `docs/features/usd-bonuses-and-dispatch.md`).

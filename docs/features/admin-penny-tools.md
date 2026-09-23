@@ -1,6 +1,6 @@
 # What Admin Penny can be asked
 
-The capability reference for the Admin dashboard's Penny AI: the **24 tools** it
+The capability reference for the Admin dashboard's Penny AI: the **25 tools** it
 can call, what each one really answers, and — the more useful half — **what it
 will refuse to tell you and why**.
 
@@ -37,7 +37,8 @@ Mark" costs an extra step — "what happened to markm@simple.biz" does not.
 |---|---|
 | `find_employee` | Resolve a name or partial email to the exact `work_email` every other tool needs. Returns 0, 1 or several matches — **active AND off-boarded people** (since 2026-09-15). Every match carries `status`; an off-boarded match also carries when they left, the recorded reason, who recorded it, and every department their master rows held. Active matches rank first. |
 | `get_employee_profile` | A balanced read on a person: identity, department, employee id, start date, current regular + OT rate, self-entered skill sets, **recognition** (commendations) **and concerns** (manager "flag for review" notes). Deliberately returns both sides so an assessment is never praise alone. |
-| `get_employee_access` | What someone is *allowed* to do: active roles, which dashboards they can open, the per-tab hidden/view/edit overlay, departments they manage, and the admin / elevated / pay-rate-visible flags. **Access rights, not pay.** |
+| `get_employee_access` | What someone is *allowed* to do: active roles, which dashboards they can open, the per-tab hidden/view/edit overlay, departments they manage, and the admin / elevated / pay-rate-visible flags. **Access rights, not pay.** A failed tab-grant read is reported as unknown, never as "no grants" (2026-09-23). |
+| `get_access_map` | *(2026-09-23)* The **reverse** direction — **who holds access over whom**. `work_email` → the department managers whose grants cover them (matched by the routes' own `departmentMatchesManagedAssignments`) plus every role that reaches all employees; `department` → its managers; `role` → its holders; `dashboard` → who can open it and who holds each tab; nothing → the org-wide map. Flags grants held by addresses not on the active roster and dormant tab grants. Rules and tests: `src/lib/penny/access-graph.ts`; see `ceo-assistant.md` § get_access_map. |
 
 ## 2. Who did what — forensics
 
@@ -186,8 +187,10 @@ a gap waiting to be filled.
   dispatch row to read and the wizard snapshot is per-cycle, not per-status.
 - **`get_employee_pay` says WHAT a bonus was, never WHERE it came from.** It
   reads the wizard's computed figures; it cannot see which KPI row or department
-  calculator produced them. `get_bonus_breakdown` is the tool for provenance,
-  and it is **Admin-only** — the CEO surface deliberately does not have it.
+  calculator produced them. `get_bonus_breakdown` is the tool for provenance.
+  It was **Admin-only** until 2026-09-23, when Kane chose to give the CEO's
+  Penny every Admin tool except `list_employee_attachments` (resolution (b),
+  session `a91f00a9`; `CEO_WITHHELD_ADMIN_TOOLS` in `admin-tools.ts`).
   When the identity does not close, the remainder is `unexplained_php` and Penny
   **must not name a cause**.
 
@@ -270,3 +273,7 @@ Four things, or a test fails:
    the build on an action with no family.
 4. Mention it in the route's system prompt, or the model will rarely reach for
    it. Add the row to §1–§5 above in the same commit.
+5. **An Admin tool now also reaches the CEO route** (since 2026-09-23) unless its
+   name is added to `CEO_WITHHELD_ADMIN_TOOLS`. Decide that explicitly: withhold a
+   tool whose output the CEO widget cannot use (an admin-gated opener, an
+   attachment frame), and mention it in the CEO prompt too if it stays.

@@ -345,6 +345,21 @@ export function isAdminTool(name: string): boolean {
   return ADMIN_TOOL_NAMES.has(name);
 }
 
+/**
+ * Admin tools the CEO route (/api/ceo/chat) does NOT expose. Since 2026-09-23
+ * (Kane, resolution (b)) the CEO's Penny carries every other Admin tool,
+ * get_bonus_breakdown included. list_employee_attachments stays Admin-only: its
+ * refs are opened through /api/admin/penny-chat/attachment, which is
+ * admin-gated, and the CEO widget renders no attachment frames — a CEO-only
+ * holder would be shown files they cannot open.
+ */
+export const CEO_WITHHELD_ADMIN_TOOLS: ReadonlySet<string> = new Set(['list_employee_attachments']);
+
+/** The Admin tools the CEO route declares, in ADMIN_TOOLS order. */
+export const CEO_ADMIN_TOOLS: Anthropic.Tool[] = ADMIN_TOOLS.filter(
+  (t) => !CEO_WITHHELD_ADMIN_TOOLS.has(t.name),
+);
+
 // ── execution ────────────────────────────────────────────────────────────────
 
 type ToolResult = Record<string, unknown>;
