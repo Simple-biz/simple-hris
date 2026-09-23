@@ -819,6 +819,457 @@
       "planSp": 3,
       "flushedAt": "2026-09-12T05:20:00.000Z",
       "flushNote": "SUPERSEDED 2026-09-12 by pass 26 (hash 4dda094a2ea9), which wrote this row directly. NOT flushed: this entry was queued at 'Pending Deploy', and pass 26 wrote a HIGHER status on Kane's confirmation, so flushing it afterwards would have DOWNGRADED the row and silently undone 28 closures. Verified written by a board re-read the same session (status and Completed Date both correct on every row)."
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The Payroll Wizard pays a data HSL sub-team — staffed, railed and paid, not just scoreable",
+        "status": "Pending Deploy",
+        "shas": [
+          "0f32d323"
+        ],
+        "basis": "Closes audit item 159: the card, the roster and the payout were three separate gates and the wizard paid a data sub-team through none of them. manager-week-amount.ts + roster-merge.ts + PayrollWizard, 186 lines of new tests. Money path, hence Critical. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Intake and Filing Specialist are scored from the Payment Catalog — the code rules are retired and the Library programme is the one rule",
+        "status": "Pending Deploy",
+        "shas": [
+          "b3dc6a98",
+          "f8ef11a4",
+          "e230972d"
+        ],
+        "basis": "CURRENT RULE ONLY: b3dc6a98 set Filing Attested Cases to 20/30/40 and added a script to retire the duplicate Library programme; e230972d DELETED that script and went the other way (code rules out via rules: [] + rulesFromCatalog, Library in), following f8ef11a4, which did the same for Intake. Probes are read-only. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "A department transfer no longer forks a second master-list row",
+        "status": "Pending Deploy",
+        "shas": [
+          "ea980676"
+        ],
+        "basis": "sheet-assignment.ts stops the master sync keying a transfer as a new (personal_email, department) row, which is what orphaned 304 of 314 duplicate groups. 131 lines of tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "One definition of an active employee — the master list reconciled and the upload gate dropped, both counts equal",
+        "status": "Done",
+        "completed": "2026-09-21",
+        "shas": [
+          "8635cb07",
+          "5163c5b4",
+          "35f6a5ab",
+          "6738bf90",
+          "8703f737",
+          "5bd59ed0"
+        ],
+        "basis": "The 1,667-vs-1,143 investigation (8635cb07), the rehearsal-by-default reconcile (5163c5b4), the active_employees upload-gate drop with its restore file (35f6a5ab), the flip-back doc (6738bf90), a gate-check fix (8703f737) and the APPLIED record (5bd59ed0): 457 rows stamped, both counts 1,266 on 2026-09-21. Done ON MEASUREMENT, not on anyone's word: re-measured read-only 2026-09-23, active_employees and the unstamped master list both count 1,247, so the gap is still 0 two days after the apply (1,266 then; the drop is leavers, and the point is that the two agree). A data reconcile has no screen to click; the equality is the proof."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "A diagnostics probe catches the two definitions of an active employee drifting apart",
+        "status": "Pending Deploy",
+        "shas": [
+          "610adf41"
+        ],
+        "basis": "roster-drift.ts + a diagnostics node that fails when active_employees and the unstamped master list disagree: the regression guard for the reconcile row. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The external API pages on a UUID cursor — REST and MCP paging had never worked past the first page",
+        "status": "Pending Deploy",
+        "shas": [
+          "8160d05e"
+        ],
+        "basis": "The GML id is a UUID and the cursor was typed integer, so 1,141 of 1,641 active people were unreachable on REST and MCP since 09-16. Five test files updated. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Payment Catalog paints from the Accounting tab cache",
+        "status": "Pending Deploy",
+        "shas": [
+          "1758cdc2"
+        ],
+        "basis": "catalog-cache.ts (178 lines + 160 of tests) joined to the Accounting tab cache. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Employee Current Paycycle — the in-flight week broken down beside an eight-step payroll track",
+        "status": "Pending Deploy",
+        "shas": [
+          "e3ee5541",
+          "6bc14901",
+          "b351bdd7"
+        ],
+        "basis": "current-paycycle route (401), CurrentPaycycle.tsx (514), paycycle-steps/arrival with tests; b351bdd7 fixes the hours (Hubstaff day cells are duration strings, now parsed via hubstaff/duration.ts). 6bc14901 is its doc correction. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Payroll Wizard Step 2 labels a first paycheck from Hubstaff history, never from a start date",
+        "status": "Pending Deploy",
+        "shas": [
+          "e33e3cfd",
+          "dce1bb03",
+          "611d9c47"
+        ],
+        "basis": "first-paycheck.ts + first-hours-index.ts + a route: no Hubstaff hours for any alias in any earlier upload, display-only, a failed read is unavailable never zero. Carla meeting 2026-09-22 recorded. dce1bb03 also carries an unrelated read-only gift probe (no row). Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Gift Tracker Recently filled / updated — who used the link, and an alert to HR",
+        "status": "Pending Deploy",
+        "shas": [
+          "7ee98b64"
+        ],
+        "basis": "recent-submissions route + GiftRecentSubmissions.tsx + live hook, and a gift_shipping.submitted notification to grant holders. Pending Deploy, held by a measured external step below.",
+        "blockers": [
+          "MEASURED 2026-09-23 read-only: references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql is NOT APPLIED. audit_log holds 79 notification.insert_failed rows, every one gift_shipping.submitted rejected by employee_notifications_type_check (23514), first 2026-09-22 20:19Z, latest 2026-09-23 16:31Z. The tab works (it reads audit_log); the HR alert is dead until the widen runs"
+        ]
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The Gift Tracker Submissions tab exports its own CSV at submission grain",
+        "status": "Pending Deploy",
+        "shas": [
+          "b3d5d05e"
+        ],
+        "basis": "shipping-export.ts gains the submission-grain file with one shared column list; the roster file keeps never-submitted people, this one does not. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The Gift Tracker drops its hero banner for four stat tiles",
+        "status": "Pending Deploy",
+        "shas": [
+          "ca8bbcb2"
+        ],
+        "basis": "GiftTracker.tsx, 79 lines out, 19 in. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 1,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The gift address link finds its owner by an alternate work email, and the code goes to that address",
+        "status": "Pending Deploy",
+        "shas": [
+          "123b6457"
+        ],
+        "basis": "match.ts looks up all four email columns; identity stays the primary, the alternate company address receives the code. 98 lines of tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "A MESA member the ledger says is saving but payroll never charges is badged, not silent",
+        "status": "Pending Deploy",
+        "shas": [
+          "85e9fe76",
+          "3a97d121"
+        ],
+        "basis": "membership-drift.ts badges the drift and toggle-mesa-member 409s an aliased opt-in; 3a97d121 records dales@ applied and 0 cases left. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "An approved time adjustment is paid on one week only, and the pay stub prints it as its own line",
+        "status": "Pending Deploy",
+        "shas": [
+          "6f2bdc32"
+        ],
+        "basis": "time-adjustment-week-scope.ts scopes the fold to activeBatchDateRange instead of the PAB month, which paid one approved day on every week of it; the stub gains a Time Adjustment line on statement, email and XLSX/PDF. Money path. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Five cold Employee dashboard tabs join the reload cache, and the cached rate row carries no bank routing",
+        "status": "Pending Deploy",
+        "shas": [
+          "58d62793"
+        ],
+        "basis": "KPI Results, Leaves, MESA, My Hours and Team join tab-cache.ts; rate-row-cache.ts keeps bank routing out of sessionStorage. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The Admin tab cache widens to Roles and one projected roster key, with the audit log kept out",
+        "status": "Pending Deploy",
+        "shas": [
+          "1714a096"
+        ],
+        "basis": "admin tab-cache.ts + master-row-cache.ts on Kane's (b) ruling: Roles in, AuditLogPanel out, one projected roster key. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "QC, Contractor and Tickets get cache stores from one shared factory",
+        "status": "Pending Deploy",
+        "shas": [
+          "cb0895df"
+        ],
+        "basis": "dashboard-cache/create-tab-cache.ts (316 lines + 261 of tests), the factory, with QC, Contractor and Tickets as its first users. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The Orphanage cache store gets its doc, Recent Submissions and Gift Catalog join it, and the bank-row tabs stay out on purpose",
+        "status": "Pending Deploy",
+        "shas": [
+          "b01853ba"
+        ],
+        "basis": "Doc for the seventh store plus two wires; four tabs carry account numbers on their primary row and stay uncached on purpose. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 2,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The wizard’s HSL KPI Bonus column shows the amount dispatch actually pays",
+        "status": "Pending Deploy",
+        "shas": [
+          "db5e87ff"
+        ],
+        "basis": "The Additions cell and footer read the raw work-email map against a Hubstaff-email row, showing zero where dispatch paid; now resolvedHslKpi. Two read-only audit scripts. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The Step-8 pay stub preview marks a figure it does not have as pending or unavailable instead of printing it",
+        "status": "Pending Deploy",
+        "shas": [
+          "38b9df2d",
+          "855caa92"
+        ],
+        "basis": "paystub-field-state.ts: settled / pending / unavailable per line, from the loader never the amount; 855caa92 routes every bonus line through the additions blob. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The hardening skill closes the documentation in the same commit as the code",
+        "status": "Pending Deploy",
+        "shas": [
+          "ef6bca26"
+        ],
+        "basis": "Skill doc change: .claude/skills/hardening/SKILL.md, +80 lines. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 2,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "The reference docs index every route and component, and three false coverage claims become measured counts",
+        "status": "Pending Deploy",
+        "shas": [
+          "30d38244",
+          "8d2f7930",
+          "6a776c7f"
+        ],
+        "basis": "docs/reference api-reference + components indexed in full, 37 moved paths repointed, three coverage claims replaced by measured counts. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-23T16:44:49.541Z",
+      "passDate": "2026-09-23",
+      "approvalHash": "152aace8cab0",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Toasts no longer render twice — the per-dashboard Toasters that duplicated the root one are gone",
+        "status": "Pending Deploy",
+        "shas": [
+          "217544cd"
+        ],
+        "basis": "app/layout.tsx already mounts the root Toaster; 11 dashboards mounted their own on top. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
+      },
+      "planSp": 1,
+      "flushedAt": null,
+      "flushNote": null
     }
   ]
 }
