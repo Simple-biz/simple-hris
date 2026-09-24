@@ -835,8 +835,8 @@
         "basis": "Closes audit item 159: the card, the roster and the payout were three separate gates and the wizard paid a data sub-team through none of them. manager-week-amount.ts + roster-merge.ts + PayrollWizard, 186 lines of new tests. Money path, hence Critical. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -855,8 +855,8 @@
         "basis": "CURRENT RULE ONLY: b3dc6a98 set Filing Attested Cases to 20/30/40 and added a script to retire the duplicate Library programme; e230972d DELETED that script and went the other way (code rules out via rules: [] + rulesFromCatalog, Library in), following f8ef11a4, which did the same for Intake. Probes are read-only. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -873,8 +873,8 @@
         "basis": "sheet-assignment.ts stops the master sync keying a transfer as a new (personal_email, department) row, which is what orphaned 304 of 314 duplicate groups. 131 lines of tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -897,8 +897,8 @@
         "basis": "The 1,667-vs-1,143 investigation (8635cb07), the rehearsal-by-default reconcile (5163c5b4), the active_employees upload-gate drop with its restore file (35f6a5ab), the flip-back doc (6738bf90), a gate-check fix (8703f737) and the APPLIED record (5bd59ed0): 457 rows stamped, both counts 1,266 on 2026-09-21. Done ON MEASUREMENT, not on anyone's word: re-measured read-only 2026-09-23, active_employees and the unstamped master list both count 1,247, so the gap is still 0 two days after the apply (1,266 then; the drop is leavers, and the point is that the two agree). A data reconcile has no screen to click; the equality is the proof."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -915,8 +915,8 @@
         "basis": "roster-drift.ts + a diagnostics node that fails when active_employees and the unstamped master list disagree: the regression guard for the reconcile row. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -933,8 +933,8 @@
         "basis": "The GML id is a UUID and the cursor was typed integer, so 1,141 of 1,641 active people were unreachable on REST and MCP since 09-16. Five test files updated. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -951,8 +951,8 @@
         "basis": "catalog-cache.ts (178 lines + 160 of tests) joined to the Accounting tab cache. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -971,8 +971,8 @@
         "basis": "current-paycycle route (401), CurrentPaycycle.tsx (514), paycycle-steps/arrival with tests; b351bdd7 fixes the hours (Hubstaff day cells are duration strings, now parsed via hubstaff/duration.ts). 6bc14901 is its doc correction. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -991,8 +991,8 @@
         "basis": "first-paycheck.ts + first-hours-index.ts + a route: no Hubstaff hours for any alias in any earlier upload, display-only, a failed read is unavailable never zero. Carla meeting 2026-09-22 recorded. dce1bb03 also carries an unrelated read-only gift probe (no row). Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1012,8 +1012,8 @@
         ]
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1030,8 +1030,8 @@
         "basis": "shipping-export.ts gains the submission-grain file with one shared column list; the roster file keeps never-submitted people, this one does not. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1048,8 +1048,8 @@
         "basis": "GiftTracker.tsx, 79 lines out, 19 in. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 1,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1066,8 +1066,8 @@
         "basis": "match.ts looks up all four email columns; identity stays the primary, the alternate company address receives the code. 98 lines of tests. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1085,8 +1085,8 @@
         "basis": "membership-drift.ts badges the drift and toggle-mesa-member 409s an aliased opt-in; 3a97d121 records dales@ applied and 0 cases left. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1103,8 +1103,8 @@
         "basis": "time-adjustment-week-scope.ts scopes the fold to activeBatchDateRange instead of the PAB month, which paid one approved day on every week of it; the stub gains a Time Adjustment line on statement, email and XLSX/PDF. Money path. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1121,8 +1121,8 @@
         "basis": "KPI Results, Leaves, MESA, My Hours and Team join tab-cache.ts; rate-row-cache.ts keeps bank routing out of sessionStorage. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1139,8 +1139,8 @@
         "basis": "admin tab-cache.ts + master-row-cache.ts on Kane's (b) ruling: Roles in, AuditLogPanel out, one projected roster key. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1157,8 +1157,8 @@
         "basis": "dashboard-cache/create-tab-cache.ts (316 lines + 261 of tests), the factory, with QC, Contractor and Tickets as its first users. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1175,8 +1175,8 @@
         "basis": "Doc for the seventh store plus two wires; four tabs carry account numbers on their primary row and stay uncached on purpose. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 2,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1193,8 +1193,8 @@
         "basis": "The Additions cell and footer read the raw work-email map against a Hubstaff-email row, showing zero where dispatch paid; now resolvedHslKpi. Two read-only audit scripts. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1212,8 +1212,8 @@
         "basis": "paystub-field-state.ts: settled / pending / unavailable per line, from the loader never the amount; 855caa92 routes every bonus line through the additions blob. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1230,8 +1230,8 @@
         "basis": "Skill doc change: .claude/skills/hardening/SKILL.md, +80 lines. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 2,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1250,8 +1250,8 @@
         "basis": "docs/reference api-reference + components indexed in full, 37 moved paths repointed, three coverage claims replaced by measured counts. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     },
     {
       "queuedAt": "2026-09-23T16:44:49.541Z",
@@ -1268,8 +1268,8 @@
         "basis": "app/layout.tsx already mounts the root Toaster; 11 dashboards mounted their own on top. Pending Deploy: on origin/main (0 unpushed, measured 2026-09-23), no migration or n8n workflow in its diff, and nobody has recorded looking at it in production yet."
       },
       "planSp": 1,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-24T00:08:31.835Z",
+      "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
     }
   ]
 }

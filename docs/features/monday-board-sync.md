@@ -2165,3 +2165,27 @@ Done · no Actual SP · no Completed Date.
 
 Probed alive with one cheap `boardGroups` call at **15:09Z** before planning anything. The whole
 pass — probes, the S28 and S29 group pages, epic parity, 3 moves, 3 verifies — cost **~25 calls**.
+
+## Pass 33 — 2026-09-23 · 33 rows / 129 SP into Sprint 29 (APPLIED + VERIFIED 2026-09-24 00:0xZ)
+
+Kane: *"All withheld SP lets push to Sprint 29."* The ledger owed 0 and pass 31 was already applied,
+so the withheld SP was **76 commits `7c880535..217544cd` with no row**. Clustered by file overlap
+into **33 rows / 129 SP**, all S29, staged in `feab043f`, approved as hash **`152aace8cab0`**.
+
+- **16:44Z 09-23** — `apply.mts --only-new` created 9 rows, then `DAILY_LIMIT_EXCEEDED`
+  (retry-after 26109 s → 00:00 UTC). 24 went to `pending-sp.json` (`2ee7e02a`).
+- **00:03Z 09-24** — budget reset. Resumed by **re-running the same `--only-new` command**, not
+  the flush, because 23 of the 24 queued rows did not exist yet and the flush refuses those. It
+  adopted the 9 by exact name and created 24 more. Row 10 (the wizard pays a data sub-team) had
+  died mid-create; the exact-name lookup found nothing, so it was created once and no duplicate
+  exists. `PASS_DATE` still read `2026-09-23` and matched `proposal.json`, so the hash still bound.
+- **Verified by re-read:** `verify-one.mts` on all 33. Every row is Sprint 29, Est SP sums to
+  **129**. **1 Done** (GML reconcile, 5 SP, Actual 5, completed 2026-09-21) and **32 Pending Deploy**
+  with no Actual SP and no Completed Date. The epic relation is unset on all 33; a full reconcile
+  owns that.
+- The 24 ledger entries are marked `flushedAt` with a note saying the apply re-run wrote them, not
+  the flush. The ledger has **0 open** entries.
+
+**Still owed:** Kane has to say which of the 32 Pending Deploy rows he has looked at in prod before
+they go Done. Two rows cannot go Done on his word: the gift "Recently filled" HR alert (migration
+not applied, item 183) and the staff Support board (zero grants, absent webhook slugs).
