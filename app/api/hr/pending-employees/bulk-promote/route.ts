@@ -14,7 +14,7 @@ import { masterListDisplayName } from "@/lib/name/display-name";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
-import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { insertAuditLog, insertAuditLogs } from "@/lib/supabase/audit-log";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -108,6 +108,8 @@ export async function POST(req: Request) {
         id: number;
         name: string;
         masterId: string;
+        /** The rehire's off-boarded row was brought back (same person). */
+        reactivated: { previousOffBoardedAt: string; previousReason: string | null } | null;
         sheetInput: {
           name: string;
           personalEmail: string;
@@ -142,6 +144,7 @@ export async function POST(req: Request) {
         id: row.id,
         name: res.row.name,
         masterId: res.masterId,
+        reactivated: res.reactivated ?? null,
         sheetInput: {
           name: res.row.name,
           personalEmail: res.row.personal_email,
@@ -281,6 +284,29 @@ export async function POST(req: Request) {
         .map((r) => ({ id: r.id, name: r.name, error: r.error })),
     },
   });
+
+  // A reactivated rehire is a reonboard in all but route — audit it under the
+  // same action Restore uses so the Offboarding history shows who came back.
+  const reactivatedRows = okPrepared.filter((p) => p.reactivated);
+  if (reactivatedRows.length > 0) {
+    void insertAuditLogs(
+      reactivatedRows.map((p) => ({
+        user_name: authz.sessionEmail,
+        user_role: authz.roles[0] ?? "hr",
+        action: "hr.employee.reonboarded",
+        resource: "global_master_list",
+        resource_id: p.sheetInput.workEmail,
+        details: {
+          via: "rehire_promote",
+          pending_id: p.id,
+          master_id: p.masterId,
+          department: p.sheetInput.department,
+          previous_off_boarded_at: p.reactivated?.previousOffBoardedAt ?? null,
+          previous_off_boarded_reason: p.reactivated?.previousReason ?? null,
+        },
+      })),
+    );
+  }
 
   return NextResponse.json({
     promoted: promotedCount,

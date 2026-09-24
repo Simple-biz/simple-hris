@@ -156,10 +156,21 @@ Everything else about a stamped row still syncs — name, department, emails and
 `last_seen_upload_id` all update normally. They simply never re-enter `active_employees` from
 here.
 
-**The only way back onto the roster is the Restore button** — HR → Offboarding,
-`/api/hr/reonboard`, one deliberate audited person at a time (`hr.employee.reonboarded`). That
-path is untouched, and a control test asserts it still exists: removing the sheet route is only
-safe because an explicit one survives.
+**The sheet sync never brings anyone back.** There are exactly two ways back onto the roster, and
+both are one deliberate, audited person at a time (`hr.employee.reonboarded`):
+
+1. **The Restore button** — HR → Offboarding, `/api/hr/reonboard`. Untouched; a control test
+   asserts it still exists, because removing the sheet route is only safe while an explicit one
+   survives.
+2. **Promoting a rehire** — added 2026-09-24 (Kane chose (b), audit item 197). (Work Email,
+   Department) is unique, so a rehire lands back on their old row; promote used to re-stamp it and
+   leave the off-board in place, so `aireenp@` was "promoted" on 09-14 and invisible everywhere.
+   `decideMasterRowReuse` (`src/lib/hr/rehire-master-reuse.ts`) now reactivates that row — the four
+   `off_boarded_*` columns and both deletion timers — **only when its Personal Email matches the
+   hire's**. A different or missing personal email (a recycled work email) is **REFUSED**, never
+   reactivated. The `offboarded_sheet` ledger row is **kept** as the old stint's record, and RBAC
+   grants are **not** restored (a rehire starts from fresh grants). Audited with
+   `via: "rehire_promote"`; pinned by `src/lib/hr/rehire-master-reuse.test.ts`.
 
 Pinned by `src/lib/supabase/master-sync-never-reactivates.test.ts`.
 

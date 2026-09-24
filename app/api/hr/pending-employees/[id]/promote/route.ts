@@ -31,13 +31,34 @@ export async function POST(
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
 
-  const { row, masterId, error, sheet } = await promoteHrPendingEmployee(id);
+  const { row, masterId, error, sheet, reactivated } = await promoteHrPendingEmployee(id);
+  // A reactivated rehire is a reonboard in all but route — audit it under the
+  // same action Restore uses so the Offboarding history shows who came back.
+  // Before the error return: a later Sheet failure does not undo the reactivation.
+  if (reactivated) {
+    void insertAuditLog({
+      user_name: authz.sessionEmail,
+      user_role: authz.roles[0] ?? "hr",
+      action: "hr.employee.reonboarded",
+      resource: "global_master_list",
+      resource_id: row?.work_email ?? null,
+      details: {
+        via: "rehire_promote",
+        pending_id: id,
+        master_id: masterId ?? null,
+        department: row?.department ?? null,
+        previous_off_boarded_at: reactivated.previousOffBoardedAt,
+        previous_off_boarded_reason: reactivated.previousReason,
+      },
+    });
+  }
+
   // Never echo the staged hire's pay rate back to the HR client.
   const safeRow = redactPendingRowRates(row, hasRateVisibility(authz.roles));
   if (error) {
     // Distinguish validation errors (missing work_email, already promoted) from server errors.
     const status =
-      /work email|already promoted|cancelled|no current master|no_show/i.test(error)
+      /work email|already promoted|cancelled|no current master|no_show|is off-boarded/i.test(error)
         ? 400
         : 500;
     return NextResponse.json({ row: safeRow, masterId, error }, { status });

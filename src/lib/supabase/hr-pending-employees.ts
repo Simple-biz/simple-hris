@@ -8,6 +8,7 @@ import { getHrOnboardingSubmissionById } from "./hr-onboarding-submissions";
 import { normalizeDeptToKey } from "../payroll/normalize-dept-key";
 import { masterListDisplayName, nameLastFirstQuoted } from "../name/display-name";
 import { selectAllPaged } from "./select-all-paged";
+import { decideMasterRowReuse } from "../hr/rehire-master-reuse";
 
 /**
  * Maps an onboarding submission's payment details onto the `employee_ids`
@@ -765,6 +766,9 @@ export async function promoteHrPendingEmployee(
    *  path can append all hires to the Google Sheet in one batched call instead
    *  of one-read-per-hire (see opts.skipSheet). Null only on early failures. */
   startDate?: string | null;
+  /** Set when promote brought an off-boarded row of the SAME person back for a
+   *  rehire (see decideMasterRowReuse). The caller audits it as a reonboard. */
+  reactivated?: { previousOffBoardedAt: string; previousReason: string | null } | null;
 }> {
   const sb = client();
 
@@ -850,12 +854,13 @@ export async function promoteHrPendingEmployee(
   // disambiguates. This mirrors the (Work Email, Department) uniqueness the
   // schema now enforces.
   let masterId: string;
+  let reactivated: { previousOffBoardedAt: string; previousReason: string | null } | null = null;
   // Escape LIKE wildcards: a work email can contain `_` (legal local-part char),
   // which ILIKE would treat as "any char" and match a DIFFERENT person's row —
   // reassigning this hire onto their master record.
   const { data: existingMaster, error: existingErr } = await sb
     .from(MASTER_TABLE)
-    .select("id")
+    .select('id, "Personal Email", off_boarded_at, off_boarded_reason')
     .ilike("Work Email", escapeLikePattern(row.work_email))
     .ilike("Department", escapeLikePattern(row.department))
     .limit(1)
@@ -864,14 +869,55 @@ export async function promoteHrPendingEmployee(
     return { row, masterId: null, error: `Master lookup failed: ${existingErr.message}` };
 
   if (existingMaster) {
-    masterId = (existingMaster as { id: string }).id;
+    const existing = existingMaster as {
+      id: string;
+      "Personal Email": string | null;
+      off_boarded_at: string | null;
+      off_boarded_reason: string | null;
+    };
+    masterId = existing.id;
+    // A rehire lands back on their old row (the pair above is unique). If that
+    // row is still off-boarded, re-stamping the upload alone leaves them
+    // invisible to active_employees — the 09-14 aireenp@ failure. Reactivate it
+    // only when it is provably the SAME person; refuse anything else.
+    const decision = decideMasterRowReuse(
+      {
+        offBoardedAt: existing.off_boarded_at,
+        offBoardedReason: existing.off_boarded_reason,
+        personalEmail: existing["Personal Email"],
+      },
+      {
+        personalEmail: row.personal_email,
+        workEmail: row.work_email,
+        department: row.department,
+      },
+    );
+    if (decision.kind === "refuse") return { row, masterId: null, error: decision.error };
+
     // Attach the reused row to the current upload so it shows in active_employees,
     // and (re)stamp Start Date to the orientation date in case this is a
     // re-promote after a fix. Never rewrites identity fields (Work Email etc.).
-    await sb
-      .from(MASTER_TABLE)
-      .update({ last_seen_upload_id: uploadId, "Start Date": startDate })
-      .eq("id", masterId);
+    const patch: Record<string, unknown> = { last_seen_upload_id: uploadId, "Start Date": startDate };
+    if (decision.kind === "reactivate") {
+      // Same four columns + both deletion timers /api/hr/reonboard clears — a
+      // live scheduled_deletion_at would delete the rehire's new accounts. The
+      // offboarded_sheet ledger row is KEPT: it is the old stint's record.
+      patch.off_boarded_at = null;
+      patch.off_boarded_reason = null;
+      patch.off_boarded_by = null;
+      patch.off_boarded_note = null;
+      patch.scheduled_deletion_at = null;
+      patch.deletion_processed_at = null;
+      reactivated = {
+        previousOffBoardedAt: decision.previousOffBoardedAt,
+        previousReason: decision.previousReason,
+      };
+    }
+    // Checked: this update used to be fire-and-forget, so a failed re-stamp
+    // still reported "promoted".
+    const { error: reuseErr } = await sb.from(MASTER_TABLE).update(patch).eq("id", masterId);
+    if (reuseErr)
+      return { row, masterId: null, error: `Master update failed: ${reuseErr.message}` };
   } else {
     // Master-list columns use mixed-case quoted identifiers ("Personal Email", etc.)
     // — see references/supabase_global_master_list.sql.
@@ -1091,7 +1137,7 @@ export async function promoteHrPendingEmployee(
   // setHrPromotionOutcome() per hire with that batch's per-row result. So leave
   // the pending row 'ready' and hand back the masterId + startDate it needs.
   if (opts.deferStatus) {
-    return { row, masterId, error: null, sheet, startDate };
+    return { row, masterId, error: null, sheet, startDate, reactivated };
   }
 
   // Single-promote path: the Sheet write ran inline above, so we know the
@@ -1104,7 +1150,7 @@ export async function promoteHrPendingEmployee(
     masterId,
   });
   if (finalizeErr)
-    return { row, masterId, error: `Status update failed: ${finalizeErr}`, sheet, startDate };
+    return { row, masterId, error: `Status update failed: ${finalizeErr}`, sheet, startDate, reactivated };
   if (!sheetOk) {
     return {
       row: finalized ?? row,
@@ -1114,9 +1160,10 @@ export async function promoteHrPendingEmployee(
       }). Marked "Failed to promote" — retry once the Sheet is reachable.`,
       sheet,
       startDate,
+      reactivated,
     };
   }
-  return { row: finalized ?? row, masterId, error: null, sheet, startDate };
+  return { row: finalized ?? row, masterId, error: null, sheet, startDate, reactivated };
 }
 
 /**
