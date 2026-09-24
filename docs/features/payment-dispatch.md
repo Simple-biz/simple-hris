@@ -1657,8 +1657,14 @@ only mis-paint the strip's percentage:
    me"** — `payableUnpaidCount === 0 && paidCount > 0`, no floor, no cross-check against the
    headcount the wizard knows.
 
-Two smaller holes on the same load path: `payJson.error` from `/api/payroll-current-pay` is
-never inspected (only `ratesJson.error` aborts), and an empty-without-error `rates.rows`
+Two smaller holes on the same load path. **(i) CLOSED 2026-09-24:** `payJson.error` from
+`/api/payroll-current-pay` was never inspected (only `ratesJson.error` aborted). The route
+answers a 500 with `period: { start: null, … }`, so a failed pay read fell through to
+`EMPTY_PERIOD` and painted **"No upload yet / No Hubstaff cycle uploaded"** over a live week
+with 1,039 of 1,051 paid (Kane's screenshot; one 500 in 11 measured calls, message not
+captured). `loadAll` now aborts on `!payRes.ok || payJson.error` exactly like the rates
+read, so the body shows `ErrorState` with the reason. **"No upload yet" means no cycle, never
+a failed read.** **(ii) Still OPEN:** an empty-without-error `rates.rows`
 sends everyone to `excluded` (`no_pay`), leaving the denominator.
 
 **2026-09-02** had **no lock flip** — the per-cycle lock stayed `locked: true` from 23:11Z

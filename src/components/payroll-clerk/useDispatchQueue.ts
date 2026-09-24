@@ -285,7 +285,14 @@ async function loadAll(
     error?: string | null;
   };
 
-  if (ratesJson.error) {
+  // A failed pay read is an ERROR, never "no cycle". The route answers a 500
+  // with `period: { start: null, … }`, which used to fall through to
+  // EMPTY_PERIOD below and paint "No upload yet / No Hubstaff cycle uploaded"
+  // over a live, 1,039-paid week (2026-09-24). Same abort as the rates read.
+  const payError = !payRes.ok || payJson.error
+    ? `Could not load this week's pay: ${payJson.error || `HTTP ${payRes.status}`}`
+    : null;
+  if (ratesJson.error || payError) {
     return {
       rows: [],
       excluded: [],
@@ -294,7 +301,7 @@ async function loadAll(
       period: EMPTY_PERIOD,
       fxRate: 0,
       wizardReady: true,
-      error: ratesJson.error,
+      error: ratesJson.error || payError,
       contractorError: null,
       contractorAdvisory: null,
       valuesWarning: null,
