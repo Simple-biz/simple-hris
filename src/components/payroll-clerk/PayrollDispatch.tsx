@@ -1670,13 +1670,6 @@ export default function PayrollDispatch() {
                 👋
               </motion.span>
             </motion.p>
-            <h1 className="mt-0.5 text-xl font-bold tracking-tight text-zinc-900 dark:text-white sm:text-[28px]">
-              Payment dispatch
-            </h1>
-            <p className="mt-1 max-w-xl text-[13px] text-zinc-500 dark:text-zinc-400 sm:text-sm">
-              Dispatch this week&apos;s payroll one transfer at a time. Pick a processor on the left,
-              log each payment as it goes out, and the queue clears as money moves.
-            </p>
           </div>
 
           <div className="flex w-full flex-row flex-wrap items-center gap-2 sm:w-auto sm:flex-col sm:items-end">
