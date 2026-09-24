@@ -2189,3 +2189,25 @@ into **33 rows / 129 SP**, all S29, staged in `feab043f`, approved as hash **`15
 **Still owed:** Kane has to say which of the 32 Pending Deploy rows he has looked at in prod before
 they go Done. Two rows cannot go Done on his word: the gift "Recently filled" HR alert (migration
 not applied, item 183) and the staff Support board (zero grants, absent webhook slugs).
+
+## Pass 34 — 2026-09-24 · status pass: 32 Pending Deploy rows / 119 SP → Done (APPLIED, UNVERIFIED)
+
+Kane: *"All unfinished tasks from 28 put them in 29"*, then *"All of these Pending deployes have
+already been deployed so lets score them"*, then approved after pushing to `cea56d5a`. The board
+held **41** HRIS Pending Deploy rows (37 S29, 4 S28), found by status filter. Every blocker was
+re-measured read-only the same hour. **32 went Done on Kane's word; 9 are held** because a
+deploy cannot run a migration, grant a role or switch on a workflow (see Open item 196 for the
+nine and their measurements). **Nothing moved S28 → S29:** S28's only open rows are four of the
+held nine, and their code landed inside S28 (tickets in S27).
+
+- `apply.mts --only-new` under hash `8c101a026a29` at 00:22Z wrote **37 of 41**: all 32 Done rows
+  (Actual SP = Est SP, Completed Date = last sha's date, Sep 21–23) plus 5 held rows' evidence
+  updates. Then `DAILY_LIMIT_EXCEEDED`, retry-after 85061 s → **2026-09-25 00:00Z**. It was already
+  late in the UTC day's bucket after pass 33 (~110 calls). 4 held rows (tickets, paystub reissue,
+  HSL scheduling, Lead Gen QC) are queued in `pending-sp.json`. They exist on the board and keep
+  Pending Deploy, so only their evidence update is owed and the flush can write them.
+- **Verification is PARTIAL.** Every correction resolved its target by byte-exact name, so the
+  rows exist and the writes addressed real ids. The VALUES are acknowledged mutations and have not
+  been re-read. `verify-one.mts` died on the same budget.
+
+**Owed after the reset:** `flush-pending.mts --apply` (about 9 calls), then `verify-one.mts` on all 41.

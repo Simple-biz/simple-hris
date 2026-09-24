@@ -1270,6 +1270,93 @@
       "planSp": 1,
       "flushedAt": "2026-09-24T00:08:31.835Z",
       "flushNote": "written by apply.mts --only-new re-run 2026-09-24T00:08:31.835Z (approval 152aace8cab0), not the flush — row did not exist; re-read by verify-one.mts"
+    },
+    {
+      "queuedAt": "2026-09-24T00:22:18.093Z",
+      "passDate": "2026-09-24",
+      "approvalHash": "8c101a026a29",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Tickets board notifies the requester on every update — comment emails and status-move emails",
+        "status": "Pending Deploy",
+        "shas": [
+          "24be42cf",
+          "90fb23fa"
+        ],
+        "basis": "Held against Kane's 2026-09-24 \"all deployed, score them\": the code is live, the email leg is switched off. NOTE for when it closes: the code landed 2026-08-21 (Sprint 27) and the row sits in Sprint 28, so it can only go Done with dateBasis external on the day the workflows are switched on, and that day must fall in the row's sprint.",
+        "blockers": [
+          "MEASURED 2026-09-24 ~00:20Z read-only: ticket_replied and ticket_moved ARE in webhooks.config now but both are marked inactive (config last saved 2026-09-12), so neither email is sent"
+        ]
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-24T00:22:18.093Z",
+      "passDate": "2026-09-24",
+      "approvalHash": "8c101a026a29",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt",
+        "status": "Pending Deploy",
+        "shas": [
+          "4acceeb9"
+        ],
+        "basis": "Held against Kane's 2026-09-24 \"all deployed, score them\": an assertion cannot create a table. The feature records nothing until the migration runs.",
+        "blockers": [
+          "MEASURED 2026-09-24 ~00:20Z read-only with .limit(1) against a PGRST205 negative control: public.paystub_issues is ABSENT. Run scripts/apply-paystub-issues-migration.mts --apply"
+        ]
+      },
+      "planSp": 8,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-24T00:22:18.093Z",
+      "passDate": "2026-09-24",
+      "approvalHash": "8c101a026a29",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership",
+        "status": "Pending Deploy",
+        "shas": [
+          "7cf94aa5"
+        ],
+        "basis": "Held against Kane's 2026-09-24 \"all deployed, score them\": code-complete, saves nothing.",
+        "blockers": [
+          "MEASURED 2026-09-24 ~00:20Z read-only with .limit(1) against a PGRST205 negative control: public.employee_schedule_periods is ABSENT. Run scripts/apply-employee-schedules-migration.mts --apply"
+        ]
+      },
+      "planSp": 5,
+      "flushedAt": null,
+      "flushNote": null
+    },
+    {
+      "queuedAt": "2026-09-24T00:22:18.093Z",
+      "passDate": "2026-09-24",
+      "approvalHash": "8c101a026a29",
+      "inputsHash": null,
+      "reason": "DAILY_LIMIT_EXCEEDED",
+      "row": {
+        "name": "Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate",
+        "status": "Pending Deploy",
+        "shas": [
+          "b6711973",
+          "89f2d0e6",
+          "8307df6e"
+        ],
+        "basis": "Held against Kane's 2026-09-24 \"all deployed, score them\": this row is money that has not moved, not code awaiting a look.",
+        "blockers": [
+          "MEASURED 2026-09-24 ~00:20Z read-only via scripts/probe-lead-gen-qc-vs-applied.mts: gap STILL OPEN, 290 applied rows (124 at PHP 0) all written by carla@ 2026-09-15T15:16Z. scripts/restore-lead-gen-qc-first-pass.mts --apply has not run, and Kane has not ruled whether a first pass is payable"
+        ]
+      },
+      "planSp": 3,
+      "flushedAt": null,
+      "flushNote": null
     }
   ]
 }
