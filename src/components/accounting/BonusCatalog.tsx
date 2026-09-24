@@ -149,6 +149,7 @@ import { PAY_PROCESSORS_SETTING_KEY, type PayProcessor } from '@/lib/payment-cat
 import { BANKS_SETTING_KEY, type BankGroup } from '@/lib/payment-catalog/banks';
 import { subDeptStructureKey, type DepartmentRegistryEntry } from '@/lib/departments/registry';
 import { setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { parseCatalogRosterResponse, type CatalogRosterRow } from '@/lib/payment-catalog/catalog-roster';
 import {
   readCachedCatalog,
   readCachedFx,
@@ -599,8 +600,13 @@ type RosterEntry = {
   aliases: string[];
 };
 
-function buildRoster(initialData?: InitialAccountingData | null): RosterEntry[] {
-  const rows = initialData?.employees ?? [];
+/** The four roster fields the catalog reads — satisfied by both the prefetch's
+ *  `EmployeeRow` and the projected `CatalogRosterRow` from the roster route. */
+type RosterSourceRow = Pick<CatalogRosterRow, 'personal_email' | 'name' | 'department'> & {
+  work_email?: string | null;
+};
+
+function buildRoster(rows: readonly RosterSourceRow[]): RosterEntry[] {
   const seen = new Set<string>();
   const out: RosterEntry[] = [];
   for (const r of rows) {
@@ -658,6 +664,9 @@ const CATALOG_SOURCES = [
   { label: 'Departments', url: '/api/payment-catalog/departments' },
   { label: 'Pay processors', url: '/api/payment-catalog/pay-processors' },
   { label: 'Current banks', url: '/api/payment-catalog/banks' },
+  // The roster rides the same refetch so transfers move headcounts without a
+  // hard reload. Deliberately NOT part of the `ratesSummary` cache blob.
+  { label: 'People', url: '/api/payment-catalog/roster' },
 ] as const;
 
 export default function BonusCatalog({ initialData }: { initialData?: InitialAccountingData | null }) {
@@ -737,11 +746,21 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
   // `visibleRoster` is who the catalog offers as a person: search results,
   // pickers, department headcounts, spend. Filtering the name map too would turn
   // an existing rate row into a bare email address.
-  const roster = useMemo(() => buildRoster(initialData), [initialData]);
-  const offboardedEmails = useMemo(
-    () => new Set(initialData?.catalogOffboardedEmails ?? []),
-    [initialData],
+  //
+  // Both are STATE, seeded from the page-load prefetch and replaced by every
+  // `refetch()` (the `People` source). They used to be derived from `initialData`
+  // alone, so a transfer applied after `/accounting` opened never moved a
+  // headcount until a hard reload — a new sub-team read "0 people" with someone
+  // in it (2026-09-24). Not mirrored into the tab cache: the seed is already on
+  // the page, and ~1,200 names and emails in sessionStorage buy nothing.
+  const [rosterRows, setRosterRows] = useState<readonly RosterSourceRow[]>(
+    () => initialData?.employees ?? [],
   );
+  const [offboardedList, setOffboardedList] = useState<readonly string[]>(
+    () => initialData?.catalogOffboardedEmails ?? [],
+  );
+  const roster = useMemo(() => buildRoster(rosterRows), [rosterRows]);
+  const offboardedEmails = useMemo(() => new Set(offboardedList), [offboardedList]);
   const visibleRoster = useMemo(() => withoutOffboarded(roster, offboardedEmails), [roster, offboardedEmails]);
   // Current Banks enriches its people list with departments from the roster that is
   // already loaded here — no extra request, and no department resolution of its own.
@@ -937,6 +956,7 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       }>(3);
       const proc = await read<{ processors?: PayProcessor[] }>(4);
       const bank = await read<{ banks?: BankGroup[] }>(5);
+      const people = await read<object>(6);
 
       // Every commit below is guarded the way the processors read always was: a
       // failed read keeps the PRIOR list rather than blanking it — an empty tab
@@ -970,6 +990,18 @@ export default function BonusCatalog({ initialData }: { initialData?: InitialAcc
       }
       if (Array.isArray(proc?.processors)) setPayProcessors((next.payProcessors = proc.processors));
       if (Array.isArray(bank?.banks)) setBanks((next.banks = bank.banks));
+      // The roster and its off-board set move TOGETHER: a fresh roster beside a
+      // stale hidden-set could re-show a leaver or hide a re-hire. A malformed or
+      // empty read keeps both as they were and is reported like any other.
+      if (people) {
+        const parsed = parseCatalogRosterResponse(people);
+        if (parsed) {
+          setRosterRows(parsed.employees);
+          setOffboardedList(parsed.catalogOffboardedEmails);
+        } else {
+          failed.push(CATALOG_SOURCES[6].label);
+        }
+      }
 
       committedRef.current = next;
       setTabCache(TAB_CACHE_KEYS.ratesSummary, next);

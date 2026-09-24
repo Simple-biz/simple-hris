@@ -70,6 +70,22 @@ Sheet. The roster prop is used only as an autofill convenience in the people
 picker (and for built-in departments' headcounts) — picking a roster person
 copies their name/email, "their roster row is not touched".
 
+**The roster is re-read on every catalog `refetch()` (2026-09-24).** It used to
+come only from the `/accounting` page-load prefetch, so every headcount on this
+tab — the master-list cards, the Edit dialog's sub-team occupancy, its People
+step — froze at the moment the page opened. A transfer applied afterwards
+(including one this dialog's own People step wrote) never showed until a hard
+reload: Carla's `hsl:healthcare_specialist` read **0 people** with `aireenp@`
+already in it (applied 14:18 UTC; `active_employees` correct, not off-board
+hidden; the count helpers return 1 on the same data). `BonusCatalog` now holds
+the roster and its off-board set as state, seeded from the prefetch and replaced
+together by `GET /api/payment-catalog/roster` (`People` source). The route
+projects rows to four fields (`toCatalogRosterRows` — **never** `EmployeeRow`,
+which carries bank details) and a failed, malformed or **zero-row** read keeps
+the prior roster and raises the failed-reads banner — an empty list would zero
+every headcount. An off-board evidence failure still delivers the roster and
+hides nobody, the prefetch's rule.
+
 > History: the original `5359889` POST reused the transfer engine
 > (`applyDepartmentTransfer` + Sheet dept write-back) and mirrored HR
 > promotion for inserts. `ec4482f` — same day, per Kane's call — stripped all

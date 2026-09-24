@@ -256,6 +256,14 @@ Unlike `PeopleTab`, this tab has **no SSR/hydration seed mismatch**: `App.tsx` s
 Client paint only. No route changed, every fetch is still `cache: 'no-store'`, the
 Realtime channel and the focus refetch are untouched, and no gate moved.
 
+**A seventh read, deliberately outside the blob (2026-09-24).** `People`
+(`GET /api/payment-catalog/roster`) joined `CATALOG_SOURCES` because the roster had
+been frozen at page load and transfers never moved a headcount
+(payment-catalog-departments.md §2). It is **not** mirrored into `ratesSummary`: the
+seed is already on the page as `initialData.employees`, and ~1,200 names and emails
+in sessionStorage buy nothing. The roster and its off-board set commit together or
+not at all, the same pairing discipline as the CAS pairs above.
+
 ## Adding another dataset
 
 1. Add a key to `TAB_CACHE_KEYS`. Keys do **not** carry the viewer's email — the identity

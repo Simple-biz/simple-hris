@@ -3223,6 +3223,7 @@ feature doc and in no hand-written section here.**
 | `/api/payment-catalog/departments` | GET, POST, PATCH | — **none found** | [payment-catalog-departments](../features/payment-catalog-departments.md) · *this file* |
 | `/api/payment-catalog/pay-processors` | GET, POST, PATCH | — **none found** | [payment-catalog-pay-processors](../features/payment-catalog-pay-processors.md) |
 | `/api/payment-catalog/pay-structures` | GET, POST, DELETE | — **none found** | [bonus-catalog](../features/bonus-catalog.md) · [payroll-readiness](../features/payroll-readiness.md) · *this file* |
+| `/api/payment-catalog/roster` | GET | `requireRateVisibilitySession` | [payment-catalog-departments](../features/payment-catalog-departments.md) §2 · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) |
 | `/api/payment-catalog/system-bonuses` | GET, POST, DELETE | — **none found** | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) |
 | `/api/payment-dispatch/bank-override` | POST | service-role only | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches` | GET, POST | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [dispatch-paid-toast](../features/dispatch-paid-toast.md) · *this file* |
