@@ -1908,7 +1908,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // 3 SP: jimg@ and dales@ were NEVER deducted across 14 stubs because ledger identity is an ALIAS and
   // the CSV backfill stamps `mesa_member` WITHOUT the alias map. jimg@ FIXED; dales@ STILL OPEN. NEVER
   // repair via toggle-mesa-member — it MINTS A SECOND ACCOUNT. See [[mesa-alias-members-never-flagged]].
-  { epic: 'HRIS-07', name: 'An aliased MESA member was never charged the deduction — the membership is stamped onto the rate rows and the backfill audit learns the alias map', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-07', name: 'An aliased MESA member was never charged the deduction — the membership is stamped onto the rate rows and the backfill audit learns the alias map', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
   // 3 SP: juliar@ was paid PHP 279.99/hr for ELEVEN WEEKS — one individual catalog override from
   // 2026-06-15 outranked the 280 already in the sheet and the rates. Corrected to 280/420 effective
   // 2026-09-06, FORWARD-ONLY, the 06-22 history row RETAINED. done:true — the catalog structure was
@@ -2075,7 +2075,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // MEASURED: 57 gift-shipping rows in production, ZERO with a named recipient, and the toggle is
   // gated `peopleAltRecipient > 0` by design — so it renders nowhere yet and cannot be clicked
   // through until somebody names a recipient. The tile beside it does render, at zero.
-  { epic: 'HRIS-32', name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-32', name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
 
   // 8 SP and arguably an epic: 36 files / 11,264 insertions across four commits plus the chat half
   // of the mixed `push` commit. Named for BOTH conversion paths — a chat becomes a ticket when
@@ -2116,37 +2116,37 @@ export const PLAN_TASKS: PlanTask[] = [
   // pass records, read-only probes and a plan (named in pass.mts). Two rows describe the CURRENT rule
   // after a same-day reversal (sub-team bonus targets; Filing/Intake). One is Done on measurement
   // (the GML reconcile, both counts 1,247 on 2026-09-23); the rest wait for Kane to name them.
-  { epic: 'HRIS-06', name: 'Discovery can add an external member to its KPI calculator', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Discovery can add an external member to its KPI calculator', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-17', name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-06', name: 'Edit Department manager access is scoped — one list per HSL sub-team, never one collapsed family list', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-26', name: 'The Edit Department People step moves someone as a real department transfer, never a registry note', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-06', name: 'Built-in departments can have sub-departments, HSL included — code teams pinned, data teams under hsl: labels', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-08', name: 'A Bonus Library bonus can target one sub-team — it lands on the parent card and reaches only that team’s members', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-26', name: 'A data HSL sub-team can be transferred into and granted — every transfer, HR and roles surface reads the sub-team map', type: 'Bug', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-30', name: 'A Bonus Library bonus assigned to an HSL sub-team is scored on that team’s KPI card, with its inputs named', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-30', name: 'A data HSL sub-team is a scoreable branch, so it appears in KPI Submissions', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-02a', name: 'The Payroll Wizard pays a data HSL sub-team — staffed, railed and paid, not just scoreable', type: 'Bug', sp: 5, done: false, sprint: 'S29', priority: 'Critical' },
-  { epic: 'HRIS-30', name: 'Intake and Filing Specialist are scored from the Payment Catalog — the code rules are retired and the Library programme is the one rule', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-14', name: 'A department transfer no longer forks a second master-list row', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-06', name: 'Edit Department manager access is scoped — one list per HSL sub-team, never one collapsed family list', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-26', name: 'The Edit Department People step moves someone as a real department transfer, never a registry note', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Built-in departments can have sub-departments, HSL included — code teams pinned, data teams under hsl: labels', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-08', name: 'A Bonus Library bonus can target one sub-team — it lands on the parent card and reaches only that team’s members', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-26', name: 'A data HSL sub-team can be transferred into and granted — every transfer, HR and roles surface reads the sub-team map', type: 'Bug', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-30', name: 'A Bonus Library bonus assigned to an HSL sub-team is scored on that team’s KPI card, with its inputs named', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-30', name: 'A data HSL sub-team is a scoreable branch, so it appears in KPI Submissions', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'The Payroll Wizard pays a data HSL sub-team — staffed, railed and paid, not just scoreable', type: 'Bug', sp: 5, done: true, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-30', name: 'Intake and Filing Specialist are scored from the Payment Catalog — the code rules are retired and the Library programme is the one rule', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-14', name: 'A department transfer no longer forks a second master-list row', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
   { epic: 'HRIS-01', name: 'One definition of an active employee — the master list reconciled and the upload gate dropped, both counts equal', type: 'Chore', sp: 5, done: true, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-15', name: 'A diagnostics probe catches the two definitions of an active employee drifting apart', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-14', name: 'The external API pages on a UUID cursor — REST and MCP paging had never worked past the first page', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-06', name: 'Payment Catalog paints from the Accounting tab cache', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-09', name: 'Employee Current Paycycle — the in-flight week broken down beside an eight-step payroll track', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-02a', name: 'Payroll Wizard Step 2 labels a first paycheck from Hubstaff history, never from a start date', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'A diagnostics probe catches the two definitions of an active employee drifting apart', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-14', name: 'The external API pages on a UUID cursor — REST and MCP paging had never worked past the first page', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-06', name: 'Payment Catalog paints from the Accounting tab cache', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-09', name: 'Employee Current Paycycle — the in-flight week broken down beside an eight-step payroll track', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'Payroll Wizard Step 2 labels a first paycheck from Hubstaff history, never from a start date', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-32', name: 'Gift Tracker Recently filled / updated — who used the link, and an alert to HR', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-32', name: 'The Gift Tracker Submissions tab exports its own CSV at submission grain', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-32', name: 'The Gift Tracker drops its hero banner for four stat tiles', type: 'Chore', sp: 1, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-32', name: 'The gift address link finds its owner by an alternate work email, and the code goes to that address', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-07', name: 'A MESA member the ledger says is saving but payroll never charges is badged, not silent', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-02a', name: 'An approved time adjustment is paid on one week only, and the pay stub prints it as its own line', type: 'Bug', sp: 5, done: false, sprint: 'S29', priority: 'Critical' },
-  { epic: 'HRIS-09', name: 'Five cold Employee dashboard tabs join the reload cache, and the cached rate row carries no bank routing', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-15', name: 'The Admin tab cache widens to Roles and one projected roster key, with the audit log kept out', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-15', name: 'QC, Contractor and Tickets get cache stores from one shared factory', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-03c', name: 'The Orphanage cache store gets its doc, Recent Submissions and Gift Catalog join it, and the bank-row tabs stay out on purpose', type: 'Chore', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-02a', name: 'The wizard’s HSL KPI Bonus column shows the amount dispatch actually pays', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
-  { epic: 'HRIS-03b', name: 'The Step-8 pay stub preview marks a figure it does not have as pending or unavailable instead of printing it', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-15', name: 'The hardening skill closes the documentation in the same commit as the code', type: 'Chore', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-15', name: 'The reference docs index every route and component, and three false coverage claims become measured counts', type: 'Chore', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-15', name: 'Toasts no longer render twice — the per-dashboard Toasters that duplicated the root one are gone', type: 'Bug', sp: 1, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-32', name: 'The Gift Tracker Submissions tab exports its own CSV at submission grain', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-32', name: 'The Gift Tracker drops its hero banner for four stat tiles', type: 'Chore', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-32', name: 'The gift address link finds its owner by an alternate work email, and the code goes to that address', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-07', name: 'A MESA member the ledger says is saving but payroll never charges is badged, not silent', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'An approved time adjustment is paid on one week only, and the pay stub prints it as its own line', type: 'Bug', sp: 5, done: true, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-09', name: 'Five cold Employee dashboard tabs join the reload cache, and the cached rate row carries no bank routing', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'The Admin tab cache widens to Roles and one projected roster key, with the audit log kept out', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'QC, Contractor and Tickets get cache stores from one shared factory', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-03c', name: 'The Orphanage cache store gets its doc, Recent Submissions and Gift Catalog join it, and the bank-row tabs stay out on purpose', type: 'Chore', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-02a', name: 'The wizard’s HSL KPI Bonus column shows the amount dispatch actually pays', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-03b', name: 'The Step-8 pay stub preview marks a figure it does not have as pending or unavailable instead of printing it', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-15', name: 'The hardening skill closes the documentation in the same commit as the code', type: 'Chore', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'The reference docs index every route and component, and three false coverage claims become measured counts', type: 'Chore', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'Toasts no longer render twice — the per-dashboard Toasters that duplicated the root one are gone', type: 'Bug', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
 ];
