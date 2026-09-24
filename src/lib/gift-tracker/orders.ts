@@ -277,6 +277,15 @@ export function resolveOrderLines(input: ResolveInput): OrderLine[] {
   );
 }
 
+/**
+ * How many gifts are OPEN — distinct submissions with at least one open line,
+ * blocked ones included. The same unit the Open orders list counts, and what
+ * the Orders tab badge shows.
+ */
+export function countOpenOrders(lines: OrderLine[]): number {
+  return new Set(lines.map((l) => l.submissionId)).size;
+}
+
 // ---------------------------------------------------------------------------
 // Invoice
 // ---------------------------------------------------------------------------

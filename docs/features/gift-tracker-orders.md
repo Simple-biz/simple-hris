@@ -30,6 +30,15 @@ Tracker already loaded, so an approval shows up in Orders without a refresh. The
 approval month does not matter (Kane: *"no matter which month it was earned"*); there
 is no month batching.
 
+**The Orders tab badge is the Open count** — distinct submissions with an open line
+(`countOpenOrders`), blocked ones included, locked ones excluded, the same number the
+Open list shows. `GiftTracker` reads the orders state on mount and on Refresh (so the
+badge shows with the tab closed) and the open tab hands every fresh read back up
+(`onState`), so a lock or reopen moves the badge with the list. Both go through the ONE
+reader, `fetchOrdersState` (`src/lib/gift-tracker/orders-client.ts`). **A failed read or
+an unapplied migration hides the badge — it is never shown as 0**, which would read as
+"nothing to order".
+
 One submission can send several items (the 24-month tier is *Tote Bag & Mug*), so
 the unit is the **line** = one gift item on one submission, keyed
 `orderLineKey(submissionId, item)`. The tab selects by submission (all its open lines

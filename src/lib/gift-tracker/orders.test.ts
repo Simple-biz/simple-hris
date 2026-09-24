@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildInvoice,
   canonicalSize,
+  countOpenOrders,
   formatPhp,
   isSizedItem,
   orderLineKey,
@@ -194,4 +195,19 @@ test('sizes, centavos and pesos', () => {
   const tote = (d: string) => ({ id: d, item: 'Tote Bag', description: d, price_php: 1 });
   assert.equal(isSizedItem([tote('Small'), tote('Medium'), tote('Large')]), false);
   assert.equal(isSizedItem([{ ...tote('Small'), sized: true }]), true);
+});
+
+test('the Orders badge counts open GIFTS: locked ones out, blocked ones in, two items count once', () => {
+  const lines = resolve(
+    [
+      sub({ id: 'open' }),
+      sub({ id: 'two', milestone_index: 4 }), // Tote Bag & Mug = 2 lines, 1 gift
+      sub({ id: 'blocked', apparel_size: '' }), // needs_size — still open
+      sub({ id: 'locked' }),
+      sub({ id: 'pending', status: 'pending' }),
+    ],
+    new Set([orderLineKey('locked', 'Tshirt')]),
+  );
+  assert.equal(countOpenOrders(lines), 3);
+  assert.equal(countOpenOrders([]), 0);
 });

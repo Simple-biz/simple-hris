@@ -31,6 +31,7 @@ import {
   type OrderTier,
 } from '@/lib/gift-tracker/orders';
 import { downloadOrderInvoicePdf, invoiceNumber } from '@/lib/gift-tracker/order-invoice';
+import { fetchOrdersState, type OrdersClientState } from '@/lib/gift-tracker/orders-client';
 import type { GiftOrderRow } from '@/lib/supabase/gift-orders';
 
 /**
@@ -49,13 +50,6 @@ const PAGE_SIZE = 20;
 export interface GiftOrdersPerson {
   name: string;
   department: string | null;
-}
-
-interface OrdersResponse {
-  migrated: boolean;
-  orders: GiftOrderRow[];
-  liveKeys: string[];
-  error: string | null;
 }
 
 interface SubmissionGroup {
@@ -86,11 +80,15 @@ function fmtStamp(iso: string | null | undefined): string {
 export default function GiftOrders({
   submissions,
   people,
+  onState,
 }: {
   /** Every shipping submission the tracker loaded (any status). */
   submissions: OrderSubmission[];
   /** Roster lookup keyed by lower-case personal email. */
   people: Map<string, GiftOrdersPerson>;
+  /** Every fresh read is handed up so the tab badge counts from the SAME data;
+   *  `null` = unknown (failed read or not migrated) — the badge hides, never 0. */
+  onState?: (state: OrdersClientState | null) => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,24 +111,16 @@ export default function GiftOrders({
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [oRes, cRes] = await Promise.all([
-        fetch('/api/gift-orders', { cache: 'no-store' }),
-        fetch('/api/gift-catalog', { cache: 'no-store' }),
-      ]);
-      const oJson = (await oRes.json()) as OrdersResponse;
-      const cJson = (await cRes.json()) as {
-        catalog?: { items?: OrderCatalogItem[]; anniversaries?: OrderTier[] };
-        error?: string | null;
-      };
-      if (!oRes.ok || oJson.error) throw new Error(oJson.error ?? 'Could not load orders');
-      if (!cRes.ok || cJson.error) throw new Error(cJson.error ?? 'Could not load Gift items');
-      setMigrated(oJson.migrated);
-      setOrders(oJson.orders ?? []);
-      setLiveKeys(new Set(oJson.liveKeys ?? []));
-      setCatalog(cJson.catalog?.items ?? []);
-      setTiers(cJson.catalog?.anniversaries ?? []);
+      const st = await fetchOrdersState();
+      setMigrated(st.migrated);
+      setOrders(st.orders);
+      setLiveKeys(new Set(st.liveKeys));
+      setCatalog(st.catalog);
+      setTiers(st.tiers);
       setLoadError(null);
+      onState?.(st.migrated ? st : null);
     } catch (e) {
+      onState?.(null);
       // Never paint an empty Open list over a failed read — that reads as
       // "nothing to order". The error card says what actually happened.
       setLoadError(e instanceof Error ? e.message : 'Could not load orders');
@@ -138,7 +128,7 @@ export default function GiftOrders({
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [onState]);
 
   useEffect(() => {
     void load();

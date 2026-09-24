@@ -23,6 +23,8 @@ import {
 import GiftCatalog from '@/components/orphanage/GiftCatalog';
 import GiftRecentSubmissions from '@/components/orphanage/GiftRecentSubmissions';
 import GiftOrders from '@/components/orphanage/GiftOrders';
+import { countOpenOrders, resolveOrderLines } from '@/lib/gift-tracker/orders';
+import { fetchOrdersState, type OrdersClientState } from '@/lib/gift-tracker/orders-client';
 import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -616,6 +618,25 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     void load({ silent: painted });
   }, [load]);
 
+  /**
+   * Orders state for the Orders tab BADGE, read on mount and on Refresh even
+   * while the tab is closed. The open tab hands every fresh read back up
+   * (`onState`), so after a lock or reopen the badge moves with the list.
+   * `null` = unknown (failed read or migration not applied) ⇒ NO badge, never 0.
+   */
+  const [ordersState, setOrdersState] = useState<OrdersClientState | null>(null);
+  const loadOrdersState = useCallback(async () => {
+    try {
+      const st = await fetchOrdersState();
+      setOrdersState(st.migrated ? st : null);
+    } catch {
+      setOrdersState(null);
+    }
+  }, []);
+  useEffect(() => {
+    void loadOrdersState();
+  }, [loadOrdersState]);
+
   const rows: Row[] = useMemo(() => {
     const out: Row[] = [];
     // `email` is the key NOTES and SHIPPING are stored under (both of those
@@ -677,6 +698,18 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
 
   // Orders tab inputs, memoised so its line resolution does not re-run every render.
   const orderSubmissions = useMemo(() => Array.from(shippingByEmail.values()).flat(), [shippingByEmail]);
+  /** Open (not locked) orders — the Open list's own count, from the same resolver. */
+  const openOrderCount = useMemo(() => {
+    if (!ordersState) return undefined;
+    return countOpenOrders(
+      resolveOrderLines({
+        submissions: orderSubmissions,
+        catalog: ordersState.catalog,
+        tiers: ordersState.tiers,
+        lockedKeys: new Set(ordersState.liveKeys),
+      }),
+    );
+  }, [ordersState, orderSubmissions]);
   const orderPeople = useMemo(
     () => new Map(rows.map((r) => [r.key, { name: r.name, department: r.department }])),
     [rows],
@@ -1208,6 +1241,8 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             onClick={() => goToSubTab('orders')}
             Icon={ShoppingCart}
             label="Orders"
+            // Open orders only — locked ones are done. Hidden when unknown.
+            badge={openOrderCount || undefined}
           />
           <SubTabButton
             active={subTab === 'recent'}
@@ -1225,7 +1260,10 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void load({ force: true })}
+            onClick={() => {
+              void load({ force: true });
+              void loadOrdersState();
+            }}
             disabled={refreshing}
           >
             <RefreshCw
@@ -1265,6 +1303,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
             <GiftOrders
               submissions={orderSubmissions}
               people={orderPeople}
+              onState={setOrdersState}
             />
           </motion.div>
         ) : subTab === 'recent' ? (
