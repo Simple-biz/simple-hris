@@ -31,7 +31,7 @@ store nor the CEO store but the shared one:
 | `accounting/BonusCatalog.tsx` | `ratesSummary`, `ratesFx`, `ratesView` |
 | `accounting/PayrollWizardNotesFab.tsx` | notes rows, workers, uploads, readiness, offboarded |
 | `payroll/AccountingMesa.tsx` | `mesaRequests`, `mesaNonMembers`, `mesaActiveMembers` |
-| `payroll/PabDisputeQueue.tsx` | `pabDisputes`, `pabReasonCodes`, `bankPreferredRequests` |
+| `payroll/PabDisputeQueue.tsx` | `pabDisputes`, `pabReasonCodes`, `timeAdjustmentIssues` (`bankPreferredRequests` was deleted 2026-09-24 with the Issues table's Bank Preferred rows) |
 | `payroll-clerk/useDispatchQueue.ts` | `dispatchQueue` |
 | `ceo/CeoOverviewKpis.tsx` | `ceo:overview-kpis`, `ceo:viewer-name:<email>` |
 | `ceo/CeoFinancialReports.tsx` | the financial-report snapshot |
@@ -137,8 +137,11 @@ same request twice", and `employee-dashboard-cache.md`'s reason, which is that
 `upsertPaystubDispatchQueue` re-stages onto an already-PAID row with no post-pay detector
 ([[paystub-staged-snapshot-stale]]). `tab-cache.test.ts` greps the call sites for
 `dispatchQueue`, `peopleRoster`, `transfers`, `pabDisputes`, `bankPreferredRequests`,
-`ratesSummary`, `overviewPayouts`, `payrollReadiness` and `payrollNotesOffboarded`, so
-the boundary cannot be crossed by copy-paste.
+`ratesSummary`, `overviewPayouts`, `payrollReadiness`, `payrollNotesOffboarded` and
+`documentsQueue`, so the boundary cannot be crossed by copy-paste.
+`bankPreferredRequests` stays on that banned list although the key was deleted on
+2026-09-24. A name on a ban list protects the boundary if the key ever returns, and
+removing it would loosen a test.
 
 **A flag can never outlive its data.** `clearTabCache` and `clearAllAccountingCache` both
 clear `fetchedThisSession`. Without that, a purge would leave the flag reporting "already

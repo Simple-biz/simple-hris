@@ -113,12 +113,6 @@ import RequestDocumentsTab from '@/components/employee/RequestDocumentsTab';
 import {
   PROCESSOR_OPTIONS,
   type ProcessorId,
-  isProcessorId,
-  bankPreferredLabelForProcessor,
-  processorForBankPreferredLabel,
-  selectableBankPreferredOptions,
-  walletFromReceiving,
-  mirroredBankPreferredFor,
   walletRailEffectiveFromPayload,
 } from '@/lib/employee-payment-processors';
 import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-titles';
@@ -908,19 +902,15 @@ export default function EmployeeProfile({
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
-  // "Bank Preferred" — the processor Payment Dispatch routes salary through.
-  // SEPARATE from preferredProcessor (Disbursement); changing one never changes
-  // the other. Stored in employee_ids.bank_preferred (x1153 → 'wires').
-  const [bankPreferred, setBankPreferred] = useState<ProcessorId | ''>('');
-  // A pending Bank Preferred change awaiting accounting approval (the requested
-  // processor id), or null. The live `bankPreferred` above still shows the
-  // currently-approved value until accounting approves this.
-  const [pendingBankPreferred, setPendingBankPreferred] = useState<ProcessorId | ''>('');
+  // There is no sending-bank ("Bank Preferred") state here: since 2026-09-24 the
+  // sending bank is Accounting's alone (Kane: "accounting will the only one who
+  // will be responsible for changing it"), set in People → Banking. This page
+  // never sends `bank_preferred`, and the save route refuses a change to it.
+  //
   // The EFFECTIVE send-from rail across all three routing tiers, resolved
-  // SERVER-side (`/api/employee-ids?email=` → resolveWalletRailLock). Used as
-  // the dropdown's DISPLAY DEFAULT for the 1,796 people whose tier 1 is NULL —
-  // "defaulted to what they are" (Kane, 2026-08-31): a tier-2 Kolan payee sees
-  // Kolan, not an empty "Select…".
+  // SERVER-side (`/api/employee-ids?email=` → resolveWalletRailLock). It gates
+  // the payout card and prints as its "Paid via" line — the employee's
+  // read-only view of how Accounting pays them.
   const [walletRailEffective, setWalletRailEffective] = useState<ProcessorId | null>(null);
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
   const [payoutSaving, setPayoutSaving] = useState(false);
@@ -1470,14 +1460,12 @@ export default function EmployeeProfile({
   useEffect(() => {
     if (!bankInfo) {
       setPreferredProcessor('');
-      setBankPreferred('');
       setPayout({ ...emptyPayout });
       setPayoutEditing(true);
       return;
     }
     const d = payoutDraftFromIdsRow(bankInfo as unknown as Record<string, unknown>);
     setPreferredProcessor(d.preferredProcessor);
-    setBankPreferred(isProcessorId(bankInfo.bank_preferred ?? '') ? (bankInfo.bank_preferred as ProcessorId) : '');
     setPayout(d.payout);
     setPayoutEditing(false);
   }, [bankInfo]);
@@ -1485,14 +1473,12 @@ export default function EmployeeProfile({
   const resetPayoutDraft = React.useCallback(() => {
     if (!bankInfo) {
       setPreferredProcessor('');
-      setBankPreferred('');
       setPayout({ ...emptyPayout });
       setPayoutEditing(true);
       return;
     }
     const d = payoutDraftFromIdsRow(bankInfo as unknown as Record<string, unknown>);
     setPreferredProcessor(d.preferredProcessor);
-    setBankPreferred(isProcessorId(bankInfo.bank_preferred ?? '') ? (bankInfo.bank_preferred as ProcessorId) : '');
     setPayout(d.payout);
     setPayoutEditing(false);
   }, [bankInfo]);
@@ -1506,20 +1492,21 @@ export default function EmployeeProfile({
         // row instead of the full table. Same pattern documented in
         // memory/project_employee_portal_filtered_endpoints.md.
         //
-        // ONE wave. None of these six reads depends on another's result — the
+        // ONE wave. None of these five reads depends on another's result — the
         // master-record and bank-preferred calls used to wait for the first four
-        // and then for each other (three serial hops behind one skeleton).
-        // The two optional ones resolve to `null` on a network failure so a
-        // missing badge or address supplement can never fail the whole profile.
+        // and then for each other (three serial hops behind one skeleton). The
+        // optional one resolves to `null` on a network failure so a missing
+        // address supplement can never fail the whole profile. (The sixth read,
+        // `/api/bank-preferred-requests` for the "Pending approval" badge, was
+        // retired with the employee's sending-bank pick on 2026-09-24.)
         const emailParam = `email=${encodeURIComponent(employeeEmail)}`;
         const optional = (url: string) => fetch(url, { cache: 'no-store' }).catch(() => null);
-        const [empRes, rateRes, idsRes, fxRes, mrRes, bpRes] = await Promise.all([
+        const [empRes, rateRes, idsRes, fxRes, mrRes] = await Promise.all([
           fetch(`/api/employees?${emailParam}`, { cache: 'no-store' }),
           fetch(`/api/employee-hourly-rates?${emailParam}`, { cache: 'no-store' }),
           fetch(`/api/employee-ids?${emailParam}`, { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
           optional(`/api/employee-master-record?${emailParam}`),
-          optional(`/api/bank-preferred-requests?${emailParam}`),
         ]);
 
         const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
@@ -1544,22 +1531,6 @@ export default function EmployeeProfile({
             masterRecord = mrJson.employee ?? null;
           } catch {
             /* ignore — fall back to active_employees row alone */
-          }
-        }
-
-        // A pending Bank Preferred change (awaiting accounting approval) shows as
-        // a badge on the field; the live value stays whatever's on employee_ids.
-        let pendingBp: ProcessorId | '' = '';
-        if (bpRes) {
-          try {
-            const bpJson = (await bpRes.json()) as { rows?: { to_value?: string; status?: string }[] };
-            const latest = (bpJson.rows ?? [])[0];
-            pendingBp =
-              latest?.status === 'pending' && isProcessorId(latest.to_value ?? '')
-                ? (latest.to_value as ProcessorId)
-                : '';
-          } catch {
-            /* non-fatal — just no badge */
           }
         }
 
@@ -1599,7 +1570,6 @@ export default function EmployeeProfile({
         setBankInfo(myId ?? null);
         setBankInfoLoaded(true);
         setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
-        setPendingBankPreferred(pendingBp);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -1721,8 +1691,9 @@ export default function EmployeeProfile({
         body: JSON.stringify({
           work_email: norm,
           bootstrap_display_name: bootstrapName || undefined,
+          // The RECEIVING channel only. The sending bank is never sent from
+          // here — it is Accounting's (People → Banking) since 2026-09-24.
           preferred_processor: preferredProcessor || null,
-          bank_preferred: bankPreferred || null,
           preferred_bank_slot: payout.preferredBankSlot || null,
           hurupay_email: payout.hurupayEmail,
           wepay_email: payout.wepayEmail,
@@ -1745,7 +1716,6 @@ export default function EmployeeProfile({
       const json = (await res.json()) as {
         error?: string | null;
         success?: boolean;
-        bankPreferredRequested?: boolean;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
 
@@ -1761,18 +1731,7 @@ export default function EmployeeProfile({
       onPayoutCompletionChange?.(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
       setPayoutSavedAt(new Date().toLocaleTimeString());
       setPayoutEditing(false);
-
-      // A Bank Preferred change is held for accounting approval — reflect the
-      // pending state immediately (the live dropdown reverts to the approved
-      // value via the bankInfo reload above).
-      if (json.bankPreferredRequested) {
-        setPendingBankPreferred(bankPreferred);
-        toast.success('Payment details saved', {
-          description: 'Your Bank Preferred change was sent to Accounting for approval.',
-        });
-      } else {
-        toast.success('Payment details saved');
-      }
+      toast.success('Payment details saved');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save payment details');
     } finally {
@@ -2664,18 +2623,13 @@ export default function EmployeeProfile({
                               )}
                               <PreferredPaymentMethodRadios
                                 value={preferredProcessor}
-                                onChange={(id) => {
-                                  setPreferredProcessor(id);
-                                  // THE 1:1 MIRROR (Kane, 2026-08-31 PM): picking Kolan
-                                  // or HiGlobe as the receiving bank pins the sending
-                                  // rail to the same wallet. In-form only — the save
-                                  // FILES the Bank Preferred change through the
-                                  // Accounting approval gate; the server applies the
-                                  // same mirror regardless, so this is display, not
-                                  // enforcement. Bank rails impose nothing.
-                                  const wallet = mirroredBankPreferredFor(id);
-                                  if (wallet) setBankPreferred(wallet);
-                                }}
+                                // The receiving channel only. Picking Kolan/HiGlobe no
+                                // longer files a matching sending-bank change (the
+                                // 2026-08-31 in-form mirror): the sending bank is
+                                // Accounting's since 2026-09-24, and a mismatch this
+                                // save leaves behind is named in Accounting's "Bank
+                                // details updated" alert instead.
+                                onChange={(id) => setPreferredProcessor(id)}
                                 disabled={payoutReadOnly}
                               />
                               {/* Card when reading, form when editing. The pane
@@ -2686,8 +2640,8 @@ export default function EmployeeProfile({
                                   The read view is gated on `walletRailEffective`
                                   — the SERVER-resolved rail, across all three
                                   routing tiers — and never on `preferredProcessor`
-                                  or `bankPreferred`: those three are distinct
-                                  stored values and changing one never changes
+                                  or the stored `bank_preferred`: those three are
+                                  distinct values and changing one never changes
                                   the others, so the raw Disbursement pick can
                                   disagree with how the person is really paid.
                                   The edit view stays keyed on
@@ -2743,73 +2697,12 @@ export default function EmployeeProfile({
                             </motion.div>
                           </Section>
 
-                          <div className="rounded-xl border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-[13px] font-medium text-zinc-900 dark:text-white">
-                                    Bank Preferred
-                                  </p>
-                                  {pendingBankPreferred && (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10.5px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                                      <Clock className="h-3 w-3" />
-                                      Pending approval: {bankPreferredLabelForProcessor(pendingBankPreferred)}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                  {pendingBankPreferred
-                                    ? 'Your change is awaiting Accounting approval. Until then, your current setting below stays active.'
-                                    : walletFromReceiving(preferredProcessor)
-                                      ? `Your receiving bank is ${PROCESSOR_OPTIONS.find((p) => p.id === walletFromReceiving(preferredProcessor))?.label} — your salary is sent from that same wallet, 1:1. Changes need Accounting approval.`
-                                      : 'The bank Payment Dispatch routes your salary through. Kolan/HiGlobe follow your receiving bank automatically; Wise can only be set by Accounting. Changes need Accounting approval.'}
-                                </p>
-                              </div>
-                              <SmoothSelect
-                                aria-label="Bank Preferred"
-                                value={
-                                  // "Defaulted to what they are": the stored tier-1 pick
-                                  // wins; else a wallet receiving bank pins the display
-                                  // (1:1); else the server-resolved EFFECTIVE rail, so a
-                                  // tier-2/tier-3-routed person sees their real rail
-                                  // instead of an empty "Select…". Display only — no
-                                  // write happens until the user changes something.
-                                  bankPreferredLabelForProcessor(bankPreferred) ||
-                                  bankPreferredLabelForProcessor(
-                                    walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
-                                  )
-                                }
-                                onChange={(label) => {
-                                  setBankPreferred(processorForBankPreferredLabel(label) ?? '');
-                                }}
-                                disabled={payoutReadOnly}
-                                triggerClassName="w-full sm:w-48"
-                                options={[
-                                  ...(bankPreferredLabelForProcessor(bankPreferred) ||
-                                  bankPreferredLabelForProcessor(
-                                    walletFromReceiving(preferredProcessor) ?? walletRailEffective ?? '',
-                                  )
-                                    ? []
-                                    : [{ value: '', label: 'Select…' }]),
-                                  // THE 1:1 RULE, option-list edition: keyed on the LIVE
-                                  // receiving pick above. A wallet receiver sees exactly
-                                  // their wallet (the send-from is pinned); a bank-rail
-                                  // receiver sees the bank options; someone with no
-                                  // receiving channel sees everything, and a wallet pick
-                                  // here mirrors the receiving channel server-side. Wise
-                                  // is absent for employees — Accounting sets Wise as a
-                                  // sending bank in People → Banking.
-                                  ...selectableBankPreferredOptions(preferredProcessor, 'employee').map(
-                                    (o) => ({
-                                      value: o.label,
-                                      label: o.label,
-                                    }),
-                                  ),
-                                ]}
-                              />
-                            </div>
-                          </div>
-
+                          {/* The "Bank Preferred" (sending bank) card that sat here was
+                              RETIRED 2026-09-24 (Kane): the sending bank is set by
+                              Accounting alone, in People → Banking, and employee
+                              changes no longer file an approval into Accounting →
+                              Issues. The payout card's "Paid via" line above is the
+                              employee's read-only view of it. */}
                           {preferredProcessor && (
                             <div className="flex items-center gap-2 px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
                               <span>

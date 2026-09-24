@@ -13,6 +13,9 @@ import {
   bankPreferredLabelForProcessor,
   selectableBankPreferredOptions,
   walletRailEffectiveFromPayload,
+  isBankPreferredChange,
+  sendFromMismatch,
+  sendFromMismatchSentence,
   PROCESSOR_OPTIONS,
   BANK_PREFERRED_OPTIONS,
   WALLET_RAILS,
@@ -297,4 +300,83 @@ test('structural: the wallet set is exactly hurupay + higlobe', () => {
     assert.equal(mirroredDisbursementFor(id), id);
     assert.equal(walletFromReceiving(id), id);
   }
+});
+
+// ── The sending bank is Accounting's (Kane, 2026-09-24) ─────────────────────
+// Self-service routes refuse a CHANGE to bank_preferred. A page opened before
+// the retirement still posts the stored value on every save, so an equal value
+// must pass or that employee cannot save their receiving details at all.
+
+test('isBankPreferredChange: the unchanged stored value is not a change', () => {
+  assert.equal(isBankPreferredChange('hurupay', 'hurupay'), false);
+  assert.equal(isBankPreferredChange(' Wires ', 'wires'), false, 'trimmed, case-insensitive');
+  assert.equal(isBankPreferredChange(null, null), false);
+  assert.equal(isBankPreferredChange('', null), false, 'blank is unset');
+  assert.equal(isBankPreferredChange('   ', undefined), false);
+});
+
+test('isBankPreferredChange: a new rail, a clear, or junk is a change', () => {
+  assert.equal(isBankPreferredChange('hurupay', null), true, 'first-time set');
+  assert.equal(isBankPreferredChange('jeeves', 'wires'), true, 'switch');
+  assert.equal(isBankPreferredChange(null, 'wise'), true, 'a clear moves routing to tier 2');
+  assert.equal(isBankPreferredChange('', 'higlobe'), true, 'a blank clear too');
+  assert.equal(isBankPreferredChange('bpi', 'wires'), true);
+  assert.equal(isBankPreferredChange(5, null), true, 'non-string body values are not waved through');
+});
+
+// The mismatch the alert names is EXACTLY the 1:1 verdict — never a second rule.
+test('sendFromMismatch: null when no sending bank is set, whatever the receiving', () => {
+  for (const recv of ['hurupay', 'kolan', 'higlobe', 'wise', 'jeeves', 'wires', '', null]) {
+    assert.equal(sendFromMismatch(recv, null), null, String(recv));
+    assert.equal(sendFromMismatch(recv, ''), null, String(recv));
+  }
+});
+
+test('sendFromMismatch: null when there is no receiving channel', () => {
+  for (const sendFrom of ['hurupay', 'higlobe', 'wise', 'jeeves', 'wires']) {
+    assert.equal(sendFromMismatch(null, sendFrom), null, sendFrom);
+    assert.equal(sendFromMismatch('', sendFrom), null, sendFrom);
+  }
+});
+
+test('sendFromMismatch: the shapes measured in production on 2026-09-24', () => {
+  // 5 active payees: sent by wire while electing a wallet.
+  assert.deepEqual(sendFromMismatch('hurupay', 'wires'), { sendFrom: 'wires', receiving: 'hurupay' });
+  assert.deepEqual(sendFromMismatch('higlobe', 'wires'), { sendFrom: 'wires', receiving: 'higlobe' });
+  // Sent from one wallet while electing the other.
+  assert.deepEqual(sendFromMismatch('hurupay', 'higlobe'), { sendFrom: 'higlobe', receiving: 'hurupay' });
+  // Sent from a wallet while electing a bank.
+  assert.deepEqual(sendFromMismatch('wires', 'hurupay'), { sendFrom: 'hurupay', receiving: 'wires' });
+  assert.deepEqual(sendFromMismatch('wise', 'hurupay'), { sendFrom: 'hurupay', receiving: 'wise' });
+  // The rebrand alias is the same rail on either side.
+  assert.equal(sendFromMismatch('kolan', 'hurupay'), null);
+  assert.deepEqual(sendFromMismatch('kolan', 'wires'), { sendFrom: 'wires', receiving: 'hurupay' });
+});
+
+test('sendFromMismatch: agrees with isBankPreferredAllowedForReceiving on every set pair', () => {
+  const rails = ['hurupay', 'kolan', 'higlobe', 'wise', 'jeeves', 'wires', 'wepay'];
+  for (const recv of rails) {
+    for (const sendFrom of rails) {
+      assert.equal(
+        sendFromMismatch(recv, sendFrom) !== null,
+        !isBankPreferredAllowedForReceiving(recv, sendFrom),
+        `${recv} / ${sendFrom}`,
+      );
+    }
+  }
+});
+
+test('sendFromMismatchSentence: sending bank by its Bank Preferred label, receiving by its Disbursement label', () => {
+  assert.equal(
+    sendFromMismatchSentence({ sendFrom: 'wires', receiving: 'hurupay' }),
+    'Their sending bank is x1153, which does not match their receiving bank (Kolan). Change it in People → Banking.',
+  );
+  assert.equal(
+    sendFromMismatchSentence({ sendFrom: 'hurupay', receiving: 'wires' }),
+    'Their sending bank is Kolan, which does not match their receiving bank (Wires). Change it in People → Banking.',
+  );
+  assert.equal(
+    sendFromMismatchSentence({ sendFrom: 'higlobe', receiving: 'hurupay' }),
+    'Their sending bank is HiGlobe, which does not match their receiving bank (Kolan). Change it in People → Banking.',
+  );
 });

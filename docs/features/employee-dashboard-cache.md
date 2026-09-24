@@ -156,9 +156,13 @@ correctly not bumped**.
 
 The Profile's identity fetch is also **one wave** now: `/api/employee-master-record` and
 `/api/bank-preferred-requests` used to wait for the first four calls and then for each
-other (three serial hops behind one skeleton). They have no data dependency on the
-others, so all six run in one `Promise.all`; the two optional ones resolve to `null` on
-a network failure so a missing badge can never fail the profile.
+other (three serial hops behind one skeleton). They had no data dependency on the
+others, so all of them ran in one `Promise.all`, the optional ones resolving to `null`
+on a network failure so a missing badge could never fail the profile. **Since
+2026-09-24 the wave is five reads:** the sixth, `/api/bank-preferred-requests` for the
+"Pending approval" badge, was retired with the employee's sending-bank pick
+(bank-preferred-routing.md §1, §3), and the route no longer exists. The master-record
+read is the one optional read left.
 
 **Every key in `EMPLOYEE_CACHE_KEYS` is wired to a live call site.** An unused key is
 an invitation to cache something under a shape it was not written for; if a dataset

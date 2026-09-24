@@ -450,9 +450,10 @@ export const TAB_CACHE_KEYS = {
   pabReasonCodes: 'pab-disputes:reason-codes',
   // PAB disputes are cached per status filter, e.g. `pab-disputes:pending`.
   pabDisputes: (statusFilter: string) => `pab-disputes:${statusFilter}`,
-  // Bank Preferred change requests render as rows in the same Issues table and
-  // are cached per status filter alongside the disputes they sit with.
-  bankPreferredRequests: (statusFilter: string) => `bank-preferred-requests:${statusFilter}`,
+  // `bankPreferredRequests` (`bank-preferred-requests:<filter>`) was DELETED
+  // 2026-09-24 with the Bank Preferred rows of the Issues table — the sending
+  // bank is Accounting's alone now, changed in People → Banking. Entries a
+  // browser still holds under that key are never read again.
   // Time adjustments awaiting Accounting render as rows in the same Issues table
   // (2026-09-15), cached per status filter. Evidence signed URLs are NOT cached —
   // they expire, so they are re-fetched with every revalidation.

@@ -155,14 +155,16 @@ export function mirroredDisbursementFor(
 }
 
 /**
- * "Bank Preferred" dropdown (Employee Profile → Payment). This is a SEPARATE
- * field from the Disbursement picker (`preferred_processor`): it stores the
- * processor Payment Dispatch should route the salary through, in its own
- * `employee_ids.bank_preferred` column. Each option maps to a processor id.
+ * "Bank Preferred" — the SENDING bank, set by Accounting alone in People →
+ * Banking (Kane, 2026-09-24; the employee's own dropdown on Profile → Payment and
+ * its Issues-tab approval were retired that day). A SEPARATE field from the
+ * Disbursement picker (`preferred_processor`): it stores the processor Payment
+ * Dispatch routes the salary through, in its own `employee_ids.bank_preferred`
+ * column. Each option in `BANK_PREFERRED_OPTIONS` maps to a processor id.
  *
  * `x1153` is a specific wire account, not a distinct processor, so it maps to
  * `wires`. Because `wires` has no dedicated non-x1153 option here, a saved
- * `wires` value displays as "x1153" in this dropdown. See the design doc.
+ * `wires` value displays as "x1153". See bank-preferred-routing.md.
  */
 /**
  * The WALLET rail this receiving channel is, or null when it is a bank rail /
@@ -245,7 +247,9 @@ export const BANK_PREFERRED_OPTIONS: { label: string; id: ProcessorId }[] = [
  * Pass the LIVE receiving value the form is about to save, so the options track
  * the pick in real time and never offer what the API will refuse. `audience`
  * decides whether Wise is offered as a send-from: Accounting-only (People →
- * Banking); employees can hold a stored Wise but not newly pick it.
+ * Banking); employees can hold a stored Wise but not newly pick it. Since
+ * 2026-09-24 no employee surface renders a send-from picker at all, so the
+ * `'employee'` audience has no caller; its tests still pin the policy.
  */
 export function selectableBankPreferredOptions(
   receiving: string | null | undefined,
@@ -282,6 +286,56 @@ export function bankPreferredLabelForProcessor(p: ProcessorId | ''): string {
 /** The `preferred_processor` id for a chosen dropdown label. */
 export function processorForBankPreferredLabel(label: string): ProcessorId | undefined {
   return BANK_PREFERRED_OPTIONS.find((o) => o.label === label)?.id;
+}
+
+/**
+ * **THE SENDING BANK IS ACCOUNTING'S (Kane, 2026-09-24):** *"all changes for the
+ * sending bank should be here only in accounting and accounting will the only one
+ * who will be responsible for changing it"*. Its one write path is People →
+ * Banking (`PATCH /api/people/[email]/banking`); every self-service or
+ * receiving-details route refuses a CHANGE to `bank_preferred`.
+ *
+ * True when `requested` would change `stored`. A page opened before the
+ * retirement still posts the unchanged stored value with every save, so an EQUAL
+ * value (trimmed, case-insensitive, blank ⇒ unset) is not a change and must not
+ * break that save. Everything else — a new rail, a clear, junk — is a change.
+ */
+export function isBankPreferredChange(requested: unknown, stored: string | null | undefined): boolean {
+  const norm = (v: unknown): string | null => {
+    if (v == null) return null;
+    const s = String(v).trim().toLowerCase();
+    return s === '' ? null : s;
+  };
+  return norm(requested) !== norm(stored);
+}
+
+/**
+ * The sending bank Accounting set, when the receiving channel no longer fits it
+ * under the 1:1 rule (`isBankPreferredAllowedForReceiving`) — or null when the two
+ * agree, when no sending bank is set (routing tier 2 then follows the receiving
+ * pick, so nothing is mismatched), or when there is no receiving channel.
+ *
+ * An employee's receiving move no longer touches the sending bank (2026-09-24),
+ * so this is how the mismatch reaches Accounting: named in the "Bank details
+ * updated" alert. Advisory only — the save still lands, Accounting decides.
+ */
+export function sendFromMismatch(
+  receiving: string | null | undefined,
+  sendFrom: string | null | undefined,
+): { sendFrom: ProcessorId; receiving: ProcessorId } | null {
+  const from = processorIdFromBankPreferredText(sendFrom);
+  const recv = processorIdFromBankPreferredText(receiving);
+  if (!from || !recv) return null;
+  return isBankPreferredAllowedForReceiving(recv, from) ? null : { sendFrom: from, receiving: recv };
+}
+
+/** The alert sentence for a `sendFromMismatch` — the sending bank under its
+ *  Bank Preferred label (`wires` ⇒ "x1153"), the receiving channel under its
+ *  Disbursement label. */
+export function sendFromMismatchSentence(m: { sendFrom: ProcessorId; receiving: ProcessorId }): string {
+  const labelOf = (id: ProcessorId) => PROCESSOR_OPTIONS.find((p) => p.id === id)?.label ?? id;
+  const sending = bankPreferredLabelForProcessor(m.sendFrom) || labelOf(m.sendFrom);
+  return `Their sending bank is ${sending}, which does not match their receiving bank (${labelOf(m.receiving)}). Change it in People → Banking.`;
 }
 
 export function processorDescription(p: ProcessorId): string {

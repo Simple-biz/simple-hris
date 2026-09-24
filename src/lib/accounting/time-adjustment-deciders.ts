@@ -4,8 +4,9 @@
  * Kane, 2026-09-15: *"any one with Acct>Issues>Edit can adjust. (Exclude Jake/April/Lenny)"*.
  * The grant half is the route gate (`requireFeatureEdit('accounting', 'disputes')`)
  * plus the existing `canActOnDisputes` role check. This module is the exclusion: three
- * Accounting Team members who hold (or may later hold) Issues edit for disputes and
- * Bank Preferred work, but must not decide time adjustments.
+ * Accounting Team members who hold (or may later hold) Issues edit for disputes (and,
+ * until those rows were retired on 2026-09-24, Bank Preferred work), but must not
+ * decide time adjustments.
  *
  * Measured 2026-09-15 (`scripts/probe-time-adjustment-deciders.mts`): no role or grant
  * separates these three from the other Issues editors — jakec@ and april@ hold

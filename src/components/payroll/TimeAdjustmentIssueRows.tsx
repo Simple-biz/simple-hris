@@ -291,7 +291,7 @@ export function TimeAdjustmentIssueDialogs({
         </div>
       )}
 
-      {/* View details — same shell as the dispute and Bank Preferred View modals */}
+      {/* View details — same shell as the dispute View modal */}
       {viewTarget && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none"

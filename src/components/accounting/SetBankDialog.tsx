@@ -37,9 +37,10 @@ export interface SetBankPerson {
   email?: string | null;
   workEmail: string | null;
   personalEmail: string | null;
-  /** LIVE-resolved effective processor. Non-empty LOCKS the picker — routing
-   *  changes stay in their approval flows. Never feed a snapshot value here
-   *  (see `prefill.processor`). In `override` mode it only PRE-SELECTS. */
+  /** LIVE-resolved effective processor. Non-empty LOCKS the picker — a routing
+   *  change is Accounting's sending-bank edit in People → Banking. Never feed a
+   *  snapshot value here (see `prefill.processor`). In `override` mode it only
+   *  PRE-SELECTS. */
   processor: string | null;
 }
 
@@ -56,10 +57,12 @@ export interface SetBankPerson {
  *
  * DEFAULT mode (Readiness Bank Info, People → Offboarded): when the row already
  * resolves an effective processor (Bank Preferred / Disbursement / legacy cell),
- * the processor is FIXED and we only collect its missing details — routing
- * changes stay in their existing approval flows (and the WIRES lock stays
- * intact). Only with NO processor at all does the picker open up, writing the
- * Disbursement channel (`preferred_processor`), never `bank_preferred`.
+ * the processor is FIXED and we only collect its missing details — a routing
+ * change is the sending-bank edit in People → Banking, Accounting's alone since
+ * 2026-09-24 (there is no employee approval flow any more). Only with NO
+ * processor at all does the picker open up, writing the Disbursement channel
+ * (`preferred_processor`), never `bank_preferred` — and since that date the
+ * save route no longer turns a wallet pick into a filed sending-bank request.
  *
  * OVERRIDE mode (`override` — the Payroll Notes Offboarded tab, 2026-09-15,
  * Kane: *"Set banks should be a complete override"*): a leaver has no
@@ -365,7 +368,7 @@ export default function SetBankDialog({
             {locked && (
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
                 Already routed via {processorLabel} — just complete the missing details
-                below. Routing changes go through the usual approval flow.
+                below. To route them differently, set their sending bank in People → Banking.
               </p>
             )}
             {override && processor && current?.processor && processor !== current.processor && (

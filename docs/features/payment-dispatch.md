@@ -1485,7 +1485,7 @@ free-text column as the sole routing input. It is now the **lowest**-precedence
 source. A person is routed to a processor tab by:
 
 ```
-employee_ids.bank_preferred            (employee-owned "Bank Preferred" — highest)
+employee_ids.bank_preferred            (Accounting-set "Bank Preferred" — highest)
   ↓ else
 employee_ids.preferred_processor       (the Disbursement pick)
   ↓ else
@@ -1498,12 +1498,14 @@ deleted 2026-08-12 with the Reports tab. For the CSV column to be
 authoritative, `preferred_processor` must be NULL (it outranks the CSV).
 `x1153`/`x1161` continue to map to `wires`.
 
-This whole feature — the employee **Bank Preferred** dropdown, its **Accounting
-approval gate** (changes held in `bank_preferred_change_requests` until approved
-in the Issues tab), and the **WIRES lock** (a wires/null/legacy employee can
-never be switched to hurupay/higlobe — the stored values, which `kolan` also
-resolves to) — has its own doc:
-[bank-preferred-routing.md](./bank-preferred-routing.md).
+This whole feature has its own doc:
+[bank-preferred-routing.md](./bank-preferred-routing.md). **Since 2026-09-24 the
+sending bank is set by Accounting alone**, in People → Banking (Kane). The
+employee's own **Bank Preferred** dropdown and its **Accounting approval gate**
+(changes held in `bank_preferred_change_requests` until approved in the Issues
+tab) are retired, and the **1:1 rule** (a Kolan/HiGlobe receiver is paid from
+that wallet, a bank receiver never from a wallet) superseded the 2026-07-22
+**WIRES lock** on 2026-08-31.
 
 #### 12.3.1 Sub-₱7k wires → Wise (temporary weekly reroute, 2026-07-29)
 

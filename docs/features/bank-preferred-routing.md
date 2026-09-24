@@ -1,4 +1,4 @@
-# Bank Preferred — send-from routing, approval gate & the 1:1 rule
+# Bank Preferred — send-from routing (Accounting-only) & the 1:1 rule
 
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
@@ -7,15 +7,20 @@
 Employee Profile dropdown moved onto the EFFECTIVE rail 2026-08-31 AM (§1). **2026-08-31 PM
 (Kane): the stored-transition WIRES lock and the same-morning receiving gate were BOTH
 superseded by the 1:1 rule (§4)** — the RECEIVING bank drives the send-from rail, the wallet
-coupling is two-way, and Wise as a send-from is Accounting-only.*
+coupling is two-way, and Wise as a send-from is Accounting-only. **2026-09-24 (Kane): the
+employee's own sending-bank pick and its Accounting → Issues approval gate were RETIRED —
+every sending-bank change is Accounting's, made in People → Banking (§1, §3), and an
+employee's receiving move no longer files or writes one (§4.1).***
 
 "Bank Preferred" is the processor **Accounting sends a salary OUT on** — the
 *send-from rail*. It is a first-class field that wins Payment Dispatch's
-processor-routing precedence, is **held for Accounting approval** before an
-employee's own change takes effect, and is constrained by the **1:1 rule** (§4):
-the send-from rail must agree with the employee's RECEIVING bank — a
-Kolan/HiGlobe receiver is paid from that same wallet, and a bank receiver is
-never paid from a wallet.
+processor-routing precedence, is **set by Accounting alone** — in People →
+Banking; no employee surface can change it (Kane, 2026-09-24: *"all changes for
+the sending bank should be here only in accounting and accounting will the only
+one who will be responsible for changing it"*) — and is constrained by the
+**1:1 rule** (§4): the send-from rail must agree with the employee's RECEIVING
+bank — a Kolan/HiGlobe receiver is paid from that same wallet, and a bank
+receiver is never paid from a wallet.
 
 > **Rebrand, 2026-08-24 — Hurupay is now Kolan.** Only the human-visible label
 > changed. The processor **id**, `employee_ids.bank_preferred`, the
@@ -49,10 +54,15 @@ never paid from a wallet.
 > - **Disbursement → Bank Preferred** (2026-08-31 PM): setting the RECEIVING
 >   bank to a wallet pins the send-from to the same wallet — "they cannot
 >   receive from an x1153 or Wise if they have HiGlobe or Kolan" —
->   `mirroredBankPreferredFor()`. In People → Banking this applies immediately
->   (Accounting's edit is the approval, §8); on the employee dashboard it FILES
->   the matching Bank Preferred change through the §3 approval gate, applied
->   server-side in `update-employee-ids` so it holds however the save was made.
+>   `mirroredBankPreferredFor()`. **This mirror runs ONLY where Accounting sets
+>   the sending bank** — People → Banking, where it applies immediately (§8).
+>   **An employee's own save never moves the sending bank** (Kane, 2026-09-24,
+>   resolution (b) of that day's hardening brief): the dashboard and the OTP
+>   page change the receiving channel only, and a save that leaves an
+>   Accounting-set sending bank out of step is NAMED in Accounting's "Bank
+>   details updated" alert (`sendFromMismatch`, §4.1) for Accounting to fix.
+>   From 2026-08-31 PM to 2026-09-24 the dashboard save instead FILED the
+>   matching change through the §3 approval gate, now retired.
 >
 > Wise / Jeeves / Wires impose nothing in either direction and remain fully
 > independent, which is what the original 2026-07-22 decoupling protected. (The
@@ -63,34 +73,55 @@ never paid from a wallet.
 
 ---
 
-## 1. The dropdown (Employee → Profile → Payment)
+## 1. Who sets it: Accounting only (People → Banking)
 
-A `SmoothSelect` below the Disbursement form. Options and their stored processor
-ids come from `BANK_PREFERRED_OPTIONS` in
+**The sending bank is changed in exactly one place:** the *Bank Preferred
+(send-from)* dropdown in Accounting → People → View → Banking, saved through
+`PATCH /api/people/[email]/banking` (§8) — plus the Payroll Notes → Offboarded
+override, which rides that same route. Kane, 2026-09-24: *"let us deprecate the
+feature that the Employee can choose a sending bank and that it would pop up in
+accounting under the issues Section - all changes for the sending bank should be
+here only in accounting and accounting will the only one who will be responsible
+for changing it"*.
+
+Options and their stored processor ids come from `BANK_PREFERRED_OPTIONS` in
 [`src/lib/employee-payment-processors.ts`](../../src/lib/employee-payment-processors.ts):
 HiGlobe / Kolan / Jeeves / Wise / **x1153**.
 
 - **`x1153` → `wires`.** `x1153` is a specific wire account, not a distinct
   processor, so it maps to the `wires` processor id. Because there is no separate
-  non-x1153 `wires` option, a saved `wires` value **displays as "x1153"** in the
-  dropdown.
-- The field shows a **"Pending approval"** badge whenever the employee has an
-  outstanding change (see §3).
-- **Which options an employee sees is the 1:1 rule (§4), keyed on the LIVE
-  receiving pick in the form above.** `selectableBankPreferredOptions(receiving,
-  audience)` is the one narrowing point: a wallet receiver sees exactly their
-  wallet (the send-from is pinned), a bank-rail receiver sees the bank options,
-  no receiving channel sees everything. The `'employee'` audience never includes
-  **Wise** — only Accounting sets Wise as a sending bank, in People → Banking.
-- **The displayed value defaults to what they ARE** (Kane, 2026-08-31): the
-  stored tier-1 pick wins, else a wallet receiving bank pins the display, else
-  the server-resolved EFFECTIVE rail (`walletRail.effectiveRail` on
-  `GET /api/employee-ids?email=`) — so a tier-2 Kolan payee sees **Kolan**, not
-  an empty "Select…". Display only; nothing writes until the user changes
-  something, and an employee's change still files through §3.
+  non-x1153 `wires` option, a saved `wires` value **displays as "x1153"**.
+- **Which options Accounting sees is the 1:1 rule (§4), keyed on the receiving
+  channel in the same form.** `selectableBankPreferredOptions(receiving,
+  'accounting')` is the one narrowing point: a wallet receiver gets exactly their
+  wallet (the send-from is pinned), a bank-rail receiver the bank options, no
+  receiving channel everything.
 - `EmployeeIdRow` and both `.select(cols)` strings in
   [`src/lib/supabase/employee-ids.ts`](../../src/lib/supabase/employee-ids.ts)
   must list `bank_preferred`, or reads return `undefined`.
+
+**The employee's own dropdown (Employee → Profile → Compensation → Payout) was
+RETIRED 2026-09-24**, with its "Pending approval" badge and the §3 gate it filed
+into. What the employee has instead:
+
+- **A read-only view.** The payout card's **"Paid via X"** line is the
+  server-resolved EFFECTIVE rail (`walletRail.effectiveRail` on
+  `GET /api/employee-ids?email=`, all three tiers) — how Accounting actually pays
+  them. It was already there; the retired dropdown's "defaulted to what they are"
+  display (2026-08-31) had used the same value.
+- **No write path.** The payout save sends the receiving channel and details
+  only. `POST /api/update-employee-ids` refuses a posted CHANGE to
+  `bank_preferred` with a **403** ("The sending bank can only be changed by
+  Accounting, in People → Banking…") for every caller, self-service and staff
+  alike; a page opened before the retirement still posts the UNCHANGED stored
+  value, which `isBankPreferredChange` treats as a no-op so that save still
+  lands. The check reads the live value and **fails closed** (503 on a read
+  error, nothing saved). The OTP page's route never accepted the field.
+- **Pinned** by `src/lib/employee/send-from-accounting-only.test.ts` (no body
+  key, no picker, no badge read, no allowlist entry, no Issues row kind, the
+  routes deleted — and People → Banking still accepting it), which scans code
+  with comments stripped so the tombstones naming the retired pieces stay
+  greppable.
 
 ## 2. Routing precedence (how Payment Dispatch picks the rail)
 
@@ -130,58 +161,45 @@ routing to be authoritative, since it outranks the legacy CSV column.
 > the routing precedence that bypasses every picker and the §4 mirrors. Needs a
 > ticket or an explicit "accepted".
 
-## 3. Accounting approval gate
+## 3. Accounting approval gate — RETIRED 2026-09-24
 
-Employee Bank Preferred changes do **not** write `employee_ids` directly. They
-are held as a `pending` row and approved by Accounting first — mirroring the MESA
-Requests workflow.
+**There is no employee approval flow for the sending bank.** Kane retired it on
+2026-09-24 together with the employee's pick (§1): Accounting sets the sending
+bank directly in People → Banking, where its edit has always been the approval
+(§8), and nothing reaches Accounting → Issues any more.
 
-**Flow:**
-1. Employee changes Bank Preferred → a `pending` row is inserted into
-   `bank_preferred_change_requests` (data layer:
-   [`src/lib/supabase/bank-preferred-requests.ts`](../../src/lib/supabase/bank-preferred-requests.ts)).
-   The **old value stays live** for Payment Dispatch until approved. Other bank
-   fields on the form still save immediately. **First-time set is also gated.**
-2. The write path is intercepted in
-   [`app/api/update-employee-ids/route.ts`](../../app/api/update-employee-ids/route.ts)
-   (`interceptBankPreferred`), which is **fail-closed** — it never writes
-   `bank_preferred` without filing a request.
-3. **One pending per employee** (partial unique index). A re-submit supersedes
-   the previous pending row; two near-simultaneous submits that trip the index
-   (Postgres `23505`) are retried once instead of surfacing a raw 500.
-4. Accounting approves/denies in the **Issues tab** (internal id `disputes`,
-   gated by `requireFeatureEditAnyView('disputes')`). Since 2026-09-01 the
-   requests render as **rows inside the Issues table itself**
-   ([`PabDisputeQueue.tsx`](../../src/components/payroll/PabDisputeQueue.tsx))
-   — the separate `BankPreferredApprovals` card above the table was removed
-   (Kane: it's a yes/no like every other issue, and the card had no tab-cache
-   so it re-spun a loader on every tab switch). Bank rows sort first, ride the
-   same per-filter stale-while-revalidate cache as the disputes, and keep the
-   advisory rail-change note (§4.1). **Approve** writes
-   `employee_ids.bank_preferred` (bootstrapping a row if none) and notifies the
-   employee (`bank_preferred.decided`); **Deny** leaves the value untouched.
-   Same PATCH endpoint as before — the merge changed no write path and no
-   authorization.
-5. **Decided rows are editable and deletable (2026-09-01, Kane's ask —
-   supersedes the original decide-once 409).** The PATCH now accepts:
-   - `denied → approved`: applies the value now — **only for the employee's
-     LATEST request** (409 otherwise, so a stale ask can't be resurrected over
-     a newer one), through the same dispatch-lock (423) and live 1:1 gates.
-   - `approved → denied`: **REVERTS** the applied value back to `from_value` —
-     **only while the live `bank_preferred` still equals this request's
-     `to_value`** (409 otherwise: something newer landed, fix it in People →
-     Banking), and only if the restored rail passes the live 1:1 check (400).
-     Both mirrors/gates identical to an approve; fail closed on a read error.
-   - same status: note-only edit (`review_notes` refreshed).
-   - `superseded` rows stay immutable (409).
-   **DELETE** removes the request RECORD only — it **never** touches
-   `employee_ids` (reversing an applied approval is the `approved → denied`
-   edit, not delete). Role bar mirrors the dispute admin delete
-   (`DISPUTE_DELETE_ROLES`) on top of the feature gate; logged as
-   `bank_preferred.request.deleted` with a full row snapshot.
+**What it was (2026-07-22 → 2026-09-24).** An employee's Bank Preferred change,
+and from 2026-08-31 PM also the 1:1 mirror of a wallet receiving move, was held
+as a `pending` row in `bank_preferred_change_requests` by `interceptBankPreferred`
+in `update-employee-ids` (fail-closed, one pending per employee), and Accounting
+approved or denied it as a row in the Issues table (2026-09-01 onwards, with
+editable and deletable decided rows). Design:
+[2026-07-22-bank-preferred-approval-gate-design.md](../superpowers/specs/2026-07-22-bank-preferred-approval-gate-design.md);
+the full mechanics are in git history. It was barely used: **8 requests in two
+months** (2 approved, 1 denied, 3 superseded, 2 pending), measured read-only on
+the retirement day.
 
-API routes: [`app/api/bank-preferred-requests/route.ts`](../../app/api/bank-preferred-requests/route.ts)
-and [`[id]/route.ts`](../../app/api/bank-preferred-requests/[id]/route.ts).
+**Removed:** the intercept and its "Bank Preferred change needs approval"
+reviewer notification · `GET /api/bank-preferred-requests` and
+`PATCH`/`DELETE /api/bank-preferred-requests/[id]` · the data layer
+`src/lib/supabase/bank-preferred-requests.ts` · the Issues table's bank row kind,
+its View / Deny / Edit / Delete dialogs, its KPI counts and the
+`bankPreferredRequests` tab-cache key · the employee's "Pending approval" badge
+and its read.
+
+**Kept, deliberately:**
+- the `bank_preferred_change_requests` **table and its 8 rows** — no DDL was run.
+  Nothing reads or writes it now. **The 2 rows still `pending` at retirement**
+  are both `none → wallet`, filed by the mirror for payees already receiving
+  on, and paid via, that wallet (tier 1 NULL, tier 2 the wallet), so leaving
+  them undecided moves no money. If they are not decided in Issues before the
+  retirement deploys, they stay behind as inert records.
+- the `bank_preferred.decided` notification type in the CHECK (old rows still
+  render) and the `bank_preferred.request.*` audit events (still readable in the
+  audit log and by Admin Penny's bank filter).
+- the approvals' own history: every applied approval also wrote
+  `bank_update_history` (`via: accounting_approval` / `accounting_edit`), so it
+  still shows in People → Bank changes.
 
 ## 4. The 1:1 rule (supersedes the WIRES lock, 2026-08-31 PM)
 
@@ -224,27 +242,47 @@ the other, both deliberately**:
   cannot pay a wire recipient into a wallet" — survives receiving-keyed: it is
   exactly the "bank receiver never sends from a wallet" half.
 
-**Wise as a send-from is Accounting-only** (same ruling): employees never get
-Wise as a new Bank Preferred pick — `selectableBankPreferredOptions(receiving,
-'employee')` excludes it for every receiving value, pinned by test — and the
-employee Disbursement radios no longer offer Wise for new picks either
+**Every send-from is Accounting-only since 2026-09-24** (Kane — §1). Wise was
+the first (the same 2026-08-31 PM ruling): employees never got Wise as a new
+Bank Preferred pick — `selectableBankPreferredOptions(receiving, 'employee')`
+excludes it for every receiving value, still pinned by test though the
+`'employee'` audience has had no caller since the employee dropdown was retired
+— and the employee Disbursement radios no longer offer Wise for new picks either
 (`SELECTABLE_PROCESSOR_OPTIONS`; a stored Wise stays visible as the current
-selection). Accounting sets Wise in People → Banking, which uses the
-`'accounting'` audience. This reverses the 2026-07-25 employee-picker Wise
-exception for those two employee surfaces only;
-`EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS` is untouched for Accounting's Readiness
-"Set bank" editor.
+selection). Accounting sets every sending bank, Wise included, in People →
+Banking, which uses the `'accounting'` audience. The radios' Wise change
+reversed the 2026-07-25 employee-picker Wise exception for the employee surfaces
+only; `EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS` is untouched for Accounting's
+Readiness "Set bank" editor.
+
+**Where the rule is enforced, and where it is only reported.** The 1:1 verdict
+is ENFORCED where a sending bank is set — People → Banking. The receiving
+channel is the employee's own data, so a self-service save that leaves the
+Accounting-set sending bank out of step is NOT refused: it lands, and
+`sendFromMismatch(receiving, sendFrom)` (the same verdict, pure and tested)
+names the mismatch in Accounting's "Bank details updated" alert —
+title *"Bank details updated — sending bank no longer matches"*, message ending
+*"Their sending bank is x1153, which does not match their receiving bank
+(Kolan). Change it in People → Banking."*, `details.send_from_mismatch` — on
+both the dashboard route and the OTP page's route. Same
+`people.banking.self_updated` type and `neutral` tone: the notifications CHECK
+allows only `positive`/`neutral`, and a new type or tone is rejected silently.
+No sending bank set (tier 1 NULL, 2,052 of 2,198 rows on 2026-09-24) is never a
+mismatch — routing tier 2 then follows the receiving pick.
 
 ### 4.1 Enforcement sites
 
 | Site | Behavior |
 |---|---|
-| `update-employee-ids` pre-filter | 1:1 check against the receiving value the save leaves in place (written in the same request, else stored) → **400** before a request is filed |
-| `update-employee-ids` mirror | a save moving RECEIVING onto a wallet with no `bank_preferred` alongside **files** the matching Bank Preferred change through §3 — server-side, so it holds however the save was made |
-| Approval **PATCH** | re-checks the 1:1 rule against the **live** stored receiving channel at approve time; **fails closed** (a read error is a 503, never an applied approval) |
-| People → Banking save | 1:1 check → **400**, then BOTH mirrors apply **immediately** (Accounting's edit is the approval, §8) |
-| Employee Profile UI | options pinned by the live receiving pick (`selectableBankPreferredOptions`); the radios mirror a wallet pick into the Bank Preferred field in-form |
-| Accounting approvals row (Issues-table bank rows since 2026-09-01) | **advisory only** — a rail-change note; Approve stays enabled because approvability depends on the live receiving bank, which the queue row does not carry. The PATCH is the gate. |
+| People → Banking save (`PATCH /api/people/[email]/banking`) | **the one write path.** 1:1 check → **400**, then BOTH mirrors apply **immediately** (§8) |
+| Payroll Notes → Offboarded override | rides the People → Banking PATCH (§8) — same gate, same 1:1 re-check |
+| `update-employee-ids` (Employee dashboard save; Readiness / People → Offboarded "Set bank" default mode) | `bank_preferred` is not on the write allowlist; a posted CHANGE → **403**, an unchanged stale value is a no-op, an unreadable stored value → **503** (fails closed). Never mirrors. Reports a mismatch in the reviewer alert (`sendFromMismatch`) |
+| `bank-update/save` (the OTP `/update-bank-info` page) | never accepted `bank_preferred`. Reports a mismatch in the reviewer alert, same helper and wording |
+| Employee Profile UI | no sending-bank control (retired 2026-09-24); the radios write the receiving channel only; "Paid via X" on the payout card is read-only |
+
+Retired with §3 on 2026-09-24: the `update-employee-ids` 1:1 pre-filter and
+server-side mirror (which FILED requests), the approval PATCH's live 1:1
+re-check, and the Issues-table rows' advisory rail-change note.
 
 ### 4.2 History
 
@@ -264,15 +302,37 @@ exception for those two employee surfaces only;
   receiving pick re-routes pay — is now the **mechanism**, made safe by the
   two-way mirror and the stateless rule above. The receiving gate and the
   transition guard were removed.
+- **2026-09-24** — Kane retired the employee's sending-bank pick and the §3
+  Issues approval gate: *"all changes for the sending bank should be here only
+  in accounting"*. The hardening brief (session `5dbbfa67`) stopped on one
+  conflict, whether the employee-side receiving→wallet pin survives, and Kane
+  chose **(b)**: it becomes Accounting's job. So the reverse mirror now runs
+  only in People → Banking, and a self-service mismatch is reported to
+  Accounting instead of filed. The tier-2 mechanism is untouched: for a payee
+  with no Accounting-set sending bank, the receiving pick still routes them (a
+  Kolan receiver is paid via Kolan, a Wires receiver via x1153). That is the 1:1
+  default, not a send-from choice.
 
-> **Known data debt:** rows written under the old model can violate 1:1 — e.g.
+> **Known data debt — MEASURED 2026-09-24, OPEN:** rows can violate 1:1 — e.g.
 > tier 1 `wise` with tier 2 `hurupay` (tier 1 wins, so they are PAID via Wise
-> while electing to receive on Kolan). The pickers surface these (the options
-> pin to the wallet while the stored value shows Wise) and any touch of the row
-> heals it through the mirrors; a read-only audit for the full population is
-> OPEN. The OTP self-service page (`/update-bank-info`) writes only
-> `preferred_processor`, so a tier-1-set payee moving to a wallet THERE leaves
-> tier 1 stale until Accounting or the dashboard touches it — also OPEN.
+> while electing to receive on Kolan). The read-only population audit
+> (predicate `!isBankPreferredAllowedForReceiving(preferred_processor,
+> bank_preferred)` over all 2,198 `employee_ids` rows) found **13, 7 of them on
+> the active roster**: 5 sent by wire (x1153) while electing a wallet (4 Kolan,
+> 1 HiGlobe), 1 sent from HiGlobe while electing Kolan, 1 sent from Kolan while
+> electing wires; the 6 inactive are 3 wire/Wise-sent Kolan electors and 3
+> Kolan-sent bank electors. Origin per row not traced, and not cross-checked
+> against what Payment Dispatch last paid them. **Not fixed**: correcting tier 1
+> is a data write (Kane's call), and any People → Banking save of the row heals
+> it through the mirrors. Session-log item 202.
+>
+> **By design since 2026-09-24, no longer a gap:** neither self-service path
+> writes tier 1. The dashboard and the OTP page (`/update-bank-info`) both change
+> only `preferred_processor`, so a tier-1-set payee who moves their receiving
+> bank keeps Accounting's sending bank until Accounting changes it — and the
+> "Bank details updated" alert now says so (§4). (Before that date the OTP
+> page's behaviour was logged here as OPEN, because the dashboard filed a mirror
+> request and the OTP page did not.)
 
 ## 5. Mark Paid bank-details override
 
@@ -360,15 +420,14 @@ by resolving everything People shows through the SAME dispatch-parity helpers:
   carries `bank_preferred`, `effective_processor`, `effective_processor_source`;
   a sheet-routed person with no `employee_ids` row still gets a synthesized
   record so their routing shows.
-- **Accounting direct-edit.** The People banking editor now offers a *Bank
-  Preferred (send-from)* dropdown. `PATCH /api/people/[email]/banking` accepts
-  `bank_preferred` **without filing a change request** — the route is gated to
-  the same roles that approve those requests, so the edit *is* the approval.
-  The **1:1 rule (§4) applies**, enforced server-side against the receiving
-  channel the save leaves in place, and mirrored in the dropdown's option
-  pinning. The employee self-service path keeps the §3 approval gate unchanged.
-  (A direct edit does not cancel an employee's pending request; the approval
-  PATCH re-checks the rule at approve time as before.)
+- **Accounting direct-edit — since 2026-09-24 the ONLY way a sending bank
+  changes.** The People banking editor offers a *Bank Preferred (send-from)*
+  dropdown. `PATCH /api/people/[email]/banking` accepts `bank_preferred`
+  directly — it is gated to Accounting's `people` feature, so the edit *is*
+  the decision; there is no request to file (the employee §3 gate it once sat
+  beside is retired). The **1:1 rule (§4) applies**, enforced server-side
+  against the receiving channel the save leaves in place, and mirrored in the
+  dropdown's option pinning.
 - **Payroll Notes → Offboarded "Set bank" rides this same route (2026-09-15).**
   A leaver has nobody left to file a request, so the Offboarded tab's dialog is
   mounted in override mode: rail unlocked, and the save is a
@@ -378,9 +437,11 @@ by resolving everything People shows through the SAME dispatch-parity helpers:
   primary wire field was typed. Same gate, same 423 under the dispatch lock, same
   1:1 re-check. The PATCH accepts an optional `source` (one of the known
   `CHANGE_SOURCES`, default `people_tab`) so the audit row reads `via
-  payroll_wizard_readiness`. The Readiness **Bank Info** fixer and the employee
-  self-service route are unchanged — the §3 intercept still never writes without
-  a request.
+  payroll_wizard_readiness`. The Readiness **Bank Info** fixer (default-mode
+  "Set bank", on `update-employee-ids`) writes the receiving channel only and
+  never `bank_preferred`; since 2026-09-24 a wallet pick there no longer files a
+  mirrored sending-bank request either (for its only case, a person with no
+  rail at all, tier 2 then routes them onto that wallet anyway).
 
 Parity is pinned by `src/lib/employee/payout-completeness.test.ts` and the
 audit script's post-fix run: **0 disagreements across 1,498 active people**.
@@ -420,7 +481,9 @@ locks not covering everything they imply. All fixed in one pass:
   `bank_preferred`-routed employee saw an empty picker and had to invent a
   `preferred_processor` that then disagreed with their real rail.
 - **Lock coverage.** Approving a Bank Preferred request now checks the dispatch
-  lock (it writes the send-from rail; every direct-edit path already did).
+  lock (it writes the send-from rail; every direct-edit path already did). *(The
+  approval path itself was retired 2026-09-24, §3; People → Banking keeps its
+  423 under the lock.)*
   Rate writes, payment-catalog pay structures, and Hubstaff hours POST/PATCH/
   DELETE are now lock-guarded too — previously the derived per-employee bonus
   amounts were guarded but the rates and hours they derive from were not.
@@ -608,8 +671,8 @@ editor**:
 | File | State | Effect |
 |---|---|---|
 | `references/sql/alter/2026-07-22_add_bank_preferred_to_employee_ids.sql` | applied (column pre-existed; adds CHECK) | the `bank_preferred` column + constraint |
-| `references/sql/create/bank_preferred_change_requests.sql` | applied (verified present) | the approval-gate requests table |
-| `references/sql/alter/2026-07-22_employee_notifications_add_bank_preferred_type.sql` | **APPLIED** (verified 2026-08-11 — a `bank_preferred.decided` row exists) | allows `bank_preferred.decided` |
+| `references/sql/create/bank_preferred_change_requests.sql` | applied (verified present) | the approval-gate requests table. **Retained** after the gate's 2026-09-24 retirement (§3): 8 rows, nothing reads or writes it, no DDL was run |
+| `references/sql/alter/2026-07-22_employee_notifications_add_bank_preferred_type.sql` | **APPLIED** (verified 2026-08-11 — a `bank_preferred.decided` row exists) | allows `bank_preferred.decided` — no longer emitted since 2026-09-24; kept so old rows stay valid |
 | `references/sql/alter/2026-07-22_employee_notifications_add_bank_override_type.sql` | **UNVERIFIED** — a CHECK constraint's allowed values are not readable through PostgREST, and no `people.banking.overridden` row exists yet, which proves nothing either way | allows `people.banking.overridden`; if it has NOT run, the Mark Paid override notification no-ops (the override itself works) |
 
 Both notification migrations restate the **full** `employee_notifications.type`
@@ -620,12 +683,13 @@ breaks other notification inserts).
 
 | Path | Purpose |
 |---|---|
-| `src/lib/employee-payment-processors.ts` | `BANK_PREFERRED_OPTIONS`, `isWiresPreferred`, `isBankPreferredAllowedForReceiving`, both mirrors, `selectableBankPreferredOptions` (+ tests) |
-| `src/lib/supabase/bank-preferred-requests.ts` | approval-gate data layer |
-| `app/api/update-employee-ids/route.ts` | `interceptBankPreferred` (fail-closed) |
-| `app/api/bank-preferred-requests/route.ts` + `[id]/route.ts` | list / approve / deny |
-| `src/components/payroll/PabDisputeQueue.tsx` | Issues-tab approval UI — bank rows merged into the Issues table (2026-09-01; `BankPreferredApprovals.tsx` deleted) |
+| `src/lib/employee-payment-processors.ts` | `BANK_PREFERRED_OPTIONS`, `isWiresPreferred`, `isBankPreferredAllowedForReceiving`, both mirrors, `selectableBankPreferredOptions`, and since 2026-09-24 `isBankPreferredChange` (the self-service refusal's verdict) + `sendFromMismatch` / `sendFromMismatchSentence` (the alert line) (+ tests) |
+| `app/api/people/[email]/banking/route.ts` | **the one sending-bank write path** — 1:1 check, both mirrors (§8) |
+| `app/api/update-employee-ids/route.ts` | receiving-details save (dashboard + default-mode Set bank): refuses a `bank_preferred` change (403), reports a 1:1 mismatch in the reviewer alert |
+| `app/api/bank-update/save/route.ts` | the OTP page's save — receiving only, same mismatch alert |
+| `src/lib/employee/send-from-accounting-only.test.ts` | pins the 2026-09-24 retirement at the source (no employee write path, no Issues bank rows, routes gone, People → Banking still the path) |
 | `src/lib/supabase/employee-ids.ts` | `EmployeeIdRow` + select strings (must list `bank_preferred`) |
+| *(deleted 2026-09-24)* `src/lib/supabase/bank-preferred-requests.ts` · `app/api/bank-preferred-requests/route.ts` + `[id]/route.ts` | the retired approval gate's data layer and list / approve / deny / delete routes (§3) |
 | `app/api/payment-dispatch/bank-override/route.ts` | Mark Paid receiving-detail override |
 | `src/lib/payroll/bank-override-mapping.ts` | slot-aware override column mapping (+ tests) |
 | `src/lib/payroll/{mock-queue,pay-schedule,dispatch-export-csv}.ts` | routing-precedence resolvers |

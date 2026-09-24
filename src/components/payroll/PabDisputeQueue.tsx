@@ -5,7 +5,6 @@ import { useSearchParams } from 'next/navigation';
 import { normEmail } from '@/lib/email/norm-email';
 import {
   AlertCircle,
-  ArrowRight,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -13,7 +12,6 @@ import {
   Clock,
   Eye,
   Gavel,
-  Landmark,
   Loader2,
   Pencil,
   RefreshCw,
@@ -54,12 +52,6 @@ import {
   disputeGrantsPabForgiveness,
   isOrphanageStyleReason,
 } from '@/lib/supabase/pab-day-disputes';
-import type { BankPreferredRequestRow } from '@/lib/supabase/bank-preferred-requests';
-import {
-  bankPreferredLabelForProcessor,
-  isWiresPreferred,
-  type ProcessorId,
-} from '@/lib/employee-payment-processors';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import type { TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
@@ -91,15 +83,8 @@ function formatHours(hours: number | null | undefined): string | null {
   return `${m}m`;
 }
 
-/** Human label for a Bank Preferred processor id ('None' for a first-time set). */
-function bankLabel(v: string | null): string {
-  if (!v) return 'None';
-  return bankPreferredLabelForProcessor(v as ProcessorId) || v;
-}
-
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   pending: { label: 'Pending', className: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400' },
-  superseded: { label: 'Superseded', className: 'border-zinc-300 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400' },
   pending_orphanage_manager: { label: 'Awaiting orphanage review', className: 'border-amber-400 bg-amber-50 text-amber-700 dark:border-amber-600 dark:bg-amber-950/40 dark:text-amber-400' },
   orphanage_manager_approved: { label: 'Awaiting accounting', className: 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-600 dark:bg-sky-950/40 dark:text-sky-300' },
   orphanage_manager_denied: { label: 'Orph. mgr denied', className: 'border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-600 dark:bg-rose-950/40 dark:text-rose-400' },
@@ -150,13 +135,13 @@ function StatCard({
   );
 }
 
-/** One row of the merged Issues table — a PAB short-day dispute, a Bank Preferred
- *  change request, or (2026-09-15) a time adjustment carrying both stage-1
- *  signatures. Each is a yes/no for Accounting; the time adjustment also takes the
- *  day total to set. */
+/** One row of the merged Issues table — a PAB short-day dispute, or (2026-09-15) a
+ *  time adjustment carrying both stage-1 signatures. Each is a yes/no for
+ *  Accounting. The third kind, a Bank Preferred (sending bank) change request, was
+ *  RETIRED 2026-09-24 with the employee's sending-bank pick (Kane: the sending
+ *  bank is Accounting's alone, changed in People → Banking) — do not re-add it. */
 type IssueRow =
   | { kind: 'dispute'; dispute: PabDayDisputeRow }
-  | { kind: 'bank'; request: BankPreferredRequestRow }
   | { kind: 'time_adjustment'; request: TimeAdjustmentRow };
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -207,23 +192,14 @@ export default function PabDisputeQueue() {
   const [disputes, setDisputes] = useState<PabDayDisputeRow[]>(
     () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('all')) ?? [],
   );
-  // Bank Preferred change requests live in the same table (merged 2026-09-01,
-  // they're a yes/no like every other issue). Cached per filter like disputes.
-  const [bankRequests, setBankRequests] = useState<BankPreferredRequestRow[]>(
-    () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('all')) ?? [],
-  );
   // The KPI cards always read the FULL dataset, whatever the table filter says
   // (Kane 2026-09-01) — kept as its own pair so filtering never zeroes a card.
   const [allDisputes, setAllDisputes] = useState<PabDayDisputeRow[]>(
     () => getTabCache<PabDayDisputeRow[]>(TAB_CACHE_KEYS.pabDisputes('all')) ?? [],
   );
-  const [allBankRequests, setAllBankRequests] = useState<BankPreferredRequestRow[]>(
-    () => getTabCache<BankPreferredRequestRow[]>(TAB_CACHE_KEYS.bankPreferredRequests('all')) ?? [],
-  );
-  const [bankError, setBankError] = useState<string | null>(null);
   // Time adjustments (2026-09-15): the rows Accounting used to find only inside the
-  // Payroll Wizard, filtered to one pay week. Cached per filter like the other two
-  // kinds; the evidence signed URLs are NOT cached because they expire.
+  // Payroll Wizard, filtered to one pay week. Cached per filter like the disputes;
+  // the evidence signed URLs are NOT cached because they expire.
   const [timeAdjustments, setTimeAdjustments] = useState<TimeAdjustmentRow[]>(
     () => getTabCache<TimeAdjustmentRow[]>(TAB_CACHE_KEYS.timeAdjustmentIssues('all')) ?? [],
   );
@@ -282,9 +258,7 @@ export default function PabDisputeQueue() {
 
   const fetchDisputes = useCallback(async () => {
     const cacheKey = TAB_CACHE_KEYS.pabDisputes(statusFilter);
-    const bankCacheKey = TAB_CACHE_KEYS.bankPreferredRequests(statusFilter);
     const cached = getTabCache<PabDayDisputeRow[]>(cacheKey);
-    const cachedBank = getTabCache<BankPreferredRequestRow[]>(bankCacheKey);
     if (cached) {
       // Paint the cached rows for this filter immediately (covers switching
       // filters too) and revalidate quietly without a spinner.
@@ -293,18 +267,9 @@ export default function PabDisputeQueue() {
     } else {
       setLoading(true);
     }
-    if (cachedBank) setBankRequests(cachedBank);
     const taCacheKey = TAB_CACHE_KEYS.timeAdjustmentIssues(statusFilter);
     const cachedTa = getTabCache<TimeAdjustmentRow[]>(taCacheKey);
     if (cachedTa) setTimeAdjustments(cachedTa);
-
-    const loadBank = async (filter: typeof statusFilter): Promise<BankPreferredRequestRow[]> => {
-      const qs = filter === 'all' ? '' : `?status=${filter}`;
-      const res = await fetch(`/api/bank-preferred-requests${qs}`, { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: BankPreferredRequestRow[]; error?: string | null };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load Bank Preferred requests');
-      return json.rows ?? [];
-    };
 
     const loadDisputeRows = async (filter: typeof statusFilter): Promise<PabDayDisputeRow[]> => {
       const params = new URLSearchParams();
@@ -324,31 +289,10 @@ export default function PabDisputeQueue() {
       return (json.rows ?? []) as PabDayDisputeRow[];
     };
 
-    // Bank Preferred requests load alongside the disputes; a failure on one
-    // never blanks the other (each keeps its cached rows). The KPI cards read
-    // the 'all' dataset regardless of the table filter, so a non-'all' filter
-    // refreshes both its own slice and the full set.
-    const bankPromise = (async () => {
-      try {
-        const rows = await loadBank(statusFilter);
-        setTabCache(bankCacheKey, rows);
-        setBankRequests(rows);
-        setBankError(null);
-        if (statusFilter === 'all') {
-          setAllBankRequests(rows);
-        } else {
-          const allRows = await loadBank('all');
-          setTabCache(TAB_CACHE_KEYS.bankPreferredRequests('all'), allRows);
-          setAllBankRequests(allRows);
-        }
-      } catch (e) {
-        if (!hasTabCache(bankCacheKey)) setBankRequests([]);
-        setBankError(e instanceof Error ? e.message : 'Failed to load Bank Preferred requests');
-      }
-    })();
-
-    // Time adjustments load the same way: alongside, never blanking the others on a
-    // failure, and the 'all' set refreshed for the KPI cards whatever the filter.
+    // Time adjustments load alongside the disputes; a failure on one never blanks
+    // the other (each keeps its cached rows). The KPI cards read the 'all'
+    // dataset regardless of the table filter, so a non-'all' filter refreshes both
+    // its own slice and the full set.
     const loadTimeAdjustments = async (
       filter: typeof statusFilter,
     ): Promise<{ rows: TimeAdjustmentRow[]; signedUrls: Record<string, string> }> => {
@@ -397,7 +341,6 @@ export default function PabDisputeQueue() {
       // Keep the cached rows on a background-refresh failure.
       if (!hasTabCache(cacheKey)) setDisputes([]);
     } finally {
-      await bankPromise;
       await taPromise;
       setLoading(false);
     }
@@ -470,80 +413,6 @@ export default function PabDisputeQueue() {
     }
   }, [taDeleteTarget, fetchDisputes]);
 
-  // Approve/deny a Bank Preferred change request. The PATCH is the real gate —
-  // it re-checks the 1:1 rule against the employee's LIVE receiving bank and
-  // fails closed, so the row never pre-judges approvability (advisory only).
-  // Same action set as the dispute rows (2026-09-01): immediate Approve, Deny
-  // through a note dialog, View detail modal, Edit on decided rows (an
-  // approved→denied flip REVERTS the applied value, server-guarded), and a
-  // role-gated Delete of the record (which never changes the live value).
-  const [bankActingId, setBankActingId] = useState<string | null>(null);
-  const [bankDecideDialog, setBankDecideDialog] = useState<{ request: BankPreferredRequestRow; action: 'approved' | 'denied' } | null>(null);
-  const [bankDecisionNote, setBankDecisionNote] = useState('');
-  const [viewBankTarget, setViewBankTarget] = useState<BankPreferredRequestRow | null>(null);
-  const [bankEditDialog, setBankEditDialog] = useState<BankPreferredRequestRow | null>(null);
-  const [bankEditStatus, setBankEditStatus] = useState<'approved' | 'denied'>('approved');
-  const [bankEditNote, setBankEditNote] = useState('');
-  const [bankDeleteTarget, setBankDeleteTarget] = useState<BankPreferredRequestRow | null>(null);
-  const [bankDeleting, setBankDeleting] = useState(false);
-  const decideBankRequest = useCallback(
-    async (row: BankPreferredRequestRow, status: 'approved' | 'denied', note?: string): Promise<boolean> => {
-      setBankActingId(row.id);
-      try {
-        const res = await fetch(`/api/bank-preferred-requests/${row.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status, review_notes: note?.trim() ? note.trim() : null }),
-        });
-        const json = (await res.json()) as { success?: boolean; error?: string };
-        if (!res.ok || json.error) throw new Error(json.error ?? 'Action failed');
-        const who = row.employee_name || row.work_email;
-        const noteOnly = row.status === status;
-        const reverted = row.status === 'approved' && status === 'denied';
-        toast.success(
-          noteOnly
-            ? 'Decision note updated.'
-            : status === 'approved'
-              ? `Approved — ${bankLabel(row.to_value)} is now active for ${who}.`
-              : reverted
-                ? `Reversed — ${who}'s Bank Preferred is back to ${bankLabel(row.from_value)}.`
-                : `Denied ${who}'s Bank Preferred change.`,
-        );
-        fetchDisputes();
-        return true;
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Action failed');
-        return false;
-      } finally {
-        setBankActingId(null);
-      }
-    },
-    [fetchDisputes],
-  );
-
-  const openBankEdit = useCallback((row: BankPreferredRequestRow) => {
-    setBankEditDialog(row);
-    setBankEditStatus(row.status === 'denied' ? 'denied' : 'approved');
-    setBankEditNote(row.review_notes ?? '');
-  }, []);
-
-  const handleBankDelete = useCallback(async () => {
-    if (!bankDeleteTarget) return;
-    setBankDeleting(true);
-    try {
-      const res = await fetch(`/api/bank-preferred-requests/${bankDeleteTarget.id}`, { method: 'DELETE' });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed');
-      toast.success('Bank Preferred request deleted');
-      setBankDeleteTarget(null);
-      fetchDisputes();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete request');
-    } finally {
-      setBankDeleting(false);
-    }
-  }, [bankDeleteTarget, fetchDisputes]);
-
   const handleApprove = useCallback(async (d: PabDayDisputeRow) => {
     setApprovingId(d.id);
     try {
@@ -587,13 +456,6 @@ export default function PabDisputeQueue() {
 
   const filtered = useMemo<IssueRow[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    const bank: IssueRow[] = bankRequests
-      .filter(r => {
-        if (!q) return true;
-        const blob = [r.work_email, r.employee_name ?? '', bankLabel(r.from_value), bankLabel(r.to_value), r.reviewed_by ?? '', 'bank preferred'].join(' ').toLowerCase();
-        return blob.includes(q);
-      })
-      .map(r => ({ kind: 'bank' as const, request: r }));
     const disp: IssueRow[] = disputes
       .filter(d => {
         if (!q) return true;
@@ -604,11 +466,10 @@ export default function PabDisputeQueue() {
     const adjustments: IssueRow[] = timeAdjustments
       .filter(r => !q || timeAdjustmentSearchBlob(r).includes(q))
       .map(r => ({ kind: 'time_adjustment' as const, request: r }));
-    // Bank rows first — a pending request holds the employee's payout routing
-    // until it's decided (same slot they occupied as a card above the table).
-    // Time adjustments next: they change a pay figure, disputes change PAB only.
-    return [...bank, ...adjustments, ...disp];
-  }, [disputes, bankRequests, timeAdjustments, searchQuery]);
+    // Time adjustments first: they change a pay figure, disputes change PAB only.
+    // (Bank Preferred rows sorted above both until they were retired 2026-09-24.)
+    return [...adjustments, ...disp];
+  }, [disputes, timeAdjustments, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -624,16 +485,14 @@ export default function PabDisputeQueue() {
   const pendingCount = useMemo(
     () =>
       allDisputes.filter((d) => d.status === 'pending' || d.status === 'orphanage_manager_approved').length +
-      allBankRequests.filter((r) => r.status === 'pending').length +
       taCounts.pending,
-    [allDisputes, allBankRequests, taCounts],
+    [allDisputes, taCounts],
   );
   const approvedCount = useMemo(
     () =>
       allDisputes.filter((d) => d.status === 'approved' || d.status === 'accounting_approved').length +
-      allBankRequests.filter((r) => r.status === 'approved').length +
       taCounts.approved,
-    [allDisputes, allBankRequests, taCounts],
+    [allDisputes, taCounts],
   );
   const deniedCount = useMemo(
     () =>
@@ -643,9 +502,8 @@ export default function PabDisputeQueue() {
           d.status === 'orphanage_manager_denied' ||
           d.status === 'accounting_denied',
       ).length +
-      allBankRequests.filter((r) => r.status === 'denied').length +
       taCounts.denied,
-    [allDisputes, allBankRequests, taCounts],
+    [allDisputes, taCounts],
   );
 
   const handleEdit = useCallback(async () => {
@@ -817,8 +675,8 @@ export default function PabDisputeQueue() {
               Issues
             </h2>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-              Approval queue for short-day issues, Bank Preferred changes, and time adjustments that carry both
-              manager signatures. Any Accounting user can approve or deny.
+              Approval queue for short-day issues and time adjustments that carry both manager signatures. Any
+              Accounting user can approve or deny.
             </p>
           </div>
         </div>
@@ -851,7 +709,7 @@ export default function PabDisputeQueue() {
 
       {/* KPI cards */}
       <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total" value={allDisputes.length + allBankRequests.length + taCounts.total} tone="indigo" icon={ClipboardList} />
+        <StatCard label="Total" value={allDisputes.length + taCounts.total} tone="indigo" icon={ClipboardList} />
         <StatCard label="Pending" value={pendingCount} tone="amber" icon={Clock} />
         <StatCard label="Approved" value={approvedCount} tone="emerald" icon={CheckCircle2} />
         <StatCard label="Denied" value={deniedCount} tone="rose" icon={XCircle} />
@@ -889,13 +747,8 @@ export default function PabDisputeQueue() {
         </div>
       </div>
 
-      {/* Bank Preferred rows failed to refresh — the dispute rows still stand. */}
-      {bankError && (
-        <div className="shrink-0 rounded-md border border-rose-200 bg-rose-50/60 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
-          Bank Preferred change requests couldn&apos;t be refreshed: {bankError}
-        </div>
-      )}
-      {/* Same for time adjustments — said out loud, never a silently shorter queue. */}
+      {/* Time adjustments failed to refresh — said out loud, never a silently
+          shorter queue; the dispute rows still stand. */}
       {taError && (
         <div className="shrink-0 rounded-md border border-rose-200 bg-rose-50/60 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
           Time adjustments couldn&apos;t be refreshed: {taError}
@@ -911,7 +764,7 @@ export default function PabDisputeQueue() {
         <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center">
           <AlertCircle className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
           <p className="text-sm text-zinc-500">
-            {disputes.length === 0 && bankRequests.length === 0 && timeAdjustments.length === 0
+            {disputes.length === 0 && timeAdjustments.length === 0
               ? 'No issues filed yet.'
               : 'No issues match your filters.'}
           </p>
@@ -963,140 +816,6 @@ export default function PabDisputeQueue() {
                         onDeny={() => setTaDecide({ row: r, action: 'deny' })}
                         onDelete={() => setTaDeleteTarget(r)}
                       />
-                    );
-                  }
-                  if (row.kind === 'bank') {
-                    const r = row.request;
-                    const acting = bankActingId === r.id;
-                    // ADVISORY only, under the 1:1 rule (2026-08-31 PM): whether a
-                    // wallet send-from is approvable depends on the employee's LIVE
-                    // receiving bank, which this row does not carry. The approve
-                    // PATCH is the real gate (re-checks live, fails closed) — so the
-                    // row hints at a rail change but never disables Approve.
-                    const railChange = isWiresPreferred(r.from_value) !== isWiresPreferred(r.to_value);
-                    return (
-                      <TableRow key={`bank-${r.id}`} className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
-                        <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300" title={r.employee_name ?? undefined}>
-                          {r.work_email}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm text-zinc-700 dark:text-zinc-300">
-                          {new Date(r.created_at).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                            <Landmark className="h-3 w-3" />
-                            Bank Preferred
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="min-w-[200px] align-top text-xs text-zinc-600 dark:text-zinc-400">
-                          <div className="flex items-center gap-1.5">
-                            <span className="rounded-md bg-zinc-200/70 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                              {bankLabel(r.from_value)}
-                            </span>
-                            <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
-                            <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                              {bankLabel(r.to_value)}
-                            </span>
-                          </div>
-                          {railChange && (
-                            <p className="mt-1 text-[10px] font-medium leading-snug text-amber-600 dark:text-amber-400">
-                              Rail change — approval is checked against the live receiving bank (1:1 rule).
-                            </p>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[r.status]?.className)}>
-                            {STATUS_BADGE[r.status]?.label ?? r.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs">
-                          <span className="text-[10px] text-zinc-400">—</span>
-                        </TableCell>
-                        <TableCell className="text-xs text-zinc-500 dark:text-zinc-400">
-                          {r.reviewed_by ? (
-                            <div className="flex flex-col gap-0.5">
-                              <span>{r.reviewed_by}</span>
-                              {r.review_notes && <span className="text-[10px] italic">{r.review_notes}</span>}
-                            </div>
-                          ) : '—'}
-                        </TableCell>
-                        <TableCell className="min-w-[260px] text-right align-top">
-                          <div className="flex flex-wrap justify-end gap-1">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 border-indigo-200 px-2 text-[11px] text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
-                              title="View details"
-                              onClick={() => setViewBankTarget(r)}
-                            >
-                              <Eye className="mr-1 h-3 w-3" />
-                              View
-                            </Button>
-                            {r.status === 'pending' ? (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={acting}
-                                  className="h-7 border-emerald-300 px-2 text-[11px] text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-700 dark:text-emerald-400"
-                                  title={
-                                    railChange
-                                      ? 'The save verifies the sending rail against this employee’s live receiving bank and refuses a mismatch.'
-                                      : undefined
-                                  }
-                                  onClick={() => void decideBankRequest(r, 'approved')}
-                                >
-                                  {acting ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Approve'}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={acting}
-                                  className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
-                                  onClick={() => { setBankDecideDialog({ request: r, action: 'denied' }); setBankDecisionNote(''); }}
-                                >
-                                  Deny
-                                </Button>
-                              </>
-                            ) : r.status !== 'superseded' ? (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={acting}
-                                  className="h-7 border-zinc-300 px-2 text-[11px] text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300"
-                                  onClick={() => openBankEdit(r)}
-                                >
-                                  <Pencil className="mr-1 h-3 w-3" />
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canDelete}
-                                  title={!canDelete ? 'Requires admin or accounting' : 'Delete this request record'}
-                                  className="h-7 border-rose-300 px-2 text-[11px] text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-700 dark:text-rose-400"
-                                  onClick={() => setBankDeleteTarget(r)}
-                                >
-                                  Revoke
-                                </Button>
-                              </>
-                            ) : null}
-
-                            {canDelete && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                title="Permanently delete this request record (admin / accounting only) — does not change the live Bank Preferred"
-                                className="h-7 w-7 border-zinc-200 p-0 text-rose-500 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:border-zinc-700 dark:text-rose-400 dark:hover:border-rose-800 dark:hover:bg-rose-950/40"
-                                onClick={() => setBankDeleteTarget(r)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
                     );
                   }
                   const d = row.dispute;
@@ -1372,314 +1091,6 @@ export default function PabDisputeQueue() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Bank Preferred view details modal — same shell as the issue View. */}
-      {viewBankTarget && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px] animate-in fade-in duration-200 ease-out motion-reduce:animate-none"
-          onClick={() => setViewBankTarget(null)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Bank Preferred change details"
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out dark:border-zinc-800 dark:bg-zinc-950 motion-reduce:animate-none"
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4 dark:border-zinc-800">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-sm shadow-indigo-500/20 dark:from-indigo-600 dark:to-violet-700">
-                  <Landmark className="h-4 w-4" aria-hidden />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
-                    Bank Preferred change
-                  </p>
-                  <h3 className="mt-0.5 truncate font-mono text-sm font-bold text-zinc-900 dark:text-white">
-                    {viewBankTarget.work_email}
-                  </h3>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewBankTarget(null)}
-                aria-label="Close"
-                className="shrink-0 rounded-md p-1.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3.5 px-5 py-4">
-              <div className="grid grid-cols-2 gap-3">
-                <InfoRow label="Requested" value={new Date(viewBankTarget.created_at).toLocaleString()} />
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Status</p>
-                  <div className="mt-1">
-                    <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[viewBankTarget.status]?.className)}>
-                      {STATUS_BADGE[viewBankTarget.status]?.label ?? viewBankTarget.status}
-                    </Badge>
-                  </div>
-                </div>
-              </div>
-
-              {viewBankTarget.employee_name && <InfoRow label="Employee" value={viewBankTarget.employee_name} />}
-
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Change</p>
-                <div className="mt-1 flex items-center gap-1.5">
-                  <span className="rounded-md bg-zinc-200/70 px-1.5 py-0.5 text-[11px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                    {bankLabel(viewBankTarget.from_value)}
-                  </span>
-                  <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400" />
-                  <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-                    {bankLabel(viewBankTarget.to_value)}
-                  </span>
-                </div>
-                {isWiresPreferred(viewBankTarget.from_value) !== isWiresPreferred(viewBankTarget.to_value) && (
-                  <p className="mt-1.5 text-[11px] font-medium leading-snug text-amber-600 dark:text-amber-400">
-                    Rail change — approval is checked against the live receiving bank (1:1 rule).
-                  </p>
-                )}
-              </div>
-
-              {viewBankTarget.reviewed_by && <InfoRow label="Decided by" value={viewBankTarget.reviewed_by} />}
-              {viewBankTarget.reviewed_at && <InfoRow label="Decided at" value={new Date(viewBankTarget.reviewed_at).toLocaleString()} />}
-
-              {viewBankTarget.review_notes && (
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Decision note</p>
-                  <p className="mt-1 break-words text-sm italic leading-relaxed text-zinc-700 dark:text-zinc-300">
-                    {viewBankTarget.review_notes}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
-              <Button variant="outline" size="sm" onClick={() => setViewBankTarget(null)}>
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bank Preferred decide dialog — same shape as the issue Deny dialog. */}
-      {bankDecideDialog && (
-        <Dialog open onOpenChange={() => { setBankDecideDialog(null); setBankDecisionNote(''); }}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="text-sm">
-                {bankDecideDialog.action === 'denied' ? 'Deny Bank Preferred change' : 'Approve Bank Preferred change'}
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                {bankDecideDialog.request.employee_name || bankDecideDialog.request.work_email} —{' '}
-                {bankLabel(bankDecideDialog.request.from_value)} → {bankLabel(bankDecideDialog.request.to_value)}
-                {bankDecideDialog.action === 'denied' && (
-                  <span className="mt-1 block text-[10px] text-zinc-500">
-                    Denying keeps the current Bank Preferred; the employee is notified with your note.
-                  </span>
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Decision note (optional)</Label>
-              <textarea
-                value={bankDecisionNote}
-                onChange={e => setBankDecisionNote(e.target.value)}
-                rows={2}
-                placeholder="Optional note..."
-                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-              />
-            </div>
-            <DialogFooter className="gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { setBankDecideDialog(null); setBankDecisionNote(''); }}
-                disabled={bankActingId === bankDecideDialog.request.id}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={bankActingId === bankDecideDialog.request.id}
-                className={bankDecideDialog.action === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
-                onClick={async () => {
-                  const ok = await decideBankRequest(bankDecideDialog.request, bankDecideDialog.action, bankDecisionNote);
-                  if (ok) { setBankDecideDialog(null); setBankDecisionNote(''); }
-                }}
-              >
-                {bankActingId === bankDecideDialog.request.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                {bankDecideDialog.action === 'denied' ? 'Deny' : 'Approve'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* Bank Preferred edit dialog — flip a decided request. approved→denied
-          REVERTS the applied value (server refuses if the live value has since
-          changed, and re-runs the 1:1 + dispatch-lock gates either way). */}
-      {bankEditDialog && (
-        <Dialog
-          open
-          onOpenChange={(open) => { if (!open) setBankEditDialog(null); }}
-        >
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle className="text-sm">Edit Bank Preferred decision</DialogTitle>
-              <DialogDescription className="text-xs">
-                {bankEditDialog.employee_name || bankEditDialog.work_email} —{' '}
-                {bankLabel(bankEditDialog.from_value)} → {bankLabel(bankEditDialog.to_value)}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Status</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={bankEditStatus === 'approved' ? 'default' : 'outline'}
-                    onClick={() => setBankEditStatus('approved')}
-                    className={cn('flex-1 h-8 text-xs', bankEditStatus === 'approved' && 'bg-emerald-600 hover:bg-emerald-700')}
-                  >
-                    Approved
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={bankEditStatus === 'denied' ? 'default' : 'outline'}
-                    onClick={() => setBankEditStatus('denied')}
-                    className={cn('flex-1 h-8 text-xs', bankEditStatus === 'denied' && 'bg-rose-600 hover:bg-rose-700')}
-                  >
-                    Denied
-                  </Button>
-                </div>
-              </div>
-              {bankEditDialog.status === 'approved' && bankEditStatus === 'denied' && (
-                <p className="rounded-md border border-amber-200/90 bg-amber-50/80 px-2.5 py-2 text-[11px] leading-snug text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-100/95">
-                  This reverses the applied approval: their Bank Preferred goes back to{' '}
-                  <span className="font-semibold">{bankLabel(bankEditDialog.from_value)}</span>. The save is refused if
-                  their setting has since changed elsewhere, or if the restored rail would break the 1:1 rule.
-                </p>
-              )}
-              {bankEditDialog.status === 'denied' && bankEditStatus === 'approved' && (
-                <p className="rounded-md border border-zinc-200 bg-zinc-50/80 px-2.5 py-2 text-[11px] leading-snug text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-                  This applies <span className="font-semibold">{bankLabel(bankEditDialog.to_value)}</span> now — checked
-                  against their live receiving bank (1:1 rule), and only allowed on the employee&apos;s latest request.
-                </p>
-              )}
-              <div className="space-y-1.5">
-                <Label className="text-xs">Decision note</Label>
-                <textarea
-                  value={bankEditNote}
-                  onChange={e => setBankEditNote(e.target.value)}
-                  rows={2}
-                  placeholder="Optional note…"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-              </div>
-            </div>
-            <DialogFooter className="gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBankEditDialog(null)}
-                disabled={bankActingId === bankEditDialog.id}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={bankActingId === bankEditDialog.id}
-                className={bankEditStatus === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'}
-                onClick={async () => {
-                  const ok = await decideBankRequest(bankEditDialog, bankEditStatus, bankEditNote);
-                  if (ok) setBankEditDialog(null);
-                }}
-              >
-                {bankActingId === bankEditDialog.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                Save changes
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* Bank Preferred delete confirmation — removes the RECORD only. */}
-      {bankDeleteTarget && (
-        <Dialog open onOpenChange={(open) => { if (!open && !bankDeleting) setBankDeleteTarget(null); }}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <div className="flex items-center gap-3">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-rose-100 dark:bg-rose-950/60">
-                  <Trash2 className="size-4 text-rose-600 dark:text-rose-400" />
-                </div>
-                <div className="min-w-0">
-                  <DialogTitle className="text-sm">Delete Bank Preferred request</DialogTitle>
-                  <DialogDescription className="mt-0.5 text-xs">
-                    This permanently removes the record. Cannot be undone.
-                  </DialogDescription>
-                </div>
-              </div>
-            </DialogHeader>
-            <div className="space-y-2 text-[12.5px] text-zinc-700 dark:text-zinc-300">
-              <p>
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Employee</span>{' '}
-                <span className="font-medium">{bankDeleteTarget.employee_name || bankDeleteTarget.work_email}</span>
-              </p>
-              <p>
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Change</span>{' '}
-                <span className="font-medium">
-                  {bankLabel(bankDeleteTarget.from_value)} → {bankLabel(bankDeleteTarget.to_value)}
-                </span>
-              </p>
-              <p>
-                <span className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400">Status</span>{' '}
-                <span className="font-medium">
-                  {STATUS_BADGE[bankDeleteTarget.status]?.label ?? bankDeleteTarget.status}
-                </span>
-              </p>
-              <p className="rounded-md border border-amber-200/60 bg-amber-50/70 px-2.5 py-1.5 text-[11.5px] leading-snug text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-                Deleting removes the request record only — it does <span className="font-semibold">not</span> change the
-                employee&apos;s current Bank Preferred. To reverse an applied approval, use Edit instead. The deletion is
-                logged as <code className="font-mono">bank_preferred.request.deleted</code>.
-              </p>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={bankDeleting}
-                onClick={() => setBankDeleteTarget(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                disabled={bankDeleting}
-                onClick={handleBankDelete}
-                className="gap-1.5 bg-rose-600 text-white hover:bg-rose-700 dark:bg-rose-700 dark:hover:bg-rose-600"
-              >
-                {bankDeleting ? (
-                  <>
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Deleting…
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="h-3 w-3" />
-                    Delete
-                  </>
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       )}
 
       {/* Decide confirmation dialog */}

@@ -11,7 +11,8 @@
  * waiting on something."*
  *
  * So the rows now render inside the Issues table as a third `IssueRow` kind, the
- * way Bank Preferred change requests were merged on 2026-09-01. Every derivation the
+ * way Bank Preferred change requests were merged on 2026-09-01 (those rows were
+ * retired 2026-09-24, leaving disputes and time adjustments). Every derivation the
  * table needs lives here as a pure function because this repo's tests are
  * `node --test` over `src/**\/*.test.ts` with no React renderer — logic left inside
  * `PabDisputeQueue.tsx` is untestable by construction.

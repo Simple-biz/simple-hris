@@ -716,13 +716,18 @@ celebration.
   `employee_ids` row via `POST /api/update-employee-ids` (the same route the
   employee portal saves through, so history/audit/notifications all fire).
   When the row already resolves an effective processor, the processor is
-  FIXED and only its missing details are collected — routing changes stay in
-  their approval flows and the WIRES lock stays intact. Only with no processor
+  FIXED and only its missing details are collected — a routing change is
+  Accounting's sending-bank edit in People → Banking (the dialog says so since
+  2026-09-24; it used to point at an "approval flow" that no longer exists), and
+  the 1:1 rule is enforced there. Only with no processor
   at all does the picker open (a `SmoothSelect` over
   `EMPLOYEE_SELECTABLE_PROCESSOR_OPTIONS`, which un-retires **Wise**; Wise is
   deliberately not a wallet here — it collects the same wire fields as Wires,
   since `isPayoutComplete` judges it on bank details), writing the
-  Disbursement channel (`preferred_processor`), never `bank_preferred`.
+  Disbursement channel (`preferred_processor`), never `bank_preferred`. (Until
+  2026-09-24 the route's server-side 1:1 mirror turned a Kolan/HiGlobe pick here
+  into a FILED sending-bank request on Accounting → Issues; that mirror is gone,
+  and tier 2 routes the person onto the picked wallet anyway.)
   Filters: a searchable **department dropdown** (including a "No department"
   bucket) and a **"Paying this week (N)"** toggle chip that narrows to the
   hard blockers (hidden — and auto-released — when none qualify). Blocker rows

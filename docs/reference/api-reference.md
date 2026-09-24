@@ -509,9 +509,11 @@ Updates bank information and other employee ID fields.
 | `preferred_bank_slot` | string | No |
 | `bootstrap_display_name` | string | No |
 
-**Allowed update fields**: Only the fields listed above are accepted. All others are silently ignored. Empty strings are converted to `null`.
+**Allowed update fields**: Only the fields listed above are accepted. All others are silently ignored, **except `bank_preferred`** (below). Empty strings are converted to `null`.
 
 **Behavior notes**:
+- **The sending bank (`bank_preferred`) is not writable here** — it is Accounting's alone since 2026-09-24, set through `PATCH /api/people/[email]/banking` ([bank-preferred-routing.md](../features/bank-preferred-routing.md) §1). A body carrying a CHANGED `bank_preferred` gets **`403`** `"The sending bank can only be changed by Accounting, in People → Banking…"` from every caller, self-service or staff; the unchanged stored value (a page opened before the retirement still posts it) is a no-op; an unreadable stored value is **`503`** and nothing is saved. Until 2026-09-24 the field was accepted and filed as an approval request for Accounting → Issues.
+- A save that writes `preferred_processor` and leaves the stored sending bank out of step with it (the 1:1 rule) still lands; the Accounting/CEO/Admin `people.banking.self_updated` alert then says *"Bank details updated — sending bank no longer matches"* and carries `details.send_from_mismatch`.
 - Writes to Supabase table `employee_ids`.
 - If no existing row matches and `work_email` is present, the route bootstraps a new `employee_ids` row with a temporary `SELF-...` employee ID, then saves the submitted fields.
 - `preferred_processor` must be one of: `hurupay`, `wepay`, `higlobe`, `wise`, `jeeves`, `wires`.
@@ -2962,7 +2964,9 @@ rather than `isHslSubDeptLabel`, which knew only the code teams and would have
 
 ## Route index — every `app/api/**/route.ts` in the tree
 
-**Generated 2026-09-22 by walking `app/api/`; 325 route files.** This section exists because the
+**Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
+`/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
+sending-bank approval gate; routes added by other commits since the walk are not counted here). This section exists because the
 rest of this file documents 119 of them by hand, so for years an endpoint's absence here could not be
 told apart from an endpoint that does not exist. **A route missing from this table is a route that
 does not exist** — that is the only claim this table makes. It does not describe request or response
@@ -3018,8 +3022,6 @@ feature doc and in no hand-written section here.**
 | `/api/auth/force-logout` | POST | `requireElevatedSession` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) · *this file* |
 | `/api/auth/session-status` | GET | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/avatar` | GET | `authorizeEmail` | *this file* |
-| `/api/bank-preferred-requests` | GET | `requireElevatedSession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) |
-| `/api/bank-preferred-requests/[id]` | PATCH, DELETE | `getServerSession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) |
 | `/api/bank-update/lock-status` | GET | — **none found** | — **no doc** |
 | `/api/bank-update/request-otp` | POST | — **none found** | — **no doc** |
 | `/api/bank-update/save` | POST | service-role only | [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |

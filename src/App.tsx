@@ -377,8 +377,9 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
       case 'payment-dispatch':
         return <PayrollDispatch />;
       case 'disputes':
-        // Bank Preferred change requests render as rows inside the Issues
-        // table itself (merged 2026-09-01) — no stacked card above it.
+        // PAB disputes + countersigned time adjustments. The Bank Preferred
+        // (sending bank) rows were retired 2026-09-24 — Accounting changes a
+        // sending bank directly in People → Banking.
         return <PabDisputeQueue />;
       case 'transfers':
         return <AccountingTransfers />;

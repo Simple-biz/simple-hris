@@ -10,6 +10,7 @@ import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { escapeLikePattern } from "@/lib/db/like-escape";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
+import { sendFromMismatch, sendFromMismatchSentence } from "@/lib/employee-payment-processors";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,12 +58,17 @@ function clientIp(req: Request): string | null {
   return req.headers.get("x-real-ip");
 }
 
-/** Notify Accounting/CEO/Admin that an employee self-updated their payout details. */
+/** Notify Accounting/CEO/Admin that an employee self-updated their payout details.
+ *  `mismatch` names an Accounting-set sending bank this save leaves out of step
+ *  with the receiving channel (the 1:1 rule) — this page never touches the
+ *  sending bank, so the alert is how Accounting hears it needs changing. Same
+ *  wording as the dashboard route's alert (`sendFromMismatchSentence`). */
 async function notifyReviewers(
   supabase: ReturnType<typeof createSupabaseServiceRoleClient>,
   workEmail: string,
   displayName: string | null,
   changedFields: string[],
+  mismatch: ReturnType<typeof sendFromMismatch>,
 ): Promise<void> {
   if (!supabase) return;
   try {
@@ -79,14 +85,20 @@ async function notifyReviewers(
       ),
     );
     if (recipients.length === 0) return;
+    const base = `${displayName || workEmail} updated their bank & payout details via the external link.`;
     await supabase.from("employee_notifications").insert(
       recipients.map((to) => ({
         recipient_email: to,
         type: "people.banking.self_updated",
         tone: "neutral",
-        title: "Bank details updated",
-        message: `${displayName || workEmail} updated their bank & payout details via the external link.`,
-        details: { work_email: workEmail, via: "external_link", fields: changedFields },
+        title: mismatch ? "Bank details updated — sending bank no longer matches" : "Bank details updated",
+        message: mismatch ? `${base} ${sendFromMismatchSentence(mismatch)}` : base,
+        details: {
+          work_email: workEmail,
+          via: "external_link",
+          fields: changedFields,
+          ...(mismatch ? { send_from_mismatch: { send_from: mismatch.sendFrom, receiving: mismatch.receiving } } : {}),
+        },
       })),
     );
   } catch {
@@ -160,14 +172,27 @@ export async function POST(req: Request) {
     // before→after. Best-effort: on an un-migrated env (missing column) or a
     // first-time setup (no row) this resolves empty and every "before" is null.
     // `.limit(1)` (not maybeSingle) tolerates the known same-email row collisions.
+    // The stored sending bank rides along whenever the receiving channel is
+    // written, for the reviewer alert's mismatch line — never into `changes`.
+    const snapshotFields =
+      "preferred_processor" in update ? [...changedFields, "bank_preferred"] : changedFields;
     const beforeRow: Record<string, unknown> = await (async () => {
       const { data } = await supabase
         .from("employee_ids")
-        .select(changedFields.join(", "))
+        .select(snapshotFields.join(", "))
         .ilike("work_email", emailPattern)
         .limit(1);
       return (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
     })();
+    // Advisory, like the dashboard route: the 1:1 rule is enforced where the
+    // sending bank is SET (People → Banking); a save here only reports it.
+    const mismatch =
+      "preferred_processor" in update
+        ? sendFromMismatch(
+            update.preferred_processor,
+            typeof beforeRow.bank_preferred === "string" ? beforeRow.bank_preferred : null,
+          )
+        : null;
 
     // Update the canonical employee_ids row.
     const { data: updatedRows, error: updateError } = await supabase
@@ -264,7 +289,7 @@ export async function POST(req: Request) {
       via: "external_link",
       ip_address: ip,
     }).catch(() => undefined);
-    await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields);
+    await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields, mismatch);
     // Nudge the People-tab "Bank changes" live feed to refetch instantly. The
     // audit row above is the feed's source; this pulse just makes it real-time.
     await pulseBankChanges();

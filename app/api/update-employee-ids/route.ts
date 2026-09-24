@@ -2,15 +2,15 @@ import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
 import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
-import { createBankPreferredRequest } from "@/lib/supabase/bank-preferred-requests";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { normalizeSource, EMPLOYEE_DASHBOARD_SOURCE } from "@/lib/payroll/readiness-audit";
 import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
 import {
-  isBankPreferredAllowedForReceiving,
-  mirroredBankPreferredFor,
+  isBankPreferredChange,
+  sendFromMismatch,
+  sendFromMismatchSentence,
 } from "@/lib/employee-payment-processors";
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
@@ -20,6 +20,8 @@ import { requireFeatureEditAnyView } from "@/lib/auth/authorize-feature";
 /** Fields blocked while Accounting has payroll dispatch locked (employees may still update personal_email). */
 const BLOCKED_WHILE_PAYROLL_LOCKED = new Set([
   "preferred_processor",
+  // Never writable on this route since 2026-09-24 (the sending bank is
+  // Accounting's — see POST). Kept so the lock list stays the full payout set.
   "bank_preferred",
   "bank_name",
   "account_holder_name",
@@ -58,12 +60,20 @@ function clientIp(req: Request): string | null {
  * Notify Accounting/CEO/Admin that an employee self-updated their payout details
  * from the Employee Dashboard. Mirrors the external-link route's reviewer notify
  * (same `people.banking.self_updated` type) so both channels feed the same badge.
+ *
+ * `mismatch` is set when the save leaves the Accounting-set sending bank
+ * incompatible with the receiving channel (the 1:1 rule). Since 2026-09-24 an
+ * employee's receiving move never touches the sending bank, and this alert is
+ * how Accounting hears it needs changing — so the title says so, not only the
+ * message. Same type and `neutral` tone: the notifications CHECK rejects
+ * anything else, silently.
  */
 async function notifyReviewers(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
   workEmail: string,
   displayName: string | null,
   changedFields: string[],
+  mismatch: ReturnType<typeof sendFromMismatch>,
 ): Promise<void> {
   try {
     const { data: roleRows } = await supabase
@@ -79,14 +89,20 @@ async function notifyReviewers(
       ),
     );
     if (recipients.length === 0) return;
+    const base = `${displayName || workEmail} updated their bank & payout details from the Employee Dashboard.`;
     await supabase.from("employee_notifications").insert(
       recipients.map((to) => ({
         recipient_email: to,
         type: "people.banking.self_updated",
         tone: "neutral",
-        title: "Bank details updated",
-        message: `${displayName || workEmail} updated their bank & payout details from the Employee Dashboard.`,
-        details: { work_email: workEmail, via: "employee_dashboard", fields: changedFields },
+        title: mismatch ? "Bank details updated — sending bank no longer matches" : "Bank details updated",
+        message: mismatch ? `${base} ${sendFromMismatchSentence(mismatch)}` : base,
+        details: {
+          work_email: workEmail,
+          via: "employee_dashboard",
+          fields: changedFields,
+          ...(mismatch ? { send_from_mismatch: { send_from: mismatch.sendFrom, receiving: mismatch.receiving } } : {}),
+        },
       })),
     );
   } catch {
@@ -94,111 +110,11 @@ async function notifyReviewers(
   }
 }
 
-/**
- * Notify Accounting/CEO/Admin that an employee submitted a Bank Preferred change
- * that needs approval in the Issues tab. Best-effort; never fails the save.
- */
-async function notifyReviewersOfBankPreferredRequest(
-  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
-  workEmail: string,
-  displayName: string | null,
-  fromValue: string | null,
-  toValue: string,
-): Promise<void> {
-  try {
-    const { data: roleRows } = await supabase
-      .from("employee_roles")
-      .select("work_email")
-      .in("role", ["admin", "accounting", "ceo"])
-      .is("revoked_at", null);
-    const recipients = Array.from(
-      new Set(
-        (roleRows ?? [])
-          .map((r: { work_email?: string | null }) => (r.work_email ?? "").trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    );
-    if (recipients.length === 0) return;
-    await supabase.from("employee_notifications").insert(
-      recipients.map((to) => ({
-        recipient_email: to,
-        type: "people.banking.self_updated",
-        tone: "neutral",
-        title: "Bank Preferred change needs approval",
-        message: `${displayName || workEmail} requested a Bank Preferred change (${fromValue ?? "none"} → ${toValue}). Approve or deny it in the Issues tab.`,
-        details: { work_email: workEmail, via: "employee_dashboard", kind: "bank_preferred_request", from: fromValue, to: toValue },
-      })),
-    );
-  } catch {
-    // Notification failure must never fail the save.
-  }
-}
-
-/**
- * Intercept a Bank Preferred change: instead of writing employee_ids.bank_preferred
- * directly, hold the new value as a pending request for Accounting to approve.
- *
- * Mutates `update` in place — removing `bank_preferred` so it is NOT written to
- * employee_ids by the caller. Returns whether a pending request was filed (so
- * the response can tell the UI to show "sent for approval"). A no-op change
- * (requested value equals the current live value) is dropped silently.
- */
-async function interceptBankPreferred(opts: {
-  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>;
-  update: Record<string, string | null>;
-  workEmail: string | null;
-  displayName: string | null;
-  currentValue: string | null;
-  /** The receiving channel this save leaves in place: the value being written in
-   *  the same request, else the stored one. The 1:1 rule judges against THIS. */
-  receiving: string | null;
-}): Promise<{ requested: boolean; forbidden?: boolean }> {
-  const { supabase, update, workEmail, displayName, currentValue, receiving } = opts;
-  if (!("bank_preferred" in update)) return { requested: false };
-
-  const requested = update.bank_preferred; // already trimmed/validated, or null
-  // Always take it out of the immediate employee_ids write — it only lands there
-  // on approval.
-  delete update.bank_preferred;
-
-  // No work email → can't key a request (bootstrap by personal_email only). Drop.
-  if (!workEmail) return { requested: false };
-
-  const current = (currentValue ?? "").trim() || null;
-  const target = (requested ?? "").trim() || null;
-
-  // No actual change (incl. clearing an already-empty value) → nothing to gate.
-  if (current === target) return { requested: false };
-  // Clearing the value doesn't need approval — but there's no UI path to clear
-  // it, and a null target has no processor to route to. Treat null target as a
-  // no-op request to avoid filing an empty approval. (Set requires a value.)
-  if (!target) return { requested: false };
-
-  // THE 1:1 RULE, pre-filter edition (Kane, 2026-08-31 PM). The send-from rail
-  // must agree with the RECEIVING channel: a wallet receiver's send-from IS that
-  // wallet, a bank receiver never sends from a wallet. Stateless — judged
-  // against the receiving value this save leaves in place, so there is no
-  // transition history to launder. The approval PATCH re-checks against the
-  // LIVE receiving channel at approve time; the money gate is there, not here.
-  if (!isBankPreferredAllowedForReceiving(receiving, target)) {
-    return { requested: false, forbidden: true };
-  }
-
-  const { error } = await createBankPreferredRequest({
-    workEmail,
-    employeeName: displayName,
-    fromValue: current,
-    toValue: target,
-  });
-  if (error) {
-    // Un-migrated env or DB hiccup — do NOT silently write the value (that would
-    // bypass the gate). Surface via a thrown error the caller converts to 500.
-    throw new Error(`Could not file Bank Preferred change for approval: ${error}`);
-  }
-
-  await notifyReviewersOfBankPreferredRequest(supabase, workEmail, displayName, current, target);
-  return { requested: true };
-}
+// `interceptBankPreferred` (which held an employee's sending-bank pick as a
+// `bank_preferred_change_requests` row for Accounting → Issues) and its "needs
+// approval" notifier were REMOVED 2026-09-24 with the approval gate itself: the
+// sending bank is Accounting's alone, set in People → Banking, and POST below
+// refuses a change to it. See bank-preferred-routing.md §3.
 
 /**
  * After a successful Employee-Dashboard payout save, record it into the same
@@ -224,8 +140,11 @@ async function recordDashboardBankChange(opts: {
    *  self-service edit this is the employee; for a staff-made fix it's the
    *  accountant — so the audit row is attributed to whoever actually acted. */
   actor: { user_name: string; user_role: string };
+  /** The sending bank this save leaves mismatched with the receiving channel,
+   *  if any — named in the reviewer alert (see `notifyReviewers`). */
+  mismatch: ReturnType<typeof sendFromMismatch>;
 }): Promise<void> {
-  const { supabase, req, workEmail, displayName, bankChangedFields, beforeRow, update, created, source, actor } = opts;
+  const { supabase, req, workEmail, displayName, bankChangedFields, beforeRow, update, created, source, actor, mismatch } = opts;
   if (bankChangedFields.length === 0 || !workEmail) return;
 
   const ip = clientIp(req);
@@ -285,7 +204,7 @@ async function recordDashboardBankChange(opts: {
     ip_address: ip,
   }).catch(() => undefined);
 
-  await notifyReviewers(supabase, workEmail, displayName, bankChangedFields);
+  await notifyReviewers(supabase, workEmail, displayName, bankChangedFields, mismatch);
 
   // Nudge the People-tab "Bank changes" live feed to refetch instantly.
   await pulseBankChanges();
@@ -409,8 +328,9 @@ export async function POST(req: Request) {
       "alt_account_holder_name",
       "alt_account_number",
       "alt_routing_number",
+      // The RECEIVING channel. `bank_preferred` (the SENDING bank) is not on this
+      // list: it is Accounting's alone since 2026-09-24 — see the check below.
       "preferred_processor",
-      "bank_preferred",
       "hurupay_email",
       "wepay_email",
       "higlobe_email",
@@ -442,12 +362,6 @@ export async function POST(req: Request) {
             { status: 400 },
           );
         }
-        if (key === "bank_preferred" && trimmed != null && !ALLOWED_PROCESSORS.has(trimmed)) {
-          return NextResponse.json(
-            { error: `Invalid bank_preferred: ${trimmed}` },
-            { status: 400 },
-          );
-        }
         if (key === "preferred_bank_slot" && trimmed != null && !ALLOWED_BANK_SLOTS.has(trimmed)) {
           return NextResponse.json(
             { error: `Invalid preferred_bank_slot: ${trimmed}` },
@@ -455,6 +369,48 @@ export async function POST(req: Request) {
           );
         }
         update[key] = trimmed;
+      }
+    }
+
+    const eqColumn = work_email ? "work_email" : "personal_email";
+    const identifier = (work_email ?? personal_email) as string;
+
+    // THE SENDING BANK IS ACCOUNTING'S (Kane, 2026-09-24): "all changes for the
+    // sending bank should be here only in accounting and accounting will the
+    // only one who will be responsible for changing it". Its one write path is
+    // People → Banking (PATCH /api/people/[email]/banking), so this route
+    // refuses a CHANGE from every caller, self-service and staff alike, out loud
+    // rather than dropping it: no approval request is filed any more (the
+    // Issues-tab gate is retired) and nothing is written. A page opened before the retirement
+    // still posts the UNCHANGED stored value with every save; that is a no-op,
+    // not a change, so it must not break the save. The check reads the live
+    // value and fails CLOSED — an unreadable row is never assumed unchanged.
+    if (fields.bank_preferred !== undefined) {
+      const { data: storedRows, error: storedErr } = await supabase
+        .from("employee_ids")
+        .select("bank_preferred")
+        .eq(eqColumn, identifier)
+        .limit(1);
+      if (storedErr) {
+        return NextResponse.json(
+          {
+            error:
+              "Could not check the current sending bank, so nothing was saved. Reload the page and try again.",
+          },
+          { status: 503 },
+        );
+      }
+      const stored = (Array.isArray(storedRows) && storedRows[0]
+        ? (storedRows[0] as { bank_preferred?: string | null }).bank_preferred
+        : null) ?? null;
+      if (isBankPreferredChange(fields.bank_preferred, stored)) {
+        return NextResponse.json(
+          {
+            error:
+              "The sending bank can only be changed by Accounting, in People → Banking. If this page was open before that change, reload it and save again.",
+          },
+          { status: 403 },
+        );
       }
     }
 
@@ -478,27 +434,21 @@ export async function POST(req: Request) {
       }
     }
 
-    const eqColumn = work_email ? "work_email" : "personal_email";
-    const identifier = (work_email ?? personal_email) as string;
-
-    // Snapshot the CURRENT value of the bank fields being written (incl.
-    // bank_preferred, which is in BLOCKED_WHILE_PAYROLL_LOCKED), BEFORE the update
-    // overwrites them, so the People-tab feed can show a masked before→after and
-    // the Bank Preferred gate can compare old vs requested. Best-effort.
-    const preInterceptBankFields = Object.keys(update).filter((k) =>
+    // Snapshot the CURRENT value of the bank fields being written, BEFORE the
+    // update overwrites them, so the People-tab feed can show a masked
+    // before→after. Best-effort.
+    const snapshotFields = Object.keys(update).filter((k) =>
       BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
     );
-    // The 1:1 pre-filter judges bank_preferred against the RECEIVING channel, so
-    // when only bank_preferred is being written we still need the stored
-    // preferred_processor in the snapshot.
-    if ("bank_preferred" in update && !preInterceptBankFields.includes("preferred_processor")) {
-      preInterceptBankFields.push("preferred_processor");
-    }
+    // A receiving move no longer touches the sending bank (2026-09-24 — the
+    // employee-side 1:1 mirror that FILED a matching change is gone), so read the
+    // stored one alongside: the reviewer alert names a mismatch this save leaves.
+    if ("preferred_processor" in update) snapshotFields.push("bank_preferred");
     let beforeRow: Record<string, unknown> = {};
-    if (preInterceptBankFields.length > 0) {
+    if (snapshotFields.length > 0) {
       const { data } = await supabase
         .from("employee_ids")
-        .select([...preInterceptBankFields, "name"].join(", "))
+        .select([...snapshotFields, "name"].join(", "))
         .eq(eqColumn, identifier)
         .limit(1);
       beforeRow = (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
@@ -509,61 +459,22 @@ export async function POST(req: Request) {
       (typeof beforeRow.name === "string" ? beforeRow.name : "") ||
       null;
 
-    // THE 1:1 MIRROR, employee edition: a save that moves the RECEIVING channel
-    // onto Kolan/HiGlobe also aligns the send-from — by FILING the matching Bank
-    // Preferred change through the same Accounting approval gate, never by
-    // writing it. Applied server-side so it holds however the save was made; the
-    // client mirrors it in-form only so the UI shows what will be requested.
-    if (
-      "preferred_processor" in update &&
-      !("bank_preferred" in update) &&
-      mirroredBankPreferredFor(update.preferred_processor)
-    ) {
-      update.bank_preferred = mirroredBankPreferredFor(update.preferred_processor);
-    }
-
-    // Bank Preferred changes go through Accounting approval: hold the requested
-    // value as a pending request and REMOVE it from `update` so it is not written
-    // to employee_ids until approved. Everything else saves immediately.
-    const bankPreferred = await interceptBankPreferred({
-      supabase,
-      update,
-      workEmail: work_email ? String(work_email).trim() : null,
-      displayName: displayNameForChange,
-      currentValue:
-        typeof beforeRow.bank_preferred === "string" ? beforeRow.bank_preferred : null,
-      receiving:
-        ("preferred_processor" in update
-          ? update.preferred_processor
-          : typeof beforeRow.preferred_processor === "string"
-            ? beforeRow.preferred_processor
-            : null) ?? null,
-    });
-
-    if (bankPreferred.forbidden) {
-      return NextResponse.json(
-        {
-          error:
-            "The sending rail must match the receiving bank: a Kolan/HiGlobe receiver is paid from that wallet, and a bank receiver cannot be paid from a wallet.",
-        },
-        { status: 400 },
-      );
-    }
-
-    // If Bank Preferred was the ONLY thing submitted, there's nothing left to
-    // write to employee_ids — the request is filed; report it and return.
-    if (Object.keys(update).length === 0) {
-      return NextResponse.json({
-        success: true,
-        created: false,
-        bankPreferredRequested: bankPreferred.requested,
-      });
-    }
+    // The 1:1 rule is enforced where the sending bank is SET — People → Banking.
+    // Here it is only REPORTED: advisory, never a refusal, because the receiving
+    // channel is the employee's own data. Rides the best-effort snapshot, so a
+    // failed read just leaves the alert without the line.
+    const mismatch =
+      "preferred_processor" in update
+        ? sendFromMismatch(
+            update.preferred_processor,
+            typeof beforeRow.bank_preferred === "string" ? beforeRow.bank_preferred : null,
+          )
+        : null;
 
     // Which of the fields actually being written are payout/bank fields (the same
     // set the payroll lock guards). Only these feed the People-tab "Bank changes"
-    // flow — a pure name/personal_email edit shouldn't notify Accounting. Computed
-    // AFTER the intercept so bank_preferred (now held for approval) is excluded.
+    // flow — a pure name/personal_email edit shouldn't notify Accounting.
+    // `bank_preferred` is never among them: it is not writable on this route.
     const bankChangedFields = Object.keys(update).filter((k) =>
       BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
     );
@@ -591,11 +502,11 @@ export async function POST(req: Request) {
         created: false,
         source,
         actor,
+        mismatch,
       });
       return NextResponse.json({
         success: true,
         created: false,
-        bankPreferredRequested: bankPreferred.requested,
       });
     }
 
@@ -640,11 +551,11 @@ export async function POST(req: Request) {
         created: true,
         source,
         actor,
+        mismatch,
       });
       return NextResponse.json({
         success: true,
         created: true,
-        bankPreferredRequested: bankPreferred.requested,
       });
     }
 
@@ -671,11 +582,11 @@ export async function POST(req: Request) {
         created: false,
         source,
         actor,
+        mismatch,
       });
       return NextResponse.json({
         success: true,
         created: false,
-        bankPreferredRequested: bankPreferred.requested,
       });
     }
 

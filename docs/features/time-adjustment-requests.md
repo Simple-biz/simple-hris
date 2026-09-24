@@ -549,8 +549,9 @@ The endpoint takes **no email parameter**. There is nothing to authorize beyond 
 
 **Where Accounting decides a time adjustment is the Issues tab** (`src/App.tsx` case
 `disputes`, `PabDisputeQueue.tsx`). Rows with both stage-1 signatures render inside the
-merged Issues table as a third row kind next to PAB disputes and Bank Preferred changes —
-the 2026-09-01 Bank Preferred merge is the precedent and the shape is identical: same
+merged Issues table as a row kind next to PAB disputes (a third kind, Bank Preferred
+changes, was retired 2026-09-24 — the sending bank is Accounting's alone, set in People →
+Banking) — the 2026-09-01 Bank Preferred merge was the precedent and the shape is identical: same
 table, same per-filter stale-while-revalidate cache (`TAB_CACHE_KEYS.timeAdjustmentIssues`),
 same KPI cards, **same PATCH** (`/api/time-adjustments/[id]` `approve` / `deny`) the
 wizard panel below has always called, so the two surfaces cannot disagree on what a
@@ -581,8 +582,9 @@ What the row does, and the rules it carries over unchanged from the wizard panel
   (`timeAdjustmentTrail`: filed → named → manager → second approver → Accounting).
 - **Delete** appears on `denied` / `manager_denied` rows only, for `DISPUTE_DELETE_ROLES`,
   and calls the existing `DELETE /api/time-adjustments/[id]`.
-- Rows sort **after Bank Preferred and before disputes**: a bank row holds payout routing,
-  a time adjustment changes a pay figure, a dispute changes PAB only.
+- Rows sort **before disputes**: a time adjustment changes a pay figure, a dispute changes
+  PAB only. (Until 2026-09-24 Bank Preferred rows sorted above both, because a bank row held
+  payout routing; those rows are retired.)
 - The **Overview "Needs your decision" tile** and its Pending list now count
   `manager_approved` time adjustments alongside disputes awaiting Accounting (labelled
   *Time adjustment · date*), because the tile opens the Issues tab and must agree with
