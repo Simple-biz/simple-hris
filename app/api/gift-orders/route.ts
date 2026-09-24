@@ -6,6 +6,9 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getGiftCatalog } from '@/lib/supabase/gift-catalog';
 import { listShippingDetails } from '@/lib/supabase/employee-gift-shipping';
 import {
+  deleteGiftOrder,
+  getGiftOrder,
+  listGiftOrderLines,
   listGiftOrders,
   lockGiftOrder,
   reopenGiftOrder,
@@ -29,6 +32,10 @@ export const runtime = 'nodejs';
  *        silent re-price.
  * POST { action: 'reopen', orderId, reason }
  *        Keeps the invoice, marks it reopened, frees its gifts back to Open.
+ * POST { action: 'delete', orderId }
+ *        Removes the invoice and its lines for good (Kane, 2026-09-23); a locked
+ *        order's gifts go back to Open. The whole row is read FIRST and written
+ *        to the audit entry, so it stays traceable after it is gone.
  *
  * Same gate as approval and the catalog: `hr / gift_tracker` (view to read, edit to write).
  */
@@ -46,6 +53,7 @@ const REFUSAL_STATUS: Record<GiftOrderRefusal, { status: number; message: string
   already_ordered: { status: 409, message: 'One of these gifts is already on a locked order. Refresh and try again.' },
   total_mismatch: { status: 409, message: 'The total did not add up. Refresh and try again.' },
   not_locked: { status: 409, message: 'That order is not locked (already reopened?). Refresh.' },
+  not_found: { status: 404, message: 'That order no longer exists. Refresh.' },
   missing: { status: 503, message: 'Orders are not set up yet — the Gift Orders migration has not been applied.' },
 };
 
@@ -55,6 +63,10 @@ interface LockBody {
   variantChoices?: unknown;
   names?: unknown;
   expectedTotalCentavos?: unknown;
+}
+interface DeleteBody {
+  action: 'delete';
+  orderId?: unknown;
 }
 interface ReopenBody {
   action: 'reopen';
@@ -75,9 +87,9 @@ export async function POST(req: NextRequest) {
   const authz = await requireFeatureEdit('hr', 'gift_tracker');
   if (!authz.ok) return deniedResponse(authz);
 
-  let body: LockBody | ReopenBody;
+  let body: LockBody | ReopenBody | DeleteBody;
   try {
-    body = (await req.json()) as LockBody | ReopenBody;
+    body = (await req.json()) as LockBody | ReopenBody | DeleteBody;
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
@@ -99,8 +111,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: null });
   }
 
+  if (body.action === 'delete') {
+    const orderId = typeof body.orderId === 'string' ? body.orderId.trim() : '';
+    if (!orderId) return NextResponse.json({ error: 'Missing orderId' }, { status: 400 });
+    // Read the whole thing BEFORE it is gone — the audit entry is the only
+    // record of this invoice once the delete lands.
+    const [{ order, error: readErr }, { lines, error: linesErr }] = await Promise.all([
+      getGiftOrder(orderId),
+      listGiftOrderLines(orderId),
+    ]);
+    if (readErr || linesErr) return NextResponse.json({ error: readErr ?? linesErr }, { status: 500 });
+    if (!order) return NextResponse.json({ error: REFUSAL_STATUS.not_found.message }, { status: 404 });
+    const { refusal, error } = await deleteGiftOrder(orderId);
+    if (refusal) return NextResponse.json({ error: REFUSAL_STATUS[refusal].message }, { status: REFUSAL_STATUS[refusal].status });
+    if (error) return NextResponse.json({ error }, { status: 500 });
+    await insertAuditLog({
+      ...auditFrom(req, authz),
+      action: 'gift.order_deleted',
+      resource: 'gift_orders',
+      resource_id: orderId,
+      details: {
+        order_no: order.order_no,
+        status_at_delete: order.status,
+        locked_at: order.locked_at,
+        locked_by: order.locked_by,
+        reopened_at: order.reopened_at,
+        reopened_by: order.reopened_by,
+        total_centavos: order.total_centavos,
+        line_count: order.line_count,
+        snapshot: order.snapshot,
+        lines,
+      },
+    });
+    return NextResponse.json({ error: null });
+  }
+
   if (body.action !== 'lock') {
-    return NextResponse.json({ error: "action must be 'lock' or 'reopen'" }, { status: 400 });
+    return NextResponse.json({ error: "action must be 'lock', 'reopen' or 'delete'" }, { status: 400 });
   }
 
   const ids = Array.isArray(body.submissionIds)

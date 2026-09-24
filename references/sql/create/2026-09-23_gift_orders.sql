@@ -12,7 +12,7 @@
 -- so a later price edit in Gift items or an address edit can never change an
 -- invoice that was already sent to a vendor.
 --
--- Service-role only: RLS on, NO policies, NOT in supabase_realtime, and both
+-- Service-role only: RLS on, NO policies, NOT in supabase_realtime, and all three
 -- functions are revoked from PUBLIC / anon / authenticated (Postgres grants
 -- EXECUTE to PUBLIC by default, which on Supabase means the anon key).
 
@@ -32,8 +32,8 @@ create table if not exists public.gift_orders (
   locked_by       text not null,
   constraint gift_orders_locked_by_present check (length(btrim(locked_by)) > 0),
 
-  -- Reopening KEEPS the row. The invoice existed and may be in a vendor's inbox;
-  -- deleting it would erase the evidence that it did.
+  -- Reopening KEEPS the row. Deleting is a separate, explicit act
+  -- (gift_order_delete) whose audit entry carries the full snapshot.
   reopened_at     timestamptz,
   reopened_by     text,
   reopen_reason   text,
@@ -202,7 +202,31 @@ begin
 end;
 $$;
 
+-- ===========================================================================
+-- Delete — Kane, 2026-09-23 ("Allow deleting please"). Removes the invoice and
+-- its lines for good; a LOCKED order's gifts go back to Open because nothing
+-- holds them any more. The route reads the whole row BEFORE calling this and
+-- writes it (snapshot, lines, totals) to audit_log once the delete succeeds, so
+-- the invoice stays traceable after the row is gone.
+-- ===========================================================================
+
+create or replace function public.gift_order_delete(p_order_id uuid)
+returns void
+language plpgsql
+as $$
+begin
+  perform 1 from public.gift_orders where id = p_order_id for update;
+  if not found then
+    raise exception 'gift_order_not_found' using errcode = 'P0001';
+  end if;
+  delete from public.gift_order_lines where order_id = p_order_id;
+  delete from public.gift_orders where id = p_order_id;
+end;
+$$;
+
 revoke all on function public.gift_order_lock(text, bigint, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.gift_order_reopen(uuid, text, text) from public, anon, authenticated;
+revoke all on function public.gift_order_delete(uuid) from public, anon, authenticated;
 grant execute on function public.gift_order_lock(text, bigint, jsonb, jsonb) to service_role;
 grant execute on function public.gift_order_reopen(uuid, text, text) to service_role;
+grant execute on function public.gift_order_delete(uuid) to service_role;

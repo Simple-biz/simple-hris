@@ -1,7 +1,7 @@
 /**
  * [GIFT-ORDERS]
  * Applies references/sql/create/2026-09-23_gift_orders.sql — the two tables and
- * two functions behind Gift Tracker → Orders — then verifies they landed, that
+ * three functions (lock, reopen, delete) behind Gift Tracker → Orders — then verifies they landed, that
  * RLS is on with no policies, that neither table joined supabase_realtime, that
  * anon/authenticated cannot EXECUTE the functions, and that the double-invoice
  * guard actually bites.
@@ -56,6 +56,7 @@ const TABLES = ['gift_orders', 'gift_order_lines'];
 const FUNCS = [
   'public.gift_order_lock(text, bigint, jsonb, jsonb)',
   'public.gift_order_reopen(uuid, text, text)',
+  'public.gift_order_delete(uuid)',
 ];
 
 const CHECKS: Array<[string, string]> = [
@@ -182,6 +183,30 @@ async function main() {
       const kept = await attempt(`SELECT count(*)::int AS n FROM public.gift_orders WHERE id = $1`, [oid]);
       report('the reopened invoice is KEPT, not deleted', kept.rows[0]?.n === 1);
     }
+    // Delete: the live order from the re-lock above is removed with its lines,
+    // and the gift is free again.
+    const live = await attempt(
+      `SELECT order_id FROM public.gift_order_lines WHERE submission_id = $1 AND released_at IS NULL LIMIT 1`,
+      [sid],
+    );
+    const liveId = live.rows[0]?.order_id as string | undefined;
+    if (liveId) {
+      const del = await attempt(`SELECT public.gift_order_delete($1)`, [liveId]);
+      report('deleting an order is ACCEPTED', !del.err, ` — ${del.err}`);
+      const gone = await attempt(
+        `SELECT (SELECT count(*) FROM public.gift_orders WHERE id = $1)
+              + (SELECT count(*) FROM public.gift_order_lines WHERE order_id = $1) AS n`,
+        [liveId],
+      );
+      report('the deleted order AND its lines are gone', Number(gone.rows[0]?.n) === 0);
+      const relock = await attempt(lockSql, [43000, line(43000)]);
+      report('after a delete the gift can be locked again', !relock.err, ` — ${relock.err}`);
+    } else {
+      report('a live order existed to delete', false, ' — none found');
+    }
+    const missingDel = await attempt(`SELECT public.gift_order_delete(gen_random_uuid())`);
+    report('deleting an order that does not exist is REJECTED', missingDel.err !== '', ' — accepted');
+
     await attempt(`UPDATE public.employee_gift_shipping_details SET status='pending' WHERE id=$1`, [sid]);
     const notApproved = await attempt(lockSql, [43000, line(43000)]);
     report('a submission that is no longer approved is REJECTED', notApproved.err !== '', ' — accepted');

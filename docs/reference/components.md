@@ -1716,7 +1716,7 @@ Read-only (approve/reject happens on the Accounting side).
 
 ### `src/components/orphanage/GiftOrders.tsx`
 
-Gift Tracker → **Orders** sub-tab. Props: `submissions` (every shipping row the tracker loaded) and `people` (roster lookup by lower-case personal email). **Open orders** = approved submissions no live order holds (`resolveOrderLines` in `src/lib/gift-tracker/orders.ts`), 20 per page, per-line variant picker, flagged lines un-selectable; **Invoice preview** = `buildInvoice` on the selection; **Lock order & build PDF** → `POST /api/gift-orders {action:'lock'}` (server re-prices) then `downloadOrderInvoicePdf`; **Locked orders** = every invoice, PDF from its snapshot, Reopen with optional reason. Fetches `/api/gift-orders` + `/api/gift-catalog` `no-store` on mount through `fetchOrdersState` (`src/lib/gift-tracker/orders-client.ts`) — never the tab cache — and hands each read up via `onState`, which feeds the Orders tab **badge** (open gifts only, `countOpenOrders`; hidden, never 0, when unknown). Governing doc: [gift-tracker-orders.md](../features/gift-tracker-orders.md).
+Gift Tracker → **Orders** sub-tab. Props: `submissions` (every shipping row the tracker loaded) and `people` (roster lookup by lower-case personal email). **Open orders** = approved submissions no live order holds (`resolveOrderLines` in `src/lib/gift-tracker/orders.ts`), 20 per page, per-line variant picker, flagged lines un-selectable; **Invoice preview** = `buildInvoice` on the selection; **Lock order & build PDF** → `POST /api/gift-orders {action:'lock'}` (server re-prices) then `downloadOrderInvoicePdf`; **Locked orders** = every invoice not deleted, PDF from its snapshot, Reopen with optional reason, **Delete** (trash + inline confirm). While locking it mounts `InvoiceProgress` (the "Creating invoice" overlay — real phases `locking` → `pdf` → `done`, never a timer). Fetches `/api/gift-orders` + `/api/gift-catalog` `no-store` on mount through `fetchOrdersState` (`src/lib/gift-tracker/orders-client.ts`) — never the tab cache — and hands each read up via `onState`, which feeds the Orders tab **badge** (open gifts only, `countOpenOrders`; hidden, never 0, when unknown). Governing doc: [gift-tracker-orders.md](../features/gift-tracker-orders.md).
 
 ### `src/components/orphanage/GiftCatalog.tsx`
 
@@ -2128,6 +2128,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx` | component | *this file* |
 | `src/components/orphanage/GiftCatalog.tsx` | component | *this file* · [gift-tracker-orders](../features/gift-tracker-orders.md) |
 | `src/components/orphanage/GiftOrders.tsx` | component | *this file* · [gift-tracker-orders](../features/gift-tracker-orders.md) |
+| `src/components/orphanage/InvoiceProgress.tsx` | component | [gift-tracker-orders](../features/gift-tracker-orders.md) |
 | `src/components/orphanage/GiftPayments.tsx` | component | *this file* |
 | `src/components/orphanage/GiftRecentSubmissions.tsx` | component | [gift-address-external-link](../features/gift-address-external-link.md) · *this file* |
 | `src/components/orphanage/GiftTracker.tsx` | component | *this file* · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · [gift-tracker-receipts](../features/gift-tracker-receipts.md) |

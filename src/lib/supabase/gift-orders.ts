@@ -69,7 +69,14 @@ export async function listGiftOrders(): Promise<GiftOrdersList> {
 }
 
 /** The distinct refusals the lock/reopen functions raise, mapped to HTTP. */
-export type GiftOrderRefusal = 'empty' | 'not_approved' | 'already_ordered' | 'total_mismatch' | 'not_locked' | 'missing';
+export type GiftOrderRefusal =
+  | 'empty'
+  | 'not_approved'
+  | 'already_ordered'
+  | 'total_mismatch'
+  | 'not_locked'
+  | 'not_found'
+  | 'missing';
 
 function refusalOf(err: { code?: string; message: string }): GiftOrderRefusal | null {
   const m = err.message;
@@ -78,6 +85,7 @@ function refusalOf(err: { code?: string; message: string }): GiftOrderRefusal | 
   if (/gift_order_empty/.test(m)) return 'empty';
   if (/gift_order_total_mismatch/.test(m)) return 'total_mismatch';
   if (/gift_order_not_locked/.test(m)) return 'not_locked';
+  if (/gift_order_not_found/.test(m)) return 'not_found';
   if (classifyTableProbe(err) === 'MISSING' || err.code === 'PGRST202') return 'missing';
   return null;
 }
@@ -117,6 +125,45 @@ export async function reopenGiftOrder(args: {
     p_reopened_by: args.reopenedBy,
     p_reason: args.reason,
   });
+  if (error) return { refusal: refusalOf(error), error: error.message };
+  return { refusal: null, error: null };
+}
+
+/** One order, whole — read before a delete so the audit entry can carry it. */
+export async function getGiftOrder(orderId: string): Promise<{ order: GiftOrderRow | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { order: null, error: 'Supabase client unavailable' };
+  const { data, error } = await supabase.from('gift_orders').select(ORDER_COLS).eq('id', orderId).maybeSingle();
+  if (error) return { order: null, error: error.message };
+  if (!data) return { order: null, error: null };
+  const o = data as GiftOrderRow;
+  return { order: { ...o, total_centavos: Number(o.total_centavos), order_no: Number(o.order_no) }, error: null };
+}
+
+/** Every line of one order (released or not) — for the delete's audit record. */
+export async function listGiftOrderLines(
+  orderId: string,
+): Promise<{ lines: Record<string, unknown>[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { lines: [], error: 'Supabase client unavailable' };
+  const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('gift_order_lines')
+      .select('submission_id, personal_email, milestone_index, item, size, unit_centavos, qty, released_at')
+      .eq('order_id', orderId)
+      .order('id')
+      .range(from, to),
+  );
+  return { lines: rows, error };
+}
+
+/** Hard delete (Kane, 2026-09-23). Atomic: the order and all its lines, or nothing. */
+export async function deleteGiftOrder(
+  orderId: string,
+): Promise<{ refusal: GiftOrderRefusal | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { refusal: null, error: 'Supabase client unavailable' };
+  const { error } = await supabase.rpc('gift_order_delete', { p_order_id: orderId });
   if (error) return { refusal: refusalOf(error), error: error.message };
   return { refusal: null, error: null };
 }

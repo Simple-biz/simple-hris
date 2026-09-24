@@ -117,3 +117,24 @@ The pre-existing `leave.cancelled` action covers the employee-initiated cancella
 To broaden either policy (e.g. let `payroll_coordinator` delete disputes), edit the relevant constant in the lib file. The UI (`canDelete` flag) and API (role gate) both read from the same constant, so the change is one line.
 
 Don't widen the unrestricted leave tier (`LEAVE_DELETE_UNRESTRICTED_ROLES`) without thinking — it lets a role bypass the per-department scope check. The current set (admin + payroll_manager) is intentionally narrow for cross-department wipes.
+
+---
+
+## Gift Orders (invoices)
+
+**Endpoint:** `POST /api/gift-orders { action: 'delete', orderId }`
+**UI entry point:** trash icon on each row of HR → Gift Tracker → Orders → **Locked orders**, behind an inline confirm.
+
+### Roles allowed
+
+`requireFeatureEdit('hr', 'gift_tracker')` — the same gate as lock and reopen. Kane chose to allow deleting on 2026-09-23 and did not pick a tighter gate (admin-only was offered).
+
+### Behavior
+
+- Works on locked AND reopened orders. A locked order's gifts go back to Open; a reopened one moves nothing.
+- Hard delete via `gift_order_delete` — the order and all its lines in one transaction.
+- Invoice numbers are never reissued; a gap is a deleted invoice.
+
+### Audit log
+
+Action: `gift.order_deleted`. The route reads the whole order and every line **before** deleting and writes them all (snapshot, lines, totals, who locked / reopened it) once the delete succeeds — the only record of the invoice afterwards. Governing doc: [gift-tracker-orders.md](gift-tracker-orders.md).

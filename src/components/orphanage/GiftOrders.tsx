@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Search,
   ShoppingCart,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +34,7 @@ import {
 import { downloadOrderInvoicePdf, invoiceNumber } from '@/lib/gift-tracker/order-invoice';
 import { fetchOrdersState, type OrdersClientState } from '@/lib/gift-tracker/orders-client';
 import type { GiftOrderRow } from '@/lib/supabase/gift-orders';
+import InvoiceProgress, { type InvoicePhase } from '@/components/orphanage/InvoiceProgress';
 
 /**
  * Gift Tracker → Orders (Kane, 2026-09-23).
@@ -107,6 +109,12 @@ export default function GiftOrders({
   const [reopenReason, setReopenReason] = useState('');
   const [reopening, setReopening] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  /** Real lock phases for the "Creating invoice" overlay — see InvoiceProgress. */
+  const [lockPhase, setLockPhase] = useState<InvoicePhase | null>(null);
+  const [lockedInvoiceNo, setLockedInvoiceNo] = useState<string | null>(null);
+  const [lockGiftCount, setLockGiftCount] = useState(0);
+  const [deleteTarget, setDeleteTarget] = useState<GiftOrderRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -210,6 +218,10 @@ export default function GiftOrders({
   const lock = useCallback(async () => {
     if (!preview || selectedGroups.length === 0) return;
     setLocking(true);
+    setLockedInvoiceNo(null);
+    setLockGiftCount(preview.giftCount);
+    setLockPhase('locking');
+    let succeeded = false;
     try {
       const names: Record<string, string> = {};
       for (const g of selectedGroups) names[g.personalEmail] = g.name;
@@ -227,23 +239,39 @@ export default function GiftOrders({
       const json = (await res.json()) as { order?: GiftOrderRow; error?: string | null };
       if (!res.ok || !json.order) throw new Error(json.error ?? 'Could not lock the order');
       const o = json.order;
-      toast.success(`${invoiceNumber(o.order_no)} locked — ${formatPhp(o.total_centavos)}.`);
       setSelected(new Set());
+      // The order EXISTS from here on, whatever the PDF does next.
+      setLockedInvoiceNo(invoiceNumber(o.order_no));
+      setLockPhase('pdf');
+      let pdfOk = true;
       try {
         await downloadOrderInvoicePdf(
           { orderNo: o.order_no, lockedAt: o.locked_at, lockedBy: o.locked_by, status: o.status },
           o.snapshot,
         );
       } catch {
-        toast.error('The order is locked, but the PDF could not be built. Download it from Locked orders.');
+        pdfOk = false;
+      }
+      if (pdfOk) {
+        succeeded = true;
+        setLockPhase('done');
+        toast.success(`${invoiceNumber(o.order_no)} locked — ${formatPhp(o.total_centavos)}.`);
+      } else {
+        setLockPhase(null);
+        toast.error(
+          `${invoiceNumber(o.order_no)} is locked, but the PDF could not be built. Download it from Locked orders.`,
+        );
       }
       await load();
     } catch (e) {
+      setLockPhase(null);
       toast.error(e instanceof Error ? e.message : 'Could not lock the order');
       // A 409 means the screen was stale — reload so it matches the server.
       await load();
     } finally {
       setLocking(false);
+      // Hold "ready" long enough for the stamp to land, then close.
+      if (succeeded) window.setTimeout(() => setLockPhase(null), 1400);
     }
   }, [preview, selectedGroups, variantChoices, load]);
 
@@ -268,6 +296,32 @@ export default function GiftOrders({
       setReopening(false);
     }
   }, [reopenTarget, reopenReason, load]);
+
+  const remove = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch('/api/gift-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', orderId: deleteTarget.id }),
+      });
+      const json = (await res.json()) as { error?: string | null };
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Could not delete');
+      toast.success(
+        deleteTarget.status === 'locked'
+          ? `${invoiceNumber(deleteTarget.order_no)} deleted — its gifts are back in Open orders.`
+          : `${invoiceNumber(deleteTarget.order_no)} deleted.`,
+      );
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete');
+      await load();
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, load]);
 
   const download = useCallback(async (o: GiftOrderRow) => {
     setDownloadingId(o.id);
@@ -333,6 +387,7 @@ export default function GiftOrders({
 
   return (
     <div className="flex flex-col gap-6">
+      <InvoiceProgress phase={lockPhase} invoiceNo={lockedInvoiceNo} giftCount={lockGiftCount} />
       {/* ── Open orders ─────────────────────────────────────────────────── */}
       <Card className="overflow-hidden ring-1 ring-emerald-200/60 dark:ring-emerald-900/40">
         <CardHeader className="flex flex-col gap-3 border-b border-emerald-100/60 pb-4 dark:border-emerald-900/40">
@@ -573,8 +628,8 @@ export default function GiftOrders({
             <div>
               <CardTitle className="text-base font-semibold">Locked orders</CardTitle>
               <p className="text-xs text-muted-foreground">
-                Every invoice ever locked. The PDF prints exactly what was locked. Reopening keeps the invoice
-                (marked reopened) and sends its gifts back to Open orders.
+                Every invoice locked and not deleted. The PDF prints exactly what was locked. Reopen keeps the
+                invoice (marked reopened) and sends its gifts back to Open; Delete removes it for good.
               </p>
             </div>
           </div>
@@ -648,13 +703,53 @@ export default function GiftOrders({
                               onClick={() => {
                                 setReopenTarget(o);
                                 setReopenReason('');
+                                setDeleteTarget(null);
                               }}
                             >
                               <RotateCcw className="mr-1 h-3 w-3" />
                               Reopen
                             </Button>
                           )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-rose-500 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40"
+                            onClick={() => {
+                              setDeleteTarget(o);
+                              setReopenTarget(null);
+                            }}
+                            aria-label={`Delete ${invoiceNumber(o.order_no)}`}
+                            title="Delete this invoice"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
+                        {deleteTarget?.id === o.id && (
+                          <div className="mt-2 flex flex-col gap-2 rounded-md border border-rose-300 bg-rose-50 p-2.5 text-xs dark:border-rose-900/60 dark:bg-rose-950/40">
+                            <span className="text-rose-900 dark:text-rose-200">
+                              <strong>Delete {invoiceNumber(o.order_no)} for good?</strong>{' '}
+                              {o.status === 'locked'
+                                ? `Its ${o.snapshot?.giftCount ?? ''} gifts go back to Open orders. `
+                                : 'It is already reopened, so no gifts move. '}
+                              If the PDF already went to the vendor, their copy no longer matches anything here.
+                              A full copy is kept in the audit log.
+                            </span>
+                            <div className="flex justify-end gap-1.5">
+                              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="h-7 bg-rose-600 text-xs text-white hover:bg-rose-700"
+                                onClick={() => void remove()}
+                                disabled={deleting}
+                              >
+                                {deleting ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1 h-3 w-3" />}
+                                Delete invoice
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                         {reopenTarget?.id === o.id && (
                           <div className="mt-2 flex flex-col gap-2 rounded-md border border-rose-200 bg-rose-50/70 p-2.5 text-xs dark:border-rose-900/50 dark:bg-rose-950/30">
                             <span className="text-rose-900 dark:text-rose-200">

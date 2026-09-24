@@ -310,7 +310,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'gift.',
     surfaces: ['hr', 'orphanage'],
     label: 'Gift tracker',
-    note: 'catalog_saved, tracker_note_saved, payment_edited, order_locked (details: order_no, gifts, qty, total_centavos, submission_ids), order_reopened (details: reason)',
+    note: 'catalog_saved, tracker_note_saved, payment_edited, order_locked (details: order_no, gifts, qty, total_centavos, submission_ids), order_reopened (details: reason), order_deleted (details: the WHOLE order as it was: snapshot, lines, totals, who locked/reopened it; the only record once the row is gone)',
   },
   {
     match: 'employee_gift_shipping.',

@@ -3096,7 +3096,7 @@ feature doc and in no hand-written section here.**
 | `/api/gift-address/save` | POST | — **none found** | — **no doc** |
 | `/api/gift-address/verify-otp` | POST | — **none found** | — **no doc** |
 | `/api/gift-catalog` | GET, PUT | — **none found** | — **no doc** |
-| `/api/gift-orders` | GET, POST | `requireFeatureAccess('hr','gift_tracker','view')` (GET) · `requireFeatureEdit('hr','gift_tracker')` (POST lock/reopen) | [gift-tracker-orders](../features/gift-tracker-orders.md) |
+| `/api/gift-orders` | GET, POST | `requireFeatureAccess('hr','gift_tracker','view')` (GET) · `requireFeatureEdit('hr','gift_tracker')` (POST lock/reopen/delete) | [gift-tracker-orders](../features/gift-tracker-orders.md) |
 | `/api/gift-payments` | GET, PUT | — **none found** | — **no doc** |
 | `/api/gift-tracker/recent-submissions` | GET | `requireFeatureAccess('hr','gift_tracker','view')` | [gift-address-external-link](../features/gift-address-external-link.md) |
 | `/api/gift-tracker-notes` | GET, PUT | — **none found** | — **no doc** |

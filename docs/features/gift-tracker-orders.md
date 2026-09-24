@@ -5,7 +5,8 @@ submission lands in **Open orders** the moment it is approved, whatever month it
 earned. HR ticks the gifts to send, the **Invoice preview** prices them from Gift items
 (item · size · qty · unit · amount · total), and **Lock order & build PDF** writes the
 invoice and downloads it for the vendor. **Locked orders** lists every invoice ever
-locked; any of them re-downloads, and a locked order can be **reopened**. Asked for by
+locked; any of them re-downloads, a locked order can be **reopened**, and any order can
+be **deleted**. Asked for by
 Kane 2026-09-23; built in session `95df963a`.
 
 ## Key files
@@ -105,13 +106,42 @@ cannot be edited or deleted** (`PATCH`/`DELETE /api/employee-gift-shipping/[id]`
 naming the invoice). A failed check refuses too — "could not tell" is never "not
 locked". Reopen the order first.
 
-## Reopen keeps the invoice
+## Reopen keeps the invoice; Delete removes it
 
 `gift_order_reopen` marks the order `reopened` (who, when, optional reason) and stamps
 `released_at` on its lines, which frees those gifts back to Open orders and lets them be
-locked again. **The order row is never deleted** — the invoice existed and may be in a
-vendor's inbox. A reopened invoice still downloads, stamped REOPENED / void. There is
-no un-reopen; lock the gifts again instead.
+locked again. **Reopen never deletes** — a reopened invoice still downloads, stamped
+REOPENED / void. There is no un-reopen; lock the gifts again instead.
+
+**Delete is the separate, explicit way to remove an invoice** (Kane ruled 2026-09-23,
+session `95df963a`, answering the hard stop in audit item 195: *"Allow deleting please
+ill remove it after if I dont need it"*). This REPLACES the earlier rule "the order row is
+never deleted" — Reopen still keeps it; only Delete removes it.
+
+- Button on every row of **Locked orders** (locked AND reopened), behind an inline
+  confirm that says the gifts go back to Open and that a vendor's copy will no longer
+  match anything here. Never on Open orders — removing an open order would mean
+  un-approving the submission, which is a different act.
+- Gate: `requireFeatureEdit('hr','gift_tracker')`, the same as lock and reopen (Kane did
+  not pick a tighter one; admin-only was offered).
+- `gift_order_delete` is atomic: the order and ALL its lines, or nothing. Deleting a
+  LOCKED order frees its gifts (nothing holds them any more); deleting a reopened one
+  moves no gifts.
+- **The route reads the whole order + every line BEFORE deleting** and writes them to
+  the `gift.order_deleted` audit entry once the delete succeeds (snapshot, lines, totals,
+  who locked / reopened it). That entry is the only record of the invoice afterwards.
+- Invoice numbers are an identity series: a deleted `GO-000012` is never reissued, so the
+  sequence can have gaps. A gap is a deleted invoice, not a bug.
+
+## The "Creating invoice" overlay tracks real work
+
+`InvoiceProgress.tsx` (Kane, 2026-09-23) covers the tab while locking. **Every step is a
+real phase, never a timer:** `locking` while the POST is in flight (server re-prices and
+writes the order) → `pdf` once the order exists and the browser is building the PDF →
+`done` only after both finished, held ~1.4s so the LOCKED stamp can land. A failed lock
+closes it at once and the toast says why; a lock whose PDF failed closes it too (the
+order IS locked — the toast says to download from Locked orders). It never plays a
+success animation over a lock that did not happen. Honors `prefers-reduced-motion`.
 
 ## Price is allowed here and nowhere else
 
@@ -126,8 +156,8 @@ queue — **an invoice is not a payment.**
 ## Auth, audit, realtime
 
 - GET `requireFeatureAccess('hr','gift_tracker','view')`; POST `requireFeatureEdit('hr','gift_tracker')` — the gate approval and the catalog already use.
-- Audit: `gift.order_locked` (order_no, gifts, qty, total_centavos, submission_ids) and `gift.order_reopened` (reason), actor = the verified session. Registered in `src/lib/audit/registry.ts` under `gift.`.
-- Both tables: RLS on, **no policies**, **not** in `supabase_realtime`; both functions revoked from PUBLIC/anon/authenticated (Postgres grants EXECUTE to PUBLIC by default). The tab fetches `no-store` on mount and after every lock/reopen; it is never painted from the orphanage tab cache — lock state must not be stale.
+- Audit: `gift.order_locked` (order_no, gifts, qty, total_centavos, submission_ids), `gift.order_reopened` (reason) and `gift.order_deleted` (the whole order + lines), actor = the verified session. Registered in `src/lib/audit/registry.ts` under `gift.`.
+- Both tables: RLS on, **no policies**, **not** in `supabase_realtime`; all three functions (lock, reopen, delete) revoked from PUBLIC/anon/authenticated (Postgres grants EXECUTE to PUBLIC by default). The tab fetches `no-store` on mount and after every lock/reopen; it is never painted from the orphanage tab cache — lock state must not be stale.
 - Reads page with `selectAllPaged`.
 
 ## Deploy notes
@@ -136,6 +166,7 @@ queue — **an invoice is not a payment.**
   `scripts/Apply Gift Orders migration.cmd` — rehearsal first (always rolled back), then
   type `APPLY`. Needs `DATABASE_URL` (session pooler) in `.env.local`. The rehearsal
   passed on 2026-09-23 against production (15 object checks + 10 behavioural controls,
-  all rolled back). Until it is applied the Orders tab says "not set up yet" and the
+  all rolled back; re-run after `gift_order_delete` was added — 18 object checks +
+  14 behavioural controls, all passed). Until it is applied the Orders tab says "not set up yet" and the
   edit/delete freeze is a no-op (nothing can be locked).
 - No env vars, no n8n import.
