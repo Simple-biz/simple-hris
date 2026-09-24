@@ -181,7 +181,7 @@ import {
 } from '@/lib/payroll/settlement-currency';
 import { SettlementChip } from '@/components/payroll/SettlementChip';
 import { resolveSystemBonuses, isDeptEligible, systemBonusAmountForDept } from '@/lib/payment-catalog/system-bonus';
-import { normEmail } from '@/lib/email/norm-email';
+import { mailableEmail, normEmail } from '@/lib/email/norm-email';
 import {
   mergeOrphanageErrors,
   resolveOrphanageHourRows,
@@ -9562,14 +9562,20 @@ export default function PayrollWizard({
     const resolvePersonalEmail = (r: CalcRow): string | null => {
       const em = normEmail(r.email);
       const rateRow = em ? ratesByEmail.get(em) : undefined;
-      const fromRate = normEmail(rateRow?.personal_email);
+      // Every tier must yield a MAILABLE address, not merely a non-empty cell.
+      // A rates-sheet Personal Email holding a name ("breynald john lim") used
+      // to win here, n8n skipped it as invalid, and breyl@ got no paystub for
+      // six weeks while the Lead Gen master row held a real address. Junk now
+      // falls through, and a person with no mailable address anywhere resolves
+      // null → counted in `missing` → the lock-in warning names them.
+      const fromRate = mailableEmail(rateRow?.personal_email);
       if (fromRate) return fromRate;
       let master = em ? masterIndex.byWorkEmail.get(em) : undefined;
       if (!master && r.name) {
         const tokens = normalizeNameTokens(r.name);
         if (tokens) master = masterIndex.byNameTokens.get(tokens);
       }
-      if (master) return normEmail(master.personal_email) ?? null;
+      if (master) return mailableEmail(master.personal_email);
       // Final-pay overlay, same reason as the department resolver: both master
       // tiers above read the ACTIVE roster, so a leaver resolves no delivery
       // address and their last paystub is silently never sent. Consulted only
@@ -9581,7 +9587,7 @@ export default function PayrollWizard({
         const tokens = normalizeNameTokens(r.name);
         if (tokens) leaver = offboardedIndex.byNameTokens.get(tokens);
       }
-      return normEmail(leaver?.personal_email) ?? null;
+      return mailableEmail(leaver?.personal_email);
     };
 
     // Per-employee: a custom currency variant covering the employee's dept
