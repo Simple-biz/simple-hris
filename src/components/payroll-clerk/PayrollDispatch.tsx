@@ -24,7 +24,6 @@ import {
   RotateCcw,
   Send,
   ShieldOff,
-  Sparkles,
   StopCircle,
   Wallet,
   Wallet2,
@@ -1646,49 +1645,51 @@ export default function PayrollDispatch() {
           transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
           className="flex flex-wrap items-start justify-between gap-4"
         >
-          <div>
-            <div className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-orange-200/80 bg-white/70 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-orange-700 backdrop-blur-md dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300">
-              <Sparkles className="h-3 w-3" />
-              Payroll clerk
-            </div>
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.35, delay: 0.05 }}
-              className="text-[13px] font-medium text-zinc-500 dark:text-zinc-400"
-            >
-              Welcome back,{' '}
-              <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
-                {firstName}
-              </span>{' '}
-              <motion.span
-                initial={{ rotate: 0 }}
-                animate={{ rotate: [0, 14, -8, 14, -4, 10, 0] }}
-                transition={{ duration: 1.4, ease: 'easeInOut', delay: 0.3 }}
-                className="inline-block origin-[70%_70%]"
+          <div className="min-w-0">
+            <p className="text-[13px] text-zinc-500 dark:text-zinc-400">
+              Welcome back, <span className="font-medium text-zinc-800 dark:text-zinc-200">{firstName}</span>
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h1
+                className={cn(
+                  'text-xl font-semibold tracking-tight tabular-nums sm:text-2xl',
+                  period.start && period.end
+                    ? 'text-zinc-900 dark:text-zinc-50'
+                    : 'text-amber-700 dark:text-amber-300',
+                )}
               >
-                👋
-              </motion.span>
-            </motion.p>
-          </div>
-
-          <div className="flex w-full flex-row flex-wrap items-center gap-2 sm:w-auto sm:flex-col sm:items-end">
-            <div className="flex items-center gap-2">
-              <PeriodPill period={period} />
+                {formatPeriodHeading(period.start, period.end)}
+              </h1>
               <CycleSelector value={selectedSourceFile} onChange={setSelectedSourceFile} />
             </div>
+            {period.sourceFile && (
+              <p
+                className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] text-zinc-500 dark:text-zinc-400"
+                title={period.sourceFile}
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{period.sourceFile}</span>
+              </p>
+            )}
+          </div>
+
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             <div ref={stopClusterRef} className="flex flex-wrap items-center justify-end gap-2">
-              <ProcessingPill locked={lockState.locked} />
-              <ProcessingToggleButton
-                locked={lockState.locked}
-                onClick={() => {
-                  // Start the cue on the CLICK, as the modal opens — a user
-                  // gesture, so autoplay policy allows it. START only.
-                  if (!lockState.locked) playStagePrepped();
-                  setConfirmingLockToggle(true);
-                }}
-                disabled={viewingPastWeek}
-              />
+              {/* Status and its control read as one instrument: what the lock
+                  is doing now, and the one button that changes it. */}
+              <div className="flex items-center gap-3 rounded-lg border border-zinc-200 bg-white py-1 pr-1 pl-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:border-zinc-800 dark:bg-zinc-900/80">
+                <ProcessingStatus locked={lockState.locked} />
+                <ProcessingToggleButton
+                  locked={lockState.locked}
+                  onClick={() => {
+                    // Start the cue on the CLICK, as the modal opens — a user
+                    // gesture, so autoplay policy allows it. START only.
+                    if (!lockState.locked) playStagePrepped();
+                    setConfirmingLockToggle(true);
+                  }}
+                  disabled={viewingPastWeek}
+                />
+              </div>
               {/* Closed-week state + Reopen. Only rendered for payroll_manager /
                   admin (the route re-checks), and NOT lock-bound — a week closed
                   by mistake can be reopened while browsing it. Two-step: the
@@ -1740,11 +1741,11 @@ export default function PayrollDispatch() {
                       exit={{ opacity: 0, scale: 0.96 }}
                       transition={{ duration: reduceMotion ? 0 : 0.18 }}
                       title="This week has a filed close-out record. Reopening archives it and frees the week to be closed again."
-                      className="flex items-center gap-1.5 rounded-full border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-800/70 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-900/50"
+                      className="flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
-                      <Archive className="h-3 w-3" />
+                      <Archive className="h-3.5 w-3.5" />
                       Closed
-                      <span className="text-violet-400 dark:text-violet-600">·</span>
+                      <span className="text-zinc-400 dark:text-zinc-600">·</span>
                       <span className="underline decoration-dotted underline-offset-2">Reopen</span>
                     </motion.button>
                   )}
@@ -2200,12 +2201,12 @@ function ProcessingToggleButton({
       whileTap={disabled ? undefined : { scale: 0.95 }}
       transition={{ type: 'spring', stiffness: 380, damping: 26 }}
       className={cn(
-        'relative inline-flex h-8 min-w-[7.25rem] items-center justify-center gap-1.5 overflow-hidden rounded-md px-3 text-[11px] font-semibold text-white shadow-sm transition-[box-shadow,background-image] duration-300',
+        'relative inline-flex h-7 min-w-[7.25rem] items-center justify-center gap-1.5 overflow-hidden rounded-md px-3 text-[12px] font-semibold text-white transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-zinc-900',
         disabled
-          ? 'cursor-not-allowed bg-gradient-to-br from-zinc-400 to-zinc-500 opacity-60 dark:from-zinc-600 dark:to-zinc-700'
+          ? 'cursor-not-allowed bg-zinc-400 opacity-60 dark:bg-zinc-700'
           : locked
-            ? 'bg-gradient-to-br from-rose-500 to-red-600 shadow-rose-500/30 hover:from-rose-600 hover:to-red-700'
-            : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/30 hover:from-emerald-600 hover:to-teal-700',
+            ? 'bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-500'
+            : 'bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500',
       )}
       aria-pressed={locked}
       aria-disabled={disabled}
@@ -2238,36 +2239,36 @@ function ProcessingToggleButton({
   );
 }
 
-function ProcessingPill({ locked }: { locked: boolean }) {
+/** Inline status that sits beside the Start/Stop button inside one bordered
+ *  group — the words say what the lock is doing, the button changes it. */
+function ProcessingStatus({ locked }: { locked: boolean }) {
   return (
-    <motion.span
-      key={locked ? 'locked' : 'open'}
-      initial={{ scale: 0.95, opacity: 0 }}
-      animate={{ scale: 1, opacity: 1 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 22 }}
+    <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium backdrop-blur-md',
-        locked
-          ? 'border-rose-200/80 bg-rose-50/80 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300'
-          : 'border-zinc-200/80 bg-zinc-50/80 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300',
+        'inline-flex items-center gap-2 text-[12px] font-medium',
+        locked ? 'text-rose-700 dark:text-rose-300' : 'text-zinc-600 dark:text-zinc-400',
       )}
       title={locked ? 'Issues are paused for employees until you stop processing' : undefined}
+      role="status"
     >
       {locked ? (
         <>
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
+          <span className="relative flex h-2 w-2" aria-hidden>
+            <span className="absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-70 motion-safe:animate-ping" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-500" />
           </span>
-          Processing · issues paused
+          <span>
+            Processing
+            <span className="hidden text-rose-600/80 dark:text-rose-300/70 md:inline"> · issues paused</span>
+          </span>
         </>
       ) : (
         <>
-          <Lock className="h-3 w-3 opacity-60" />
+          <Lock className="h-3.5 w-3.5 opacity-60" aria-hidden />
           Not processing
         </>
       )}
-    </motion.span>
+    </span>
   );
 }
 
@@ -2641,42 +2642,6 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-function PeriodPill({ period }: { period: { start: string | null; end: string | null; sourceFile: string | null } }) {
-  const label = formatPeriodLabel(period.start, period.end);
-  const hasPeriod = period.start && period.end;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -3 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay: 0.1 }}
-      className={cn(
-        'inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[11px] backdrop-blur-md',
-        hasPeriod
-          ? 'border-orange-200/80 bg-white/70 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-200'
-          : 'border-amber-200/80 bg-amber-50/80 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300',
-      )}
-      title={period.sourceFile ?? undefined}
-    >
-      <CalendarRange className="h-3.5 w-3.5 text-orange-500" />
-      <div className="flex flex-col leading-tight">
-        <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
-          Payroll period
-        </span>
-        <span className="font-semibold tracking-tight">{label}</span>
-      </div>
-      {period.sourceFile && (
-        <span className="hidden items-center gap-1 border-l border-orange-100 pl-2 text-[10px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-500 sm:inline-flex">
-          <FileSpreadsheet className="h-3 w-3" />
-          <span className="max-w-[120px] truncate" title={period.sourceFile}>
-            {period.sourceFile.replace(/\.csv$/i, '')}
-          </span>
-        </span>
-      )}
-    </motion.div>
-  );
-}
-
 interface CycleOption {
   sourceFile: string;
   label: string;
@@ -2744,16 +2709,26 @@ function CycleSelector({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[11px] font-medium transition-colors',
+          'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/60',
           isLive
-            ? 'border-zinc-200 bg-white/70 text-zinc-600 hover:border-zinc-300 dark:border-zinc-700 dark:bg-zinc-900/60 dark:text-zinc-300'
+            ? 'border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-300 dark:hover:border-zinc-700'
             : 'border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300',
         )}
-        title="Choose which pay week to dispatch"
+        title={isLive ? `Current week · live — ${buttonLabel}` : buttonLabel}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-label="Choose which pay week to dispatch"
       >
-        {isLive ? <Wifi className="h-3.5 w-3.5 text-emerald-500" /> : <History className="h-3.5 w-3.5" />}
-        <span className="max-w-[160px] truncate">{loading ? 'Loading weeks…' : buttonLabel}</span>
-        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+        {isLive ? (
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+        ) : (
+          <History className="h-3.5 w-3.5" aria-hidden />
+        )}
+        <span>{loading ? 'Loading…' : isLive ? 'Live' : 'Past week'}</span>
+        <ChevronDown
+          className={cn('h-3.5 w-3.5 opacity-60 transition-transform', open && 'rotate-180')}
+          aria-hidden
+        />
       </button>
 
       {open && (
@@ -2830,6 +2805,22 @@ function CycleSelector({
       )}
     </div>
   );
+}
+
+/** Header title: the week itself, read as a date range ("September 13–19, 2026"). */
+function formatPeriodHeading(start: string | null, end: string | null): string {
+  if (!start || !end) return 'No upload yet';
+  const s = parseISO(start);
+  const e = parseISO(end);
+  if (!s || !e) return `${start} – ${end}`;
+  const month = (d: Date) => d.toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+  if (s.getUTCFullYear() !== e.getUTCFullYear()) {
+    return `${month(s)} ${s.getUTCDate()}, ${s.getUTCFullYear()} – ${month(e)} ${e.getUTCDate()}, ${e.getUTCFullYear()}`;
+  }
+  if (s.getUTCMonth() !== e.getUTCMonth()) {
+    return `${month(s)} ${s.getUTCDate()} – ${month(e)} ${e.getUTCDate()}, ${e.getUTCFullYear()}`;
+  }
+  return `${month(s)} ${s.getUTCDate()}–${e.getUTCDate()}, ${e.getUTCFullYear()}`;
 }
 
 function formatPeriodLabel(start: string | null, end: string | null): string {

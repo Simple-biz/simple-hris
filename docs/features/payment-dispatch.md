@@ -58,11 +58,14 @@ The Accounting sidebar entry is registered in `src/components/Sidebar.tsx` (`pay
 
 ### 3.1 Hero
 
-- "Welcome back, **{firstName}** 👋" — `firstName` derived from NextAuth session (`session.user.name` → email local part → "there"), gradient text fill (orange → rose), animated wave emoji on mount.
-- "Payment dispatch" title + subtitle.
-- **Period pill** (top-right): `Apr 22 – 28, 2026` style label derived from the current Hubstaff upload's date columns. Hover shows source filename. Renders amber "No upload yet" when there's no current cycle.
-- **Processing pill**: "Not processing" (zinc) by default. When `lockState.locked` is true: "Processing · disputes paused" with a pulsing rose dot.
-- **Start / Stop processing** button (the lock toggle — see §6).
+Redesigned 2026-09-24: the **week is the title**. No eyebrow badge, no gradient text, no emoji.
+
+- "Welcome back, **{firstName}**" — one small muted line; `firstName` derived from NextAuth session (`session.user.name` → email local part → "there").
+- **Week heading** (`<h1>`) — `formatPeriodHeading` renders `September 13–19, 2026` from the loaded period (it follows the selected week, live or past). Amber "No upload yet" when there is no cycle.
+- **Week switcher** (`CycleSelector`) sits beside the heading: `● Live` (emerald dot) for the current cycle, amber `Past week` otherwise. Its dropdown is unchanged.
+- **Source file** — the full upload filename under the heading (truncates; full name on hover).
+- **Processing control** (top-right) — one bordered group: `ProcessingStatus` ("Not processing", or "Processing · issues paused" with a pulsing rose dot; the pulse respects reduced motion and "· issues paused" hides below `md`) beside the **Start / Stop processing** button (solid emerald / rose — see §6).
+- **Closed · Reopen** chip (manager/admin, closed weeks) sits after the group, in the same neutral style.
 
 ### 3.2 Hero stats
 
@@ -1049,7 +1052,7 @@ The mechanism that pauses employee disputes while Lenny is processing. This is t
    │  EmployeeApp.tsx                        │  │  PayrollDispatch.tsx             │
    │  useDispatchLock fires onChange         │  │  useDispatchLock fires onChange  │
    │  → re-fetches lock state                │  │  → re-fetches lock state         │
-   │                                         │  │  → ProcessingPill switches red   │
+   │                                         │  │  → ProcessingStatus turns red    │
    │  Renders:                               │  │  → Toggle button crossfades      │
    │  • PayrollLockBanner (slides down)      │  └──────────────────────────────────┘
    │  • Sidebar "Paused" pill                │
@@ -1065,7 +1068,7 @@ The mechanism that pauses employee disputes while Lenny is processing. This is t
 `PayrollDispatch.tsx` renders:
 
 - **`ProcessingToggleButton`** — Start / Stop button. Crossfades icon + label between states using `AnimatePresence mode="popLayout"` (no hard swap). Spring hover lift + tap squish.
-- **`ProcessingPill`** — "Not processing" (zinc) or "Processing · disputes paused" (rose, with animated ping dot).
+- **`ProcessingStatus`** — "Not processing" (zinc) or "Processing · issues paused" (rose, with animated ping dot), inline beside the button in one bordered group.
 - **`LockToggleConfirmDialog`** — confirmation modal with proper loading state. While the POST is in flight: button shows `Loader2` spinner, label says "Starting…" / "Stopping…", buttons disabled, dialog refuses to close on outside-click or Esc. Closes after success so the exit animation overlaps with the parent state change.
 - **`togglingLock` flag** in component state guards against rapid clicks.
 
