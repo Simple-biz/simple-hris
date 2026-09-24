@@ -1662,15 +1662,6 @@ export default function PayrollDispatch() {
               </h1>
               <CycleSelector value={selectedSourceFile} onChange={setSelectedSourceFile} />
             </div>
-            {period.sourceFile && (
-              <p
-                className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] text-zinc-500 dark:text-zinc-400"
-                title={period.sourceFile}
-              >
-                <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{period.sourceFile}</span>
-              </p>
-            )}
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">

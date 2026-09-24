@@ -63,7 +63,6 @@ Redesigned 2026-09-24: the **week is the title**. No eyebrow badge, no gradient 
 - "Welcome back, **{firstName}**" — one small muted line; `firstName` derived from NextAuth session (`session.user.name` → email local part → "there").
 - **Week heading** (`<h1>`) — `formatPeriodHeading` renders `September 13–19, 2026` from the loaded period (it follows the selected week, live or past). Amber "No upload yet" when there is no cycle.
 - **Week switcher** (`CycleSelector`) sits beside the heading: `● Live` (emerald dot) for the current cycle, amber `Past week` otherwise. Its dropdown is unchanged.
-- **Source file** — the full upload filename under the heading (truncates; full name on hover).
 - **Processing control** (top-right) — one bordered group: `ProcessingStatus` ("Not processing", or "Processing · issues paused" with a pulsing rose dot; the pulse respects reduced motion and "· issues paused" hides below `md`) beside the **Start / Stop processing** button (solid emerald / rose — see §6).
 - **Closed · Reopen** chip (manager/admin, closed weeks) sits after the group, in the same neutral style.
 
