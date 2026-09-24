@@ -91,6 +91,13 @@ A row of 8 filter cards (All + Kolan + Wepay + HiGlobe + Wise + Jeeves + Wires +
 
 Active card is highlighted via Framer Motion's **`layoutId`** glow that physically slides between cards on tab switch.
 
+**Finished processor = green check (2026-09-24).** When a processor card has **0 pending AND at least one
+payment already made through it this week** (`paidByProcessor[id].length > 0`), its count pill is replaced
+by a green check (`ProcessorCard` `done` prop); the compact rail shows the same check as the corner badge.
+A processor nobody used this week keeps its plain `0` — empty is not finished. Suppressed while the queue is
+`loading`, so the check never flashes before counts arrive. Processor cards only — All / Urgent / COP /
+Done / Excluded never take it.
+
 #### 3.3.1 Brand logo support
 
 `ProcessorLogo.tsx` takes an explicit `logoSrc` prop and renders that image on a white plate; if it fails to load (`onError`) it falls back to a gradient monogram tile (or icon, for non-brand cards like All / History). **There is no HEAD probe and no `/processors/{id}.svg` convention** — that was never implemented. The live assets sit at the public root: `/Kolan.png` **and** `/kolan.svg` (Kolan ships two, see below), plus `/higlobe.png`, `/wise.png`, `/jeeves.png`.

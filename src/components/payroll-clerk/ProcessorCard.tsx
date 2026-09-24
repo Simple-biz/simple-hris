@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { motion, useReducedMotion } from 'motion/react';
+import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import AnimatedNumber from './AnimatedNumber';
 import ProcessorLogo from './ProcessorLogo';
@@ -56,6 +57,13 @@ export interface ProcessorCardProps {
    * card width, so callers pass false below lg.
    */
   compact?: boolean;
+  /**
+   * The processor is finished for this week: nothing left pending AND at least
+   * one payment went out through it. The count pill becomes a green check (and
+   * so does the compact corner badge). The caller decides — a processor nobody
+   * used this week is empty, not finished, and must not get the check.
+   */
+  done?: boolean;
 }
 
 /**
@@ -83,6 +91,7 @@ export default function ProcessorCard({
   iconOnlyFallback,
   glowBorder,
   compact = false,
+  done = false,
 }: ProcessorCardProps) {
   const reduceMotion = useReducedMotion();
   const transition = reduceMotion ? { duration: 0 } : RAIL_COMPACT_TRANSITION;
@@ -155,7 +164,15 @@ export default function ProcessorCard({
             >
               {label}
             </div>
-            {count !== undefined && (
+            {done ? (
+              <span
+                className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white dark:bg-emerald-500"
+                title="Finished: nothing left to pay"
+              >
+                <Check className="h-3 w-3" strokeWidth={3} aria-hidden />
+                <span className="sr-only">Finished, nothing left to pay</span>
+              </span>
+            ) : count !== undefined && (
               <div
                 className={cn(
                   'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
@@ -199,7 +216,18 @@ export default function ProcessorCard({
               nothing to report, and a rail of "0" pills would bury the one
               number that matters. The ring is the card's own surface colour, so
               the pill reads as sitting above the plate rather than on it. */}
-          {count !== undefined && count > 0 && (
+          {done && (
+            <motion.span
+              className="pointer-events-none absolute -right-1.5 -top-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-emerald-500 text-white ring-2 ring-white dark:ring-zinc-900"
+              initial={false}
+              animate={{ opacity: compact ? 1 : 0, scale: compact ? 1 : 0.6 }}
+              transition={transition}
+              aria-hidden
+            >
+              <Check className="h-3 w-3" strokeWidth={3} />
+            </motion.span>
+          )}
+          {!done && count !== undefined && count > 0 && (
             <motion.span
               className={cn(
                 'pointer-events-none absolute -right-1.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-semibold leading-none tabular-nums ring-2',

@@ -1935,6 +1935,9 @@ export default function PayrollDispatch() {
                     label={p.label}
                     subtitle={v.blurb}
                     count={counts[p.id] ?? 0}
+                    // Finished = had work this week and none left. A processor nobody
+                    // used is empty, not finished, so it keeps its plain 0.
+                    done={!loading && (counts[p.id] ?? 0) === 0 && paidByProcessor[p.id].length > 0}
                     Icon={v.Icon}
                     logoSrc={v.logoSrc}
                     wordmark={v.wordmark}
