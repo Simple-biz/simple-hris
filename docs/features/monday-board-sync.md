@@ -2211,3 +2211,12 @@ held nine, and their code landed inside S28 (tickets in S27).
   been re-read. `verify-one.mts` died on the same budget.
 
 **Owed after the reset:** `flush-pending.mts --apply` (about 9 calls), then `verify-one.mts` on all 41.
+
+**S28 → S29, 2026-09-24.** Kane: *"just make sure that unfinished tasks from 28 is moved to 29"*.
+S28's only open rows are the four held Pending Deploy rows. Pass 32 refused to move them because
+their code landed in S28. That objection does not hold now: each is held only by an external step
+not yet taken, so it closes with `dateBasis: 'external'` on the day the step happens, which falls
+inside S29. The plan moved them to S29. `scripts/tmp-move-s28-pd.mts` moves them on the board (label
+and group only, ids pinned, status untouched). It waits for the 2026-09-25 00:00Z budget reset,
+along with the 4-row flush. A 12:10Z flush attempt probed the budget with one call, found it dead,
+and wrote nothing.

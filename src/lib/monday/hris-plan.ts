@@ -848,7 +848,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Board status stays Pending Deploy —
   // the sprint move changes WHERE it is filed, not how far along it is; the CHECK widen + two n8n
   // imports are still Kane's to run.
-  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S28' },
+  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S29' },
   // 2 SP: `HUBSTAFF_EXEMPT_DEPTS` matches raw master-list labels exactly, and the dept it excuses was
   // renamed — `Site Building` became `Site Building (US - Freelance)` (20 people, ZERO with Hubstaff
   // hours) and `Site Building (PH - Freelancer)` (13, zero) — so the list silently inverted its own
@@ -1781,7 +1781,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // delivered, no notice. Now gated on send_paystub, default FALSE. The test is `sent_at`, NEVER
   // send_count (a failed send increments the count but leaves no timestamp, so it is still the FIRST).
   // NEVER "attempt" — the CHECK refuses it. done:false: the migration has not run. [[paystub-reissue-issues]]
-  { epic: 'HRIS-33', name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt', type: 'Feature', sp: 8, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-33', name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
   // 8 SP: Penny OPENS the files on record. No ID or bank-card IMAGE exists — both are renderings — so a
   // ref names a RECORD, never a path; the URL is minted at CLICK and audited; the W-8BEN TTL stays 300s;
   // and MAX_FRAME_CHARS is NEVER raised. The viewer is a REAL modal whose entrance fires on DECODE. Also
@@ -1861,13 +1861,13 @@ export const PLAN_TASKS: PlanTask[] = [
   // 5 SP: Scheduling moves INSIDE the HSL department and starts saving. Gated on `scheduling`, NOT
   // `team`. done:false and held at Pending Deploy — `employee_schedule_periods` was MEASURED ABSENT
   // from production on 2026-09-16, so the feature is code-complete and dead. See [[hsl-scheduling-in-department]].
-  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S28', priority: 'High' },
+  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
   // 1 SP: the Offboarded list shows the inbox that still works after the work account is gone.
   { epic: 'HRIS-01a', name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone', type: 'Feature', sp: 1, done: true, sprint: 'S28', priority: 'Low' },
   // 3 SP: Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750 — a first pass stranded in
   // staging. The restore is BUILT and --apply is still NOT RUN, re-measured 2026-09-16 (192 rows both
   // at zero). OPEN RULING. See [[lead-gen-qc-first-pass-stranded-in-staging]].
-  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: false, sprint: 'S28', priority: 'Critical' },
+  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
   // 2 SP Spike: the Sep 14 Carla meeting record plus four findings measured the same day — there is no
   // QC Manager role to flip on (granting `qc` makes jackie@ an OFFICER and re-deals the live week), the
   // transferred status has never once fired and cannot, an absent officer does not block the week, and
