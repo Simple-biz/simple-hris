@@ -1290,8 +1290,8 @@
         ]
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-25T11:47:31.631Z",
+      "flushNote": "flushed 2026-09-25T11:47:31.631Z (approval 8c101a026a29)"
     },
     {
       "queuedAt": "2026-09-24T00:22:18.093Z",
@@ -1311,8 +1311,8 @@
         ]
       },
       "planSp": 8,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-25T11:47:31.631Z",
+      "flushNote": "flushed 2026-09-25T11:47:31.631Z (approval 8c101a026a29)"
     },
     {
       "queuedAt": "2026-09-24T00:22:18.093Z",
@@ -1332,8 +1332,8 @@
         ]
       },
       "planSp": 5,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-25T11:47:31.631Z",
+      "flushNote": "flushed 2026-09-25T11:47:31.631Z (approval 8c101a026a29)"
     },
     {
       "queuedAt": "2026-09-24T00:22:18.093Z",
@@ -1355,8 +1355,8 @@
         ]
       },
       "planSp": 3,
-      "flushedAt": null,
-      "flushNote": null
+      "flushedAt": "2026-09-25T11:47:31.631Z",
+      "flushNote": "flushed 2026-09-25T11:47:31.631Z (approval 8c101a026a29)"
     }
   ]
 }

@@ -2220,3 +2220,10 @@ inside S29. The plan moved them to S29. `scripts/tmp-move-s28-pd.mts` moves them
 and group only, ids pinned, status untouched). It waits for the 2026-09-25 00:00Z budget reset,
 along with the 4-row flush. A 12:10Z flush attempt probed the budget with one call, found it dead,
 and wrote nothing.
+
+**CLOSED 2026-09-25 11:47Z, VERIFIED.** The budget had reset. `flush-pending.mts --apply` wrote the 4
+queued evidence updates (0 refused). `tmp-move-s28-pd.mts --apply` moved the 4 held S28 rows
+into S29 (label and group). `verify-one.mts` read back all 41 rows: **32 Done / 119 SP**, each with
+Actual SP = Est SP and a Completed Date of Sep 21–23; **9 Pending Deploy / 52 SP** with no Actual SP
+and no date. All 41 are in the Sprint 29 group with the Sprint 29 label. 0 mismatches. Sprint 28
+now holds no open HRIS row. The epic relation is still unset on the pass-33 rows, and a full reconcile owns it.
