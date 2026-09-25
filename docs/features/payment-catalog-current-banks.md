@@ -133,6 +133,14 @@ surfaces. **This list is deliberately exempt** (Kane, 2026-09-04): the count on 
 includes leavers because the bank is still on their record (§3), so hiding them here would
 make the list disagree with the number above it. They are shown with a **Left** chip.
 
+**Except a row with no work email: it can never show the Left chip or a department.** Both are
+looked up by work email. Measured 2026-09-25: **126 of 2,198** `employee_ids` rows have a blank
+`work_email`, and **23** of them carry a bank, so they sit in some bank's list. A leaver among them
+reads as current; how many have left is not measured (session log 2026-09-25, item 212, OPEN).
+Such rows also collided on the React key, `-true` for two blank emails on one bank (`85085bf5`).
+Rows are now keyed by their index in the server's list, taken before the search filter, so a row
+keeps its key while HR types. Both rows are kept; the list must still equal the count (§5.1).
+
 The chip is resolved **client-side from `catalogOffboardedEmails`** — the same set every
 other catalog surface filters on, shipped to the browser already. Re-deriving it in the
 route would be a second answer to "who has left" that could drift from the first, and the

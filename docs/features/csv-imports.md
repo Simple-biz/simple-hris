@@ -172,6 +172,17 @@ both are one deliberate, audited person at a time (`hr.employee.reonboarded`):
    grants are **not** restored (a rehire starts from fresh grants). Audited with
    `via: "rehire_promote"`; pinned by `src/lib/hr/rehire-master-reuse.test.ts`.
 
+> **A third way back exists and bypasses both checks: Unpromote → re-promote** (measured
+> 2026-09-25, session log item 213). *Back to Ready* (`/api/hr/pending-employees/[id]/unpromote`)
+> **DELETES** the master row linked by `promoted_to_master_id` (`removeFromMasterList`,
+> `hr-pending-employees.ts:514-515`). The re-promote then finds no (Work Email, Department) row and
+> INSERTS a fresh active one, so `decideMasterRowReuse`'s Personal Email check never runs. That is
+> how `aireenp@` came back on 2026-09-24 (kaner@, twice, before `e41ce525` was deployed), and her
+> old stint row `824ad794…` no longer exists; only her `offboarded_sheet` ledger row keeps the
+> 05-18 off-board. **Never offer Unpromote as the rehire fix.** On a row whose Personal Email is
+> not the hire's (4 of the 46 invisible rehires on 2026-09-25), it deletes a row that may belong
+> to someone else.
+
 Pinned by `src/lib/supabase/master-sync-never-reactivates.test.ts`.
 
 > **Three senders, not two (found 2026-09-15).** The Payroll Wizard's Setup step has its own

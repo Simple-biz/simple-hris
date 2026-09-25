@@ -162,11 +162,20 @@ queue — **an invoice is not a payment.**
 
 ## Deploy notes
 
-- **Migration PENDING** (not applied as of 2026-09-23): double-click
-  `scripts/Apply Gift Orders migration.cmd` — rehearsal first (always rolled back), then
-  type `APPLY`. Needs `DATABASE_URL` (session pooler) in `.env.local`. The rehearsal
-  passed on 2026-09-23 against production (15 object checks + 10 behavioural controls,
-  all rolled back; re-run after `gift_order_delete` was added — 18 object checks +
-  14 behavioural controls, all passed). Until it is applied the Orders tab says "not set up yet" and the
-  edit/delete freeze is a no-op (nothing can be locked).
+- **Migration PENDING — PARTLY applied. Measured 2026-09-25 19:28Z (read-only): everything
+  EXCEPT `gift_order_delete`.** Both tables exist, RLS is on with 0 policies, neither is in
+  `supabase_realtime`, lock and reopen exist and anon/authenticated cannot EXECUTE them, and
+  the one-live-order index exists. The live objects match the SQL as of `c98b0a99`. It ran
+  between 2026-09-23 23:37Z and the first lock at 2026-09-24 00:02Z, before `c6f4d06f` added
+  the delete function to the same file. **Until it is re-run, Delete answers 503** "Orders are
+  not set up yet — the Gift Orders migration has not been applied". `PGRST202` maps to the
+  `missing` refusal, so it fails closed and deletes nothing, but the message is wrong about
+  why. **Fix: re-run** `scripts/Apply Gift Orders migration.cmd`: rehearsal first (always
+  rolled back), then type `APPLY`. The SQL is idempotent (`IF NOT EXISTS` / `CREATE OR
+  REPLACE`), so it adds only the delete function and its grants and keeps live orders. Needs
+  `DATABASE_URL` (session pooler) in `.env.local`. The rehearsal passed on 2026-09-23 against
+  production: 15 object checks + 10 behavioural controls, all rolled back, then 18 + 14 after
+  `gift_order_delete` was added. Stays PENDING until Kane confirms the re-run landed (session
+  log 2026-09-25, item 210). With the tables absent, the Orders tab says "not set up yet"
+  and the edit/delete freeze is a no-op (nothing can be locked).
 - No env vars, no n8n import.

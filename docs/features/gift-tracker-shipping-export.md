@@ -166,6 +166,28 @@ was ordered"*). It snapshots the price at lock time and lives in its own module 
 [gift-tracker-orders.md](gift-tracker-orders.md). That ruling does not reach these two
 exports: a price column here is still a defect, and the tests above still fail on one.
 
+## The Catalog: a tier's gift is PICKED from Gift items, and there is no free-form list
+
+Both changes landed 2026-09-23 (session `95df963a`). They were written only in
+`docs/reference/components.md` until the 2026-09-25 sweep (session log item 216).
+
+- **An Anniversary Gifts tier picks its gift from Gift items; it is never typed** (`d73f5db2`;
+  Kane: *"the Items in here shall be based on items set from 'Gift Items'"*). The picker is a
+  multi-pick over the distinct item NAMES (`catalogItemNames`), so sizes and variants collapse:
+  a tier says "Tshirt", and the size comes from the submission. The tier stores `gift_items:
+  string[]` and, for legacy readers, `gift` = those names joined `" & "`. Both are always
+  written together through `tierGiftFields` (`src/lib/gift-tracker/anniversary-items.ts`,
+  tested). A tier saved before the rule has only `gift`, which `tierGiftItems` splits on `" & "`.
+- **A name no longer in Gift items is KEPT and flagged amber (`missingTierItems`), never dropped**
+  on load or save. It can be unticked but not newly added. On 2026-09-23 three live tiers named
+  off-catalog gifts: Polo (30 mo), Speaker (36 mo) and Lamp (42 mo). Until Gift items holds
+  them, those gifts cannot be locked into an Orders invoice ([gift-tracker-orders.md](gift-tracker-orders.md)).
+- **What reads the tier:** the Orders invoice only. Approval does not derive a gift
+  ([[gift-feature-info-only]]), and the tier carries no price (see above).
+- **The free-form Suggestions card is removed** (`b386f258`; Kane: *"Remove the suggestions for
+  the free form ideas please"*). The stored `suggestions` array is **untouched** and round-trips
+  unchanged on Save, so nothing was deleted and the card can come back without data loss.
+
 ## The submission read must stay paged
 
 `listShippingDetails` uses `selectAllPaged`. It was a bare `.select()`; PostgREST

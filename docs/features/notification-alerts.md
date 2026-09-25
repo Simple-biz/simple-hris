@@ -130,7 +130,9 @@ before it can deliver anything — `employee_notifications.type` is
 CHECK-constrained, and a rejected insert is indistinguishable from "nothing
 happened". Every failure is written to `audit_log` as
 `notification.insert_failed`, so the silence is at least visible. Stays PENDING
-until Kane confirms it landed.
+until Kane confirms it landed. **Measured 2026-09-25 (read-only): present in
+`employee_notifications_type_check`, which now allows 49 types.** It was still
+rejecting at 09:27Z that day (session log 2026-09-25, item 211).
 
 Cross-links: `docs/features/mesa.md` (money request routing) ·
 `docs/features/urgent-payments.md` (the URGENT rail these alerts point at) ·

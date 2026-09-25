@@ -360,7 +360,12 @@ today.** It was not measured and not changed here; it is an Open item.
 - **The `gift_shipping.submitted` widen is PENDING Kane's `--apply`**
   (`references/sql/alter/2026-09-22_add_gift_shipping_notification_type.sql`).
   Until it runs the alert delivers nothing, and the only signal is a
-  `notification.insert_failed` row per attempt in `audit_log`.
+  `notification.insert_failed` row per attempt in `audit_log`. **Measured
+  2026-09-25 (read-only): the value is now IN the live constraint.** It was still
+  rejected at 09:27Z and present by ~12:30Z. Before that, HR's alert was lost for
+  three submissions (00:55Z, 09:27Z ×2). The submissions themselves were saved
+  (upsert before notify) and "Recently filled / updated" lists them. The note stays
+  PENDING until Kane confirms (session log 2026-09-25, item 211).
 - **The People → Bank changes feed's Realtime pulse is probably inert.** Its
   `postgres_changes` binding on an "Admins only" `app_settings` key cannot reach
   an anon browser. Not measured, not changed — see the Broadcast section above.

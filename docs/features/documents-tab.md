@@ -674,4 +674,7 @@ It is logged as an open item, not changed here.
 No migration. `raphs@simple.biz`: dry run clean 2026-09-23 (verdict FACTS, "Raphael Sepnio",
 March 2, 2026, Performance; start date and department blank). **`--apply` PENDING. Kane runs it:**
 `$env:TSX_TSCONFIG_PATH="tsconfig.readiness-verify.json"; node --import tsx scripts/insert-ledger-only-master-row.mts --work-email raphs@simple.biz --apply`.
-Revert = delete the one printed row id.
+Revert = delete the one printed row id. **Measured 2026-09-25 (read-only): the row EXISTS.** It is
+`cac9eb83-525c-4cd4-98ef-8a5ffa0e35ce`, `off_boarded_at` 2026-03-02, `Performance`, `Department`
+null, as the dry run predicted (session log 2026-09-25, item 211). The note stays PENDING until
+Kane confirms that is his run; the backlog decision and the `no_master` copy are still open.
