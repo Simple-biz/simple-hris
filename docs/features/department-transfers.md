@@ -41,14 +41,14 @@ Key files:
 ```
 Receiving manager · Transfers ── "Request transfer in" ──▶ POST /api/department-transfers
         │  (picks a person from ANOTHER dept; proposes effective date)   │
-        │                                                                ├─ gate: manager||admin; NOT
-        │                                                                │  from a dept you manage
+        │                                                                ├─ gate: manager||admin; INTO
+        │                                                                │  a dept you manage
         │                                                                ├─ 409 if in-flight already
         │                                                                ├─ insert row (status=pending)
         │                                                                └─ notify SOURCE manager(s)
         ▼                                                                     (transfer.release_requested)
 Source manager · Transfers → Release requests ── PATCH {action:'release'} ──▶
-        │                                                                │
+        │  (never the requester — see §1)                                │
         │                                                                ├─ lock effective_date = proposed
         │                                                                ├─ status → approved
         │                                                                └─ applyApprovedTransfer() NOW
@@ -70,28 +70,64 @@ Source manager · Transfers → Release requests ── PATCH {action:'release'}
 
 ## 1 · Initiate — the pull-in model
 
-Anyone with the `manager` **or** `admin` role can start a transfer, but a plain manager may only
-pull a person **into** a department they manage and only **from** a department they **don't** manage
-("no poaching off your own team — that's the source manager's Release call"). This is enforced in
-**three places** so it can't be bypassed:
+Anyone with the `manager` **or** `admin` role can start a transfer. A plain manager may pull a
+person **into** a department they manage, **from any department — including one they also
+manage**. Every move still needs **two people**: a non-admin may **never release or decline a
+request they raised**, so another manager of the source department always makes the Release call.
+The pure rules live in `src/lib/transfers/transfer-authority.ts` (pinned by
+`transfer-authority.test.ts`):
 
-- **Endpoint gate.** `POST /api/department-transfers` rejects non-`manager`/`admin` (403), and for a
-  non-admin manager with explicit assignments requires `to_department` ∈ managed depts **and**
-  `from_department` ∉ managed depts (via `listDepartmentsForManager` + `departmentMatchesManagedAssignments`).
-- **Picker exclusion.** `GET /api/manager/transfer-candidates` drops anyone currently in one of the
-  requester's own departments (`ownDepts` filter) before returning the roster.
-- **POST validation.** Re-checks `from`/`to` are non-empty, differ, and the date matches `YYYY-MM-DD`
-  (`ISO_DATE`); dies 400 otherwise.
+- **Endpoint gate (`initiateTransferDenial`).** `POST /api/department-transfers` rejects
+  non-`manager`/`admin` (403), and for a non-admin manager with explicit assignments requires
+  `to_department` ∈ managed depts (`listDepartmentsForManager` + `departmentMatchesManagedAssignments`).
+  **The source is not checked.**
+- **Decision gate (`transferDecisionDenial`).** `PATCH …/[id]` `release`/`decline`: a non-admin
+  must manage the **source** department **and** must not be the `requested_by` (403 *"You raised
+  this request — another manager of the current department must release or decline it. Use
+  Withdraw to cancel it."*). The requester's own path is **Withdraw** (`cancel`).
+- **Release queue (`withoutOwnRequests`).** `?scope=incoming` for a manager drops the requests they
+  raised, so their own request never shows up as theirs to release. It stays in **My requests**.
+- **POST validation.** Re-checks `from`/`to` are non-empty, that the move is real
+  (`transferNoOpDenial`: not equal, and the source cell does not already satisfy the target per
+  `deptCellSatisfiesTarget`, the dialog's own predicate), and that the date matches `YYYY-MM-DD`
+  (`ISO_DATE`). Anything else is a 400.
 
-Admins are **unrestricted** (can pull anyone, including out of a department they also manage), as are
-managers with **no** explicit department assignments (elevated). In `ManagerTransfers.tsx` the
-`canInitiate` prop is always true for managers; the "Request transfer in" button gates on
-`canRequest = canInitiate && myDepartments.length > 0`.
+Admins are **unrestricted** (they may raise anything and decide anything, including their own
+request), as are managers with **no** explicit department assignments when *raising* one. An
+unassigned manager decides nothing, because they manage no source department. In
+`ManagerTransfers.tsx` the `canInitiate` prop is always true for managers; the "Request transfer
+in" button gates on `canRequest = canInitiate && myDepartments.length > 0`.
+
+> **Why the rule changed (Kane, 2026-09-25, audit item 205, resolution (b)).** Until then a plain
+> manager could pull only **from a department they did not manage** ("no poaching off your own
+> team — that's the source manager's Release call"). Three places enforced it: the POST 403
+> *"You can't initiate a transfer out of your own department"*, a picker exclusion that dropped the
+> requester's own departments, and the POST validation. `cjm@` pulls Lead Gen agents into HSL
+> sub-teams and Client VA; **all 252 of her requests are from Lead Gen.** When `kaner@` granted her
+> `Lead Gen` on 2026-09-23 (carla@ re-granted it 09-24) so the team would show under My Team, the rule
+> hid every Lead Gen agent from her picker ("No people found") and would have 403'd the POST.
+> Nothing in the code was broken, because a grant works both ways. The rule's purpose was a second
+> person on every move. Removing only the source check would have let a manager who held both grants
+> raise **and** release alone, because the decision gate checked only source-dept membership. That
+> is why the requester ≠ releaser check shipped in the same change.
+>
+> The source check also used to be the only thing refusing a **label-only move** between two
+> spellings of one department (`Client - VA` → `Client VA`, both granted to cjm@). That is because
+> the POST's own `from ≠ to` test was a raw string compare. The same change moved that test to
+> `transferNoOpDenial`, which also asks `deptCellSatisfiesTarget`, the predicate the dialog already
+> gated Submit on. A dialog-legal move is therefore never refused, and a relabel is a 400 for
+> every role.
 
 ### The candidate picker
 
-`GET /api/manager/transfer-candidates?q=&department=` returns **active** Global-Master-List people
-via `listActiveMasterListPeople` — **Name + Department + work/personal email only, never pay**.
+`GET /api/manager/transfer-candidates?purpose=transfer&q=&department=` returns **active**
+Global-Master-List people via `listActiveMasterListPeople`: **Name + Department + work/personal
+email only, never pay**. **`purpose=transfer` is load-bearing** (`candidatePool`). With it, the
+dialog gets everyone, including people in departments the manager also manages. **Without it**
+the endpoint still drops the manager's own departments, because its other callers (the KPI
+calculators' add-external-member pickers and "Add missing as externals", `qc-scoring.md`,
+`hsl-kpi-calculator-2026-07.md`) treat every person it returns as external to the team. Do not
+fold the two back into one behaviour.
 `?q=` matches name / department / **work email** / personal email; `?department=` filters to one
 dept. The server scans the whole roster and returns the filtered `people` (capped at 200), the
 full `departments` list for the filter dropdown, and `builtinSubs` — the data sub-team **map**
@@ -103,8 +139,9 @@ search/filter is server-backed rather than a client slice of a page.
 > `{ people, builtinSubs: filtered.slice(0, 200) }`. `NextResponse.json()` takes `any`, so
 > nothing failed anywhere, and **all three of this route's contracts broke at once**: `?q=` and
 > `?department=` stopped narrowing (the picker returned the whole roster, so searching a work
-> email listed strangers — Kane's report), the picker exclusion below stopped dropping the
-> manager's own team, and the dialog read a candidate array as the sub-team map. `people` is
+> email listed strangers — Kane's report), the own-department exclusion (then applied to every
+> caller) stopped dropping the manager's own team, and the dialog read a candidate array as the
+> sub-team map. `people` is
 > **always the filtered, capped list, never the raw roster**; `builtinSubs` is **always a map,
 > never a list of people**. Name the response type — do not hand an object literal to
 > `NextResponse.json()` on this route.
@@ -210,7 +247,7 @@ rows lead with a status icon chip (green check = Applied, sky calendar = Release
 
 | Sub-tab | Scope | Contents |
 |---|---|---|
-| **Release requests** | `incoming` | Pending requests where this manager owns the **source** dept — their consent queue. Release / Decline (Decline requires a note). |
+| **Release requests** | `incoming` | Pending requests where this manager owns the **source** dept — their consent queue — **except requests they raised themselves** (those are never theirs to release, §1). Release / Decline (Decline requires a note). |
 | **My requests** | `outgoing` | The manager's own outbox. `pending` → **Withdraw**; `approved` → **Apply now**. |
 | **Done** | `done` | Resolved release requests on their team (released/declined/applied/cancelled) — a read-only record after they act. |
 

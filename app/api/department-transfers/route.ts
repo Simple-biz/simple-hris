@@ -12,7 +12,11 @@ import {
   listManagersByDepartment,
   listAllDepartmentManagers,
 } from '@/lib/supabase/department-managers';
-import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
+import {
+  initiateTransferDenial,
+  transferNoOpDenial,
+  withoutOwnRequests,
+} from '@/lib/transfers/transfer-authority';
 import {
   insertTransferRequest,
   listAllTransferRequests,
@@ -101,7 +105,8 @@ async function hideStalePending(
  *   HR/admin, scope=all       -> every request, every status (read-only history).
  *   HR/admin, scope=incoming  -> only PENDING, all teams (action queue).
  *   HR/admin, scope=done      -> only RESOLVED, all teams.
- *   manager,  scope=incoming  -> pending releases for depts they manage.
+ *   manager,  scope=incoming  -> pending releases for depts they manage,
+ *                                minus the ones they raised themselves.
  *   manager,  scope=done      -> resolved rows for depts they manage.
  *   default (any role)        -> requests the caller raised (their outbox).
  */
@@ -137,7 +142,11 @@ export async function GET(request: Request) {
       const departments = depts.map((d) => d.department).filter(Boolean);
       const { rows, error } = await listIncomingTransfersForDepartments(departments);
       if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-      return NextResponse.json({ rows: await hideStalePending(rows), error: null });
+      // A manager who raised a request out of a department they ALSO manage
+      // (allowed since 2026-09-25) must not see it as theirs to release — it
+      // stays in their outbox, and another source manager decides it.
+      const live = await hideStalePending(withoutOwnRequests(rows, sessionEmail));
+      return NextResponse.json({ rows: live, error: null });
     }
     case 'dept-resolved': {
       // Resolved release requests on the manager's team — released/declined/
@@ -167,9 +176,8 @@ export async function GET(request: Request) {
  *     from_department (person's current dept), to_department (target dept),
  *     reason?, proposed_effective_date (YYYY-MM-DD) }
  *
- * Initiating a transfer requires ADMIN rights — a plain manager can only release
- * or decline requests raised for their own team, not start one. A manager who
- * also holds admin can initiate (admin bypasses the gate).
+ * A manager may initiate into a department they manage, from ANY department —
+ * including one they also manage (2026-09-25). An admin is unrestricted.
  */
 export async function POST(request: Request) {
   try {
@@ -207,9 +215,8 @@ export async function POST(request: Request) {
     if (!fromDept || !toDept) {
       return NextResponse.json({ error: 'from_department and to_department are required' }, { status: 400 });
     }
-    if (fromDept.toLowerCase() === toDept.toLowerCase()) {
-      return NextResponse.json({ error: 'Target department must differ from the current one' }, { status: 400 });
-    }
+    const noOp = transferNoOpDenial(fromDept, toDept);
+    if (noOp) return NextResponse.json({ error: noOp }, { status: 400 });
     if (!ISO_DATE.test(proposed)) {
       return NextResponse.json({ error: 'A proposed effective date (YYYY-MM-DD) is required' }, { status: 400 });
     }
@@ -226,27 +233,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // A non-admin manager may only pull people INTO a department they manage,
-    // and only FROM a department they DON'T manage (never poach off their own
-    // team — that's the source manager's call). Admins are unrestricted, as are
+    // A non-admin manager may only pull people INTO a department they manage.
+    // The SOURCE is not checked (Kane's (b), 2026-09-25, audit item 205): a
+    // manager may pull someone out of a department they also manage, and the
+    // second person moves to the decision — the requester can never release
+    // their own request ([id]/route.ts). Admins are unrestricted, as are
     // managers with no explicit department assignments (elevated).
     if (!isAdmin) {
       const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
       const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
-      if (departments.length > 0) {
-        if (!departmentMatchesManagedAssignments(toDept, departments)) {
-          return NextResponse.json(
-            { error: 'You can only transfer people into a department you manage.' },
-            { status: 403 },
-          );
-        }
-        if (departmentMatchesManagedAssignments(fromDept, departments)) {
-          return NextResponse.json(
-            { error: "You can't initiate a transfer out of your own department." },
-            { status: 403 },
-          );
-        }
-      }
+      const denial = initiateTransferDenial({ isAdmin, managedDepts: departments, toDept });
+      if (denial) return NextResponse.json({ error: denial }, { status: 403 });
     }
 
     if (await hasPendingTransferForEmployee(identifying)) {

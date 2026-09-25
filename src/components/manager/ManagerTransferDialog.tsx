@@ -156,7 +156,9 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
     let cancelled = false;
     const handle = setTimeout(() => {
       setLoadingCandidates(true);
-      const params = new URLSearchParams();
+      // `purpose=transfer`: include people in departments this manager also
+      // manages — without it the endpoint drops them (the KPI pickers' view).
+      const params = new URLSearchParams({ purpose: 'transfer' });
       if (query.trim()) params.set('q', query.trim());
       if (deptFilter) params.set('department', deptFilter);
       fetch(`/api/manager/transfer-candidates?${params.toString()}`, { cache: 'no-store' })
@@ -243,8 +245,8 @@ export default function ManagerTransferDialog({ open, onOpenChange, myDepartment
         <DialogHeader>
           <DialogTitle>Request transfer in</DialogTitle>
           <DialogDescription>
-            Pick someone from another department. Their current manager must release them before the
-            move takes effect on your chosen date.
+            Pick someone to move into one of your departments. Another manager of their current
+            department must release them before the move takes effect on your chosen date.
           </DialogDescription>
         </DialogHeader>
 

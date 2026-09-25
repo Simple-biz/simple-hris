@@ -7,6 +7,7 @@ import { listActiveMasterListPeople, type ActiveMasterListPerson } from '@/lib/s
 import { listRecentlyOffboardedPeople } from '@/lib/roster/recently-offboarded';
 import { getBuiltinSubs } from '@/lib/departments/builtin-subs-db';
 import type { BuiltinSubMap } from '@/lib/departments/builtin-subs';
+import { candidatePool } from '@/lib/transfers/transfer-authority';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -32,10 +33,11 @@ function rolesOf(session: SessionLike): string[] {
 /**
  * GET — transfer-target candidates for the "Request transfer in" picker.
  *
- * Active Global-Master-List people the requesting manager could pull into a
- * department they manage: everyone EXCEPT those already in one of the manager's
- * own departments. Returns Name + Department + emails only — NO pay/rate data
- * (managers never see pay). Optional `?q=` filters on name/department.
+ * Active Global-Master-List people. With `?purpose=transfer` (the transfer
+ * dialog): everyone. Without it (the KPI calculators): everyone EXCEPT those in
+ * one of the manager's own departments. Returns Name + Department + emails only
+ * — NO pay/rate data (managers never see pay). Optional `?q=` filters on
+ * name/department/email.
  */
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
@@ -78,20 +80,17 @@ export async function GET(request: Request) {
   const { people, error } = await listActiveMasterListPeople();
   if (error) return NextResponse.json({ people: [], departments: [], error }, { status: 500 });
 
-  // A non-admin manager may only pull people IN FROM other departments — never
-  // from a department they themselves manage (that's their own team). Admins are
-  // unrestricted (can pull anyone, incl. from a dept they also manage).
-  let available = people;
-  if (!isAdmin) {
-    const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
-    const ownDepts = new Set(assigns.map((a) => a.department.trim().toLowerCase()).filter(Boolean));
-    if (ownDepts.size > 0) {
-      available = people.filter((p) => {
-        const d = (p.department ?? '').trim().toLowerCase();
-        return !(d && ownDepts.has(d));
-      });
-    }
-  }
+  const params = new URL(request.url).searchParams;
+
+  // `?purpose=transfer` (the "Request transfer in" dialog) offers everyone — a
+  // manager may pull someone out of a department they also manage (Kane's (b),
+  // 2026-09-25, audit item 205). Every other caller — the KPI calculators'
+  // external pickers — still has the manager's OWN departments dropped, because
+  // they treat each returned person as external to the team.
+  const managedDepts = isAdmin
+    ? []
+    : (await listDepartmentsForManager(sessionEmail)).rows.map((a) => a.department);
+  const available = candidatePool(people, { isAdmin, managedDepts, purpose: params.get('purpose') });
 
   // Full department list for the picker's filter dropdown — computed from the
   // available set so it stays stable regardless of the active filters.
@@ -99,7 +98,6 @@ export async function GET(request: Request) {
     new Set(available.map((p) => (p.department ?? '').trim()).filter(Boolean)),
   ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-  const params = new URL(request.url).searchParams;
   const q = params.get('q')?.trim().toLowerCase() ?? '';
   const dept = params.get('department')?.trim().toLowerCase() ?? '';
 
@@ -128,8 +126,9 @@ export async function GET(request: Request) {
   // candidate array under the map key, and nothing failed. That silently undid
   // all three of this route's documented contracts at once: `?q=`/`?department=`
   // stopped narrowing anything (searching a work email returned strangers), the
-  // no-poaching picker exclusion stopped dropping the manager's own team
-  // (department-transfers.md:81), and the dialog's sub-team expansion read an
+  // own-department exclusion (then applied to every caller; since 2026-09-25 only
+  // to the non-transfer ones) stopped dropping the manager's own team, and the
+  // dialog's sub-team expansion read an
   // array as a map. Naming the shape makes that class a compile error.
   const body: TransferCandidatesResponse = {
     people: filtered.slice(0, 200),

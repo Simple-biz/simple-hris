@@ -1386,7 +1386,7 @@ The **Orientation** inner tab of My Team: weekly attendance cards and tally buil
 
 ### `src/components/manager/ManagerTransferDialog.tsx`
 
-Department-transfer request modal (opened from `ManagerTransfers.tsx`; no longer a My Team roster action). Candidates + the department filter + the **data sub-team map** come from `GET /api/manager/transfer-candidates`. **Send to HR** -> `POST /api/department-transfers`. Amber note reminds HR to also update the master Google Sheet so the next sync preserves the new department.
+Department-transfer request modal (opened from `ManagerTransfers.tsx`; no longer a My Team roster action). Candidates + the department filter + the **data sub-team map** come from `GET /api/manager/transfer-candidates?purpose=transfer`. The flag is load-bearing: without it the endpoint drops the manager's own departments (the KPI pickers' view), which is how cjm@ lost every Lead Gen agent once she was granted Lead Gen (audit item 205). **Send request** -> `POST /api/department-transfers`; another manager of the source department must release it.
 
 **Targets are the manager's grants EXPANDED, never raw** (`myDepartments` is the access-control keyspace; feeding it in directly is how `hsl:intake_specialist` once got written into master `Department` cells). Since 2026-09-22: any `hsl:<x>` grant — code team **or** data team — is that ONE target; a parent-HSL grant expands to the 16 code teams **plus** every data team (`builtinSubOptionsWithPinned`); a non-HSL department that HAS sub-teams offers its teams, not its bare label. `soleDept` defaults only when exactly one real choice remains. Submit is gated on `isPlaceableDeptLabel(toDept, placeableSubIndex(map))` and the route now enforces the same rule.
 

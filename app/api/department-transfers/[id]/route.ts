@@ -16,6 +16,7 @@ import {
   type DepartmentTransferRequestRow,
 } from '@/lib/supabase/department-transfer-requests';
 import { applyApprovedTransfer, manilaTodayIso } from '@/lib/transfers/apply-transfer';
+import { transferDecisionDenial } from '@/lib/transfers/transfer-authority';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 
@@ -223,16 +224,21 @@ export async function PATCH(
     const authz = await requireFeatureEdit('manager', 'team');
     if (!authz.ok) return deniedResponse(authz);
 
-    // Only a manager of the SOURCE department (or an admin) may decide.
+    // Only a manager of the SOURCE department (or an admin) may decide — and
+    // never the manager who RAISED it. Since 2026-09-25 a requester may also
+    // manage the source department (audit item 205), so this is what keeps a
+    // second person on every move.
     if (!isAdmin) {
       const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
       const departments = assigns.map((a) => a.department.trim()).filter(Boolean);
-      if (!departmentMatchesManagedAssignments(row.from_department, departments)) {
-        return NextResponse.json(
-          { error: 'Only a manager of the current department can decide this transfer' },
-          { status: 403 },
-        );
-      }
+      const denial = transferDecisionDenial({
+        isAdmin,
+        sessionEmail,
+        requestedBy: row.requested_by,
+        fromDept: row.from_department,
+        managedDepts: departments,
+      });
+      if (denial) return NextResponse.json({ error: denial }, { status: 403 });
     }
 
     const supabase = createSupabaseServiceRoleClient();
