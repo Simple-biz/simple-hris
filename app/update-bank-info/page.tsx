@@ -3,7 +3,16 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
-import { Loader2, Mail, ShieldCheck, ArrowLeft, CheckCircle2, Landmark, Lock } from 'lucide-react';
+import {
+  Loader2,
+  Mail,
+  ShieldCheck,
+  ShieldAlert,
+  ArrowLeft,
+  CheckCircle2,
+  Landmark,
+  Lock,
+} from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -216,6 +225,7 @@ export default function UpdateBankInfoPage() {
               Verify your work email, then review and update your payout details.
             </p>
           </div>
+          {step !== 'done' && <CardSafetyNotice />}
           {step === 'email' && (
             <div className="space-y-5">
               {payrollLocked && <LockNotice />}
@@ -361,6 +371,32 @@ export default function UpdateBankInfoPage() {
         </p>
       </motion.div>
     </main>
+  );
+}
+
+/**
+ * Anti-phishing reminder, shown on every step before the save. Payouts only ever
+ * need an account or wallet — card details are what a scammer posing as Simple
+ * would ask for.
+ */
+function CardSafetyNotice() {
+  return (
+    <div
+      className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30"
+      role="note"
+    >
+      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300" aria-hidden />
+      <div className="text-[13px] leading-relaxed">
+        <p className="font-semibold text-amber-900 dark:text-amber-100">
+          Never share your card number, CVV or expiry date
+        </p>
+        <p className="mt-0.5 text-amber-800/90 dark:text-amber-200/80">
+          Simple employees will <strong>never</strong> ask for these — not on this page, by email,
+          chat or phone. If anyone does, it&rsquo;s a scam. We only need your account or wallet
+          details to pay you.
+        </p>
+      </div>
+    </div>
   );
 }
 
