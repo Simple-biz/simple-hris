@@ -147,6 +147,39 @@ by `requireRateVisibilitySession` (admin / accounting / ceo). **The CEO's People
 opens. The People root carries `data-readonly-allow`, so View, Back, Reveal and the pager stay live
 for a view-only viewer.
 
+## 7. Motion: one glide, and nothing that fights it
+
+Smoothed 2026-09-25 at Kane's request (*"smoothen the animation on this"*). The rules below were
+**measured** in a scratch harness: the real component, the project's Tailwind, Chromium, and every
+animation frame sampled.
+
+- **The lift from centre to top is a FLIP, never a CSS transition of layout.** The logo
+  (`motion.img layout`) and the bar (`layout="position"`) animate as transforms from where they were
+  to where they now are. `layoutDependency={typed}` means they are measured only when a search
+  starts or clears, not on every keystroke. The first build animated the spacer's `flex-grow` over
+  500 ms and the logo's height over 300 ms, which fought each other. Worse, a first keystroke that
+  filled the page with results used up the free space, so **the bar teleported 281 px in ONE frame**
+  (300 px on mobile) and never glided at all. Measured after the fix: about 70 frames of travel,
+  the biggest single-frame step 6% of the distance (3% on mobile), settled by ~560 ms.
+- **The travel curve is ease-in-out (`TRAVEL`, `[0.4, 0, 0.2, 1]`, 500 ms), not expo-out.** Expo-out
+  moved 21% of the distance in the first frame, a lurch on a 280 px move. Expo-out (`GLIDE`) stays
+  on the short 8–10 px arrivals (views and results), where a fast start reads as responsive.
+- **Results arrive once per search, 180 ms behind the bar, and then live-filter without
+  animating.** A keystroke re-renders rows in place, because typing feedback must never lag. Paging
+  gets a 180 ms crossfade (keyed by page), so Prev/Next visibly did something.
+- **Leaving elements pop out of the flow** (`AnimatePresence mode="popLayout"` on the hint and the
+  results), so the bar never waits for an exit animation to finish.
+- **Search ↔ person page is a quick crossfade**: 120 ms out, then 280 ms in with an 8 px rise. The
+  old version ran a full 200 ms exit and then a 200 ms entrance, both moving 10 px, with a blank
+  beat between them. The page **opens at its top**, **Back returns to the scroll position** the
+  person was opened from, focus lands on **Back** when the page opens and on **the bar** on return,
+  always with `preventScroll`. Measured: scrollTop 420 → 0 → 420, focus correct both ways.
+- **`OnMount` is a passive effect, not a layout effect.** A layout effect runs before later
+  siblings' and ancestors' refs attach (post-order commit), so the input ref was still null and
+  focus silently never landed. The harness caught this: the keystroke went nowhere.
+- **Reduced motion drops all travel and keeps the fades.** The bar lands in one frame (measured),
+  and the views, results and reveal still fade, because those fades say the state changed.
+
 ## Deploy notes
 
 **No migration.** No env vars, no new endpoint, no new payload field, no n8n import. Nothing for
