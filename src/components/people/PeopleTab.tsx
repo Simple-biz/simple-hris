@@ -869,9 +869,10 @@ export default function PeopleTab({
             </Button>
           </div>
         </div>
-        {/* Top-level tabs: Roster · Statistics · live Bank-changes feed · Offboarded search · bank Search Bar. */}
+        {/* Top-level tabs: bank Search Bar (first, Kane 2026-09-25) · Roster · Statistics · live Bank-changes feed · Offboarded search.
+            Roster stays the tab People opens on. */}
         <div role="tablist" className="mt-3 flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
-          {([['roster', 'Roster'], ['stats', 'Statistics'], ['changes', 'Bank changes'], ['offboarded', 'Offboarded'], ['search', 'Search Bar']] as const).map(([id, label]) => (
+          {([['search', 'Search Bar'], ['roster', 'Roster'], ['stats', 'Statistics'], ['changes', 'Bank changes'], ['offboarded', 'Offboarded']] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"

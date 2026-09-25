@@ -1,7 +1,8 @@
 # People → Search Bar — find a person by name or work email, then view their bank details inline
 
-A fifth tab on Accounting's People surface (Roster · Statistics · Bank changes · Offboarded ·
-**Search Bar**), also on the CEO's People tab. It is styled on Payment Catalog → Search: the
+The **first** tab on Accounting's People surface (**Search Bar** · Roster · Statistics · Bank changes ·
+Offboarded), also on the CEO's People tab. Kane moved it to the front on 2026-09-25 (*"put the search
+bar at the first part"*). **Roster is still the tab People opens on**: only the position changed. It is styled on Payment Catalog → Search: the
 Simple logo over a centred bar that moves up once you type. Results are active-roster people, and
 **View** replaces the search with that person's bank page, which has a Back button. Built for
 Kane, 2026-09-25: *"lets add a new Tab called 'Search Bar' similar to the payment catalog where we
