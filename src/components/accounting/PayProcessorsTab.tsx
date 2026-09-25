@@ -984,12 +984,17 @@ function BankPeople({
     };
   }, [bankKey, open]);
 
+  // Keyed by position in the fetched list, not by email: the list equals the count (§5.1),
+  // so it legitimately holds several rows with a blank work email, or one person twice via
+  // duplicate `employee_ids` rows — any key built from the row's own fields collides. The
+  // position is assigned before filtering, so a row keeps its key while the query changes.
   const shown = useMemo(() => {
     if (!people) return [];
+    const rows = people.map((p, i) => ({ p, rowKey: i }));
     const q = query.trim().toLowerCase();
-    if (!q) return people;
-    return people.filter(
-      (p) =>
+    if (!q) return rows;
+    return rows.filter(
+      ({ p }) =>
         p.name.toLowerCase().includes(q) ||
         p.workEmail.toLowerCase().includes(q) ||
         (deptByEmail.get(p.workEmail) ?? '').toLowerCase().includes(q),
@@ -1028,11 +1033,11 @@ function BankPeople({
             />
           )}
           <div className="max-h-64 divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-zinc-200 dark:divide-zinc-900 dark:border-zinc-800">
-            {shown.map((p) => {
+            {shown.map(({ p, rowKey }) => {
               const left = offboardedEmails.has(p.workEmail);
               const dept = deptByEmail.get(p.workEmail);
               return (
-                <div key={`${p.workEmail}-${p.paidHere}`} className="flex items-center gap-2 px-2.5 py-1.5">
+                <div key={rowKey} className="flex items-center gap-2 px-2.5 py-1.5">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium text-zinc-800 dark:text-zinc-200">
                       {p.name || p.workEmail}
