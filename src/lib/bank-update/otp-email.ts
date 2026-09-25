@@ -41,6 +41,7 @@ function renderOtpEmailHtml(name: string, code: string): string {
       <p style="margin:0 0 18px;font-size:14px;line-height:1.5;color:#3f3f46">Use this one-time code to update your bank &amp; payout details:</p>
       <div style="font-size:34px;font-weight:700;letter-spacing:8px;text-align:center;background:#f4f4f5;border-radius:12px;padding:18px 0;color:#111827">${escapeHtml(code)}</div>
       <p style="margin:18px 0 0;font-size:13px;line-height:1.5;color:#71717a">This code expires in 10 minutes. If you didn't request it, you can safely ignore this email — your details won't change.</p>
+      <div style="margin:16px 0 0;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;font-size:12px;line-height:1.6;color:#92400e"><strong>Never share your card number, CVV or expiry date.</strong> Simple employees will never ask for them — by email, chat or phone. If anyone does, it's a scam. We only need your account or wallet details to pay you.</div>
     </td></tr>
     <tr><td style="padding:16px 28px 24px;border-top:1px solid #f4f4f5">
       <p style="margin:0;font-size:12px;color:#a1a1aa">— The Simple.biz Team</p>
@@ -72,7 +73,7 @@ export async function sendBankUpdateOtpEmail(
     recipient_name: name,
     otp_code: code,
     subject: "Your Simple.biz bank-update code",
-    body: `Hi${greetingName ? ` ${greetingName}` : ""},\n\nUse this one-time code to update your bank & payout details:\n\n${code}\n\nThis code expires in 10 minutes. If you didn't request it, you can ignore this email.\n\n— The Simple.biz Team`,
+    body: `Hi${greetingName ? ` ${greetingName}` : ""},\n\nUse this one-time code to update your bank & payout details:\n\n${code}\n\nThis code expires in 10 minutes. If you didn't request it, you can ignore this email.\n\nNever share your card number, CVV or expiry date. Simple employees will never ask for them — by email, chat or phone. If anyone does, it's a scam.\n\n— The Simple.biz Team`,
     html: renderOtpEmailHtml(name, code),
     sent_by: "system",
   };
