@@ -14,7 +14,7 @@ import { resolveWebhookUrl } from '@/lib/webhooks/resolve-webhook';
 import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 import { TICKET_LIVE_EVENT, TICKET_LIVE_TOPIC, type TicketLivePayload } from '@/lib/support/ticket-live';
 import { screenText } from '@/lib/support/screening';
-import { staffReplyRecipient } from '@/lib/support/recipients';
+import { staffReplyRecipient, ticketClosedRecipient } from '@/lib/support/recipients';
 import { canStaffAct, nextStatus, type Actor, type LifecycleTicket } from '@/lib/support/lifecycle';
 import { isSupportPriority, stageOf, type SupportPriority, type TicketStage } from '@/lib/support/triage';
 import {
@@ -337,6 +337,62 @@ async function notifyInApp(
   }
 }
 
+/**
+ * The in-app row for a CLOSURE — Kane, 2026-09-25: "if a ticket was closed
+ * please make sure that the Employee is to be notified of this."
+ *
+ * Called only from the close path's success branch, with the row the
+ * compare-and-set returned, so a refused close, a lost race (409) or a
+ * double-click fires nothing: one closure, one notification.
+ *
+ * AWAITED, NOT `void`-ed — unlike the reply's. "Make sure the employee is
+ * notified" is the whole ask, and a promise left running after a serverless
+ * response is sent can be frozen before its insert lands. It cannot throw
+ * (everything is caught below), so awaiting it can never fail or un-close the
+ * ticket; it costs the Close click one name lookup and one insert. A rejected
+ * insert (the `support.closed` widen not yet applied) is written to audit_log
+ * as `notification.insert_failed` rather than vanishing.
+ *
+ * The copy tells the employee the one thing a closure changes for them: the
+ * thread stays readable, and replying reopens it (`canEmployeeReply`).
+ */
+async function notifyClosedInApp(sb: SupabaseClient, authz: AuthzOk, ticket: TicketDbRow): Promise<void> {
+  const recipient = ticketClosedRecipient({ work_email: ticket.work_email, claimed_by: ticket.claimed_by });
+  if (!recipient) return;
+
+  const type = 'support.closed';
+  const actorMeta = { user_name: authz.sessionEmail, user_role: authz.roles[0] ?? 'user' };
+  try {
+    const closedBy = (await lookupFullNameForEmail(authz.sessionEmail)) ?? 'Support';
+    const label = formatSupportTicketNo(ticket.ticket_no);
+    const notif = await sb.from('employee_notifications').insert({
+      recipient_email: recipient,
+      type,
+      tone: 'neutral',
+      title: 'Your ticket has been closed',
+      message: `${closedBy} closed your ticket ${label}. You can still read it — reply if it isn't resolved and it will reopen.`,
+      details: { ticket_id: ticket.id, ticket_no: ticket.ticket_no },
+    });
+    if (notif.error) {
+      void recordNotifyFailure({
+        notificationType: type,
+        origin: 'support/tickets/[id]/reply',
+        error: notif.error,
+        actor: actorMeta,
+        details: { ticket_no: ticket.ticket_no, act: 'close' },
+      });
+    }
+  } catch (err) {
+    void recordNotifyFailure({
+      notificationType: type,
+      origin: 'support/tickets/[id]/reply',
+      error: err,
+      actor: actorMeta,
+      details: { ticket_no: ticket.ticket_no, act: 'close' },
+    });
+  }
+}
+
 /* ──────────────────────────────── GET ───────────────────────────────────── */
 
 /** GET — the ticket and its whole thread, flags included. Any staff member may read any ticket. */
@@ -466,6 +522,7 @@ async function closeTicket(sb: SupabaseClient, request: Request, authz: AuthzOk,
     details: { ticket_no: row.ticket_no, work_email: row.work_email },
   });
   announce(row.id, 'ticket');
+  await notifyClosedInApp(sb, authz, after);
 
   return NextResponse.json({ migrated: true, ticket: toWire(after), message: null, messages: null, error: null });
 }

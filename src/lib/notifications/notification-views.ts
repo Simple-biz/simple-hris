@@ -93,8 +93,9 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // EMPLOYEE's, for the same reason as the chat pair above: the five answerers
   // work the queueing line and the board on /tickets, and a badge on that
   // dashboard for their own replies would be noise. No type exists for the
-  // staff side — the widen admits exactly these two — so an employee's reply
-  // reaches the answerers through the line they already watch, not a badge.
+  // staff side — the two widens admit exactly these three, all the employee's —
+  // so an employee's reply reaches the answerers through the line they already
+  // watch, not a badge.
   //
   //   support.replied   a staff member replied on the employee's ES- ticket.
   //                     Carla signed "A notification the moment someone
@@ -113,9 +114,18 @@ export const NOTIFICATION_TYPE_TO_VIEWS: Record<string, AppView[]> = {
   // type — either way it is the employee's. Changed together with
   // references/sql/alter/2026-09-21_support_notification_types.sql, which adds
   // exactly these two values and says the same thing from the other side;
-  // notification-views.test.ts holds the two files to each other.
+  // notification-views.test.ts holds the files to each other.
   'support.replied': ['employee'],
   'support.answered': ['employee'],
+  //   support.closed    a staff member closed the employee's ES- ticket (Kane,
+  //                     2026-09-25: "make sure that the Employee is to be
+  //                     notified of this"). Closing ends their expectation of a
+  //                     reply, so it is theirs for the same reason as the two
+  //                     above. Admitted by its OWN widen,
+  //                     references/sql/alter/2026-09-25_add_support_closed_notification_type.sql;
+  //                     notification-views.test.ts holds this family to the
+  //                     UNION of both files' `added` lists.
+  'support.closed': ['employee'],
   // Somebody filled in or updated their tenure-gift delivery details — through
   // the public /update-gift-address link, their Employee dashboard card, or a
   // staff entry. HR ONLY (Kane, 2026-09-22: "HR Dashboard people with HR - Gift

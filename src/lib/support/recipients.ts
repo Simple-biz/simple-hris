@@ -31,12 +31,17 @@
  *   employee reply   employeeReplyRecipient   the holder, or nobody — and the
  *   (incl. reopen)                            reply that REOPENS a closed
  *                                             ticket is no exception
+ *   staff close      ticketClosedRecipient    the employee, always — the
+ *                                             in-app row (support.closed)
  *
  * No function here fans out. There is no in-app type for the staff side and no
  * broadcast to the five: an employee's reply reaches the answerers through the
- * queueing line and the board they already watch. The two in-app types map to
+ * queueing line and the board they already watch. The three in-app types map to
  * ['employee'] in src/lib/notifications/notification-views.ts and are admitted
- * by references/sql/alter/2026-09-21_support_notification_types.sql.
+ * by references/sql/alter/2026-09-21_support_notification_types.sql
+ * (support.replied / support.answered) and
+ * references/sql/alter/2026-09-25_add_support_closed_notification_type.sql
+ * (support.closed).
  */
 
 const norm = (email: string | null | undefined): string | null => {
@@ -97,6 +102,30 @@ export function staffReplyRecipient(ticket: SupportTicketParties): string | null
  */
 export function employeeReplyRecipient(ticket: SupportTicketParties): string | null {
   return norm(ticket.claimed_by);
+}
+
+/**
+ * A closed ticket is news to the employee who asked. Always the employee — Kane,
+ * 2026-09-25: "if a ticket was closed please make sure that the Employee is to
+ * be notified of this."
+ *
+ * Closing is the act that ends the employee's expectation of a reply
+ * (lifecycle.ts, `case 'close'`). Before this rule the only trace was the
+ * Closed stop lighting on a track map they had to go and look at — a question
+ * could be closed over their head and they would find out by accident.
+ *
+ * NEVER `closed_by`, and never the holder. The closer is the one acting, so
+ * telling them is noise, and an admin closing over the holder's head is exactly
+ * the loop Kane is not in (see employeeReplyRecipient). The holder is not told
+ * either: a colleague closing a held ticket is refused by `canStaffAct` unless
+ * the closer is an admin, and the holder watches the board that shows it.
+ *
+ * Same answer as staffReplyRecipient on purpose, but its own function: the two
+ * events are separate rules that happen to agree today, and a change to who
+ * hears about replies must not silently change who hears about a closure.
+ */
+export function ticketClosedRecipient(ticket: SupportTicketParties): string | null {
+  return norm(ticket.work_email);
 }
 
 /**

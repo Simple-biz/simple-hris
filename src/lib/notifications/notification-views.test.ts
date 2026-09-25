@@ -96,6 +96,7 @@ const EMPLOYEE_SUPPORT_TYPES = [
   'support_chat.became_ticket',
   'support.replied',
   'support.answered',
+  'support.closed',
 ] as const;
 
 test('the two ticket-side Employee Support types badge the Employee dashboard', () => {
@@ -104,6 +105,13 @@ test('the two ticket-side Employee Support types badge the Employee dashboard', 
   const hiddenFromEmployee = hiddenTypesForView('employee');
   assert.ok(!hiddenFromEmployee.includes('support.replied'));
   assert.ok(!hiddenFromEmployee.includes('support.answered'));
+});
+
+test('a closed support ticket badges the Employee dashboard (Kane, 2026-09-25)', () => {
+  // "if a ticket was closed please make sure that the Employee is to be
+  // notified of this." Unmapped, the row would exist and reach nobody.
+  assert.deepEqual(viewsForNotificationType('support.closed'), ['employee']);
+  assert.ok(!hiddenTypesForView('employee').includes('support.closed'));
 });
 
 test("Employee Support never badges the answerers' own dashboard", () => {
@@ -151,11 +159,24 @@ const mappedFamily = (re: RegExp) =>
     .filter((t) => re.test(t))
     .sort();
 
-test('the ticket-side widen and this map admit the same two support.* types', () => {
-  assert.deepEqual(
-    mappedFamily(/^support\./),
-    addedTypes('references/sql/alter/2026-09-21_support_notification_types.sql'),
-  );
+// The ticket side has TWO widens — replies/answered (2026-09-21) and closed
+// (2026-09-25). The map must equal their union exactly, and neither file may
+// add a value the other already added (two files claiming one type means one
+// of them is lying about what it is for).
+const TICKET_SIDE_WIDENS = [
+  'references/sql/alter/2026-09-21_support_notification_types.sql',
+  'references/sql/alter/2026-09-25_add_support_closed_notification_type.sql',
+] as const;
+
+test('the ticket-side widens and this map admit the same support.* types', () => {
+  const perFile = TICKET_SIDE_WIDENS.map(addedTypes);
+  const union = perFile.flat().sort();
+  assert.equal(new Set(union).size, union.length, `a support.* type is added by more than one widen: ${union.join(', ')}`);
+  assert.deepEqual(mappedFamily(/^support\./), union);
+});
+
+test('the 2026-09-25 widen adds support.closed and nothing else', () => {
+  assert.deepEqual(addedTypes(TICKET_SIDE_WIDENS[1]), ['support.closed']);
 });
 
 test('the chat-side widen and this map admit the same two support_chat.* types', () => {

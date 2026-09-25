@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   staffReplyRecipient,
   employeeReplyRecipient,
+  ticketClosedRecipient,
   ticketFiledRecipient,
 } from './recipients';
 import type { SupportCategory, SupportStatus } from './types';
@@ -43,6 +44,7 @@ test('every function returns null rather than an empty string', () => {
   for (const b of blanks) {
     assert.equal(staffReplyRecipient({ work_email: b as string, claimed_by: STAFFER }), null);
     assert.equal(employeeReplyRecipient({ work_email: EMPLOYEE, claimed_by: b as string }), null);
+    assert.equal(ticketClosedRecipient({ work_email: b as string, claimed_by: STAFFER }), null);
     assert.equal(ticketFiledRecipient(b as string), null);
   }
 });
@@ -204,7 +206,7 @@ test('no rule ever answers with more than one address, in any status', () => {
         closed_by: status === 'closed' ? ADMIN : null,
         closed_at: status === 'closed' ? T_CLOSED : null,
       });
-      for (const got of [staffReplyRecipient(row), employeeReplyRecipient(row)]) {
+      for (const got of [staffReplyRecipient(row), employeeReplyRecipient(row), ticketClosedRecipient(row)]) {
         assert.ok(
           got === null || (typeof got === 'string' && got.length > 0 && !got.includes(',')),
           `${status}/${claimed_by ?? 'unheld'}: expected one address or null, got ${JSON.stringify(got)}`,
@@ -212,4 +214,51 @@ test('no rule ever answers with more than one address, in any status', () => {
       }
     }
   }
+});
+
+// ── A closure is the employee's news (Kane, 2026-09-25) ──────────────────────
+// "if a ticket was closed please make sure that the Employee is to be notified
+// of this." Closing ends the employee's expectation of a reply, so the person
+// who asked is told — whoever closed it, whether or not anybody held it.
+
+test('a closed ticket is announced to the employee who asked', () => {
+  const heldAndClosed = ticketRow({
+    status: 'closed',
+    claimed_by: STAFFER,
+    claimed_at: T_CLAIMED,
+    first_response_at: T_ANSWERED,
+    closed_by: STAFFER,
+    closed_at: T_CLOSED,
+  });
+  assert.equal(ticketClosedRecipient(heldAndClosed), EMPLOYEE);
+
+  // Nobody held it — lifecycle.ts lets anyone with the key close it — and the
+  // employee is still told. An unheld closure is the one most likely to
+  // surprise them.
+  const unheldClosed = ticketRow({ status: 'closed', closed_by: STAFFER, closed_at: T_CLOSED });
+  assert.equal(ticketClosedRecipient(unheldClosed), EMPLOYEE);
+});
+
+test('a closure never notifies the closer, the holder, or the alias it was filed from', () => {
+  // closed_by is not a party (SupportTicketParties) — an admin closing over the
+  // holder's head must not be mailed about support work. The holder watches the
+  // board. filed_by_email answers "how did they get here", never "who to tell".
+  const closedOverHead = ticketRow({
+    status: 'closed',
+    filed_by_email: 'maria.c.personal@gmail.com',
+    claimed_by: STAFFER,
+    claimed_at: T_CLAIMED,
+    closed_by: ADMIN,
+    closed_at: T_CLOSED,
+  });
+  const got = ticketClosedRecipient(closedOverHead);
+  assert.equal(got, EMPLOYEE);
+  assert.notEqual(got, ADMIN);
+  assert.notEqual(got, STAFFER);
+  assert.notEqual(got, 'maria.c.personal@gmail.com');
+});
+
+test('a closure normalises the address and is null, never an empty string, on a blank row', () => {
+  assert.equal(ticketClosedRecipient({ work_email: '  MariaC@Simple.BIZ ', claimed_by: null }), EMPLOYEE);
+  assert.equal(ticketClosedRecipient({ work_email: '', claimed_by: STAFFER }), null);
 });

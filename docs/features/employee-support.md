@@ -36,6 +36,7 @@ below.
 | Staff board route (list + claim/rank/reassign) | `app/api/support/tickets/route.ts` |
 | Staff thread route (reply/close/reopen) | `app/api/support/tickets/[id]/reply/route.ts` |
 | Staff board UI | `src/components/tickets/SupportTicketsTab.tsx` |
+| `support.closed` type widen + its runner | `references/sql/alter/2026-09-25_add_support_closed_notification_type.sql` · `scripts/apply-support-closed-notification-type.mjs` |
 | Audit family `employee_support.` | `src/lib/audit/registry.ts` |
 
 ## It is not on the dev ticket board, and that is not a preference
@@ -202,12 +203,31 @@ to `['employee']` — the answerers work the line and the board they already wat
 their own dashboard for their own replies. The n8n leg reuses the SAME `support_replied` slug the
 employee's own reply route calls in the other direction, `recipient_is_employee` naming which way.
 
+**A closure is announced to the employee — `support.closed` (Kane, 2026-09-25).** *"If a ticket was
+closed please make sure that the Employee is to be notified of this."* Until then a Close wrote the
+row, the audit line and the broadcast, and told the employee nothing: the only trace was the Closed
+stop lighting on a track map they had to go and look at. The close path now writes one
+`support.closed` row to the employee — `ticketClosedRecipient` in `recipients.ts`, which is the
+master `work_email`, **never `closed_by`, never the holder, never `filed_by_email`** — mapped to
+`['employee']` like every `support.*` type. It fires **only on the write the compare-and-set returned**,
+so a refused close, a lost race (409) or a double-click sends nothing: one closure, one notification.
+It is **awaited, not `void`-ed** — a promise left running after a serverless response is sent can be
+frozen before its insert lands — and it cannot throw, so it never fails or un-closes the ticket; a
+rejected insert is written to `audit_log` as `notification.insert_failed`. The copy says what a closure changes for them — the
+thread stays readable, and replying reopens it (`canEmployeeReply`). **In-app only**: the support
+email leg does not exist for any event yet (Deploy notes), and a close is not given one ahead of the
+replies. **Dead until its widen is applied** — see Deploy notes.
+
 **Not exercised in a browser** — `tsc` is clean and the suite is unaffected (4075/4077, the same
 two pre-existing failures tracked in [[main-has-three-failing-tests-2026-09-18]]), but nobody has
 clicked through the tab yet. First staff member to open it should confirm the counts resolve and a
 claim/reply/close round-trip actually lands.
 
 ## What is not built
+
+**A staff Reopen tells the employee nothing.** Only the closure is announced (2026-09-25). A reopen
+by staff puts the ticket back in the line with no row to the employee; an employee's own reply that
+reopens it needs none, because they did it.
 
 **The staff-only trial** Carla approved — *"You and the support team try it before any employee
 sees it"* — has nothing implementing it. The Help button ships to every employee the moment the
@@ -242,7 +262,16 @@ the chat migration has a foreign key into `employee_support_tickets`.
 - **Five grants by hand after deploy**: `employee_support` to Carla, Claire, Ainsley, Grace, Alivia.
   Until they exist the staff tabs are empty for everyone.
 - **n8n: PENDING.** `support_filed`, `support_replied` if the email leg ships. Recipient handed over
-  as `send_to`; the Gmail node never picks one.
+  as `send_to`; the Gmail node never picks one. A closure has **no** email hook at all yet — when the
+  leg ships it needs its own (`support_closed`), because the reply workflow's template would render
+  a closure as an empty reply.
+- **`support.closed` widen — PENDING Kane's `--apply`** (2026-09-25).
+  `node scripts/apply-support-closed-notification-type.mjs` reads the live constraint in a READ ONLY
+  transaction and writes nothing; `--apply` runs
+  `references/sql/alter/2026-09-25_add_support_closed_notification_type.sql` in a transaction and
+  COMMITs only if `support.closed` is present and every previously-live type still is. Measured
+  2026-09-25 before the apply: 49 types live, `support.closed` absent. **Until it runs every closure
+  notification is rejected** — the only trace is a `notification.insert_failed` row per close.
 - **No cron.** `docs/features/INDEX.md:42` — every `/api/cron/*` 401s on the fail-closed
   `CRON_SECRET` gate and the two declared crons have never once run. Anything with a lifetime
   expires **lazily on read**.
