@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { holdStagePrepped, playStagePrepped, releaseStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { useStartProcessingBroadcast } from '@/hooks/useStartProcessingBroadcast';
 import StartProcessingBroadcastModal from '@/components/payroll/StartProcessingBroadcastModal';
 import { announceDispatchPaid } from '@/hooks/useDispatchPaidToasts';
@@ -1438,12 +1438,12 @@ export default function PayrollDispatch() {
       !goingLocked && downloadReportOn && !viewingPastWeek && Boolean(period.sourceFile);
     // The cue is already playing — it started on the Start Processing click, as
     // the modal opened. Confirming HOLDS it so it outlives the modal and plays
-    // its full run; cancelling never reaches here, so a dismissed modal still
+    // the whole song; cancelling never reaches here, so a dismissed modal still
     // ends in silence. Start only. Same contract as the Payroll Wizard.
     if (goingLocked) holdStagePrepped();
     // Everyone else with dispatch or the wizard open gets the modal + the cue.
     // START only — stopping processing stays silent on every screen.
-    if (goingLocked) announceStart(firstName);
+    if (goingLocked) announceStart(firstName, session?.user?.name);
     // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
@@ -1624,6 +1624,10 @@ export default function PayrollDispatch() {
       // the parent state changes — feels like one motion, not two.
       setConfirmingLockToggle(false);
     } catch (e) {
+      // The Start failed and the confirm dialog is still open: hand the song
+      // back to its pre-confirm state, so Cancel silences it and a retried
+      // Confirm holds it again — never a whole song for a run that never began.
+      if (goingLocked) releaseStagePrepped();
       // On failure, still let the scene settle a beat before showing the error.
       await minShow.catch(() => {});
       toast.error(e instanceof Error ? e.message : 'Could not update lock');

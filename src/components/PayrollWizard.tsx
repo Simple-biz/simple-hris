@@ -338,7 +338,7 @@ import { useBuiltinSubsState } from '@/lib/departments/use-builtin-subs';
 import { builtinSubsFor } from '@/lib/departments/builtin-subs';
 import WizardCursorOverlay, { type WizardCursorOverlayHandle } from '@/components/payroll/WizardCursorOverlay';
 import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/LockToggleConfirmDialog';
-import { holdStagePrepped, playStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
+import { holdStagePrepped, playStagePrepped, releaseStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { useStartProcessingBroadcast } from '@/hooks/useStartProcessingBroadcast';
 import StartProcessingBroadcastModal from '@/components/payroll/StartProcessingBroadcastModal';
 import { payrollNotesWeekStart, weekRangeLabel } from '@/lib/payroll/manila-week';
@@ -11797,13 +11797,13 @@ export default function PayrollWizard({
     const goingLocked = !lockState.locked;
     // The cue is already playing — it started on the Start Processing click, as
     // the modal opened. Confirming HOLDS it, so it survives the modal closing
-    // ~2s from now and plays its full run (Kane 2026-09-15: "at least 10
-    // seconds"). Cancelling instead of confirming never reaches here, which is
-    // exactly how a dismissed modal still ends in silence. Start only.
+    // ~2s from now and plays the whole song (Kane 2026-09-25). Cancelling
+    // instead of confirming never reaches here, which is exactly how a
+    // dismissed modal still ends in silence. Start only.
     if (goingLocked) holdStagePrepped();
     // Everyone else with the wizard or dispatch open gets the modal + the cue.
     // START only — stopping processing stays silent on every screen.
-    if (goingLocked) announceStart(lockFirstName);
+    if (goingLocked) announceStart(lockFirstName, authSession?.user?.name);
     // Minimum on-screen time for the "Preparing Dispatch…" scene so it plays
     // gracefully instead of flashing by when the optimistic POST returns fast.
     const minShow = new Promise((r) => setTimeout(r, 1600));
@@ -11839,6 +11839,10 @@ export default function PayrollWizard({
         },
       });
     } catch (e) {
+      // The Start failed and the confirm dialog is still open: hand the song
+      // back to its pre-confirm state, so Cancel silences it and a retried
+      // Confirm holds it again — never a whole song for a run that never began.
+      if (goingLocked) releaseStagePrepped();
       toast.error(e instanceof Error ? e.message : 'Could not update lock');
     } finally {
       setTogglingLock(false);

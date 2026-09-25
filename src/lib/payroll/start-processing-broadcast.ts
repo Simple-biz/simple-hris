@@ -21,23 +21,54 @@
  * See docs/features/start-processing-cue.md.
  */
 
+import { STAGE_PREPPED_MAX_SECONDS } from '@/lib/sound/ping-chime';
+
 /** Realtime Broadcast topic both surfaces subscribe to. */
 export const START_PROCESSING_TOPIC = 'payroll-start-processing';
 /** Broadcast event name on that topic. */
 export const START_PROCESSING_EVENT = 'start';
 
 /**
- * How long the cue runs, in ms. MUST equal `STAGE_PREPPED_RUN_SECONDS` in
- * `src/lib/sound/ping-chime.ts` — it is both the modal's auto-dismiss deadline
- * and the staleness cutoff below. A test pins the two together.
+ * The staleness cutoff, in ms — and the modal's MINIMUM time on screen.
+ *
+ * Until 2026-09-25 this also had to equal the cue's run length. Kane then ruled
+ * the whole song plays (2:31), so the two were SPLIT rather than stretched: a
+ * 2:31 cutoff would let a tab that reconnects two and a half minutes late start
+ * the song from the top, which breaks his own 2026-09-15 ruling *"if they are
+ * late they shouldnt hear it."* The cutoff stays 12s. The modal now closes when
+ * BOTH this window has passed AND the song has stopped (`shouldCloseStartModal`),
+ * so it can neither close mid-song nor sit on in front of silence.
  */
 export const START_CUE_WINDOW_MS = 12_000;
+
+/**
+ * Hard ceiling on the peer modal, whatever the audio engine reports: the
+ * longest a run can be, started as late as the window allows, plus slack for
+ * the fetch and decode. A lost `ended` event can therefore never strand the
+ * modal over the oversee/follow mirror.
+ */
+export const START_MODAL_MAX_MS = START_CUE_WINDOW_MS + STAGE_PREPPED_MAX_SECONDS * 1000 + 10_000;
+
+/**
+ * Should the peer modal close on its own now? Only once the minimum window has
+ * passed AND the cue is no longer loading or playing. Dismissing it by hand is
+ * separate — that always closes it and stops the song.
+ */
+export function shouldCloseStartModal(s: { windowElapsed: boolean; cueActive: boolean }): boolean {
+  return s.windowElapsed && !s.cueActive;
+}
 
 export interface StartProcessingAnnouncement {
   /** Lowercased email of the clerk who started processing. */
   by: string;
   /** Friendly display name for the modal ("Carla"). */
   byLabel: string;
+  /**
+   * Their full name, for the "Started by" line, or null when the sender had
+   * none (an impersonation session's name is its raw email) or runs an older
+   * build that never sent one.
+   */
+  byName: string | null;
   /** `Date.now()` at the moment they confirmed. */
   at: number;
   /** Which surface they started from — the modal says so. */
@@ -56,7 +87,19 @@ export function parseStartPayload(raw: unknown): StartProcessingAnnouncement | n
   const surface = r.surface === 'wizard' || r.surface === 'dispatch' ? r.surface : null;
   if (!by || !at || !surface) return null;
   const byLabel = typeof r.byLabel === 'string' && r.byLabel.trim() ? r.byLabel.trim() : by.split('@')[0]!;
-  return { by, byLabel, at, surface };
+  return { by, byLabel, byName: parseFullName(r.byName), at, surface };
+}
+
+/**
+ * A display name off the wire, or null. An email is not a name (impersonation
+ * sessions set `name` to one), and the length is capped so a hostile payload
+ * cannot stretch the modal.
+ */
+export function parseFullName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.trim().replace(/\s+/g, ' ');
+  if (!name || name.includes('@')) return null;
+  return name.slice(0, 80);
 }
 
 /**
@@ -69,9 +112,10 @@ export function parseStartPayload(raw: unknown): StartProcessingAnnouncement | n
  *   - it is STALE. Kane, 2026-09-15: *"if they are late they shouldnt hear it."*
  *     Broadcast is not replayed to a late joiner, so the usual case is handled
  *     by the transport — but a reconnecting or backgrounded tab CAN be handed a
- *     message after the fact, and that arrival must be silent. The cutoff is the
- *     cue's own run length: once the operator's music has finished, there is
- *     nothing left to join.
+ *     message after the fact, and that arrival must be silent. The cutoff is
+ *     `START_CUE_WINDOW_MS` (12s), deliberately NOT the song's length — a peer
+ *     starts the song from the top, so a longer cutoff would mean a tab joining
+ *     minutes behind everyone else.
  */
 export function shouldAnnounceStart(
   msg: StartProcessingAnnouncement | null,
@@ -91,4 +135,13 @@ export function shouldAnnounceStart(
 /** One line of modal copy. Kept here so the test can pin it. */
 export function startProcessingHeadline(msg: StartProcessingAnnouncement): string {
   return `${msg.byLabel} is starting payroll`;
+}
+
+/**
+ * Who started it, in full — Kane 2026-09-25: *"the modal should also show the
+ * person who started it."* The headline's first name alone cannot tell two
+ * Carlas apart, so this names the person AND the account.
+ */
+export function startedByLine(msg: StartProcessingAnnouncement): string {
+  return `${msg.byName ?? msg.byLabel} · ${msg.by}`;
 }

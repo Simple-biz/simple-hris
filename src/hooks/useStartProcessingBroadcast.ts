@@ -5,6 +5,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
   START_PROCESSING_EVENT,
   START_PROCESSING_TOPIC,
+  parseFullName,
   parseStartPayload,
   shouldAnnounceStart,
   type StartProcessingAnnouncement,
@@ -17,8 +18,11 @@ interface Args {
 }
 
 interface Result {
-  /** Call on the START branch of the lock toggle, right after `holdStagePrepped()`. */
-  announceStart: (byLabel: string) => void;
+  /**
+   * Call on the START branch of the lock toggle, right after `holdStagePrepped()`.
+   * `byName` is the session's full name — the peer modal's "Started by" line.
+   */
+  announceStart: (byLabel: string, byName: string | null | undefined) => void;
   /** The announcement to render, or null. */
   announcement: StartProcessingAnnouncement | null;
   dismiss: () => void;
@@ -71,10 +75,10 @@ export function useStartProcessingBroadcast({ selfEmail, surface }: Args): Resul
   }, [selfEmail]);
 
   const announceStart = useCallback(
-    (byLabel: string) => {
+    (byLabel: string, byName: string | null | undefined) => {
       const self = (selfRef.current ?? '').trim().toLowerCase();
       if (!self) return;
-      sendRef.current?.({ by: self, byLabel, at: Date.now(), surface });
+      sendRef.current?.({ by: self, byLabel, byName: parseFullName(byName), at: Date.now(), surface });
     },
     [surface],
   );

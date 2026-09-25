@@ -15,22 +15,38 @@
  * Rules:
  *   - DISMISSIBLE (Kane, Q3), and dismissing STOPS the song, the same contract
  *     the operator's Cancel already has.
- *   - Auto-dismisses at the cue's own boundary, so it cannot sit on top of the
- *     oversee/follow mirror that spectators are here to watch.
+ *   - Stays up for the WHOLE song (Kane 2026-09-25: "it needs to play the whole
+ *     song unless the modal is being closed"). It closes on its own only when
+ *     the 12s window has passed AND the cue has stopped (`shouldCloseStartModal`),
+ *     with a hard ceiling (`START_MODAL_MAX_MS`) so it can never be stranded
+ *     over the oversee/follow mirror.
+ *   - Names who started it in full — name and account — not just a first name
+ *     (Kane 2026-09-25).
  *   - Shows "Tap anywhere for sound" ONLY when the browser actually refused the
  *     audio. A silent modal with no explanation is the thing to avoid.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Send, Volume2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { playStagePreppedForPeer, stopStagePreppedForPeer } from '@/lib/sound/ping-chime';
+import {
+  isStagePreppedActive,
+  playStagePreppedForPeer,
+  prefetchStagePrepped,
+  stopStagePreppedForPeer,
+  subscribeStagePrepped,
+} from '@/lib/sound/ping-chime';
 import {
   START_CUE_WINDOW_MS,
+  START_MODAL_MAX_MS,
+  shouldCloseStartModal,
+  startedByLine,
   startProcessingHeadline,
   type StartProcessingAnnouncement,
 } from '@/lib/payroll/start-processing-broadcast';
+
+const noCueOnServer = () => false;
 
 function BreathingDots({ color }: { color: string }) {
   return (
@@ -57,30 +73,55 @@ export default function StartProcessingBroadcastModal({
   onDismiss: () => void;
 }) {
   const [needsTap, setNeedsTap] = useState(false);
+  // The `at` of the announcement whose minimum window has passed. Keyed by `at`
+  // so a second start can never inherit the first one's elapsed window.
+  const [elapsedFor, setElapsedFor] = useState<number | null>(null);
+  const cueActive = useSyncExternalStore(subscribeStagePrepped, isStagePreppedActive, noCueOnServer);
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
 
-  // One effect owns the whole run: start the cue, arm the auto-dismiss, and on
-  // ANY exit (dismiss, auto-dismiss, unmount, a second announcement) stop the
-  // sound and disarm the pending unlock. Leaving that teardown to the dismiss
-  // handler alone would let an unmount strand an armed listener.
+  // This modal is mounted (closed) on BOTH Start Processing surfaces, so it is
+  // where the song's bytes get warmed — for a peer's broadcast and for the
+  // operator's own click alike. Deferred a beat so it never competes with the
+  // page's first data loads.
+  useEffect(() => {
+    const id = window.setTimeout(prefetchStagePrepped, 1500);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  // One effect owns the whole run: start the cue, arm the window and the hard
+  // ceiling, and on ANY exit (dismiss, auto-close, unmount, a second
+  // announcement) stop the sound and disarm the pending unlock. Leaving that
+  // teardown to the dismiss handler alone would let an unmount strand an armed
+  // listener.
   useEffect(() => {
     if (!announcement) return;
     let cancelled = false;
+    const at = announcement.at;
     setNeedsTap(false);
 
     void playStagePreppedForPeer().then((audible) => {
       if (!cancelled) setNeedsTap(!audible);
     });
 
-    const id = window.setTimeout(() => onDismissRef.current(), START_CUE_WINDOW_MS);
+    const windowId = window.setTimeout(() => setElapsedFor(at), START_CUE_WINDOW_MS);
+    const ceilingId = window.setTimeout(() => onDismissRef.current(), START_MODAL_MAX_MS);
     return () => {
       cancelled = true;
-      window.clearTimeout(id);
+      window.clearTimeout(windowId);
+      window.clearTimeout(ceilingId);
       stopStagePreppedForPeer();
     };
     // `at` keys the run: a second start re-triggers even from the same person.
   }, [announcement?.at, announcement]);
+
+  // Close on our own only once the window has passed AND the song has stopped —
+  // never mid-song, never left up in front of silence.
+  const windowElapsed = announcement !== null && elapsedFor === announcement.at;
+  useEffect(() => {
+    if (!announcement) return;
+    if (shouldCloseStartModal({ windowElapsed, cueActive })) onDismissRef.current();
+  }, [announcement, windowElapsed, cueActive]);
 
   // Once they tap, the sound is running and the prompt is stale.
   useEffect(() => {
@@ -105,7 +146,7 @@ export default function StartProcessingBroadcastModal({
           {announcement ? startProcessingHeadline(announcement) : 'Payroll processing started'}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          Payroll processing has started. This notice closes on its own.
+          Payroll processing has started. This notice closes when the song ends; closing it stops the song.
         </DialogDescription>
 
         <div className="relative flex flex-col items-center gap-4 px-8 py-10 text-center">
@@ -143,6 +184,17 @@ export default function StartProcessingBroadcastModal({
               <BreathingDots color={accent} />
             </p>
           </div>
+
+          {announcement ? (
+            <div className="relative w-full rounded-lg border border-amber-200/70 bg-amber-50/60 px-3 py-2 text-left dark:border-amber-500/20 dark:bg-amber-500/5">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-amber-700/80 dark:text-amber-400/80">
+                Started by
+              </p>
+              <p className="truncate text-sm text-zinc-800 dark:text-zinc-200" title={startedByLine(announcement)}>
+                {startedByLine(announcement)}
+              </p>
+            </div>
+          ) : null}
 
           <AnimatePresence>
             {needsTap ? (
