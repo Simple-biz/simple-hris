@@ -26,6 +26,7 @@ and [employee-profile.md](./employee-profile.md).
 | Which rail gets a card, which gets wallet fields (shared) | `src/lib/banking/payout-rail-view.ts` (+ `.test.ts`) |
 | The last-4 mask rule (shared with the payout form) | `src/lib/banking/account-mask.ts` (+ `.test.ts`) |
 | Host 1 — Accounting: reveal, loading state, disclosures | `src/components/people/PeopleTab.tsx` |
+| The read-only payout body Host 1 renders (card · wallet fields · Routing), shared with People → Search Bar | `src/components/people/payout-record.tsx` → `PayoutRecordBody` |
 | Host 2 — the employee's own Payout section (masked) | `src/components/employee/EmployeeProfile.tsx` → `PayoutReadView` |
 | Shipped brand logos, brand swatches + provenance | `public/banks/*.png` · `public/banks/*-brand.png` · `public/banks/SOURCES.json` |
 
@@ -236,6 +237,15 @@ already in that browser's hands (their own `employee_ids` row). `/api/people/[em
 writes an audit row because it records someone reading **another** person's record; a payee
 reading their own is not that event. Do not "fix" the asymmetry by auditing the employee's
 reveal — it would log an event that did not happen.
+
+**Accounting's read-only body has a second place it shows since 2026-09-25: People → Search Bar**
+(`people-bank-search.md`). The popup's body (card, wallet fields, Routing & rail details) was
+**moved verbatim** into `payout-record.tsx` as `PayoutRecordBody`, and both render that one
+component, so §2, §7 and §8 hold on the new page by construction. It is still Host 1's behaviour,
+not a new host: the card gets no `masked` prop, and the page reaches the body only through the
+same audited `reveal-banking` click, never automatically. The Routing fold is **controlled by the
+host**, so the popup's fold survives a tab switch or an edit round trip exactly as it did before
+the move. **Never fork the body back into either host.**
 
 **Which payee gets a card is one shared rule**, `payoutRailView` — extracted from this pane's
 own `showBank` const and now read by both hosts, so a Wise payee cannot have a card on one
