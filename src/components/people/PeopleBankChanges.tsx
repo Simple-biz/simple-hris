@@ -16,6 +16,7 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { RailMixBand } from './rail-mix-band';
 import { NO_DEPARTMENT, type RailMix } from '@/lib/people/rail-mix';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { bankTypeKey, bankTypeLabel, bankTypeOptions } from '@/lib/people/bank-change-type';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -79,6 +80,7 @@ export default function PeopleBankChanges({
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('all');
+  const [bankTypeFilter, setBankTypeFilter] = useState<string>('all');
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
@@ -227,6 +229,23 @@ export default function PeopleBankChanges({
     }
   }, [deptFilter, deptOptions]);
 
+  /** Bank types to offer: one per bucket present in the feed (bank-change-type.ts).
+   *  FEED-only — the row's `processor` is the receive election, so it never
+   *  re-scopes the send-from band above (bank-preferred-routing.md §10.3, §10.7).
+   *  Blank and unrecognised processors get their own bucket, so no row is hidden. */
+  const bankTypeSelectOptions = useMemo(
+    () => [{ value: 'all', label: 'All bank types' }, ...bankTypeOptions(rows.map((r) => r.processor))],
+    [rows],
+  );
+
+  // Same fallback as the department filter: a type whose last row ages out of
+  // the capped feed resets to All rather than leaving a silently empty list.
+  useEffect(() => {
+    if (bankTypeFilter !== 'all' && !bankTypeSelectOptions.some((o) => o.value === bankTypeFilter)) {
+      setBankTypeFilter('all');
+    }
+  }, [bankTypeFilter, bankTypeSelectOptions]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return rows.filter((r) => {
@@ -234,16 +253,18 @@ export default function PeopleBankChanges({
         const d = deptOf(r.email);
         if (deptFilter === NO_DEPARTMENT ? d !== '' : d !== deptFilter) return false;
       }
+      if (bankTypeFilter !== 'all' && bankTypeKey(r.processor) !== bankTypeFilter) return false;
       if (!q) return true;
       return (
         (r.name ?? '').toLowerCase().includes(q) ||
         (r.email ?? '').toLowerCase().includes(q) ||
         (r.processor ?? '').toLowerCase().includes(q) ||
+        (r.processor ? bankTypeLabel(bankTypeKey(r.processor)).toLowerCase().includes(q) : false) ||
         deptOf(r.email).toLowerCase().includes(q) ||
         r.fields.some((f) => fieldLabel(f).toLowerCase().includes(q))
       );
     });
-  }, [rows, query, deptFilter, deptOf]);
+  }, [rows, query, deptFilter, bankTypeFilter, deptOf]);
 
   /** What the current department selection is called, for the band's scope note. */
   const deptLabel = useMemo(
@@ -259,9 +280,12 @@ export default function PeopleBankChanges({
     return railMixByDept?.[deptFilter] ?? null;
   }, [deptFilter, railMix, railMixByDept]);
 
+  /** What the current bank-type selection is called, for the empty state. */
+  const bankTypeFilterLabel = bankTypeFilter === 'all' ? null : bankTypeLabel(bankTypeFilter);
+
   // Reset to page 1 whenever the filters change so results never land on an
   // out-of-range page.
-  useEffect(() => setPage(1), [query, deptFilter]);
+  useEffect(() => setPage(1), [query, deptFilter, bankTypeFilter]);
 
   // Paginate — 20 per page. safePage clamps after the result set shrinks (e.g.
   // a search narrows the list while you're on a later page).
@@ -312,7 +336,7 @@ export default function PeopleBankChanges({
         </div>
       </div>
 
-      {/* Search + department filter */}
+      {/* Search + department + bank-type filters */}
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
         <div className="relative w-full sm:max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -333,6 +357,18 @@ export default function PeopleBankChanges({
           className="w-full shrink-0 sm:w-56"
           options={deptOptions}
         />
+        <div
+          className="w-full shrink-0 sm:w-52"
+          title="The payment method recorded on each change. Filters this list only; the cards above keep showing the send-from mix."
+        >
+          <SmoothSelect
+            value={bankTypeFilter}
+            onChange={setBankTypeFilter}
+            aria-label="Filter bank changes by bank type"
+            className="w-full"
+            options={bankTypeSelectOptions}
+          />
+        </div>
       </div>
 
       {error && (
@@ -347,6 +383,7 @@ export default function PeopleBankChanges({
         <EmptyState
           searching={query.trim().length > 0}
           department={deptFilter === 'all' ? null : deptLabel}
+          bankType={bankTypeFilterLabel}
         />
       ) : (
         // Cross-fade the page as a unit on page change (key=safePage). Within a
@@ -512,7 +549,7 @@ function ChangeCard({
             <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 lg:mt-0 lg:flex-1">
               {row.processor && (
                 <span className="inline-flex items-center rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10.5px] font-medium capitalize text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  {row.processor}
+                  {bankTypeLabel(bankTypeKey(row.processor))}
                 </span>
               )}
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -596,16 +633,28 @@ function FeedSkeleton() {
   );
 }
 
-function EmptyState({ searching, department }: { searching: boolean; department: string | null }) {
+function EmptyState({
+  searching,
+  department,
+  bankType,
+}: {
+  searching: boolean;
+  department: string | null;
+  bankType: string | null;
+}) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white/50 py-16 text-center dark:border-zinc-700 dark:bg-zinc-950/40">
-      {searching || department ? (
+      {searching || department || bankType ? (
         <>
           <Search className="mb-2 h-6 w-6 text-zinc-300 dark:text-zinc-600" />
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            {department && !searching
-              ? `No bank changes from ${formatDeptLabel(department)}.`
-              : 'No bank changes match your search.'}
+            {searching
+              ? 'No bank changes match your search.'
+              : department && bankType
+                ? `No ${bankType} bank changes from ${formatDeptLabel(department)}.`
+                : department
+                  ? `No bank changes from ${formatDeptLabel(department)}.`
+                  : `No ${bankType} bank changes.`}
           </p>
           {department && (
             <p className="mt-1 text-[12px] text-zinc-400 dark:text-zinc-500">

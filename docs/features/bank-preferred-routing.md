@@ -3,7 +3,7 @@
 *Shipped 2026-07-22; Wise updates + the No-Bank clobber discovery added
 2026-07-25 (§7); People-tab parity + Accounting direct-edit added 2026-08-10
 (§8). Migration status re-verified against production 2026-08-11 — see
-[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10) — rail-shaped, no bank names.
+[Migrations](#migrations). Bank changes KPI band added 2026-08-19 (§10) — rail-shaped, no bank names; feed bank-type filter added 2026-09-25 (§10.7).
 Employee Profile dropdown moved onto the EFFECTIVE rail 2026-08-31 AM (§1). **2026-08-31 PM
 (Kane): the stored-transition WIRES lock and the same-morning receiving gate were BOTH
 superseded by the 1:1 rule (§4)** — the RECEIVING bank drives the send-from rail, the wallet
@@ -663,6 +663,41 @@ bands import them, the same extraction `hero-stat-row.tsx` got for the CEO Syste
 Overview. Payment Catalog renders byte-identically to before. **Never fork a copy
 back into a dashboard.**
 
+### 10.7 Bank-type filter (2026-09-25)
+
+A third control beside search and department: **All bank types / Kolan / Higlobe /
+Wise / Jeeves / Wires / …**, in
+[`PeopleBankChanges.tsx`](../../src/components/people/PeopleBankChanges.tsx), with the
+bucketing pure in [`bank-change-type.ts`](../../src/lib/people/bank-change-type.ts)
+(8 `node:test` cases).
+
+- **It scopes the FEED only, never the band.** The bucket is the change row's own
+  `bank_update_history.processor`, which §10.3 establishes is the **receive election**
+  for every self-service and People → Banking write. Letting it re-scope the
+  send-from cards would be the exact conflation §10.3 forbids. The control's tooltip
+  says so, and the band follows the department filter alone.
+- **`mark_paid_override` rows are the exception**: their `processor` is the rail the
+  payment was being marked paid on
+  ([`bank-override/route.ts`](../../app/api/payment-dispatch/bank-override/route.ts)),
+  not an election. They bucket under that rail.
+- **A filter never hides a row (§10.5).** Values normalise through
+  `processorIdFromBankPreferredText`, so `kolan` joins `hurupay` and `x1153` joins
+  `wires`. A blank processor gets a **"No bank type recorded"** bucket (71 of 1,604
+  history rows, 1 in the newest 80, measured 2026-09-25), and text no resolver
+  recognises buckets under its own spelling. Pinned by test: every row's bucket is
+  an offered option.
+- **Options come from the FEED, not the roster**, unlike departments: the band does
+  not follow this filter, so an option with no rows would only ever show an empty
+  list. The selection falls back to *All bank types* when its last row ages out of
+  the capped feed.
+- Labels are the post-rebrand processor labels, so the row chip, which printed the
+  raw stored id ("hurupay"), now reads **Kolan**, matching the filter. Search also
+  matches the label.
+
+Live mix, 2026-09-25, all 1,604 history rows: `wires 662 · hurupay 342 · higlobe 307 ·
+wise 221 · null 71 · jeeves 1`; newest 80 (what the feed loads): `wires 29 · wise 21 ·
+higlobe 16 · hurupay 13 · null 1`.
+
 ## Migrations
 
 DDL has **no path from the dev environment** — run these in the **Supabase SQL
@@ -698,6 +733,8 @@ breaks other notification inserts).
 | `scripts/audit-people-vs-dispatch-banks.mjs` | read-only People↔PD parity guard |
 | `src/lib/people/rail-mix.ts` (+ test) | send-from / payable-per-rail aggregate behind the KPI band (§10) |
 | `src/components/people/rail-mix-band.tsx` | the two KPI cards above the Bank changes feed (§10) |
+| `src/components/people/PeopleBankChanges.tsx` | the Bank changes view: band + live feed, department and bank-type filters (§10.5, §10.7) |
+| `src/lib/people/bank-change-type.ts` (+ test) | feed-only bank-type buckets; a filter never hides a row (§10.7) |
 | `src/components/accounting/kpi-stat-card.tsx` | shared gradient KPI card — Payment Catalog + Bank changes (§10.4) |
 
 See also: [payment-dispatch.md](./payment-dispatch.md) (the queue this routing

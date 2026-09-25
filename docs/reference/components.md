@@ -2195,7 +2195,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/payroll/WizardCursorOverlay.tsx` | component | — **no doc** |
 | `src/components/paystub/PayStubModal.tsx` | component | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
 | `src/components/paystub/PayStubStatement.tsx` | component | [cop-country-payees](../features/cop-country-payees.md) · [department-transfers](../features/department-transfers.md) |
-| `src/components/people/PeopleBankChanges.tsx` | component | — **no doc** |
+| `src/components/people/PeopleBankChanges.tsx` | component | [bank-preferred-routing](../features/bank-preferred-routing.md) |
 | `src/components/people/PeopleOffboarded.tsx` | component | [people-offboarded-pay](../features/people-offboarded-pay.md) |
 | `src/components/people/PeopleTab.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) |
 | `src/components/people/bank-change-detail.tsx` | component | — **no doc** |
