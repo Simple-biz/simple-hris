@@ -2702,18 +2702,9 @@ export default function EmployeeProfile({
                               Accounting alone, in People → Banking, and employee
                               changes no longer file an approval into Accounting →
                               Issues. The payout card's "Paid via" line above is the
-                              employee's read-only view of it. */}
-                          {preferredProcessor && (
-                            <div className="flex items-center gap-2 px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                              <span>
-                                Selected channel:{' '}
-                                <span className="text-zinc-700 dark:text-zinc-200">
-                                  {PROCESSOR_OPTIONS.find((p) => p.id === preferredProcessor)?.label}
-                                </span>
-                              </span>
-                              <ArrowUpRight className="h-3 w-3 text-zinc-400" />
-                            </div>
-                          )}
+                              employee's read-only view of it. The "Selected channel: X"
+                              line that followed was removed 2026-09-25 (Kane) — the
+                              radios above already show the pick. */}
                         </>
                       )}
 
