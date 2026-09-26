@@ -666,21 +666,21 @@ The roster crossed 1,000 during July (**1,296** on Jul 30) and several tables ar
 
 All sixteen now drain pages through `selectAllPaged` (commit `2829a6d`).
 
-> ⚠ **The sweep was not complete — three readers were missed, found 2026-09-18 and NOT yet
-> fixed.** `src/lib/supabase/hr-new-hire-checklist.ts:532` (`…SourceCounts` → the HR Overview
-> hiring-sources pie), `:570` (`…RecruiterCounts` → the recruiter scorecard) and `:744`
-> (`…Referrals` → the referrals table) each still do a single `.range(0, 9999)` read with no
-> paging loop. `hr_new_hire_checklist` is **1,479 rows**, so all three are computed over the
-> first 1,000 — a ~32% undercount with no error on screen. The correctly-paged loop already
-> exists **in the same file** at `:683`.
+> **The sweep was not complete — three readers were missed (found 2026-09-18) and FIXED
+> 2026-09-25 (item 110).** `hr-new-hire-checklist.ts` `…SourceCounts` (HR Overview
+> hiring-sources pie), `…RecruiterCounts` (recruiter scorecard) and `…Referrals` (referrals
+> table) each did a single `.range(0, 9999)` read. At **1,756** rows they were computed over
+> the first 1,000 with no error on screen. Two more single reads in the same file, the
+> all-weeks export and the week list's row counts, were fixed in the same commit. Measured
+> before and after: 1,000 → 1,756 rows. The scorecard had been missing **one recruiter
+> entirely**, and referrals showed 282 of 444.
 >
-> This is the same file family as the 2026-07-09 discovery below (the "Referred By" picker), so
-> treat "this reader was fixed" as a per-function fact, never a per-file one. The truncation is
-> also **ordered**, which makes it worse than an obviously-broken number: the missing 479 are not
-> a random sample, so a recruiter whose hires land in the tail simply scores lower and the
-> scorecard still looks plausible. Open item 110 in
-> [audit-2026-09-16-session-log.md](../audits/audit-2026-09-16-session-log.md). **Do not "fix" it
-> by raising the range ceiling — the cap is server-side and ignores it.**
+> Treat "this reader was fixed" as a **per-query** fact, never a per-function or per-file one.
+> The same file held correctly paged readers beside these for weeks. The truncation is also
+> **ordered**, which makes it worse than an obviously broken number: the missing rows are not
+> a random sample, so a recruiter whose hires land in the tail simply scores lower (or
+> vanishes) and the scorecard still looks plausible. **Never "fix" one by raising the range
+> ceiling — the cap is server-side and ignores it.**
 >
 > Unrelated but adjacent: the three probes added to `diagnostics-probes.ts` on 2026-09-18 return
 > aggregates only (`head: true` counts, `order().limit(1)` for recency), so that file stays clear

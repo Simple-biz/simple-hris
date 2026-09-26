@@ -134,16 +134,21 @@ export async function listAllHrNewHireChecklist(): Promise<{
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb
-    .from(TABLE)
-    .select("*")
-    .not("period_start", "is", null)
-    .order("period_start", { ascending: false })
-    .order("position", { ascending: true })
-    .order("created_at", { ascending: true })
-    .range(0, 9999);
-  if (error) return { rows: [], error: error.message };
-  return { rows: (data ?? []) as HrNewHireChecklistRow[], error: null };
+  // PAGED (2026-09-25): the table is 1,756 rows and a single .range(0, 9999)
+  // exported only the first 1,000. `id` breaks ties so pages can't shear.
+  const { rows, error } = await selectAllPaged<HrNewHireChecklistRow>((from, to) =>
+    sb
+      .from(TABLE)
+      .select("*")
+      .not("period_start", "is", null)
+      .order("period_start", { ascending: false })
+      .order("position", { ascending: true })
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { rows: [], error };
+  return { rows, error: null };
 }
 
 /**
@@ -529,11 +534,13 @@ export async function listHrNewHireChecklistSourceCounts(periodStart?: string): 
 }> {
   const sb = client();
   const period = clean(periodStart ?? null);
-  let query = sb.from(TABLE).select("source").range(0, 9999);
-  if (period) query = query.eq("period_start", period);
-  const { data, error } = await query;
-  if (error) return { sources: [], total: 0, error: error.message };
-  const rows = (data ?? []) as { source: string | null }[];
+  // PAGED (2026-09-25, item 110): the all-weeks view read 1,000 of 1,756 rows.
+  const { rows, error } = await selectAllPaged<{ source: string | null }>((from, to) => {
+    let q = sb.from(TABLE).select("source");
+    if (period) q = q.eq("period_start", period);
+    return q.order("id", { ascending: true }).range(from, to);
+  });
+  if (error) return { sources: [], total: 0, error };
   const byKey = new Map<string, { source: string; count: number }>();
   for (const r of rows) {
     const s = clean(r.source);
@@ -567,12 +574,16 @@ export async function listHrNewHireChecklistRecruiterCounts(periodStart?: string
 }> {
   const sb = client();
   const period = clean(periodStart ?? null);
-  let query = sb.from(TABLE).select("hired_by, date_of_interview").range(0, 9999);
-  if (period) query = query.eq("period_start", period);
-  const { data, error } = await query;
-  if (error)
-    return { recruiters: [], totalHires: 0, totalInterviewed: 0, error: error.message };
-  const rows = (data ?? []) as { hired_by: string | null; date_of_interview: string | null }[];
+  // PAGED (2026-09-25, item 110): the all-weeks view read 1,000 of 1,756 rows.
+  const { rows, error } = await selectAllPaged<{
+    hired_by: string | null;
+    date_of_interview: string | null;
+  }>((from, to) => {
+    let q = sb.from(TABLE).select("hired_by, date_of_interview");
+    if (period) q = q.eq("period_start", period);
+    return q.order("id", { ascending: true }).range(from, to);
+  });
+  if (error) return { recruiters: [], totalHires: 0, totalInterviewed: 0, error };
   const byKey = new Map<string, { recruiter: string; hires: number; interviewed: number }>();
   let totalHires = 0;
   let totalInterviewed = 0;
@@ -741,14 +752,18 @@ export async function listHrNewHireChecklistReferrals(periodStart?: string): Pro
 }> {
   const sb = client();
   const period = clean(periodStart ?? null);
-  let query = sb.from(TABLE).select("source, name, referred_by").range(0, 9999);
-  if (period) query = query.eq("period_start", period);
-  const [{ data, error }, resolveEmail] = await Promise.all([
-    query,
+  // PAGED (2026-09-25, item 110): the all-weeks view read 1,000 of 1,756 rows.
+  const [{ rows, error }, resolveEmail] = await Promise.all([
+    selectAllPaged<{ source: string | null; name: string | null; referred_by: string | null }>(
+      (from, to) => {
+        let q = sb.from(TABLE).select("source, name, referred_by");
+        if (period) q = q.eq("period_start", period);
+        return q.order("id", { ascending: true }).range(from, to);
+      },
+    ),
     buildReferrerEmailResolver(sb),
   ]);
-  if (error) return { referrals: [], total: 0, error: error.message };
-  const rows = (data ?? []) as { source: string | null; name: string | null; referred_by: string | null }[];
+  if (error) return { referrals: [], total: 0, error };
   const referrals: {
     hire: string;
     referredBy: string;
@@ -842,20 +857,17 @@ export async function listHrChecklistPeriods(): Promise<{
 }> {
   const sb = client();
 
-  const [{ data: rowsData, error: rowsErr }, { data: periodsData, error: periodsErr }] =
+  // Row counts come from the PAGED listChecklistWeekCounts (2026-09-25): the
+  // single .range(0, 9999) this used read 1,000 of 1,756 rows, so older weeks
+  // showed short counts, and a week whose rows all sat past the cap (with no
+  // lock row) vanished from the selector.
+  const [{ countsByWeek: counts, error: rowsErr }, { data: periodsData, error: periodsErr }] =
     await Promise.all([
-      sb.from(TABLE).select("period_start").not("period_start", "is", null).range(0, 9999),
+      listChecklistWeekCounts(),
       sb.from(PERIODS_TABLE).select("period_start, period_end, status, locked_at, locked_by"),
     ]);
-  if (rowsErr) return { periods: [], error: rowsErr.message };
+  if (rowsErr) return { periods: [], error: rowsErr };
   if (periodsErr) return { periods: [], error: periodsErr.message };
-
-  const counts = new Map<string, number>();
-  for (const r of (rowsData ?? []) as { period_start: string | null }[]) {
-    const p = r.period_start;
-    if (!p) continue;
-    counts.set(p, (counts.get(p) ?? 0) + 1);
-  }
 
   const byStart = new Map<string, HrChecklistPeriod & { row_count: number }>();
   for (const p of (periodsData ?? []) as HrChecklistPeriod[]) {
@@ -895,8 +907,8 @@ export async function listHrChecklistPeriods(): Promise<{
  * do as of 2026-08-24, and none twice within one week — so every week is
  * returned and `pickChecklistWeek` resolves which one a given hire belongs to.
  *
- * PAGED, and that is not defensive: this table holds 1,331 rows, so the
- * `.range(0, 9999)` style used elsewhere in this file returns only the first
+ * PAGED, and that is not defensive: this table holds 1,331 rows, so a single
+ * `.range(0, 9999)` (this file's old style, gone since 2026-09-25) returns only the first
  * 1,000 (PostgREST caps at `db.max-rows` with NO error) and would silently file
  * 331 hires under the wrong week.
  */

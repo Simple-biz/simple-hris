@@ -287,15 +287,18 @@ link. Teal caught it and told her to disregard it.
 - **HR Overview** — the checklist's `source` / `hired_by` / referral data powers the hiring-sources
   pie, recruiter scorecard, and referrals table (`listHrNewHireChecklistSourceCounts`,
   `…RecruiterCounts`, `…Referrals`).
-  > ⚠ **All three of those readers are silently truncated** (found 2026-09-18, **not fixed**):
-  > `hr-new-hire-checklist.ts:532`, `:570` and `:744` each fetch in one query with
-  > `.range(0, 9999)` and no paging loop. PostgREST caps at **1,000 rows even with `.range()`**
-  > and this table is **1,479**, so those three surfaces are computed over the first 1,000 rows
-  > with no error shown. The correctly-paged loop already exists in the same file at `:683`.
-  > Truncation is *ordered*, so the missing 479 are not a random sample — a recruiter whose hires
-  > land in the tail simply scores lower and the scorecard still looks plausible. Open item 110 in
-  > [audit-2026-09-16-session-log.md](../audits/audit-2026-09-16-session-log.md). **Do not "fix" it
-  > by raising the range ceiling — the cap is server-side and ignores it.**
+  > **All three read every row — paged since 2026-09-25 (item 110).** Until then each did one
+  > `.range(0, 9999)` read. PostgREST caps that at **1,000 rows even with `.range()`**, and at
+  > 1,756 rows they were computed over the first 1,000 with no error shown. The truncation was
+  > *ordered*, not a random sample: the recruiter scorecard was missing **one recruiter
+  > entirely** (9 shown, 10 real), and referrals showed **282 of 444**. The **all-weeks export**
+  > (`listAllHrNewHireChecklist`) and the **week list's row counts** (`listHrChecklistPeriods`)
+  > had the same single read and are paged too; the week list now takes its counts from
+  > `listChecklistWeekCounts`. Every whole-table read in this file pages on a total order
+  > ending in `id`. **Never "fix" one of these by raising the range ceiling — the cap is
+  > server-side and ignores it.** Known gap: the referrer-email resolver's own paging loop
+  > (`buildReferrerEmailResolver`) has no `.order()`, so a master row can repeat or be skipped
+  > across a page boundary. It only matches names to emails, so the impact is low.
 - **Offboarding automation** — the mirror pipeline for taking someone off the roster.
 - **Health coverage** — Admin → Diagnostics → HR → Service Map: the `new-hire-checklist` node
   (this table + its week locks) and the edge `new-hire-checklist → hr-onboarding`, which is the
