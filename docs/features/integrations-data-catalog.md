@@ -93,7 +93,9 @@ contract: names and the final list are decided then, as a new scope + catalog + 
   `full_address`. Test-pinned — no offered field may look like a full number. Inside the HRIS a
   full number is shown one person at a time and every reveal is audited
   (`app/api/people/[email]/reveal-banking/route.ts`); a bulk export by key is a different class of
-  exposure. `account_last4` is served only where the payout method is a bank, the same rule the
+  exposure. **That protection does not hold against the public anon key today** — `employee_ids`
+  carries an anon-read-all policy, measured 2026-09-25 returning 1,009 full account numbers to the
+  key the login page ships (audit item 221). The Bank info page says so as an `open` caveat. `account_last4` is served only where the payout method is a bank, the same rule the
   People Search Bar uses so a wallet payee's leftover account never reads as their destination.
 - **Pay and Banking are marked Money / Restricted** (test-pinned), and the resources plan already
   rules that money fields start **unticked** in the picker (`2026-09-21-external-api-resources-and-writes.md`
@@ -107,7 +109,8 @@ Each caveat is `open` (a known defect, amber, with its date) or `note` (a rule t
 `open` one must name where the fact lives (test-pinned). The GML page carries item 136 — **the
 public anon key can read the whole table**, measured 2026-09-21 — because a page saying "1 client
 has access" would otherwise overstate what the column grants protect. Remove that caveat only when
-item 136 is closed by a measurement, not when someone believes it is.
+item 136 is closed by a measurement, not when someone believes it is. The Bank info page carries
+item 221 on the same terms (anon reads `employee_ids` in full, re-measured 2026-09-25).
 
 **Checked before writing, and the brief was wrong once:** the brief proposed a caveat that the API
 serves 1,723 rows against HR's 1,215. That gap was closed on 2026-09-21 (both read 1,266 —

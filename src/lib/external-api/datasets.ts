@@ -176,8 +176,8 @@ export const GLOBAL_MASTER_LIST_DATASET: LiveDataset = {
   caveats: [
     {
       kind: 'open',
-      text: 'The public anon key can read this whole table, including personal email, phone and home address. Column grants protect it from API keys, not from the browser bundle. Measured 2026-09-21, not fixed.',
-      ref: 'Audit item 136 · memory gml-anon-readable-undercuts-column-grants',
+      text: 'The public anon key, which ships in the login page’s JavaScript, can read this whole table, including personal email, phone and home address. Column grants protect it from API keys, not from the browser bundle. Measured 2026-09-21, re-measured 2026-09-25 (2,834 rows): not fixed.',
+      ref: 'Audit items 136 · 221 · memory gml-anon-readable-undercuts-column-grants',
     },
     {
       kind: 'note',
@@ -579,8 +579,13 @@ export const DATASETS: readonly Dataset[] = [
     ],
     caveats: [
       {
+        kind: 'open',
+        text: 'The public anon key, which ships in the login page’s JavaScript, reads every column of employee_ids today: 1,009 full account numbers with holder names. Nothing on this page is true for the anon key until that policy is removed. Measured 2026-09-25, not fixed.',
+        ref: 'Audit item 221 · memory anon-key-reads-bank-accounts',
+      },
+      {
         kind: 'note',
-        text: 'Full numbers never leave by key (Kane, 2026-09-25). Inside the HRIS they are shown one person at a time, and every reveal is audited.',
+        text: 'Full numbers will never leave by an integration key (Kane, 2026-09-25). Inside the HRIS they are shown one person at a time, and every reveal is audited.',
         ref: 'app/api/people/[email]/reveal-banking/route.ts',
       },
       {
