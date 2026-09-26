@@ -364,8 +364,9 @@ async function resolveStartingRate(
   // 1. The hire record. `hr_pending_employees` rows SURVIVE promotion —
   //    setHrPromotionOutcome only UPDATEs status (hr-pending-employees.ts:1147) —
   //    so this is the truest statement of what the person was hired at.
-  //    NEVER call listHrPendingEmployees(): it is `.range(0, 1999)` with no
-  //    paging (:265).
+  //    NEVER call listHrPendingEmployees(): it drains the whole table plus a
+  //    country lookup to find one person, and matches nothing by work address
+  //    (it was also un-paged, silently capped at 1,000, until 2026-09-25).
   //
   //    MATCHED ON WORK ADDRESSES ONLY — one pass per alias, the identity's own
   //    address first, each pass short-circuiting. The hire record is also keyed

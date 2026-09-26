@@ -68,6 +68,11 @@ import { payoutBrandLabel } from '@/lib/onboarding/payout-brand';
 import { currencyForCountry, ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
 import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import {
+  isArchivedBucket,
+  onboardingSubmissionBucket,
+  type OnboardingSubmissionBucket,
+} from '@/lib/hr/onboarding-submission-bucket';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -243,7 +248,7 @@ type SubmissionRow = {
   pending_status?: string | null;
 };
 
-type StatusFilter = 'all' | HrOnboardingStatus;
+type StatusFilter = 'all' | OnboardingSubmissionBucket;
 
 /**
  * Designated-work-email state for a submission. Keeps the "do we have a real,
@@ -753,7 +758,7 @@ const STATUS_LABEL: Record<HrOnboardingStatus, string> = {
  *  promoted to the master list reads "Archived/Complete" (sky) instead of a
  *  plain grey "Archived". */
 function submissionStatusPill(r: SubmissionRow): { label: string; className: string } {
-  if (r.status === 'archived' && r.pending_status === 'promoted') {
+  if (onboardingSubmissionBucket(r) === 'complete') {
     return {
       label: 'Archived/Complete',
       className:
@@ -1112,17 +1117,19 @@ export default function HrOnboardingForm({
   }, [refreshLicenseInfo]);
 
   const counts = useMemo(() => {
-    const c = { pending: 0, submitted: 0, archived: 0 };
-    for (const r of rows) c[r.status] += 1;
+    const c: Record<OnboardingSubmissionBucket, number> = { pending: 0, submitted: 0, archived: 0, complete: 0 };
+    for (const r of rows) c[onboardingSubmissionBucket(r)] += 1;
     return c;
   }, [rows]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const result = rows.filter((r) => {
-      // "All" means every LIVE submission — archived rows only ever appear
-      // under their own Archived pill, so they can't bury the working list.
-      if (filter === 'all' ? r.status === 'archived' : r.status !== filter) return false;
+      // "All" means every LIVE submission. Archived rows only ever appear under
+      // their own pills — plain "Archived", or the Archive icon once their hire
+      // was promoted ("Archived/Complete") — so they can't bury the working list.
+      const bucket = onboardingSubmissionBucket(r);
+      if (filter === 'all' ? isArchivedBucket(bucket) : bucket !== filter) return false;
       // "Needs setup" toggle — scoped to the Submitted tab so switching away
       // from it doesn't silently hide rows elsewhere. A row still needs setup
       // when it has no work email yet OR its workspace automation failed — a
@@ -1577,15 +1584,16 @@ export default function HrOnboardingForm({
           <div role="tablist" aria-label="Onboarding submission status" className="flex flex-wrap items-center gap-1">
             <FilterPill label="Awaiting submission" count={counts.pending} active={filter === 'pending'} onClick={() => setFilter('pending')} />
             <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
+            <FilterPill label="Archived" tone="muted" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
             <FilterPill label="All" count={counts.pending + counts.submitted} active={filter === 'all'} onClick={() => setFilter('all')} />
             <span className="mx-1 h-4 w-px bg-emerald-200/70 dark:bg-emerald-900/50" aria-hidden />
             <FilterPill
-              label="Archived"
+              label="Archived/Complete"
               icon={Archive}
-              tone="muted"
-              count={counts.archived}
-              active={filter === 'archived'}
-              onClick={() => setFilter('archived')}
+              tone="sky"
+              count={counts.complete}
+              active={filter === 'complete'}
+              onClick={() => setFilter('complete')}
             />
           </div>
           {filter === 'submitted' && counts.submitted > 0 && (
@@ -1661,7 +1669,9 @@ export default function HrOnboardingForm({
                   ? 'Awaiting submission'
                   : filter === 'submitted'
                     ? 'Submitted'
-                    : 'Archived'
+                    : filter === 'complete'
+                      ? 'Archived/Complete'
+                      : 'Archived'
             }
             disabled={loading}
           />
@@ -1839,7 +1849,7 @@ export default function HrOnboardingForm({
                   const wstate = workEmailState(r);
                   return (
                     // Keyed by filter so every row remounts and re-runs its
-                    // stagger-in when you switch Awaiting/Submitted/All/Archived.
+                    // stagger-in when you switch between the status pills.
                     <motion.tr
                       key={`${filter}:${r.id}`}
                       initial={{ opacity: 0, y: 4 }}
@@ -2139,8 +2149,9 @@ export default function HrOnboardingForm({
           <DialogHeader>
             <DialogTitle className="text-base">Archive this submission?</DialogTitle>
             <DialogDescription className="text-xs">
-              The link will stop working. You can still see archived submissions under the
-              Archived filter, but the new hire won't be able to open or submit the form.
+              The link will stop working. You can still see it under Archived (or the Archive
+              icon, if the hire was promoted), but the new hire won't be able to open or submit
+              the form.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -2211,7 +2222,7 @@ export default function HrOnboardingForm({
               {bulkAction?.type === 'send'
                 ? 'Each recipient gets a fresh, unique link — any previous link for that row stops working. Emails go out via the configured webhook.'
                 : bulkAction?.type === 'archive'
-                  ? "Their links will stop working. You can still review them under the Archived filter, but new hires won't be able to open or submit the form."
+                  ? "Their links will stop working. You can still review them under Archived (or the Archive icon, for promoted hires), but new hires won't be able to open or submit the form."
                   : 'These archived submissions and any signatures / W-8BEN files uploaded with them will be removed from the database. This cannot be undone.'}
             </DialogDescription>
           </DialogHeader>
@@ -6797,9 +6808,25 @@ function ContractsDownloadTab({
 
 // ─── Filter pill ──────────────────────────────────────────────────────────
 
-/** `icon` renders the pill icon-only (the label moves to aria-label + title);
- *  `tone="muted"` keeps a grey indicator even while it's selected, so the
- *  Archived pill never reads as part of the live pipeline. */
+type FilterPillTone = 'default' | 'muted' | 'sky';
+
+const FILTER_PILL_INDICATOR: Record<FilterPillTone, string> = {
+  default: 'from-emerald-500 to-teal-700 shadow-emerald-600/25',
+  muted: 'from-zinc-500 to-zinc-700 shadow-zinc-600/25',
+  sky: 'from-sky-500 to-sky-700 shadow-sky-600/25',
+};
+
+const FILTER_PILL_IDLE: Record<FilterPillTone, string> = {
+  default:
+    'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+  muted:
+    'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100',
+  sky: 'text-sky-700 hover:bg-sky-50 hover:text-sky-900 dark:text-sky-300 dark:hover:bg-sky-950/40 dark:hover:text-sky-100',
+};
+
+/** `icon` renders the pill icon-only (the label moves to aria-label + title).
+ *  A `tone` keeps its own indicator colour even while selected, matching the
+ *  row badge it filters: `muted` grey = "Archived", `sky` = "Archived/Complete". */
 function FilterPill({
   label,
   count,
@@ -6813,10 +6840,9 @@ function FilterPill({
   active: boolean;
   onClick: () => void;
   icon?: LucideIcon;
-  tone?: 'default' | 'muted';
+  tone?: FilterPillTone;
 }) {
   const reduce = useReducedMotion();
-  const muted = tone === 'muted';
   return (
     <button
       type="button"
@@ -6829,21 +6855,14 @@ function FilterPill({
         'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
         active
           ? 'text-white'
-          : muted
-            ? 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100'
-            : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+          : FILTER_PILL_IDLE[tone],
       )}
     >
       {/* Shared indicator — glides between pills via layoutId. */}
       {active && (
         <motion.span
           layoutId="hr-onboarding-filter"
-          className={cn(
-            'absolute inset-0 rounded-md bg-gradient-to-r shadow-sm',
-            muted
-              ? 'from-zinc-500 to-zinc-700 shadow-zinc-600/25'
-              : 'from-emerald-500 to-teal-700 shadow-emerald-600/25',
-          )}
+          className={cn('absolute inset-0 rounded-md bg-gradient-to-r shadow-sm', FILTER_PILL_INDICATOR[tone])}
           transition={{ duration: reduce ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
         />
       )}

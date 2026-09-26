@@ -685,6 +685,15 @@ All sixteen now drain pages through `selectAllPaged` (commit `2829a6d`).
 > Unrelated but adjacent: the three probes added to `diagnostics-probes.ts` on 2026-09-18 return
 > aggregates only (`head: true` counts, `order().limit(1)` for recency), so that file stays clear
 > of this class by construction rather than by paging.
+>
+> **Two more were missed — found and FIXED 2026-09-25 (item 219).** `listHrOnboardingSubmissions`
+> (`.range(0, 999)`) and `listHrPendingEmployees` (`.range(0, 1999)`, which the server capped at
+> 1,000 anyway) fed HR → Onboarding. At 1,518 and 1,304 rows they were dropping the oldest **518**
+> submissions and **304** staged hires. Both now page oldest-first on `(created_at, id)`, collect
+> by id and reverse to newest-first. **Both also had a second, hidden cap:** each enriched its rows
+> with one `.in("id", allIds)` lookup, which is capped at 1,000 rows like any read *and* overruns
+> the request URL at ~1,300 ids. Those lookups are now batched (300 numeric / 150 uuid ids).
+> Paging the main read while leaving a whole-list `.in()` behind only moves the truncation.
 
 ### Original 2026-07-09 discovery
 

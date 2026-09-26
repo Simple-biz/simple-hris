@@ -259,13 +259,22 @@ export async function listHrPendingEmployees(): Promise<{
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb
-    .from(TABLE)
-    .select("*")
-    .order("created_at", { ascending: false })
-    .range(0, 1999);
-  if (error) return { rows: [], error: error.message };
-  const rows = (data ?? []) as HrPendingEmployeeRow[];
+  // PAGED: `.range(0, 1999)` was still capped at 1,000 by PostgREST, and the
+  // table passed that (1,304 on 2026-09-25) — the oldest 304 staged hires never
+  // reached the Pending Hires tab or Payroll Readiness. Paged oldest-first on a
+  // total order (created_at, id), collected by id, reversed to newest-first.
+  const { rows: paged, error } = await selectAllPaged<HrPendingEmployeeRow>((from, to) =>
+    sb
+      .from(TABLE)
+      .select("*")
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { rows: [], error };
+  const byId = new Map<number, HrPendingEmployeeRow>();
+  for (const r of paged) byId.set(r.id, r);
+  const rows = Array.from(byId.values()).reverse();
 
   // Enrich each hire with the country from their linked onboarding submission
   // (the pending table has no country column). Prefer the hire-selected country,
@@ -280,21 +289,26 @@ export async function listHrPendingEmployees(): Promise<{
   );
   if (subIds.length > 0) {
     try {
-      const { data: subs } = await sb
-        .from("hr_onboarding_submissions")
-        .select("id, country, invite_country")
-        .in("id", subIds);
-      const byId = new Map<string, string | null>();
-      for (const s of (subs ?? []) as {
-        id: string;
-        country: string | null;
-        invite_country: string | null;
-      }[]) {
-        byId.set(s.id, s.country ?? s.invite_country ?? null);
+      // Batched: `.in()` is capped at 1,000 rows like any read, and ~1,300
+      // uuids overrun the request URL.
+      const countryById = new Map<string, string | null>();
+      const LOOKUP_BATCH = 150;
+      for (let i = 0; i < subIds.length; i += LOOKUP_BATCH) {
+        const { data: subs } = await sb
+          .from("hr_onboarding_submissions")
+          .select("id, country, invite_country")
+          .in("id", subIds.slice(i, i + LOOKUP_BATCH));
+        for (const s of (subs ?? []) as {
+          id: string;
+          country: string | null;
+          invite_country: string | null;
+        }[]) {
+          countryById.set(s.id, s.country ?? s.invite_country ?? null);
+        }
       }
       for (const r of rows) {
         r.country = r.onboarding_submission_id
-          ? byId.get(r.onboarding_submission_id) ?? null
+          ? countryById.get(r.onboarding_submission_id) ?? null
           : null;
       }
     } catch {

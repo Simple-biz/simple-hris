@@ -10,6 +10,7 @@ import {
 } from "../text/sanitize-name";
 import { composeFullName } from "../hr/work-email";
 import { CURRENT_PAYOUT_BRAND, type PayoutBrand } from "../onboarding/payout-brand";
+import { selectAllPaged } from "./select-all-paged";
 
 const TABLE = "hr_onboarding_submissions";
 export const HR_ONBOARDING_BUCKET = "hr-onboarding-files";
@@ -297,19 +298,32 @@ export async function listHrOnboardingSubmissions(): Promise<{
   error: string | null;
 }> {
   const sb = client();
-  const { data, error } = await sb
-    .from(TABLE)
-    .select(LIST_COLUMNS)
-    .order("created_at", { ascending: false })
-    .range(0, 999);
-  if (error) return { rows: [], error: error.message };
+  // PAGED: the table passed PostgREST's 1,000-row cap (1,518 on 2026-09-25) and
+  // a single `.range()` silently dropped the oldest 518. Paged OLDEST-first on a
+  // total order (created_at, id) so an invite created mid-read lands on the last
+  // page instead of shifting a row across a page boundary; collected by id, then
+  // reversed to the newest-first order the UI expects.
   // Cast via `unknown`: a column-list `.select()` (vs `.select("*")`) makes
   // supabase-js infer `GenericStringError[]`, which doesn't structurally overlap
   // the row type, so a direct cast is rejected.
-  const rows = (data ?? []) as unknown as HrOnboardingSubmissionRow[];
+  const { rows: paged, error } = await selectAllPaged<unknown>((from, to) =>
+    sb
+      .from(TABLE)
+      .select(LIST_COLUMNS)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { rows: [], error };
+  const byId = new Map<string, HrOnboardingSubmissionRow>();
+  for (const r of paged as HrOnboardingSubmissionRow[]) byId.set(r.id, r);
+  const rows = Array.from(byId.values()).reverse();
 
-  // Attach the linked pending hire's status so the UI can mark an archived
-  // submission whose hire was promoted as "Archived/Complete". Best-effort.
+  // Attach the linked pending hire's status. It decides which pill an archived
+  // submission lives under (promoted ⇒ "Archived/Complete", under the Archive
+  // icon), so a failed lookup fails the list rather than silently refiling
+  // ~1,200 completed hires as plain "Archived". Batched: `.in()` is capped at
+  // 1,000 rows like any read, and a long id list overruns the request URL.
   const pendingIds = Array.from(
     new Set(
       rows
@@ -318,11 +332,13 @@ export async function listHrOnboardingSubmissions(): Promise<{
     ),
   );
   const statusById = new Map<number, string>();
-  if (pendingIds.length > 0) {
-    const { data: pend } = await sb
+  const LOOKUP_BATCH = 300;
+  for (let i = 0; i < pendingIds.length; i += LOOKUP_BATCH) {
+    const { data: pend, error: pendErr } = await sb
       .from("hr_pending_employees")
       .select("id, status")
-      .in("id", pendingIds);
+      .in("id", pendingIds.slice(i, i + LOOKUP_BATCH));
+    if (pendErr) return { rows: [], error: `Linked hire status lookup failed: ${pendErr.message}` };
     for (const p of (pend ?? []) as Array<{ id: number; status: string }>) {
       statusById.set(p.id, p.status);
     }
