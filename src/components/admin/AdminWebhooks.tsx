@@ -19,6 +19,7 @@ import {
   Eye,
   Workflow,
   Plug,
+  BookOpen,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -38,6 +39,7 @@ import {
 } from '@/lib/webhooks/webhook-config';
 import WebhookAutomationDialog from './WebhookAutomationDialog';
 import AdminExternalApiClients from './AdminExternalApiClients';
+import AdminDataCatalog from './AdminDataCatalog';
 import { useAdminCachedState } from '@/hooks/useAdminCachedState';
 import { ADMIN_CACHE_KEYS, getAdminCache, setAdminCache } from '@/lib/admin/tab-cache';
 
@@ -46,11 +48,16 @@ import { ADMIN_CACHE_KEYS, getAdminCache, setAdminCache } from '@/lib/admin/tab-
  * Integrations"): Webhooks = everything below, untouched; Integrations = the External
  * access registry (keys we ISSUE to outside systems), moved here from Admin → API
  * tokens. The sidebar id stays `webhooks`.
+ *
+ * Third tab 2026-09-25: Data catalog — the documented list of every dataset an
+ * outside system may read (live), may one day read (planned) or never will, and
+ * which clients hold each live one (`docs/features/integrations-data-catalog.md`).
  */
-type Section = 'webhooks' | 'integrations';
+type Section = 'webhooks' | 'integrations' | 'catalog';
 const SECTIONS: Array<{ id: Section; label: string; Icon: typeof Webhook }> = [
   { id: 'webhooks', label: 'Webhooks', Icon: Webhook },
   { id: 'integrations', label: 'Integrations', Icon: Plug },
+  { id: 'catalog', label: 'Data catalog', Icon: BookOpen },
 ];
 
 const SETTINGS_KEY = 'webhooks.config';
@@ -463,6 +470,8 @@ export default function AdminWebhooks() {
                 <>
                   Each automation finds its endpoint by <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">slug</code>. Toggle <strong>Active</strong> to make this URL win over the code default.
                 </>
+              ) : section === 'catalog' ? (
+                <>What data outside systems can read, what is planned, what never leaves — and who holds each.</>
               ) : (
                 <>Keys we issue to outside systems that read our data — which columns, for how long, how often.</>
               )}
@@ -521,6 +530,14 @@ export default function AdminWebhooks() {
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto w-full max-w-6xl">
             <AdminExternalApiClients />
+          </div>
+        </div>
+      )}
+
+      {section === 'catalog' && (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mx-auto w-full max-w-6xl">
+            <AdminDataCatalog onOpenIntegrations={() => setSection('integrations')} />
           </div>
         </div>
       )}

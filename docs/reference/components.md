@@ -1843,10 +1843,23 @@ copied real; code wraps and scrolls vertically, never side by side, so a long li
 (`catalog`, `grants`, `expiry`, `rate-limit`) directly — no server-only code. Governing doc:
 [external-api-integrations.md](../features/external-api-integrations.md).
 
-## `src/components/admin/AdminWebhooks.tsx` — section tabs *(2026-09-17)*
+## `src/components/admin/AdminDataCatalog.tsx` *(added 2026-09-25)*
 
-Two tabs under one header, "Webhooks & Integrations": **Webhooks** (everything the page always was — search, cards, Add /
-Save, Open automation) and **Integrations** (`AdminExternalApiClients`). The header actions and the active count render only
+The **Data catalog** tab of Admin → Webhooks & Integrations. A grouped list (one hairline table per area: People & roster ·
+Time & attendance · Pay · Banking · Performance · Never offered) with status chips (All / Live / Planned / Never offered,
+with counts) and a text filter over label, summary, sources and field names; a row opens an inline page with Back. The page:
+area, status dot + word, sensitivity; for **Live** an endpoints strip (REST · MCP tool · Scope · Filters · Paging); facts (one
+row is · leavers · comes from); caveats (`open` amber with its source, `note` neutral); for Live **Clients with access** (client ·
+key prefix · Live/Expired/Revoked · fields *whole table* or *N of M · k hidden* · expires · 7-day calls · last used, plus a
+*Manage keys on Integrations* link that switches the section); then fields by group with *sensitive* marks, *Always sent* and
+*Never leaves the HRIS*. Content is `src/lib/external-api/datasets.ts`; access is `dataset-access.ts` over the same
+`integrations:clients` cache + fetch as `AdminExternalApiClients`. A list that was not read shows *unknown*, never zero. Props:
+`onOpenIntegrations?`. Governing doc: [integrations-data-catalog.md](../features/integrations-data-catalog.md).
+
+## `src/components/admin/AdminWebhooks.tsx` — section tabs *(2026-09-17; third tab 2026-09-25)*
+
+Three tabs under one header, "Webhooks & Integrations": **Webhooks** (everything the page always was — search, cards, Add /
+Save, Open automation), **Integrations** (`AdminExternalApiClients`) and **Data catalog** (`AdminDataCatalog`). The header actions and the active count render only
 on Webhooks; the Webhooks tab shows an *unsaved* pill when the page is dirty. Sidebar id stays `webhooks`. The open section
 and the entries (as loaded/saved, never as edited) ride the Admin tab cache (`admin-dashboard-cache.md`).
 
@@ -1983,6 +1996,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/accounting/termination-docs/TerminationDocsTabRow.tsx` | component | — **no doc** |
 | `src/components/admin/AdminApiKeys.tsx` | component | *this file* · [admin-api-keys](../features/admin-api-keys.md) |
 | `src/components/admin/AdminCsvImports.tsx` | component | *this file* · [csv-imports](../features/csv-imports.md) |
+| `src/components/admin/AdminDataCatalog.tsx` | component | *this file* · [integrations-data-catalog](../features/integrations-data-catalog.md) |
 | `src/components/admin/AdminDesignSpecs.tsx` | component | [monday-board-sync](../features/monday-board-sync.md) |
 | `src/components/admin/AdminExternalApiClients.tsx` | component | *this file* · [external-api-integrations](../features/external-api-integrations.md) |
 | `src/components/admin/AdminGlobalMasterList.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |

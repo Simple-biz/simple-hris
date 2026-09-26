@@ -189,6 +189,11 @@ means a new scope in the SQL CHECK, a new catalog, and a new route (and MCP tool
 honours it** — never widening this one. Kane's model ("they only need Global Master List")
 kept v1 to this table; the catalog is where the next one goes.
 
+Every dataset that could be next — and the ones that never will be — is documented on the
+**Data catalog** tab beside this one (`integrations-data-catalog.md`, 2026-09-25). That tab is
+documentation only; its live set is test-pinned to this table's scope CHECK, so adding a scope
+here turns its suite red until the dataset's page moves to Live.
+
 ## Contract
 
 ```

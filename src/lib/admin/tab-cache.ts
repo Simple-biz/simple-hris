@@ -329,7 +329,7 @@ export const ADMIN_CACHE_KEYS = {
    * the plaintext key: that is not list state.
    */
   integrationsClients: 'integrations:clients',
-  /** Which tab of Webhooks & Integrations is open — `'webhooks' | 'integrations'`. */
+  /** Which tab of Webhooks & Integrations is open — `'webhooks' | 'integrations' | 'catalog'`. */
   webhooksSection: 'webhooks:section',
   /**
    * The webhooks config entries as LOADED or SAVED — never as edited. A draft
