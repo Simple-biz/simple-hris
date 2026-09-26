@@ -73,29 +73,37 @@ export async function loadTakenWorkEmails(): Promise<Set<string>> {
   // them, i.e. ignore any lingering employee_ids / employee_roles rows below.
   const freed = new Set([...offboardedEmails].filter((e) => !activeEmails.has(e)));
 
-  // 2. employee_ids — covers admins and non-payroll staff with workspace accounts
-  const { data: ids, error: idsErr } = await sb
-    .from("employee_ids")
-    .select("work_email")
-    .range(0, 9999);
-  if (!idsErr) {
-    for (const r of (ids ?? []) as Array<{ work_email: string | null }>) {
-      const e = norm(r.work_email);
-      if (e && !freed.has(e)) taken.add(e);
-    }
+  // 2. employee_ids — covers admins and non-payroll staff with workspace accounts.
+  // Paged like step 1: this was a single .range(0, 9999) that read 1,000 of
+  // 2,072 addresses (2026-09-25), so an address held only here could be offered
+  // and minted again. A failed read throws — a silently smaller taken set is
+  // exactly the bug.
+  const { rows: ids, error: idsErr } = await selectAllPaged<{ work_email: string | null }>((from, to) =>
+    sb
+      .from("employee_ids")
+      .select("work_email")
+      .order("employee_id", { ascending: true })
+      .range(from, to),
+  );
+  if (idsErr) throw new Error(`employee_ids: ${idsErr}`);
+  for (const r of ids) {
+    const e = norm(r.work_email);
+    if (e && !freed.has(e)) taken.add(e);
   }
 
   // 3. employee_roles — catches remaining addresses not covered above
-  const { data: roles, error: rolesErr } = await sb
-    .from("employee_roles")
-    .select("work_email")
-    .is("revoked_at", null)
-    .range(0, 9999);
-  if (!rolesErr) {
-    for (const r of (roles ?? []) as Array<{ work_email: string | null }>) {
-      const e = norm(r.work_email);
-      if (e && !freed.has(e)) taken.add(e);
-    }
+  const { rows: roles, error: rolesErr } = await selectAllPaged<{ work_email: string | null }>((from, to) =>
+    sb
+      .from("employee_roles")
+      .select("work_email")
+      .is("revoked_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (rolesErr) throw new Error(`employee_roles: ${rolesErr}`);
+  for (const r of roles) {
+    const e = norm(r.work_email);
+    if (e && !freed.has(e)) taken.add(e);
   }
 
   // 4. In-flight pending hires (not yet promoted or cancelled)

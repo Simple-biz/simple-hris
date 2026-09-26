@@ -707,7 +707,7 @@ The active roster was **1075** then, so this bit the master-list readers first. 
 
 | Call site | File | What it reads |
 |---|---|---|
-| ~~`loadTakenWorkEmails`~~ | [work-email-server.ts](src/lib/hr/work-email-server.ts) | **FIXED 2026-07-30** — work-email minting; a truncated "taken" set could re-mint a colliding address |
+| ~~`loadTakenWorkEmails`~~ | [work-email-server.ts](src/lib/hr/work-email-server.ts) | **FIXED in two steps.** The master-list read was fixed 2026-07-30. The `employee_ids` read was **missed** and stayed one capped read (1,000 of 2,072 addresses) until **2026-09-25** (item 227). That left **3** addresses held only in `employee_ids` open to being minted again. Both it and `employee_roles` now page and **throw** on a read error instead of silently skipping. Work-email minting: a truncated "taken" set could re-mint a colliding address |
 | Rates CSV sync existing-row lookup | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | **STILL OPEN** — the full-table `employee_hourly_rates` read folded case-insensitively in memory (the 2026-05-07 "single full-table SELECT" fix) |
 | `fetchMasterMin` | [current-pay.ts](src/lib/payroll/current-pay.ts) | **STILL OPEN** — the current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
 | ~~`getTeamRoster`~~ | [team-roster.ts](src/lib/supabase/team-roster.ts) | **FIXED 2026-07-30** — manager team-roster membership (~296 people were missing) |
