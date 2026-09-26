@@ -235,7 +235,7 @@ Input: CSV text + source label. Output: `{ rowCount, uploadId, inserted, updated
 
 1. **Header lookup** — read only `Work Email`, `Personal Email`, `Week`, `Regular Rate`, `OT Rate`. All other columns (~54 of them on the All Dept sheet) are ignored.
 2. **Per-employee dedup** — multiple weekly rows per `Work Email` are expected. Pick the one with the latest parsed `Week M/D/YY - M/D/YY`. Result: at most one row per work email.
-3. **Build existing maps** — single full-table SELECT *(rewritten 2026-05-07 to mirror the master list fix)*. `existingByWorkEmail` + `existingByPersonalEmail` indexed case-insensitively.
+3. **Build existing maps** — `loadCurrentRateRowIndex`: a full-table read indexed case-insensitively in memory *(2026-05-07, mirroring the master-list fix)*, **paged since 2026-09-25**. It was one `.range(0, 9999)` capped at 1,000 of 22,610 rows, so ~2,200 of 2,776 people looked absent. A sync would have INSERTED each of them a fresh row carrying only the sheet's columns, and the current-rates view would then show that row, with no MESA flag, photo, or (blank-cell) Bank Preferred. The table keeps multi-upload history (1,321 people hold several rows, up to 75). So per identity the map keeps **the row `employee_hourly_rates_current` shows**: current upload, then newest upload, then highest id (`outranksRateRow`, `src/lib/payroll/current-rate-row.ts`). It never keeps whichever row was read last (Kane, 2026-09-25). Verified read-only: the picked row equals the view's row for all 2,776 people.
 4. **Apply** — UPDATEs in parallel chunks of 20 *(added 2026-05-07)*. INSERTs in batches of 50.
 5. **Promote** new upload to `is_current = true`.
 

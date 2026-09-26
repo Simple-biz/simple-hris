@@ -4,6 +4,8 @@ import {
   fetchAllRateHistory,
   resolveRateAsOfDate,
 } from "@/lib/payroll/rate-history";
+import { outranksRateRow, type RateRowRank } from "@/lib/payroll/current-rate-row";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
 
 const RATES_UPLOADS_TABLE = "rates_uploads";
 
@@ -221,6 +223,78 @@ async function fetchHslWorkEmails(supabase: SupabaseClient): Promise<Set<string>
     if (em) out.add(em);
   }
   return out;
+}
+
+/**
+ * Each identity's CURRENT rates row id — the row `employee_hourly_rates_current`
+ * shows — keyed by lowercased Work Email and by lowercased Personal Email.
+ * READ-ONLY; the sync UPDATEs these rows in place.
+ *
+ * Reads EVERY row, indexed in memory (not a chunked `.in()`) because the old
+ * case-sensitive `.in('"Work Email"', …)` missed rows with any case variance,
+ * which then collided with the unique index on INSERT. It is PAGED: until
+ * 2026-09-25 this was one `.range(0, 9999)`, capped at 1,000 of 22,610 rows. So
+ * ~2,200 of 2,776 people looked absent and a sync would have INSERTED them a fresh
+ * row carrying only the sheet's columns. The view then shows that row, which
+ * has no MESA flag, photo, or (blank-cell) Bank Preferred.
+ *
+ * With multi-upload history (1,321 people hold several rows, up to 75) the row
+ * kept per identity is the one the view ranks first (`outranksRateRow`), never
+ * whichever row happened to be read last (Kane, 2026-09-25).
+ */
+export async function loadCurrentRateRowIndex(
+  supabase: SupabaseClient,
+  table: string,
+): Promise<{ byWorkEmail: Map<string, { id: string }>; byPersonalEmail: Map<string, { id: string }> }> {
+  const { rows: uploads, error: uploadsErr } = await selectAllPaged<{
+    id: string;
+    is_current: boolean | null;
+    uploaded_at: string | null;
+  }>((from, to) =>
+    supabase
+      .from(RATES_UPLOADS_TABLE)
+      .select("id, is_current, uploaded_at")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (uploadsErr) throw new Error(`Could not read ${RATES_UPLOADS_TABLE} for reconciliation: ${uploadsErr}`);
+  const uploadById = new Map(uploads.map((u) => [u.id, u]));
+
+  const { rows, error } = await selectAllPaged<{
+    id: string;
+    "Work Email": string | null;
+    "Personal Email": string | null;
+    upload_id: string | null;
+  }>((from, to) =>
+    supabase
+      .from(table)
+      .select('id, "Work Email", "Personal Email", upload_id')
+      .not('"Work Email"', "is", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) throw new Error(`Could not read ${table} for reconciliation: ${error}`);
+
+  const best = { work: new Map<string, RateRowRank>(), personal: new Map<string, RateRowRank>() };
+  const keep = (map: Map<string, RateRowRank>, key: string, r: RateRowRank) => {
+    const prev = map.get(key);
+    if (!prev || outranksRateRow(r, prev)) map.set(key, r);
+  };
+  for (const r of rows) {
+    const upload = r.upload_id ? uploadById.get(r.upload_id) : undefined;
+    const rank: RateRowRank = {
+      id: r.id,
+      isCurrent: upload?.is_current ?? null,
+      uploadedAt: upload?.uploaded_at ?? null,
+    };
+    const workEmail = normalizeEmail(r["Work Email"]);
+    const personalEmail = normalizeEmail(r["Personal Email"]);
+    if (workEmail) keep(best.work, workEmail, rank);
+    if (personalEmail) keep(best.personal, personalEmail, rank);
+  }
+  const ids = (m: Map<string, RateRowRank>) =>
+    new Map([...m].map(([k, v]) => [k, { id: v.id }] as const));
+  return { byWorkEmail: ids(best.work), byPersonalEmail: ids(best.personal) };
 }
 
 async function createPendingRatesUpload(
@@ -458,33 +532,8 @@ export async function replaceEmployeeHourlyRatesFromCsv(
 
   const uploadId = await createPendingRatesUpload(supabase, sourceFile, uniqueEmployees);
 
-  // Fetch ALL rows with a non-null Work Email and index by lowercased identity
-  // in memory. The previous chunked `.in('"Work Email"', …)` lookup was
-  // case-sensitive, so DB rows whose email had any case variance (legacy
-  // backfill, manual edits) were invisible — those rows then collided with
-  // the unique index when we tried to INSERT their CSV counterparts.
-  // For roster sizes the system targets (≤ a few thousand rows) one full pass
-  // is faster than chunked queries anyway.
-  const existingByWorkEmail = new Map<string, { id: unknown }>();
-  const existingByPersonalEmail = new Map<string, { id: unknown }>();
-  {
-    const { data, error } = await supabase
-      .from(table)
-      .select('id, "Work Email", "Personal Email"')
-      .not('"Work Email"', "is", null)
-      .range(0, 9999);
-    if (error) throw new Error(`Could not read ${table} for reconciliation: ${error.message}`);
-    for (const r of (data ?? []) as {
-      id: unknown;
-      "Work Email": string | null;
-      "Personal Email": string | null;
-    }[]) {
-      const workEmail = normalizeEmail(r["Work Email"]);
-      const personalEmail = normalizeEmail(r["Personal Email"]);
-      if (workEmail) existingByWorkEmail.set(workEmail, { id: r.id });
-      if (personalEmail) existingByPersonalEmail.set(personalEmail, { id: r.id });
-    }
-  }
+  const { byWorkEmail: existingByWorkEmail, byPersonalEmail: existingByPersonalEmail } =
+    await loadCurrentRateRowIndex(supabase, table);
 
   // Partition into UPDATE-targets and INSERT-payloads.
   const updateOps: { id: string | number; payload: Record<string, string | null> }[] = [];
@@ -518,7 +567,7 @@ export async function replaceEmployeeHourlyRatesFromCsv(
       (c.personalEmail ? existingByPersonalEmail.get(c.personalEmail) : undefined);
     if (existing) {
       updateOps.push({
-        id: existing.id as string | number,
+        id: existing.id,
         payload: { ...payload, upload_id: uploadId },
       });
     } else {

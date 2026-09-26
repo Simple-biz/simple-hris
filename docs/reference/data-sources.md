@@ -703,13 +703,13 @@ The active roster was **1075** then, so this bit the master-list readers first. 
 
 **The rule:** any read of a table that can exceed 1000 rows *after filtering* MUST paginate. `.range(0, 9999)` is not pagination — it is a 1000-row cap with a misleading number.
 
-**Audit fallout (2026-07-09):** an audit found ~44 more un-paginated `.range(0, 9999)` reads across the data layer. These were the confirmed-live candidates — **`loadTakenWorkEmails` and `getTeamRoster` were fixed by the 2026-07-30 sweep above; the other two still need the fix:**
+**Audit fallout (2026-07-09):** an audit found ~44 more un-paginated `.range(0, 9999)` reads across the data layer. These were the confirmed-live candidates. All four are now fixed; the dates are per row:
 
 | Call site | File | What it reads |
 |---|---|---|
 | ~~`loadTakenWorkEmails`~~ | [work-email-server.ts](src/lib/hr/work-email-server.ts) | **FIXED in two steps.** The master-list read was fixed 2026-07-30. The `employee_ids` read was **missed** and stayed one capped read (1,000 of 2,072 addresses) until **2026-09-25** (item 227). That left **3** addresses held only in `employee_ids` open to being minted again. Both it and `employee_roles` now page and **throw** on a read error instead of silently skipping. Work-email minting: a truncated "taken" set could re-mint a colliding address |
-| Rates CSV sync existing-row lookup | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | **STILL OPEN** — the full-table `employee_hourly_rates` read folded case-insensitively in memory (the 2026-05-07 "single full-table SELECT" fix) |
-| `fetchMasterMin` | [current-pay.ts](src/lib/payroll/current-pay.ts) | **STILL OPEN** — the current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
+| ~~Rates CSV sync existing-row lookup~~ | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | **FIXED 2026-09-25** (item 227c) — `loadCurrentRateRowIndex` pages all 22,610 rows (it read 1,000) and keeps each person's row in the `employee_hourly_rates_current` order. Paging alone would have updated whichever of up to 75 history rows was read last. See [csv-imports.md](../features/csv-imports.md) § Rates |
+| ~~`fetchMasterMin`~~ | [current-pay.ts](src/lib/payroll/current-pay.ts) | **Already paged.** This row said STILL OPEN until 2026-09-25, but a read that day found it paging `active_employees` in 1,000-row pages. It is the current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
 | ~~`getTeamRoster`~~ | [team-roster.ts](src/lib/supabase/team-roster.ts) | **FIXED 2026-07-30** — manager team-roster membership (~296 people were missing) |
 
 > These are the *confirmed-live* candidates flagged by the audit; the remaining `.range(0, 9999)` hits are on tables comfortably under 1000 rows today (e.g. HSL agents, departments, leave requests) and are latent — they become bugs the moment their table crosses the ceiling.
