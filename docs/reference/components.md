@@ -1187,11 +1187,14 @@ The **Onboarding** tab. Two sub-tabs: **Onboarding Form** (renders `HrOnboarding
 | List | `GET /api/hr/pending-employees` |
 | Dept rate fallback | `GET /api/hr/department-rates` |
 | Promote -> master list (+ Sheet append + Hubstaff invite) | `POST /api/hr/pending-employees/{id}/promote` |
+| Promote selected (client chunks of 15) | `POST /api/hr/pending-employees/bulk-promote` with `{ ids }` |
 | Send back to Ready | `POST /api/hr/pending-employees/{id}/unpromote` |
 | Set work email | `PATCH /api/hr/pending-employees/{id}` |
 | Cancel / hard delete | `DELETE /api/hr/pending-employees/{id}[?hard=true]` |
 
 Promote copies the staged row into `global_master_list`, appends to the Google Sheet, and fires the `hubstaff_invite_user` webhook; partial failures surface as warning toasts.
+
+**No hero header and no "Bulk promote (Lead Gen)" button** (both removed 2026-09-25, Kane). The page opens straight on the sub-tabs, and bulk promotion is **Promote selected (N)** only. The bulk-promote route's no-body mode ("promote every ready Lead Gen hire") still exists server-side, but nothing in the UI calls it any more.
 
 ### `src/components/hr/HrOnboardingForm.tsx`
 

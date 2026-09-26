@@ -20,7 +20,6 @@ import {
   Undo2,
   Users,
   XCircle,
-  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -153,10 +152,6 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
   const [confirmDelete, setConfirmDelete] = useState<HrPendingEmployeeRow | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [busyRetryId, setBusyRetryId] = useState<number | null>(null);
-  const [bulkPromoting, setBulkPromoting] = useState(false);
-  const [bulkResult, setBulkResult] = useState<{
-    promoted: number; failed: number; total: number;
-  } | null>(null);
   // Multi-select promote (Ready tab). Holds the ids ticked in the table.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [promotingSelected, setPromotingSelected] = useState(false);
@@ -364,39 +359,6 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
       await fetchPending();
     } finally {
       setBusyId(null);
-    }
-  }
-
-  async function bulkPromoteLeadGen() {
-    setBulkPromoting(true);
-    setBulkResult(null);
-    try {
-      const res = await fetch('/api/hr/pending-employees/bulk-promote', { method: 'POST' });
-      const json = (await res.json()) as {
-        promoted?: number; failed?: number; total?: number;
-        message?: string; error?: string;
-      };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Bulk promote failed');
-      const promoted = json.promoted ?? 0;
-      const failed = json.failed ?? 0;
-      const total = json.total ?? 0;
-      setBulkResult({ promoted, failed, total });
-      if (total === 0) {
-        toast.info(json.message ?? 'No Lead Gen hires are ready to promote.');
-      } else if (failed === 0) {
-        toast.success(`${promoted} Lead Gen hire${promoted !== 1 ? 's' : ''} promoted`, {
-          description: 'All added to the master list. Hubstaff invites sent.',
-        });
-      } else {
-        toast.warning(`${promoted} promoted, ${failed} failed`, {
-          description: 'Check the console for per-hire details.',
-        });
-      }
-      await fetchPending();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Bulk promote failed');
-    } finally {
-      setBulkPromoting(false);
     }
   }
 
@@ -645,51 +607,6 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:gap-8 lg:px-8 lg:pt-8">
-      {/* Hero header */}
-      <header className="relative overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-900 px-5 py-7 text-white shadow-lg shadow-emerald-600/20 dark:border-emerald-900/50 dark:from-emerald-600 dark:via-teal-900 dark:to-black sm:px-7">
-        <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" aria-hidden />
-        <div className="absolute -bottom-12 left-8 h-32 w-32 rounded-full bg-teal-300/20 blur-2xl" aria-hidden />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
-          <div className="flex min-w-0 flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-emerald-100/95">
-              <Users className="h-3 w-3 shrink-0" />
-              Onboarding
-            </div>
-            <h1 className="text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-              Stage new hires before they hit the master list.
-            </h1>
-            <p className="max-w-2xl text-sm leading-relaxed text-emerald-100/85">
-              Add interview-stage hires here. Once Payroll provides the @simple.biz
-              work email and orientation is confirmed, promote the row — it lands
-              in the Global Master List and flows into every other dashboard.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-              onClick={() => void bulkPromoteLeadGen()}
-              disabled={bulkPromoting || pendingLoading}
-              title="Promote all ready Lead Gen hires at once (orientation confirmed + work email required)"
-            >
-              {bulkPromoting ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Zap className="mr-1.5 h-3.5 w-3.5" />
-              )}
-              Bulk promote (Lead Gen)
-            </Button>
-          </div>
-          {bulkResult && bulkResult.total > 0 && (
-            <div className="mt-2 text-xs text-emerald-100/80">
-              Last bulk: {bulkResult.promoted} promoted
-              {bulkResult.failed > 0 && `, ${bulkResult.failed} failed`}
-            </div>
-          )}
-        </div>
-      </header>
-
       {/* Sub-tabs */}
       <div role="tablist" aria-label="Onboarding views" className="-mb-2 flex flex-wrap items-center gap-1.5 border-b border-emerald-100/60 pb-2 dark:border-emerald-900/40">
         <SubTabPill
