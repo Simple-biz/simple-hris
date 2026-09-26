@@ -3,7 +3,13 @@
  * Applies references/sql/create/2026-09-12_paystub_issues.sql — `paystub_issues`,
  * one row per pay statement actually EMAILED — then verifies the table, its
  * comment, its index and both CHECK constraints landed, AND that each constraint
- * actually rejects what it exists to reject.
+ * actually rejects what it exists to reject, AND that row level security is on
+ * with zero policies, so the public anon key cannot read or write pay totals.
+ *
+ * RE-RUN IT ON A LIVE TABLE. The first apply (2026-09-25) predates the RLS line
+ * and left the table open to anon. `--apply` again is safe: CREATE ... IF NOT
+ * EXISTS and ENABLE ROW LEVEL SECURITY are no-ops for whatever already exists,
+ * and no row is touched.
  *
  *   node --import tsx scripts/apply-paystub-issues-migration.mts           # rehearse, then ROLL BACK
  *   node --import tsx scripts/apply-paystub-issues-migration.mts --dry     # same, explicitly
@@ -114,6 +120,20 @@ const CHECKS: Array<[string, string]> = [
            AND column_name='${col}'), false) AS ok`,
     ],
   ),
+  // Pay totals per person. With RLS off, Supabase's default grants hand anon and
+  // authenticated full read/write — measured on the first apply (2026-09-25):
+  // the public anon key got HTTP 200. RLS on with ZERO policies = service role
+  // only; a policy here would re-open it to whichever role it names.
+  [
+    'row level security is ENABLED (the anon key cannot read or write pay totals)',
+    `SELECT COALESCE((SELECT relrowsecurity FROM pg_class
+       WHERE oid = to_regclass('${TABLE}')), false) AS ok`,
+  ],
+  [
+    'ZERO policies on the table (service role only)',
+    `SELECT NOT EXISTS (SELECT 1 FROM pg_policies
+       WHERE schemaname='public' AND tablename='paystub_issues') AS ok`,
+  ],
   ...CONSTRAINTS.map((name): [string, string] => [
     `constraint ${name}`,
     `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${name}') AS ok`,

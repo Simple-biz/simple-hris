@@ -305,11 +305,26 @@ If a "Re-send" button is ever wired to it, it must first do what the per-employe
 | The prompt | `src/components/payroll-clerk/MarkPaidDialog.tsx` |
 | Employee banner | `src/components/paystub/PayStubModal.tsx` |
 
+**Who can read it: the service role, nobody else.** Each row is one employee's emailed pay total.
+The table has **row level security on and ZERO policies**, the same shape as `gift_orders`. Every
+reader and writer in `paystub-issues.ts` uses the service role, which bypasses RLS. **Never add a
+policy** unless that reader has first moved off the anon key. The apply script checks both
+conditions: RLS on, and 0 policies.
+
 **Deploy notes.** Migration `references/sql/create/2026-09-12_paystub_issues.sql`, applied with
 `node --import tsx scripts/apply-paystub-issues-migration.mts --apply` (dry run is the default
-and is always rolled back; needs the **session-pooler** `DATABASE_URL`). **PENDING — Kane runs
-it.** Safe to deploy the code before or after: with the table absent, statements still send and
-the issue number falls back to `send_count`. No env vars, no n8n change.
+and is always rolled back; needs the **session-pooler** `DATABASE_URL`).
+- **The table IS APPLIED**, measured read-only 2026-09-26 01:25Z. It is present in the catalog and
+  through PostgREST, has 0 rows, and both CHECKs match this file.
+- **It was applied BEFORE the RLS line existed**, so RLS is **off**. `anon` and `authenticated`
+  hold SELECT/INSERT/UPDATE/DELETE, and an anon-key GET returns HTTP 200.
+- Every landed send writes a row (`app/api/payment-dispatches/route.ts:680`), issue 1 included.
+  The next pay run therefore puts every paid employee's total where the public key can read it.
+- **PENDING: Kane re-runs the same `--apply`.** The re-run is idempotent: it enables RLS and
+  touches no row.
+
+Safe to deploy the code before or after: with the table absent, statements still send and the
+issue number falls back to `send_count`. No env vars, no n8n change.
 
 ### Paystub freshness — snapshot-over-staged merge
 

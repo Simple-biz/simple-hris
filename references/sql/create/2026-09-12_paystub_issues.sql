@@ -82,5 +82,17 @@ create table if not exists public.paystub_issues (
 create index if not exists paystub_issues_recipient_idx
   on public.paystub_issues (recipient_email, cycle_source_file, issue_no desc);
 
+-- ROW LEVEL SECURITY ON, ZERO POLICIES — service role only (added 2026-09-25).
+-- Every row is one employee's emailed pay total. The first apply (2026-09-25
+-- ~01:15Z UTC) ran this file without this line, and Supabase's default grants
+-- gave anon + authenticated full SELECT/INSERT/UPDATE/DELETE: the PUBLIC anon key
+-- in /login's JS read the table (HTTP 200) and could forge an issue row, putting
+-- a false "Reissued"/"Amended" on someone's pay document. Every reader and writer
+-- (src/lib/supabase/paystub-issues.ts) uses the service role, which bypasses RLS,
+-- so nothing in the app goes silently empty. Same shape as gift_orders. Never add
+-- a policy here without moving that reader off the anon key first.
+-- Idempotent: enabling RLS that is already on is a no-op.
+alter table public.paystub_issues enable row level security;
+
 comment on table public.paystub_issues is
   'One row per pay statement actually emailed. amount_php is the total ON THAT EMAIL — it is what makes the next issue decidable as Reissued (unchanged) vs Amended (moved). Display/audit only; never a second source of truth for pay. No row = not recorded, never issue 1.';
