@@ -702,8 +702,8 @@ import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-24';
-export const AUDIT_RANGE = 'status pass, no new commit range: every HRIS Pending Deploy row on the board';
+export const PASS_DATE = '2026-09-25';
+export const AUDIT_RANGE = 'status pass, no new commit range: every open HRIS row on the board';
 export const AUDIT_COMMITS = 0;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
@@ -731,324 +731,33 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 34 · 2026-09-24 · STATUS PASS — 41 Pending Deploy rows, 32 Done / 9 held ─────────
-  // Kane 2026-09-24 ~00:20Z: "All of these Pending deployes have already been deployed so lets score
-  // them." Asked-for and recorded as the basis for every row with no open external step. The board
-  // held 41 HRIS Pending Deploy rows (37 S29 + 4 S28, measured by status filter). Every blocker was
-  // RE-MEASURED read-only the same hour rather than carried from staged prose; nine still bite, and
-  // "deployed" cannot run a migration, grant a role or switch on a workflow. Those nine stay Pending
-  // Deploy with the fresh measurement as their evidence update.
-  // Also answers "all unfinished tasks from 28 into 29": S28's only open rows are four Pending Deploy
-  // rows, all four held here. They are NOT moved: their code landed inside S28 (tickets in S27), so
-  // re-filing them into S29 would put their Completed Date outside the sprint forever.
-  {
-    name: 'Discovery can add an external member to its KPI calculator',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['769328a0'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: DeptBonusCalculator lets Discovery add a member from outside its roster, pinned by 54 lines of kpi-calculator-depts tests.',
-  },
-  {
-    name: 'Edit Department manager access is scoped — one list per HSL sub-team, never one collapsed family list',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['e7cb87ac'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: EditBuiltinManagersDialog and registry.ts: a flat built-in is one scope claiming every alias, HSL is one scope per hsl:sub matched exactly, because collapsing them would be a family-wide revoke. scripts/audit-department-manager-grants.mts measures the live grants read-only.',
-  },
-  {
-    name: 'The Edit Department People step moves someone as a real department transfer, never a registry note',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['efcbeaf0'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: The People step writes a real transfer (master list, Sheet, applied row) through direct-transfer.ts, never a registry member record; bare "HSL" is refused. The feature doc says it has never been run against production.',
-  },
-  {
-    name: 'Built-in departments can have sub-departments, HSL included — code teams pinned, data teams under hsl: labels',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['5bffa558', '88067b71', 'a362e0cd'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: Three commits sharing builtin-subs.ts / EditBuiltinManagersDialog / registry.ts: 5bffa558 adds sub-departments to built-ins (app_settings keyed builtinKey:subKey), 88067b71 fixes a sub-departments-only save reporting "Nothing has changed", a362e0cd extends it to HSL with the 16 code teams pinned and data teams kept under hsl: labels.',
-  },
-  {
-    name: 'A Bonus Library bonus can target one sub-team — it lands on the parent card and reaches only that team’s members',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['6077da7d', '40c35b7b'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: CURRENT RULE ONLY: 6077da7d first kept sub-teams off Assignments and System Bonuses, and 40c35b7b reversed that the same day. assignment-scope.ts resolves a sub-team target per member on the parent card, additive, applied rows keeping the parent key. One row, describing the rule that ships.',
-  },
-  {
-    name: 'A data HSL sub-team can be transferred into and granted — every transfer, HR and roles surface reads the sub-team map',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['b3be176d', 'f7acb469'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: b3be176d makes every surface (transfer dialog + POST, HR onboarding, Admin Roles chips, pay-structures) read the sub-team map; f7acb469 fixes the regression it introduced in transfer-candidates, where people and builtinSubs were swapped and the search returned the whole roster. Same file, so one row, last sha the fix.',
-  },
-  {
-    name: 'A Bonus Library bonus assigned to an HSL sub-team is scored on that team’s KPI card, with its inputs named',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['ac934997', '0927290a'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: catalog-bonus.ts (186 lines + 202 of tests) scores a Library bonus on an HSL sub-team card; 0927290a names its inputs on HslBonusCalculator.',
-  },
-  {
-    name: 'A data HSL sub-team is a scoreable branch, so it appears in KPI Submissions',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['f92cbe52'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: data-branch.ts gives a data sub-team a DeptConfig with no rules, so it shows in KPI Submissions and reads no_bonus when nothing is assigned; payroll-readiness learns it too.',
-  },
-  {
-    name: 'The Payroll Wizard pays a data HSL sub-team — staffed, railed and paid, not just scoreable',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['0f32d323'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: Closes audit item 159: the card, the roster and the payout were three separate gates and the wizard paid a data sub-team through none of them. manager-week-amount.ts + roster-merge.ts + PayrollWizard, 186 lines of new tests. Money path, hence Critical.',
-  },
-  {
-    name: 'Intake and Filing Specialist are scored from the Payment Catalog — the code rules are retired and the Library programme is the one rule',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['b3dc6a98', 'f8ef11a4', 'e230972d'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: CURRENT RULE ONLY: b3dc6a98 set Filing Attested Cases to 20/30/40 and added a script to retire the duplicate Library programme; e230972d DELETED that script and went the other way (code rules out via rules: [] + rulesFromCatalog, Library in), following f8ef11a4, which did the same for Intake. Probes are read-only.',
-  },
-  {
-    name: 'A department transfer no longer forks a second master-list row',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['ea980676'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: sheet-assignment.ts stops the master sync keying a transfer as a new (personal_email, department) row, which is what orphaned 304 of 314 duplicate groups. 131 lines of tests.',
-  },
-  {
-    name: 'A diagnostics probe catches the two definitions of an active employee drifting apart',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['610adf41'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: roster-drift.ts + a diagnostics node that fails when active_employees and the unstamped master list disagree: the regression guard for the reconcile row.',
-  },
-  {
-    name: 'The external API pages on a UUID cursor — REST and MCP paging had never worked past the first page',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['8160d05e'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: The GML id is a UUID and the cursor was typed integer, so 1,141 of 1,641 active people were unreachable on REST and MCP since 09-16. Five test files updated.',
-  },
-  {
-    name: 'Payment Catalog paints from the Accounting tab cache',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['1758cdc2'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: catalog-cache.ts (178 lines + 160 of tests) joined to the Accounting tab cache.',
-  },
-  {
-    name: 'Employee Current Paycycle — the in-flight week broken down beside an eight-step payroll track',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['e3ee5541', '6bc14901', 'b351bdd7'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: current-paycycle route (401), CurrentPaycycle.tsx (514), paycycle-steps/arrival with tests; b351bdd7 fixes the hours (Hubstaff day cells are duration strings, now parsed via hubstaff/duration.ts). 6bc14901 is its doc correction.',
-  },
-  {
-    name: 'Payroll Wizard Step 2 labels a first paycheck from Hubstaff history, never from a start date',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['e33e3cfd', 'dce1bb03', '611d9c47'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: first-paycheck.ts + first-hours-index.ts + a route: no Hubstaff hours for any alias in any earlier upload, display-only, a failed read is unavailable never zero. Carla meeting 2026-09-22 recorded. dce1bb03 also carries an unrelated read-only gift probe (no row).',
-  },
-  {
-    name: 'The Gift Tracker Submissions tab exports its own CSV at submission grain',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['b3d5d05e'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: shipping-export.ts gains the submission-grain file with one shared column list; the roster file keeps never-submitted people, this one does not.',
-  },
-  {
-    name: 'The Gift Tracker drops its hero banner for four stat tiles',
-    status: 'Done',
-    completed: '2026-09-23',
-    shas: ['ca8bbcb2'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: GiftTracker.tsx, 79 lines out, 19 in.',
-  },
-  {
-    name: 'The gift address link finds its owner by an alternate work email, and the code goes to that address',
-    status: 'Done',
-    completed: '2026-09-23',
-    shas: ['123b6457'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: match.ts looks up all four email columns; identity stays the primary, the alternate company address receives the code. 98 lines of tests.',
-  },
-  {
-    name: 'A MESA member the ledger says is saving but payroll never charges is badged, not silent',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['85e9fe76', '3a97d121'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: membership-drift.ts badges the drift and toggle-mesa-member 409s an aliased opt-in; 3a97d121 records dales@ applied and 0 cases left.',
-  },
-  {
-    name: 'An approved time adjustment is paid on one week only, and the pay stub prints it as its own line',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['6f2bdc32'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: time-adjustment-week-scope.ts scopes the fold to activeBatchDateRange instead of the PAB month, which paid one approved day on every week of it; the stub gains a Time Adjustment line on statement, email and XLSX/PDF. Money path.',
-  },
-  {
-    name: 'Five cold Employee dashboard tabs join the reload cache, and the cached rate row carries no bank routing',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['58d62793'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: KPI Results, Leaves, MESA, My Hours and Team join tab-cache.ts; rate-row-cache.ts keeps bank routing out of sessionStorage.',
-  },
-  {
-    name: 'The Admin tab cache widens to Roles and one projected roster key, with the audit log kept out',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['1714a096'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: admin tab-cache.ts + master-row-cache.ts on Kane\'s (b) ruling: Roles in, AuditLogPanel out, one projected roster key.',
-  },
-  {
-    name: 'QC, Contractor and Tickets get cache stores from one shared factory',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['cb0895df'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: dashboard-cache/create-tab-cache.ts (316 lines + 261 of tests), the factory, with QC, Contractor and Tickets as its first users.',
-  },
-  {
-    name: 'The Orphanage cache store gets its doc, Recent Submissions and Gift Catalog join it, and the bank-row tabs stay out on purpose',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['b01853ba'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: Doc for the seventh store plus two wires; four tabs carry account numbers on their primary row and stay uncached on purpose.',
-  },
-  {
-    name: 'The wizard’s HSL KPI Bonus column shows the amount dispatch actually pays',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['db5e87ff'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: The Additions cell and footer read the raw work-email map against a Hubstaff-email row, showing zero where dispatch paid; now resolvedHslKpi. Two read-only audit scripts.',
-  },
-  {
-    name: 'The Step-8 pay stub preview marks a figure it does not have as pending or unavailable instead of printing it',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['38b9df2d', '855caa92'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: paystub-field-state.ts: settled / pending / unavailable per line, from the loader never the amount; 855caa92 routes every bonus line through the additions blob.',
-  },
-  {
-    name: 'The hardening skill closes the documentation in the same commit as the code',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['ef6bca26'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: Skill doc change: .claude/skills/hardening/SKILL.md, +80 lines.',
-  },
-  {
-    name: 'The reference docs index every route and component, and three false coverage claims become measured counts',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['30d38244', '8d2f7930', '6a776c7f'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: docs/reference api-reference + components indexed in full, 37 moved paths repointed, three coverage claims replaced by measured counts.',
-  },
-  {
-    name: 'Toasts no longer render twice — the per-dashboard Toasters that duplicated the root one are gone',
-    status: 'Done',
-    completed: '2026-09-23',
-    shas: ['217544cd'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: app/layout.tsx already mounts the root Toaster; 11 dashboards mounted their own on top.',
-  },
-  {
-    name: 'An aliased MESA member was never charged the deduction — the membership is stamped onto the rate rows and the backfill audit learns the alias map',
-    status: 'Done',
-    completed: '2026-09-22',
-    shas: ['61fa6553', '2ed76b21', '3a97d121'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: jimg@ and dales@ were never deducted because ledger identity is an alias and the CSV backfill stamped mesa_member without the alias map; 61fa6553/2ed76b21 fix the backfill audit and repair jimg@. The one blocker (dales@ still unflagged) CLOSED 2026-09-22: 3a97d121 records dales@ APPLIED and 0 alias cases left. SHA SHARED, declared: 3a97d121 is also evidence on the MESA drift-badge row; it is the record that closes this row\'s blocker, not work counted twice.',
-  },
-  {
-    name: 'The Gift Tracker can be asked which parcels go to someone else — a toggle beside the fulfilment filter, never a fifth option inside it',
-    status: 'Done',
-    completed: '2026-09-21',
-    shas: ['06137741'],
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-24 00:2xZ: "All of these Pending deployes have already been deployed so lets score them." Re-measured the same hour: every sha an ancestor of origin/main (0 unpushed after a fetch), and no migration, n8n import, grant or data step is open for this row. The work: a tile and a toggle answer "which parcels go to someone else" on screen; it ANDs with the fulfilment facet rather than becoming a fifth state. UI only (GiftTracker.tsx + doc), no migration in its diff. The toggle self-suppresses while no production row names a recipient, by design; the old "CHECK constraints unverified" note belongs to the earlier alternate-recipient feature, not this diff.',
-  },
-  // —── HELD — Pending Deploy, blockers re-measured 2026-09-24 ───────────────────────────────────────
+  // —── PASS 35 · 2026-09-25 · STATUS PASS — the 13 open HRIS rows, 1 Done / 12 stay open ─────────
+  // Kane 2026-09-25: "Check all unfinished tasks from monday and check our git commits if we have done
+  // them make sure to add a completion date on them Ive checked the gift tracker it was already done."
+  // The board holds 13 HRIS rows that are not Done (398 ours, 385 Done, pulled 2026-09-26 ~01:05Z):
+  // pass 34's 9 held Pending Deploy rows plus 4 Ready to Start. Local main == origin/main (0/0 after a
+  // fetch). Every blocker was RE-MEASURED read-only 2026-09-26 01:11Z (scripts/tmp-probe-monday-blockers
+  // .mts, deleted after use), never carried from pass 34's prose. ONE row has lost its blocker:
+  //   • Gift Tracker Recently filled / updated → Done (below)
+  // The other twelve are unchanged, so no evidence update is posted on them:
+  //   • 4 Employee Support rows: employee_roles employee_support=0 / support_tickets=0, and 0 support
+  //     grants in employee_feature_permissions (735 live, paged)
+  //   • Tickets emails: ticket_replied and ticket_moved still active=false with an EMPTY url
+  //     (webhooks.config last saved 2026-09-12)
+  //   • Paystub reissue + HSL scheduling: paystub_issues and employee_schedule_periods both PGRST205,
+  //     same code as the negative control definitely_not_a_table_xyz
+  //   • Lead Gen QC: probe-lead-gen-qc-vs-applied.mts shows the same 290 applied rows by carla@ at
+  //     2026-09-15T15:16Z, so the restore has not run
+  //   • 4 Ready to Start rows: no commit touches them. process-scheduled-deletions/route.ts has no
+  //     commit since 08-20; the 5 employee-scope bare-hsl rows still exist (5 rows, all scope employee);
+  //     nothing in git touches the legacy rates-sheet null-preferred routing or the sheet-sync cron split.
   {
     name: 'Gift Tracker Recently filled / updated — who used the link, and an alert to HR',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-25',
     shas: ['7ee98b64'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": deployed is true, but the HR alert cannot fire. The tab works (it reads audit_log).',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only: the 2026-09-22 gift_shipping notification-type widen is still NOT APPLIED. 0 employee_notifications rows of type gift_shipping.submitted; notification.insert_failed (23514) still arriving, latest 2026-09-23 21:51Z',
-    ],
-  },
-  {
-    name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket',
-    status: 'Pending Deploy',
-    shas: ['240192e2'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": the code is live, but no answerer can open the board.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only: employee_roles 208 rows / employee_feature_permissions 1,501 rows (paged): ZERO employee_support or support_tickets grants',
-      'MEASURED 2026-09-24 ~00:20Z read-only: webhooks.config (25 entries) holds none of the support slugs, so a staff reply sends no email',
-    ],
-  },
-  {
-    name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set',
-    status: 'Pending Deploy',
-    shas: ['26292c44'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": the API is live, but it serves a board no answerer can open. Goes Done with the staff board row once the grants exist.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only: ZERO employee_support / support_tickets grants in employee_roles or employee_feature_permissions (paged)',
-    ],
-  },
-  {
-    name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it',
-    status: 'Pending Deploy',
-    shas: ['00faf88f', 'e59a16ea', 'd5ad2d72', 'a9b291f7', 'b0c8df48', '26292c44'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": deployed, migrations applied 2026-09-21, but no agent can open the queue, so the employee half talks to an empty room.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only: ZERO employee_support grants (the five named answerers: Carla, Claire, Ainsley, Grace, Alivia)',
-      'MEASURED 2026-09-24 ~00:20Z read-only: support_chat_queued / support_chat_replied absent from webhooks.config',
-    ],
-  },
-  {
-    name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them',
-    status: 'Pending Deploy',
-    shas: ['386c5c10', 'b5f82467'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": the Help button is live to employees, but the tickets they file reach nobody.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only: ZERO employee_support / support_tickets grants, so no answerer can open the queue',
-      'The staff-only trial gate Carla signed is still only a comment in EmployeeHelpMenu.tsx (carried from 2026-09-22, not re-measured)',
-    ],
-  },
-  {
-    name: 'Tickets board notifies the requester on every update — comment emails and status-move emails',
-    status: 'Pending Deploy',
-    shas: ['24be42cf', '90fb23fa'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": the code is live, the email leg is switched off. NOTE for when it closes: the code landed 2026-08-21 (Sprint 27) and the row sits in Sprint 28, so it can only go Done with dateBasis external on the day the workflows are switched on, and that day must fall in the row\'s sprint.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only: ticket_replied and ticket_moved ARE in webhooks.config now but both are marked inactive (config last saved 2026-09-12), so neither email is sent',
-    ],
-  },
-  {
-    name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt',
-    status: 'Pending Deploy',
-    shas: ['4acceeb9'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": an assertion cannot create a table. The feature records nothing until the migration runs.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only with .limit(1) against a PGRST205 negative control: public.paystub_issues is ABSENT. Run scripts/apply-paystub-issues-migration.mts --apply',
-    ],
-  },
-  {
-    name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership',
-    status: 'Pending Deploy',
-    shas: ['7cf94aa5'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": code-complete, saves nothing.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only with .limit(1) against a PGRST205 negative control: public.employee_schedule_periods is ABSENT. Run scripts/apply-employee-schedules-migration.mts --apply',
-    ],
-  },
-  {
-    name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate',
-    status: 'Pending Deploy',
-    shas: ['b6711973', '89f2d0e6', '8307df6e'],
-    basis: 'Held against Kane\'s 2026-09-24 "all deployed, score them": this row is money that has not moved, not code awaiting a look.',
-    blockers: [
-      'MEASURED 2026-09-24 ~00:20Z read-only via scripts/probe-lead-gen-qc-vs-applied.mts: gap STILL OPEN, 290 applied rows (124 at PHP 0) all written by carla@ 2026-09-15T15:16Z. scripts/restore-lead-gen-qc-first-pass.mts --apply has not run, and Kane has not ruled whether a first pass is payable',
-    ],
+    dateBasis: 'external',
+    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-25: "Ive checked the gift tracker it was already done." The measurement agrees. Pass 34 held this row on one step outside git: the gift_shipping.submitted notification-type widen. It was re-measured read-only 2026-09-26 01:11Z. The last insert rejection (notification.insert_failed) was 2026-09-25 09:27:27Z. The first delivered HR alert was 2026-09-25 12:08:17Z, and 50 have been delivered since (latest 20:22Z). No gift alert was ever delivered before that. The code (7ee98b64, 2026-09-22) is an ancestor of origin/main. Completed Date is the day the widen made the alert fire, not the commit date (dateBasis external). It falls inside Sprint 29 (Sep 15-25). Three HR alerts rejected before the widen (00:55Z, 09:27Z x2) were not re-sent; the submissions themselves are saved and listed.',
   },
 ];
 

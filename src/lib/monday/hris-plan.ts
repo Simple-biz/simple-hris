@@ -2134,7 +2134,9 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-06', name: 'Payment Catalog paints from the Accounting tab cache', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
   { epic: 'HRIS-09', name: 'Employee Current Paycycle — the in-flight week broken down beside an eight-step payroll track', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-02a', name: 'Payroll Wizard Step 2 labels a first paycheck from Hubstaff history, never from a start date', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-32', name: 'Gift Tracker Recently filled / updated — who used the link, and an alert to HR', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
+  // done:TRUE in pass 35 (2026-09-25) on Kane's confirmation. Measured: the gift_shipping.submitted
+  // widen landed; first HR alert delivered 2026-09-25 12:08Z, 50 since. Completed Date is external.
+  { epic: 'HRIS-32', name: 'Gift Tracker Recently filled / updated — who used the link, and an alert to HR', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-32', name: 'The Gift Tracker Submissions tab exports its own CSV at submission grain', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
   { epic: 'HRIS-32', name: 'The Gift Tracker drops its hero banner for four stat tiles', type: 'Chore', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
   { epic: 'HRIS-32', name: 'The gift address link finds its owner by an alternate work email, and the code goes to that address', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
