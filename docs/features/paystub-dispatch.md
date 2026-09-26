@@ -314,14 +314,14 @@ conditions: RLS on, and 0 policies.
 **Deploy notes.** Migration `references/sql/create/2026-09-12_paystub_issues.sql`, applied with
 `node --import tsx scripts/apply-paystub-issues-migration.mts --apply` (dry run is the default
 and is always rolled back; needs the **session-pooler** `DATABASE_URL`).
-- **The table IS APPLIED**, measured read-only 2026-09-26 01:25Z. It is present in the catalog and
-  through PostgREST, has 0 rows, and both CHECKs match this file.
-- **It was applied BEFORE the RLS line existed**, so RLS is **off**. `anon` and `authenticated`
-  hold SELECT/INSERT/UPDATE/DELETE, and an anon-key GET returns HTTP 200.
-- Every landed send writes a row (`app/api/payment-dispatches/route.ts:680`), issue 1 included.
-  The next pay run therefore puts every paid employee's total where the public key can read it.
-- **PENDING: Kane re-runs the same `--apply`.** The re-run is idempotent: it enables RLS and
-  touches no row.
+**APPLIED 2026-09-25 — Kane confirmed ("paystub migration is done"), and it was measured read-only
+2026-09-26 01:46Z.** The table is present with both CHECKs live. `relrowsecurity` is true with 0
+policies. As `anon` and as `authenticated` the planner returns `One-Time Filter: false`, while a
+control table with RLS off still plans a Seq Scan, so the check discriminates on an empty table.
+The first apply (01:15Z) predated the RLS line and left the table open for about half an hour.
+Anon and authenticated had full CRUD and an anon-key GET returned 200. It held 0 rows the whole
+time, so nothing was exposed. Every landed send writes a row
+(`app/api/payment-dispatches/route.ts:680`), issue 1 included.
 
 Safe to deploy the code before or after: with the table absent, statements still send and the
 issue number falls back to `send_count`. No env vars, no n8n change.

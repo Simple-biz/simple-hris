@@ -731,7 +731,10 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 35 · 2026-09-25 · STATUS PASS — the 13 open HRIS rows, 1 Done / 12 stay open ─────────
+  // —── PASS 35 · 2026-09-25 · STATUS PASS — the 13 open HRIS rows, 2 Done / 11 stay open ─────────
+  // Re-minted the same night: first hash d12f4153349b (gift row only) was never applied. Kane then ran
+  // the paystub_issues migration ("Migration applied"), the probe found it RLS-OFF, the SQL was fixed
+  // (7586a85f), Kane re-ran it ("paystub migration is done"), and the reissue row joined the pass.
   // Kane 2026-09-25: "Check all unfinished tasks from monday and check our git commits if we have done
   // them make sure to add a completion date on them Ive checked the gift tracker it was already done."
   // The board holds 13 HRIS rows that are not Done (398 ours, 385 Done, pulled 2026-09-26 ~01:05Z):
@@ -739,13 +742,14 @@ export const ROWS: PassRow[] = [
   // fetch). Every blocker was RE-MEASURED read-only 2026-09-26 01:11Z (scripts/tmp-probe-monday-blockers
   // .mts, deleted after use), never carried from pass 34's prose. ONE row has lost its blocker:
   //   • Gift Tracker Recently filled / updated → Done (below)
-  // The other twelve are unchanged, so no evidence update is posted on them:
+  //   • Sending a second copy of a pay document → Done (below), once its migration ran
+  // The other eleven are unchanged, so no evidence update is posted on them:
   //   • 4 Employee Support rows: employee_roles employee_support=0 / support_tickets=0, and 0 support
   //     grants in employee_feature_permissions (735 live, paged)
   //   • Tickets emails: ticket_replied and ticket_moved still active=false with an EMPTY url
   //     (webhooks.config last saved 2026-09-12)
-  //   • Paystub reissue + HSL scheduling: paystub_issues and employee_schedule_periods both PGRST205,
-  //     same code as the negative control definitely_not_a_table_xyz
+  //   • HSL scheduling: employee_schedule_periods PGRST205, same code as the negative control
+  //     definitely_not_a_table_xyz (paystub_issues was absent at 01:11Z too, then applied: row below)
   //   • Lead Gen QC: probe-lead-gen-qc-vs-applied.mts shows the same 290 applied rows by carla@ at
   //     2026-09-15T15:16Z, so the restore has not run
   //   • 4 Ready to Start rows: no commit touches them. process-scheduled-deletions/route.ts has no
@@ -758,6 +762,14 @@ export const ROWS: PassRow[] = [
     shas: ['7ee98b64'],
     dateBasis: 'external',
     basis: 'DONE on Kane\'s recorded confirmation, 2026-09-25: "Ive checked the gift tracker it was already done." The measurement agrees. Pass 34 held this row on one step outside git: the gift_shipping.submitted notification-type widen. It was re-measured read-only 2026-09-26 01:11Z. The last insert rejection (notification.insert_failed) was 2026-09-25 09:27:27Z. The first delivered HR alert was 2026-09-25 12:08:17Z, and 50 have been delivered since (latest 20:22Z). No gift alert was ever delivered before that. The code (7ee98b64, 2026-09-22) is an ancestor of origin/main. Completed Date is the day the widen made the alert fire, not the commit date (dateBasis external). It falls inside Sprint 29 (Sep 15-25). Three HR alerts rejected before the widen (00:55Z, 09:27Z x2) were not re-sent; the submissions themselves are saved and listed.',
+  },
+  {
+    name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt',
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['4acceeb9'],
+    dateBasis: 'external',
+    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-25: "Migration applied", then "paystub migration is done". The measurement agrees. Pass 34 held this row on one step outside git: public.paystub_issues was absent. It was measured read-only. At 2026-09-26 01:11Z it was still PGRST205. At 01:25Z it was PRESENT in the catalog and through PostgREST, both CHECKs were live (kind refuses \'attempt\'), and it had 0 rows. That first apply left row level security OFF, so anon and authenticated had full CRUD and an anon-key GET returned 200. The create SQL was fixed to enable RLS (7586a85f, audit item 226), and Kane re-ran it. At 01:46Z relrowsecurity was true with 0 policies, and as anon and as authenticated the planner returns "One-Time Filter: false". A control table with RLS off still plans a Seq Scan, so the check can tell the difference on an empty table. The code (4acceeb9, 2026-09-12) is an ancestor of origin/main. Completed Date is the day the migration made the feature record, not the commit date (dateBasis external). It falls inside Sprint 29 (Sep 15-25). Not exercised end to end: no statement has been reissued since the table landed, so the first real issue row is still to come.',
   },
 ];
 

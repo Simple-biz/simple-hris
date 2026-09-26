@@ -1780,8 +1780,11 @@ export const PLAN_TASKS: PlanTask[] = [
   // SECOND pay document (117 real duplicates) while the in-app notification WAS de-duped — document
   // delivered, no notice. Now gated on send_paystub, default FALSE. The test is `sent_at`, NEVER
   // send_count (a failed send increments the count but leaves no timestamp, so it is still the FIRST).
-  // NEVER "attempt" — the CHECK refuses it. done:false: the migration has not run. [[paystub-reissue-issues]]
-  { epic: 'HRIS-33', name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+  // NEVER "attempt" — the CHECK refuses it. [[paystub-reissue-issues]]
+  // done:TRUE in pass 35 (2026-09-25) on Kane's "paystub migration is done". Measured 2026-09-26 01:46Z:
+  // paystub_issues live, RLS on with 0 policies (the first apply had left it anon-writable; re-run the
+  // same night). Completed Date is external — the day the migration made the feature record.
+  { epic: 'HRIS-33', name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
   // 8 SP: Penny OPENS the files on record. No ID or bank-card IMAGE exists — both are renderings — so a
   // ref names a RECORD, never a path; the URL is minted at CLICK and audited; the W-8BEN TTL stays 300s;
   // and MAX_FRAME_CHARS is NEVER raised. The viewer is a REAL modal whose entrance fires on DECODE. Also
