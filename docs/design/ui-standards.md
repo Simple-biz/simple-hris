@@ -985,7 +985,7 @@ such indicators and `grep -rn 'layoutId=' src/components` is the inventory):
 | --- | --- | --- |
 | `SubTabPill` (Onboarding Form / Pending Hires) | `HrOnboarding.tsx` | `hr-onboarding-subtab` |
 | `TabPill` (Awaiting / Ready / Failed / Promoted / …) | `HrOnboarding.tsx` | `hr-pending-tab` |
-| `FilterPill` (Awaiting submission / Submitted / Archived / All) | `HrOnboardingForm.tsx` | `hr-onboarding-filter` |
+| `FilterPill` (Awaiting submission / Submitted / All ┆ Archived icon pill) — **All excludes archived** | `HrOnboardingForm.tsx` | `hr-onboarding-filter` |
 | Section strip (Departments / HSL) — **underline variant** | `PayrollWizard.tsx` (Additions step) | `additions-section-indicator` |
 | `SlidingTab` (My Team inner tabs · Cards/List · People/Scheduling/Rankings) — **spring variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamInnerTab` · `myTeamViewMode` · `myTeamDeptView` |
 | Department rail row (My Team) — **vertical rail variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamDeptRail` |
@@ -1024,6 +1024,13 @@ Rules:
   swaps the indicator gradient to `from-red-500 to-rose-700` and tints the idle
   label/count red so an unfinished promote stands out whether or not it's
   selected. Don't let the shared indicator flatten a danger pill back to emerald.
+- The same rule covers a **muted tone**: `FilterPill`'s `tone="muted"` (the
+  Onboarding **Archived** pill) keeps a `from-zinc-500 to-zinc-700` indicator and
+  a grey idle label. It is **icon-only** (`Archive`; the label moves to
+  `aria-label` + `title`), sits after a divider, and stays in the same tablist so
+  the indicator still glides onto it. Archived rows show **only** under that pill:
+  "All" is every live submission (Kane, 2026-09-25), which also keeps the per-row
+  hard Delete reachable from the Archived view alone.
 - The indicator transition is `duration: 0.28, ease: [0.22, 1, 0.36, 1]`,
   **gated behind `useReducedMotion()`** (`reduce ? 0`).
 - `aria-pressed={active}` on every pill; the label/count sit at `relative z-10`

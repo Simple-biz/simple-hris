@@ -40,6 +40,7 @@ import {
   Users,
   Wand2,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react';
 import { Select as SelectPrimitive } from '@base-ui/react/select';
 import { derivationNameParts } from '@/lib/hr/work-email';
@@ -1119,7 +1120,9 @@ export default function HrOnboardingForm({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const result = rows.filter((r) => {
-      if (filter !== 'all' && r.status !== filter) return false;
+      // "All" means every LIVE submission — archived rows only ever appear
+      // under their own Archived pill, so they can't bury the working list.
+      if (filter === 'all' ? r.status === 'archived' : r.status !== filter) return false;
       // "Needs setup" toggle — scoped to the Submitted tab so switching away
       // from it doesn't silently hide rows elsewhere. A row still needs setup
       // when it has no work email yet OR its workspace automation failed — a
@@ -1574,8 +1577,16 @@ export default function HrOnboardingForm({
           <div role="tablist" aria-label="Onboarding submission status" className="flex flex-wrap items-center gap-1">
             <FilterPill label="Awaiting submission" count={counts.pending} active={filter === 'pending'} onClick={() => setFilter('pending')} />
             <FilterPill label="Submitted" count={counts.submitted} active={filter === 'submitted'} onClick={() => setFilter('submitted')} />
-            <FilterPill label="Archived" count={counts.archived} active={filter === 'archived'} onClick={() => setFilter('archived')} />
-            <FilterPill label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
+            <FilterPill label="All" count={counts.pending + counts.submitted} active={filter === 'all'} onClick={() => setFilter('all')} />
+            <span className="mx-1 h-4 w-px bg-emerald-200/70 dark:bg-emerald-900/50" aria-hidden />
+            <FilterPill
+              label="Archived"
+              icon={Archive}
+              tone="muted"
+              count={counts.archived}
+              active={filter === 'archived'}
+              onClick={() => setFilter('archived')}
+            />
           </div>
           {filter === 'submitted' && counts.submitted > 0 && (
             <>
@@ -1645,7 +1656,7 @@ export default function HrOnboardingForm({
             rows={filtered}
             scopeLabel={
               filter === 'all'
-                ? 'All'
+                ? 'All except archived'
                 : filter === 'pending'
                   ? 'Awaiting submission'
                   : filter === 'submitted'
@@ -1828,7 +1839,7 @@ export default function HrOnboardingForm({
                   const wstate = workEmailState(r);
                   return (
                     // Keyed by filter so every row remounts and re-runs its
-                    // stagger-in when you switch Awaiting/Submitted/Archived/All.
+                    // stagger-in when you switch Awaiting/Submitted/All/Archived.
                     <motion.tr
                       key={`${filter}:${r.id}`}
                       initial={{ opacity: 0, y: 4 }}
@@ -6786,40 +6797,61 @@ function ContractsDownloadTab({
 
 // ─── Filter pill ──────────────────────────────────────────────────────────
 
+/** `icon` renders the pill icon-only (the label moves to aria-label + title);
+ *  `tone="muted"` keeps a grey indicator even while it's selected, so the
+ *  Archived pill never reads as part of the live pipeline. */
 function FilterPill({
   label,
   count,
   active,
   onClick,
+  icon: Icon,
+  tone = 'default',
 }: {
   label: string;
   count: number;
   active: boolean;
   onClick: () => void;
+  icon?: LucideIcon;
+  tone?: 'default' | 'muted';
 }) {
   const reduce = useReducedMotion();
+  const muted = tone === 'muted';
   return (
     <button
       type="button"
       onClick={onClick}
       role="tab"
       aria-selected={active}
+      aria-label={Icon ? `${label} (${count})` : undefined}
+      title={Icon ? label : undefined}
       className={cn(
         'relative flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors',
         active
           ? 'text-white'
-          : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
+          : muted
+            ? 'text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-100'
+            : 'text-zinc-600 hover:bg-emerald-50 hover:text-emerald-900 dark:text-zinc-300 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-100',
       )}
     >
       {/* Shared indicator — glides between pills via layoutId. */}
       {active && (
         <motion.span
           layoutId="hr-onboarding-filter"
-          className="absolute inset-0 rounded-md bg-gradient-to-r from-emerald-500 to-teal-700 shadow-sm shadow-emerald-600/25"
+          className={cn(
+            'absolute inset-0 rounded-md bg-gradient-to-r shadow-sm',
+            muted
+              ? 'from-zinc-500 to-zinc-700 shadow-zinc-600/25'
+              : 'from-emerald-500 to-teal-700 shadow-emerald-600/25',
+          )}
           transition={{ duration: reduce ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
         />
       )}
-      <span className="relative z-10">{label}</span>
+      {Icon ? (
+        <Icon className="relative z-10 h-3.5 w-3.5" aria-hidden />
+      ) : (
+        <span className="relative z-10">{label}</span>
+      )}
       <span
         className={cn(
           'relative z-10 rounded-full px-1.5 text-[10px] tabular-nums',
