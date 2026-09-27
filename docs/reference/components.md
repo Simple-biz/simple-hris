@@ -337,6 +337,19 @@ A loading spinner appears beside the dropdown while stats are recomputing.
 
 **Reconciliation drill-down.** The Hubstaff ↔ Master cross-reference tile is **clickable**: it opens the searchable **`src/components/accounting/HubstaffMasterMatchesModal.tsx`** drill-down (`onOpenHubstaffModal`) — a paginated, searchable, status-filterable list of the exact people behind the gap (on both directions: worked-but-not-on-directory, on-directory-but-no-hours), computed via `src/lib/payroll/hubstaff-reconciliation.ts` so the modal rows reconcile 1:1 with the tile counts. A CSV export (`downloadHubstaffReconCsv`) sits on the tile. The same modal is reused on the CEO Overview (`CeoOverviewKpis` / `hero-stat-row`).
 
+### Attention row (under the hero) *(updated 2026-09-26)*
+
+Two cards: **Needs your decision** (`AttentionCard`: pending short-day issues, which opens the
+Issues queue) and **Payroll Notes · Steps 1–8**
+(`src/components/accounting/PayrollNotesSetupCard.tsx`, `md:col-span-2`). The second card shows
+the Payroll Wizard's Wizard Setup checklist for the cycle in view. It spotlights one step at a
+time, open steps first, and crossfades between them (`src/lib/payroll/wizard-setup-spotlight.ts`).
+It reads `readiness.wizardSetup` through the per-week cache it shares with the Payroll Notes FAB
+(`src/lib/payroll/readiness-cache.ts`), and step pills and icons come from
+`src/components/accounting/wizard-setup-meta.ts`. It **replaced the New hires and Attrition
+cards**. Those figures remain on `/hr`. See
+[accounting-overview-payroll-notes-card.md](../features/accounting-overview-payroll-notes-card.md).
+
 **Total Payout computation** runs in-browser after both Hubstaff data and rates resolve. For "All Time", hours are accumulated per employee across files with per-file regular/OT split, then pay is computed from the summed seconds. Stat card subtexts adapt to show the source (filename or "all uploads combined").
 
 ### Employee Table (middle-left, spans 2/3 of second row)
@@ -1994,6 +2007,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/accounting/HubstaffMasterMatchesModal.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) |
 | `src/components/accounting/PayProcessorsTab.tsx` | component | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) · [payment-catalog-pay-processors](../features/payment-catalog-pay-processors.md) |
 | `src/components/accounting/PaymentCatalogOverview.tsx` | component | [bonus-catalog](../features/bonus-catalog.md) |
+| `src/components/accounting/PayrollNotesSetupCard.tsx` | component | *this file* · [accounting-overview-payroll-notes-card](../features/accounting-overview-payroll-notes-card.md) · [payroll-readiness](../features/payroll-readiness.md) |
 | `src/components/accounting/PayrollWizardNotesFab.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) · [hubstaff-zero-hours-gap](../features/hubstaff-zero-hours-gap.md) |
 | `src/components/accounting/SetBankDialog.tsx` | component | *this file* · [payroll-readiness](../features/payroll-readiness.md) · [people-offboarded-pay](../features/people-offboarded-pay.md) |
 | `src/components/accounting/departments/EditBuiltinManagersDialog.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |

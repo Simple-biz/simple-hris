@@ -173,10 +173,14 @@ override*.
 
 Notes:
 
-- The FAB's score ring and the Readiness pane share **one** readiness cache
-  entry per week, so whichever reads first spares the other the query (it used
-  to be fetched twice over). The ring still force-refetches when the modal
-  closes — an inline "Set rate"/"Set bank" fix may have just moved the score.
+- The FAB's score ring, the Readiness pane and (since 2026-09-26) the
+  Accounting Overview's **Payroll Notes** card share **one** readiness cache
+  entry per week, so whichever reads first spares the others the query (it used
+  to be fetched twice over). The helpers live in `src/lib/payroll/readiness-cache.ts`
+  (moved out of this component unchanged), so all three share the 30s fresh window,
+  the 6h ceiling and the 4-week trim above. The ring still force-refetches when
+  the modal closes — an inline "Set rate"/"Set bank" fix may have just moved the
+  score. See [accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md).
 - Row-cache writes are driven off the saved-server-copy map, never off
   keystroke state, so a half-typed draft can't be what a later mount seeds from.
 - A cache-seeded snapshot never counts as a live payload for the 100% confetti —

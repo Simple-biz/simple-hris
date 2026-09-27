@@ -16,10 +16,7 @@ import {
   ChevronRight,
   ClipboardList,
   Clock,
-  DollarSign,
   EyeOff,
-  FileText,
-  Heart,
   ListChecks,
   Loader2,
   Lock,
@@ -27,12 +24,10 @@ import {
   Plus,
   PowerOff,
   Search,
-  Send,
   ShieldCheck,
   Sparkles,
   StickyNote,
   Trash2,
-  Upload,
   UserPlus,
   CalendarOff,
   Wallet,
@@ -89,7 +84,6 @@ import type {
   KpiDeptStatus,
   ExceptionKind,
   ReadinessScore,
-  WizardSetupStep,
 } from "@/lib/payroll/payroll-readiness";
 import type {
   OffboardedPayrollCandidate,
@@ -118,6 +112,14 @@ import {
   markFetchedThisSession,
   TAB_CACHE_KEYS,
 } from "@/lib/accounting/tab-cache";
+import {
+  READINESS_CACHE_MAX_WEEKS,
+  READINESS_FRESH_MS,
+  READINESS_MAX_AGE_MS,
+  readCachedReadiness,
+  writeCachedReadiness,
+} from "@/lib/payroll/readiness-cache";
+import { SETUP_STATUS_PILL, SETUP_STEP_ICON } from "@/components/accounting/wizard-setup-meta";
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
@@ -255,48 +257,13 @@ const PANE_VARIANTS = {
  * the focus refresh all still run, and they write back through the same cache.
  */
 
-/** A readiness snapshot plus when it was pulled, so a remount can tell "seconds
- *  ago" (reuse as-is) from "a while ago" (paint it, then revalidate). */
-type StampedReadiness = { readiness: PayrollReadiness; at: number };
-
-/** Inside this window a remount reuses the cached snapshot with NO refetch — it
- *  matches the pane's own live poll, so a tab bounce can't be staler than
- *  sitting on the tab already was. */
-const READINESS_FRESH_MS = 30_000;
-
-/** Past this, a cached snapshot is too old to show even briefly (e.g. the tab
- *  sat open overnight) — such a load starts from the skeleton instead. */
-const READINESS_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-
-function readCachedReadiness(sourceFile: string | null): StampedReadiness | null {
-  const hit = getTabCache<StampedReadiness>(TAB_CACHE_KEYS.payrollReadiness(sourceFile));
-  if (!hit?.readiness || typeof hit.at !== "number") return null;
-  return Date.now() - hit.at > READINESS_MAX_AGE_MS ? null : hit;
-}
-
-/** Week keys cached this session, oldest first. A readiness snapshot is a
- *  sizeable payload, so paging back through a quarter of weeks would otherwise
- *  fill sessionStorage with snapshots nobody will look at again — only the most
- *  recent handful are kept. */
-const cachedReadinessKeys: string[] = [];
-const READINESS_CACHE_MAX_WEEKS = 4;
-
-/** Share a freshly-pulled snapshot with every other reader of the same week —
- *  the FAB's ring and the Readiness pane hit the same endpoint, so whichever
- *  fetches first spares the other one the query. */
-function writeCachedReadiness(sourceFile: string | null, readiness: PayrollReadiness): void {
-  const key = TAB_CACHE_KEYS.payrollReadiness(sourceFile);
-  setTabCache<StampedReadiness>(key, { readiness, at: Date.now() });
-  const seen = cachedReadinessKeys.indexOf(key);
-  if (seen >= 0) cachedReadinessKeys.splice(seen, 1);
-  cachedReadinessKeys.push(key);
-  while (cachedReadinessKeys.length > READINESS_CACHE_MAX_WEEKS) {
-    clearTabCache(cachedReadinessKeys.shift()!);
-  }
-}
+// The readiness snapshot cache (StampedReadiness, the 30s fresh window, the 6h
+// ceiling, the 4-week trim) lives in `@/lib/payroll/readiness-cache` since
+// 2026-09-26 — the Accounting Overview's Payroll Notes card reads the same
+// entries, so the FAB's ring, its Readiness pane and that card share one pull.
 
 /** The Offboarded pane's cached pull — same stamped shape/idea as
- *  {@link StampedReadiness}, so a tab switch and back repaints instantly
+ *  `StampedReadiness` (readiness-cache.ts), so a tab switch and back repaints instantly
  *  instead of re-running the whole final-pay assembly with a spinner. */
 type StampedOffboarded = {
   people: OffboardedPayrollCandidate[];
@@ -1761,43 +1728,10 @@ function PaneBody({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Status pill + row meta for the Wizard setup checklist. Read-only by design —
- *  fixes happen on the wizard steps themselves; the detail names which one. */
-const SETUP_STATUS_PILL: Record<
-  WizardSetupStep["status"],
-  { label: string; cls: string; Icon: typeof CheckCircle2 }
-> = {
-  done: {
-    label: "Done",
-    cls: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300",
-    Icon: CheckCircle2,
-  },
-  attention: {
-    label: "Attention",
-    cls: "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300",
-    Icon: AlertTriangle,
-  },
-  blocked: {
-    label: "Blocked",
-    cls: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300",
-    Icon: AlertTriangle,
-  },
-  pending: {
-    label: "Pending",
-    cls: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300",
-    Icon: Clock,
-  },
-};
-
-const SETUP_STEP_ICON: Record<WizardSetupStep["key"], typeof CheckCircle2> = {
-  csv: Upload,
-  fx: DollarSign,
-  orphanage: Heart,
-  kpi: Sparkles,
-  notes: StickyNote,
-  contractors: FileText,
-  dispatch: Send,
-};
+// Status pill + row icon for the Wizard setup checklist (SETUP_STATUS_PILL /
+// SETUP_STEP_ICON) live in ./wizard-setup-meta since 2026-09-26 — shared with
+// the Accounting Overview's Payroll Notes card. Read-only by design: fixes
+// happen on the wizard steps themselves; the detail names which one.
 
 /** Empty "all clear" line for a settled section (§12.1, compact). */
 function AllClear({ text }: { text: string }) {

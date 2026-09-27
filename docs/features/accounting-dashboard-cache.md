@@ -19,17 +19,18 @@ Siblings: `employee-dashboard-cache.md`, `manager-dashboard-cache.md`, and
 
 ## One store, three dashboards
 
-Eleven call sites across three shells read it, which is why it is neither the Accounting
+Twelve call sites across three shells read it, which is why it is neither the Accounting
 store nor the CEO store but the shared one:
 
 | Consumer | Datasets |
 | --- | --- |
 | `components/Overview.tsx` | `overviewPayouts`, `overviewPabMetrics` |
+| `accounting/PayrollNotesSetupCard.tsx` (the Overview's Payroll Notes card, 2026-09-26) | `payrollReadiness` — the SAME per-week entry as the FAB, via `payroll/readiness-cache.ts`; seeded in a layout effect (hydration-safe), revalidated unless under 30s old, never skip-flagged |
 | `people/PeopleTab.tsx` | `peopleRoster` |
 | `accounting/AccountingTransfers.tsx` | `transfers` |
 | `accounting/AccountingDocuments.tsx` | `documentsQueue`, `documentsSignature`, `documentsView` |
 | `accounting/BonusCatalog.tsx` | `ratesSummary`, `ratesFx`, `ratesView` |
-| `accounting/PayrollWizardNotesFab.tsx` | notes rows, workers, uploads, readiness, offboarded |
+| `accounting/PayrollWizardNotesFab.tsx` | notes rows, workers, uploads, readiness (via `payroll/readiness-cache.ts`, shared with the Overview card), offboarded |
 | `payroll/AccountingMesa.tsx` | `mesaRequests`, `mesaNonMembers`, `mesaActiveMembers` |
 | `payroll/PabDisputeQueue.tsx` | `pabDisputes`, `pabReasonCodes`, `timeAdjustmentIssues` (`bankPreferredRequests` was deleted 2026-09-24 with the Issues table's Bank Preferred rows) |
 | `payroll-clerk/useDispatchQueue.ts` | `dispatchQueue` |

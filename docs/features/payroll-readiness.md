@@ -34,6 +34,7 @@ Every row below has its own section further down — this is the index, so a
 | 2026-09-11 | **"Set rate" gains an "Effective from" date** — defaults to today, no `min`, sent verbatim, blank REFUSES. Closes the class where a leaver's final-pay rate could only ever be written effective-today and so never reached the week being paid. |
 | 2026-09-15 | **A leaver's DEPARTMENT follows "Set rate"** (Kane: *"make sure the paystub department will change"*) — `leaverPayDepartment`, read by the wizard's final-pay overlay and this tab; the Department line rides the `final_pay` snapshot so an unpaid stub follows without a re-lock. |
 | 2026-09-15 | **Offboarded tab: "Set rate" and "Set bank" are a COMPLETE OVERRIDE** (Kane: *"it's not sticking at all"*). Both dialogs show what is on file; Set rate leaves exactly ONE individual structure per person, supersedes history from the chosen date, keys to the hours-carrying email, and tells the open wizard to re-pull its rates; Set bank (Offboarded only) unlocks the rail and saves through the Accounting direct-edit route. See "Offboarded tab — complete override" below. |
+| 2026-09-26 | **A second reader of the Wizard Setup checklist:** the Accounting Overview's **Payroll Notes** card, which replaced New hires + Attrition, rotates through `wizardSetup`'s rows with open steps first, and shares this tab's per-week readiness cache (`readiness-cache.ts`). It renders the rows as sent and derives nothing. See [accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md). |
 
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
 per-week checklist of wizard-step prerequisites that sits *beside* the four
@@ -50,6 +51,8 @@ week's readiness at all.
 | Server aggregator (`getPayrollReadiness`) | `src/lib/payroll/payroll-readiness.ts` |
 | Pure scorer (no I/O, unit-tested) | `src/lib/payroll/readiness-score.ts` (+ `readiness-score.test.ts`) |
 | Wizard setup checklist — pure derivation + marker keys (unit-tested) | `src/lib/payroll/wizard-setup-steps.ts` (+ `wizard-setup-steps.test.ts`) |
+| Wizard setup checklist — status pill + step icon (shared with the Overview card) | `src/components/accounting/wizard-setup-meta.ts` |
+| Per-week readiness snapshot cache (FAB ring · this pane · Overview card) | `src/lib/payroll/readiness-cache.ts` |
 | Week-scoped roster predicates (pure, unit-tested) | `src/lib/payroll/readiness-week-scope.ts` (+ `readiness-week-scope.test.ts`) |
 | No-Pay-Rate post-enrichment retry rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-retry.ts` (+ `readiness-rate-retry.test.ts`) |
 | No-Pay-Rate "Ignore" partition rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-ignore.ts` (+ `readiness-rate-ignore.test.ts`) |
@@ -408,20 +411,28 @@ backing query is reported into `degraded[]` (same convention as the rest of
 readiness) and that row alone reads `pending` with a "couldn't read…" detail
 — never a false done or blocked.
 
-The **#** column is the wizard step the fix lives on, not a row index — two rows share
-step 4 since HSL and Additions merged into it (2026-08-28), which also shifted
-Contractors to 5 and Dispatch to 7. `stepNo` in `wizard-setup-steps.ts` is the source
-of these labels and moves with the rail.
+**Two surfaces render it, and neither derives anything:** this tab, and (since 2026-09-26) the
+Accounting Overview's **Payroll Notes** card, which spotlights the open rows one at a time
+([accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md)). Both
+read `wizardSetup.steps` exactly as sent and share one status palette
+(`wizard-setup-meta.ts`), so a row cannot read one way on the Overview and another way here.
+
+The **#** column is the wizard step the fix lives on, not a row index. Two rows share
+**step 5**. HSL and Additions merged into one step on 2026-08-28, and PAB moved ahead of it to
+step 4 on 2026-09-01 (Kane), which pushed Additions to 5, Contractors to 6 and Dispatch to 8.
+Between those two dates the rows read 4 / 4 / 5 / 7, and this table still said that until
+2026-09-26, long after the code had moved. `stepNo` in `wizard-setup-steps.ts` is the source of
+these labels and moves with the rail. PAB (4) and Validation (7) have no row.
 
 | # | Row | Done when | Otherwise |
 | - | --- | --- | --- |
 | 1 | Hubstaff CSV | an upload's filename parses to the checklist's expected week (see Week resolution, above) | **`blocked`** (rose — the only row that can read blocked); an unparseable newest-upload filename reads `attention` instead ("can't tell") |
 | 2 | USD rate confirmed | this cycle's per-upload FX record (`payroll.wizard.fx.<sourceFile>`, keyed to the MATCHED upload) has both `php` and `cop` non-zero | `attention` in every other case: record absent or both legs 0 → "Rates at 0 — set on Step 2"; exactly one leg 0 → "PHP still 0 — Step 2" / "COP still 0 — Step 2"; no upload has matched the expected week yet → "Waiting for this week's CSV" (not a zero complaint) |
 | 3 | Orphanage hours | `orphanage_pay` rows exist for the matched upload, OR `payroll.wizard.orphanage_confirmed.<weekStart>` exists | `attention` — "Paste hours or confirm none on Step 3". Real rows always outrank the confirm-none marker |
-| 4 | KPI bonuses | every due department — reusing the KPI rows already computed above, no duplicate queries — is ready/locked/no_bonus | `attention` listing up to 3 pending depts; `pending` (neutral) when no department is due this week |
-| 4 | Notes adjustments | zero strict-parseable Adjustment rows for the week, OR every noted worker's normalized email has a finite Adj. override in the cycle's `payroll.wizard.additions.<sourceFile>` blob | `attention` — "N of M not yet in wizard". Existence-based, not equality-based: the bridge has no per-note "applied" column, and hand-tweaked overrides after a pull are legitimate |
-| 5 | Contractor invoices | zero pending (non-stranded) invoices riding this cycle (reuses the dispatch queue's window/stranded rules) | `attention` — "N awaiting approval" |
-| 7 | Sent to dispatch | `payroll.dispatch_lock.<matchedSourceFile>` is locked | `pending` (sky/neutral) — it's the end state, not a warning |
+| 5 | KPI bonuses | every due department — reusing the KPI rows already computed above, no duplicate queries — is ready/locked/no_bonus | `attention` listing up to 3 pending depts; `pending` (neutral) when no department is due this week |
+| 5 | Notes adjustments | zero strict-parseable Adjustment rows for the week, OR every noted worker's normalized email has a finite Adj. override in the cycle's `payroll.wizard.additions.<sourceFile>` blob | `attention` — "N of M not yet in wizard". Existence-based, not equality-based: the bridge has no per-note "applied" column, and hand-tweaked overrides after a pull are legitimate |
+| 6 | Contractor invoices | zero pending (non-stranded) invoices riding this cycle (reuses the dispatch queue's window/stranded rules) | `attention` — "N awaiting approval" |
+| 8 | Sent to dispatch | `payroll.dispatch_lock.<matchedSourceFile>` is locked | `pending` (sky/neutral) — it's the end state, not a warning |
 
 ### USD rate — per-cycle zero-placeholder record (2026-08-03, same-day follow-up)
 
@@ -480,8 +491,9 @@ weekly confirmation:
   reads them any more (same precedent as every other retired per-week key in
   this codebase).
 
-**Dispatch hard gate (Validation / Dispatch — steps 6 and 7 since the
-2026-08-28 HSL+Additions merge).** A deliberate, explicit exception to
+**Dispatch hard gate (Validation / Dispatch — steps 7 and 8 since PAB moved
+to step 4 on 2026-09-01; they were 6 and 7 from the 2026-08-28 HSL+Additions
+merge until then).** A deliberate, explicit exception to
 this checklist's own "never a new gate, never affects the score" design (row
 2 above still only ever reads `attention`, never `blocked`) — Kane's call,
 because a zero cycle rate makes every USD/COP figure in the dispatch payload

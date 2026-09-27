@@ -29,8 +29,6 @@ import {
   AlertCircle,
   FileWarning,
   CalendarDays,
-  UserMinus,
-  UserPlus,
   ArrowRight,
   ArrowUp,
   LayoutGrid,
@@ -43,6 +41,7 @@ import EmployeePabCalendar from './employee/EmployeePabCalendar';
 import PabCalendarLoader from './employee/PabCalendarLoader';
 import { type AttentionTone, ATTENTION_PALETTE, HeroStatRow } from '@/components/accounting/hero-stat-row';
 import HubstaffMasterMatchesModal from '@/components/accounting/HubstaffMasterMatchesModal';
+import PayrollNotesSetupCard from '@/components/accounting/PayrollNotesSetupCard';
 import {
   type HubstaffMasterRow,
   sortHubstaffReconRows,
@@ -463,17 +462,11 @@ interface SimpleViewProps {
   pendingDisputes: number | null;
   oldestDisputeDays: number | null;
   pendingLeaves: number | null;
-  attrition: {
-    separations: number;
-    activeHeadcount: number;
-    avgHeadcount: number;
-    ratePct: number;
-  } | null;
-  newHires: {
-    last30d: number;
-    last7d: number;
-    mostRecentDays: number | null;
-  } | null;
+  /** The Hubstaff upload the Payroll Notes card reads its Steps 1–8 for — the
+   *  page's cycle selection, with All Time / latest → null (the server's live
+   *  week). Taken from the SELECTION, not `activeSourceFile`, so a failed hours
+   *  fetch (which nulls activeSourceFile) can't move the card to another week. */
+  setupSourceFile: string | null;
   pabMetrics: {
     loading: boolean;
     totalEmployees: number;
@@ -586,8 +579,7 @@ function SimpleView({
   pendingDisputes,
   oldestDisputeDays,
   pendingLeaves,
-  attrition,
-  newHires,
+  setupSourceFile,
   pabMetrics,
   techBonusEligibility,
   pabBonusPhp,
@@ -741,16 +733,6 @@ function SimpleView({
         ? `overdue ${oldestDisputeDays}d`
         : 'review soon'
       : null;
-  const attritionRatePct = attrition?.ratePct ?? null;
-  const attritionDisplay = attritionRatePct == null ? 0 : Math.round(attritionRatePct);
-  const attritionTone: AttentionTone =
-    attritionRatePct == null
-      ? 'neutral'
-      : attritionRatePct >= 15
-        ? 'warn'
-        : attritionRatePct >= 5
-          ? 'info'
-          : 'ok';
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
@@ -1156,61 +1138,14 @@ function SimpleView({
             cta="Review queue"
             onClick={onNavigate ? () => onNavigate('disputes') : undefined}
           />
-          <AttentionCard
-            icon={<UserPlus />}
-            label="New hires"
-            tone={newHires && newHires.last30d > 0 ? 'ok' : 'neutral'}
-            tag="last 30 days"
-            value={newHires?.last30d ?? 0}
-            unit={newHires?.last30d === 1 ? 'started' : 'started'}
-            sub={
-              newHires == null || newHires.last30d === 0 ? (
-                <>No new hires in the last 30 days.</>
-              ) : (
-                <>
-                  <strong className="text-zinc-700 dark:text-zinc-300">{newHires.last7d}</strong>{' '}
-                  this week
-                  {newHires.mostRecentDays != null && (
-                    <>
-                      {' · '}
-                      most recent{' '}
-                      <strong className="text-zinc-700 dark:text-zinc-300">
-                        {newHires.mostRecentDays === 0
-                          ? 'today'
-                          : newHires.mostRecentDays === 1
-                            ? 'yesterday'
-                            : `${newHires.mostRecentDays}d ago`}
-                      </strong>
-                    </>
-                  )}
-                </>
-              )
-            }
-            cta="Open in HR"
-            onClick={() => { window.location.href = '/hr'; }}
-          />
-          <AttentionCard
-            icon={<UserMinus />}
-            label="Attrition"
-            tone={attritionTone}
-            tag="last 12 months"
-            value={attritionDisplay}
-            unit="%"
-            sub={
-              attrition == null ? (
-                <>No off-board data available yet.</>
-              ) : (
-                <>
-                  <strong className="text-zinc-700 dark:text-zinc-300">{attrition.separations}</strong>{' '}
-                  separation{attrition.separations === 1 ? '' : 's'} ·{' '}
-                  <strong className="text-zinc-700 dark:text-zinc-300">{attrition.activeHeadcount}</strong>{' '}
-                  active · avg headcount{' '}
-                  <strong className="text-zinc-700 dark:text-zinc-300">{Math.round(attrition.avgHeadcount)}</strong>
-                </>
-              )
-            }
-            cta="Open in HR"
-            onClick={() => { window.location.href = '/hr'; }}
+          {/* Payroll Notes — the wizard's Steps 1–8 for the cycle in view,
+              open steps spotlighted first. Replaced the New hires and
+              Attrition cards 2026-09-26 (Kane): HR headcount lives on /hr;
+              this row is what Accounting has to act on. */}
+          <PayrollNotesSetupCard
+            className="md:col-span-2"
+            sourceFile={setupSourceFile}
+            onOpenWizard={onNavigate ? () => onNavigate('payroll-wizard') : undefined}
           />
         </section>
 
@@ -2701,13 +2636,6 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
   /** Bonuses keyed in (KPI Calculator → catalog-applied + HSL entries) for the
    *  active payroll week. null when no single week is selected or while loading. */
   const [bonusesKeyedIn, setBonusesKeyedIn] = useState<number | null>(null);
-  /** Trailing-12-month attrition: separations + average headcount snapshot. */
-  const [attrition, setAttrition] = useState<{
-    separations: number;
-    activeHeadcount: number;
-    avgHeadcount: number;
-    ratePct: number;
-  } | null>(null);
   /** Offboarded-sheet identities keyed by normalized email (both work AND personal
    *  email point at the same record). Sourced from the Offboarded tab of the master
    *  Google Sheet (via /api/hr/offboard-history). A Hubstaff worker who is missing
@@ -2717,32 +2645,6 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     string,
     { name: string; personalEmail: string; department: string; offBoardedAt: string | null }
   > | null>(null);
-  /** New hires in the trailing 30 days, derived from `start_date` on the master list. */
-  const newHires = useMemo(() => {
-    const now = Date.now();
-    const day = 24 * 3600 * 1000;
-    const cutoff30 = now - 30 * day;
-    const cutoff7 = now - 7 * day;
-    let last30d = 0;
-    let last7d = 0;
-    let mostRecentMs: number | null = null;
-    for (const e of employees) {
-      const raw = e.start_date;
-      if (!raw) continue;
-      const t = new Date(raw).getTime();
-      if (!Number.isFinite(t)) continue;
-      if (t > now) continue;
-      if (t >= cutoff30) {
-        last30d += 1;
-        if (mostRecentMs === null || t > mostRecentMs) mostRecentMs = t;
-      }
-      if (t >= cutoff7) last7d += 1;
-    }
-    const mostRecentDays = mostRecentMs == null
-      ? null
-      : Math.max(0, Math.floor((now - mostRecentMs) / day));
-    return { last30d, last7d, mostRecentDays };
-  }, [employees]);
   /** Which layout the user is currently viewing — persisted in localStorage.
    *  Lazy initializer reads from storage synchronously on the FIRST client
    *  render, so the component never momentarily renders 'simple' and then
@@ -2900,12 +2802,10 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
     })();
     (async () => {
       try {
-        // Trailing-12-month attrition. Pulls offboarded employees + the active
-        // roster and computes separations / average headcount.
-        const [offRes, empRes] = await Promise.all([
-          fetch('/api/hr/offboard-history', { cache: 'no-store' }),
-          fetch('/api/employees', { cache: 'no-store' }),
-        ]);
+        // Offboarded identities for the Hubstaff ↔ Master recon. (This read
+        // also fed the Attrition card and its /api/employees headcount pull
+        // until 2026-09-26, when the Payroll Notes card replaced it.)
+        const offRes = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
         const offJson = (await offRes.json()) as {
           rows?: {
             Name?: string | null;
@@ -2915,12 +2815,6 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
             off_boarded_at: string | null;
           }[];
         };
-        const empJson = (await empRes.json()) as { employees?: unknown[] };
-        const cutoff = Date.now() - 365 * 24 * 3600 * 1000;
-        const separations = (offJson.rows ?? []).reduce((n, r) => {
-          const t = r.off_boarded_at ? new Date(r.off_boarded_at).getTime() : NaN;
-          return Number.isFinite(t) && t >= cutoff ? n + 1 : n;
-        }, 0);
         // Index offboarded identities by BOTH normalized emails so the recon can
         // resolve a Hubstaff worker (matched on work email) to an already-offboarded
         // person even when only the personal email is on file.
@@ -2941,17 +2835,8 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
           if (p) offIndex[p] = rec;
         }
         if (!cancelled) setOffboardedByEmail(offIndex);
-        const activeHeadcount = Array.isArray(empJson.employees) ? empJson.employees.length : 0;
-        // Average headcount over the period ≈ start + end / 2.
-        // start ≈ activeNow + everyone who left during the period.
-        const avgHeadcount = activeHeadcount + separations / 2;
-        const ratePct = avgHeadcount > 0 ? (separations / avgHeadcount) * 100 : 0;
-        if (!cancelled) setAttrition({ separations, activeHeadcount, avgHeadcount, ratePct });
       } catch {
-        if (!cancelled) {
-          setAttrition(null);
-          setOffboardedByEmail({});
-        }
+        if (!cancelled) setOffboardedByEmail({});
       }
     })();
     return () => {
@@ -4548,8 +4433,7 @@ export default function Overview({ onViewRates, onNavigate, initialData, viewerE
               pendingDisputes={pendingDisputes}
               oldestDisputeDays={oldestDisputeDays}
               pendingLeaves={pendingLeaves}
-              attrition={attrition}
-              newHires={newHires}
+              setupSourceFile={selectedSourceFile && selectedSourceFile !== '__all__' ? selectedSourceFile : null}
               pabMetrics={pabMetrics}
               techBonusEligibility={techBonusEligibility}
               pageRows={pageRows}
