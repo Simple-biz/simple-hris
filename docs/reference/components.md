@@ -1357,6 +1357,10 @@ UI: sticky header with spring-animated grand total + headcount, `FilterPill` row
 
 **Per-card Refresh** *(2026-09-14)*: a chip in each department card's header (beside → Payout) reloads that one department via `refreshDept` → `loadDept`. Unlike the toolbar Refresh, which skips departments with unsaved local work, the card button saves the pending edit first (`saveDept`, after cancelling the key's autosave timer) and refuses to reload if that save fails. Built for the KPI Calculator modal Accounting opens from Payroll Readiness (`PayrollWizardNotesFab.tsx`).
 
+### `src/components/manager/AppointmentRankingsPane.tsx`
+
+Manager → My Team → *<department>* → **Appointments** *(2026-09-26)*: the department’s current roster ranked by appointments set, **Weekly | Monthly** with a period stepper, a badge per week (Not scored yet · Draft · With Accounting · Finalized by Accounting · No payroll record · Couldn’t check), and a table of #, name, appointments, weeks (monthly), tenure — sortable by appointments or tenure, paged at 25 because `TeamAvatar` loads eagerly. **Paints only**: every rule is in the pure `src/lib/manager/appointment-rankings.ts` (`buildAppointmentWeeks`, `groupMonths`, `rankAppointments`). Mode / period / sort are owned by `ManagerApp` (`apptView`), because My Team panes unmount on every view switch. Counts only, never pesos. Fed by `GET /api/manager/appointment-rankings`, gated like `/api/manager/department-members` — **not** by `canViewTeamRankings`. See [manager-appointment-rankings](../features/manager-appointment-rankings.md).
+
 ### `src/components/manager/ManagerMemberDialog.tsx`
 
 Per-member profile dialog (roster "View" button). A persistent left **identity rail** (avatar, name, role, department/MESA badges, then `RailRow`s for Employee ID, Start date, Work/Personal email, Address) beside a tabbed detail panel. Three tabs (`TabBar`, `TabId = 'work' | 'notes' | 'hours'`): **Work** (the teammate's read-only shared profile — Currently Working On / Skills / Strengths via `SkillBlock`), **Notes** (`MemberNotesEditor`, manager-only, `PUT /api/manager/member-notes`), and **Hours** (`ManagerMemberHoursMini`). No fetching of its own.
@@ -2115,6 +2119,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/hr/OffboardingWeeklyPulse.tsx` | component | [offboarding-automation](../features/offboarding-automation.md) |
 | `src/components/hr/ReferralsWeekSection.tsx` | component | — **no doc** |
 | `src/components/hr/SmoothCombobox.tsx` | component | — **no doc** |
+| `src/components/manager/AppointmentRankingsPane.tsx` | component | *this file* · [manager-appointment-rankings](../features/manager-appointment-rankings.md) · [manager-my-team](../features/manager-my-team.md) |
 | `src/components/manager/DeptBonusCalculator.tsx` | component | *this file* · [cop-country-payees](../features/cop-country-payees.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
 | `src/components/manager/HslBonusCalculator.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [hsl-subdepartments](../features/hsl-subdepartments.md) |
 | `src/components/manager/HslBonusEditModal.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |

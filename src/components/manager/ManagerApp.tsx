@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarCog,
+  CalendarCheck2,
   Trophy,
   CirclePause,
   CirclePlay,
@@ -43,6 +44,11 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { departmentHasScheduling } from '@/lib/manager/scheduling-rows';
 import { RankingsPane } from '@/components/team/RankingsPane';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
+import {
+  AppointmentRankingsPane,
+  type AppointmentRankView,
+} from '@/components/manager/AppointmentRankingsPane';
+import type { AppointmentWeek } from '@/lib/manager/appointment-rankings';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import SchedulingPanel from './SchedulingPanel';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
@@ -2309,7 +2315,9 @@ function TeamPanelInner({
   // Roster vs Scheduling WITHIN the selected department. Only HSL carries the
   // second view today; the toggle is absent everywhere else, so this stays
   // 'roster' for every other department by construction.
-  const [deptView, setDeptView] = useState<'roster' | 'scheduling' | 'rankings'>('roster');
+  const [deptView, setDeptView] = useState<
+    'roster' | 'scheduling' | 'rankings' | 'appointments'
+  >('roster');
   /**
    * Weekly SP rankings for the selected department.
    *
@@ -2337,6 +2345,30 @@ function TeamPanelInner({
   const [rankingsError, setRankingsError] = useState<string | null>(null);
   const [rankingWeekIndex, setRankingWeekIndex] = useState(0);
   const [rankingDir, setRankingDir] = useState(1);
+  /**
+   * Appointments set, per week, for the selected department — Manager → My Team →
+   * <department> → Appointments (`docs/features/manager-appointment-rankings.md`).
+   *
+   * **A different gate from Rankings, on purpose.** `/api/manager/appointment-rankings`
+   * scopes exactly like this roster's own `/api/manager/department-members` (Kane,
+   * 2026-09-26: *"The my team tab lets you only see what Departments were assigned to
+   * you"*), and never consults `canViewTeamRankings`.
+   *
+   * **Which departments have it is decided by the DATA** — rows carrying `Appts_Set` /
+   * `Appts` (Lead Gen and Callback today) — never a department list here.
+   *
+   * The view state lives here, not in the pane: panes unmount on every view switch,
+   * and the manager should come back to the week and sort they left.
+   */
+  const [apptWeeks, setApptWeeks] = useState<AppointmentWeek[]>([]);
+  const [apptAvailable, setApptAvailable] = useState(false);
+  const [apptLoading, setApptLoading] = useState(false);
+  const [apptError, setApptError] = useState<string | null>(null);
+  const [apptView, setApptView] = useState<AppointmentRankView>({
+    mode: 'week',
+    index: 0,
+    sort: 'appointments',
+  });
   // One read, passed to every SlidingTab and pane below. Reduced motion here means
   // the indicator stops TRAVELLING and panes stop rising — it never means the
   // selected state becomes invisible.
@@ -2796,16 +2828,64 @@ function TeamPanelInner({
 
   const rankingsAvailable = rankingWeeks.length > 0;
 
+  // Appointments. The payload is stamped with the label it was fetched FOR, so a
+  // department switch can never paint one team's weeks against another team's roster
+  // while the next response is in flight.
+  const [apptFor, setApptFor] = useState('');
+  useEffect(() => {
+    if (!activeDeptLabel) return;
+    let cancelled = false;
+    setApptLoading(true);
+    setApptError(null);
+    fetch(`/api/manager/appointment-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
+      cache: 'no-store',
+    })
+      .then((r) => r.json())
+      .then((j: { available?: boolean; weeks?: AppointmentWeek[]; error?: string | null }) => {
+        if (cancelled) return;
+        setApptWeeks(j.weeks ?? []);
+        setApptAvailable(!!j.available);
+        setApptError(j.error ?? null);
+        setApptFor(activeDeptLabel);
+        setApptView((v) => ({ ...v, index: 0 }));
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setApptWeeks([]);
+        setApptAvailable(false);
+        setApptError(e.message);
+        setApptFor(activeDeptLabel);
+      })
+      .finally(() => {
+        if (!cancelled) setApptLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDeptLabel]);
+  const apptReady = apptFor === activeDeptLabel;
+  const apptMembers = useMemo(
+    () => membersForRailKey(activeDept, rail, membersByDept),
+    [activeDept, rail, membersByDept],
+  );
+  // A failed read keeps the pill (so the error is visible where it was asked for)
+  // only when the manager is already on this view; otherwise no data = no pill.
+  const appointmentsAvailable = apptReady
+    ? apptAvailable || (deptView === 'appointments' && apptError !== null)
+    : deptView === 'appointments';
+
   // Leaving a department must not strand the manager on a view that department does
   // not have. Derived, never stored, so it cannot go stale — and a denied viewer
   // gets an empty week list, which lands here as "no Rankings view", identically to
   // a team that was never scored.
-  const activeDeptView: 'roster' | 'scheduling' | 'rankings' =
+  const activeDeptView: 'roster' | 'scheduling' | 'rankings' | 'appointments' =
     schedulingAvailable && deptView === 'scheduling'
       ? 'scheduling'
       : rankingsAvailable && deptView === 'rankings'
         ? 'rankings'
-        : 'roster';
+        : appointmentsAvailable && deptView === 'appointments'
+          ? 'appointments'
+          : 'roster';
 
   // The rail's own filter — for a manager (or admin) whose rail runs to 20-plus
   // entries. A query force-opens every group so a matching sub-team is never
@@ -3337,7 +3417,7 @@ function TeamPanelInner({
           )}
           {/* The department's own views, beside the search bar. Absent for every other
               department — this is the first per-department surface. */}
-          {(schedulingAvailable || rankingsAvailable) && (
+          {(schedulingAvailable || rankingsAvailable || appointmentsAvailable) && (
             <div
               role="tablist"
               aria-label={`${activeEntry?.name ?? 'Department'} views`}
@@ -3375,6 +3455,18 @@ function TeamPanelInner({
                   reduceMotion={reduceMotion}
                 >
                   <Trophy className="h-3.5 w-3.5" /> Rankings
+                </SlidingTab>
+              )}
+              {appointmentsAvailable && (
+                <SlidingTab
+                  group="myTeamDeptView"
+                  selected={activeDeptView === 'appointments'}
+                  onSelect={() => setDeptView('appointments')}
+                  className="px-2.5 py-1 text-[11px] font-semibold"
+                  idleClassName="text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100"
+                  reduceMotion={reduceMotion}
+                >
+                  <CalendarCheck2 className="h-3.5 w-3.5" /> Appointments
                 </SlidingTab>
               )}
             </div>
@@ -3446,6 +3538,29 @@ function TeamPanelInner({
               setRankingDir(dir);
               setRankingWeekIndex(next);
             }}
+          />
+        </motion.div>
+      )}
+
+      {activeDeptView === 'appointments' && (
+        <motion.div
+          key={`appointments:${activeDept}`}
+          initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
+        >
+          {/* Ranked over the SAME roster the People view shows for this entry
+              (unfiltered by search), so the two views never disagree about who is
+              on the team. Counts only — never pesos. */}
+          <AppointmentRankingsPane
+            weeks={apptReady ? apptWeeks : []}
+            loading={!apptReady || apptLoading}
+            error={apptReady ? apptError : null}
+            members={apptMembers}
+            deptName={activeEntry?.name ?? 'department'}
+            view={apptView}
+            onViewChange={setApptView}
+            onOpenMember={(m) => setSelectedMember(m)}
           />
         </motion.div>
       )}

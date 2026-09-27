@@ -167,13 +167,21 @@ dropdown was hidden in the same case). Pure logic is unit-tested in
 
 ## Per-department views (the department's own tabs)
 
-Beside the department search sit the views that only *some* departments have. Two
+Beside the department search sit the views that only *some* departments have. Three
 exist:
 
 | View | Appears when | Source |
 | --- | --- | --- |
 | **Scheduling** | the selected entry is in the HSL family | `departmentHasScheduling` |
 | **Rankings** | the department has SP-scored weeks **and** the viewer may read them (kaner@, or a manager holding a grant for that department) | the data, via `/api/team-rankings?view=manager` |
+| **Appointments** | the department's rows carry `Appts_Set` / `Appts` (Lead Gen, Callback) **and** the department is in the viewer's My Team scope | the data, via `/api/manager/appointment-rankings` — [manager-appointment-rankings.md](./manager-appointment-rankings.md) |
+
+> **Rankings and Appointments have DIFFERENT gates, on purpose — never harmonize them.**
+> Rankings has two doors (the one-name list, or an exact-label grant) and no role bypass.
+> Appointments mirrors this roster's own `/api/manager/department-members` scope (Kane
+> 2026-09-26: *"The my team tab lets you only see what Departments were assigned to you"*),
+> including its elevated fallback for a caller with no assignments. Appointments shows draft
+> weeks with a badge; Rankings shows only ready/locked weeks.
 
 > **Scheduling is gated by a PREDICATE; Rankings is gated by the DATA.** That
 > difference is deliberate. Scheduling is a decision Kane made about HSL, so it is
