@@ -7,7 +7,10 @@ Two skills, split by whether the thing already exists.
 **Building something new** — a dashboard, page, tab, route, table, report, export,
 notification, integration, or script: use the **`blueprint`** skill first. It scopes the
 surface against the governing docs and the nearest shipped precedent, posts a `BLUEPRINT`
-brief, and **hard-stops for approval before any code is written**. After the build it writes
+brief, **takes its own recommendations and builds straight away**, reporting each choice as a
+`CHOSEN` line. It stops only for what needs Kane: a value only he holds, an external party's
+schema or grant, a money ruling, or a contradiction with a documented rule. Those are left out
+as `NEEDS` lines (Kane, 2026-09-26; this replaced the approval hard stop). After the build it writes
 the feature doc, the `docs/features/INDEX.md` row, and the memory entry into the same commit.
 A feature without its doc is unfinished.
 
@@ -44,8 +47,8 @@ only fires on a code commit. So, before the session ends:
   row in the newest session log's Open items (start a new log if that one is days old).
 - A **meeting** → `docs/meetings/YYYY-MM-DD-<slug>.md`, its `docs/README.md` row, and
   wikilinks in every INDEX row it touches.
-- A **brief posted and awaiting approval** (a `blueprint` or `hardening` hard stop) → one Open
-  items line naming the session id and the questions outstanding.
+- A **brief left waiting on Kane** (a `blueprint` `NEEDS` line or hard stop, or a `hardening`
+  conflict) → one Open items line naming the session id and what is outstanding.
 - Then **commit it**, by explicit path. Doc work left in the working tree is invisible to the
   next session and gets swept under someone else's commit message.
 
