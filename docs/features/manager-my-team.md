@@ -235,6 +235,11 @@ places for a peso column to appear.
   leaderboards (Kane, 2026-09-27: *"AI/API Team should have the top 3 as well please"*). It is
   `RankingsPane`'s opt-in `showPodium`: it shows the SAME SP / project SP / tier fields as the rows,
   never a peso, and the Employee tab does not pass it.
+- **The loading state is shaped like the board** (Kane, 2026-09-27: *"Lets also add a Skeleton on this
+  please so we are expecting it"*): one `RankingsSkeleton` (header bar, top-3 podium, rows) serves
+  `RankingsPane`, both leaderboards, and the hold while a department's reads are out. **The hold now
+  also waits for the SP read** (`spFor`), so a cold visit to AI/API shows the skeleton instead of
+  bouncing to People while `/api/team-rankings` is still answering. A cached department never shows it.
 
 **The People view opens as the LIST** (Kane, 2026-09-14), switchable to cards. The
 list is the denser of the two — it pages at 20 against the cards' 8 — so a department

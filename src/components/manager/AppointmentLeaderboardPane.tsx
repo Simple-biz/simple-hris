@@ -22,6 +22,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { ChevronDown, Crown, Info, Medal, UserMinus, WifiOff } from 'lucide-react';
 import { TeamAvatar } from '@/components/team/team-ui';
+import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
@@ -214,22 +215,8 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   }, [weeks, days, daysUsable, members, view.window, basis, today, reorder]);
 
   if (weeksLoading && weeks.length === 0) {
-    return (
-      <div className="space-y-2" aria-busy="true" aria-live="polite">
-        <span className="sr-only">Loading rankings…</span>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-3 rounded-lg border border-zinc-200/80 bg-white p-3 dark:border-blue-950/60 dark:bg-[#0d1117]"
-          >
-            <div className="skeleton-shimmer h-6 w-6 shrink-0 rounded-md" />
-            <div className="skeleton-shimmer h-7 w-7 shrink-0 rounded-full" />
-            <div className="skeleton-shimmer h-3.5 flex-1 rounded" />
-            <div className="skeleton-shimmer h-4 w-12 shrink-0 rounded" />
-          </div>
-        ))}
-      </div>
-    );
+    // Shaped like the board (header, podium, rows) so it lands in place.
+    return <RankingsSkeleton podium />;
   }
 
   if (weeksError) {

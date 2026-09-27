@@ -31,6 +31,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ChevronLeft, ChevronRight, Crown, Medal, WifiOff } from 'lucide-react';
 import { TeamAvatar } from '@/components/team/team-ui';
+import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
@@ -109,22 +110,8 @@ export function RankingsPane({
   const reduce = useReducedMotion();
 
   if (loading) {
-    return (
-      <div className="space-y-2" aria-busy="true" aria-live="polite">
-        <span className="sr-only">Loading rankings…</span>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-3 rounded-xl border border-zinc-200/80 bg-white p-3 dark:border-blue-950/60 dark:bg-[#0d1117]"
-          >
-            <div className="skeleton-shimmer h-7 w-7 shrink-0 rounded-lg" />
-            <div className="skeleton-shimmer h-8 w-8 shrink-0 rounded-full" />
-            <div className="skeleton-shimmer h-3.5 flex-1 rounded" />
-            <div className="skeleton-shimmer h-5 w-16 shrink-0 rounded-full" />
-          </div>
-        ))}
-      </div>
-    );
+    // The podium placeholder only where the podium will appear (Manager → My Team).
+    return <RankingsSkeleton podium={showPodium} />;
   }
 
   if (error) {

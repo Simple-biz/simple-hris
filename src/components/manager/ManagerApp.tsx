@@ -43,6 +43,7 @@ import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { departmentHasScheduling } from '@/lib/manager/scheduling-rows';
 import { RankingsPane } from '@/components/team/RankingsPane';
+import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
 import {
   AppointmentRankingsPane,
@@ -2861,6 +2862,9 @@ function TeamPanelInner({
     null,
   );
   const [rankingsError, setRankingsError] = useState<string | null>(null);
+  // The last department whose SP read ANSWERED (a failure included) — so the Rankings
+  // hold below can wait for this read too instead of bouncing to People on a cold visit.
+  const [spFor, setSpFor] = useState('');
   const rankingWeeks = spRankings?.weeks ?? NO_RANKING_WEEKS;
   const rankingsLoading = spRankings === null;
   useEffect(() => {
@@ -2879,14 +2883,16 @@ function TeamPanelInner({
         if (j.error) {
           setSpRankings(null);
           setRankingsError(j.error);
-          return;
+        } else {
+          setSpRankings({ weeks: j.weeks ?? [] });
         }
-        setSpRankings({ weeks: j.weeks ?? [] });
+        setSpFor(activeDeptLabel);
       })
       .catch((e: Error) => {
         if (cancelled) return;
         setSpRankings(null);
         setRankingsError(e.message);
+        setSpFor(activeDeptLabel);
       });
     return () => {
       cancelled = true;
@@ -2894,6 +2900,7 @@ function TeamPanelInner({
   }, [activeDeptLabel, setSpRankings]);
 
   const rankingsAvailable = rankingWeeks.length > 0;
+  const spReady = spRankings !== null || spFor === activeDeptLabel;
 
   // Appointments. The cached value belongs to its key's department by construction;
   // `apptFor` stamps the last ANSWER (a failure included), so a department whose read
@@ -3011,9 +3018,15 @@ function TeamPanelInner({
     rankingsAvailable ||
     leaderboardAvailable ||
     deliverablesAvailable ||
-    (deptView === 'rankings' && (!apptReady || !delivReady));
+    (deptView === 'rankings' && (!spReady || !apptReady || !delivReady));
+  // Nothing to paint yet and a read still out → the Rankings skeleton (header, podium,
+  // rows), so the view is expected rather than blank. With a cached department every
+  // read is already "ready" and this never shows.
   const rankingsHold =
-    !rankingsAvailable && !leaderboardAvailable && !deliverablesAvailable && (!apptReady || !delivReady);
+    !rankingsAvailable &&
+    !leaderboardAvailable &&
+    !deliverablesAvailable &&
+    (!spReady || !apptReady || !delivReady);
 
   // The KPI leaderboard's daily read (days worked + the per-day order): the slow one, fetched in
   // the background the first time the Rankings view is opened for the department in
@@ -3757,11 +3770,12 @@ function TeamPanelInner({
               leaderboard, behind My Team's own department scope (not the SP doors
               above). If a team ever carried both kinds of data the two stack under
               the one pill rather than growing a second pill with the same name. */}
-          {(leaderboardAvailable || rankingsHold) && (
+          {rankingsHold && <RankingsSkeleton podium />}
+          {leaderboardAvailable && (
             <div className={cn(rankingsAvailable && 'mt-6 border-t border-zinc-200 pt-6 dark:border-zinc-800')}>
               <AppointmentLeaderboardPane
-                weeks={leaderboardAvailable ? apptWeeks : []}
-                weeksLoading={rankingsHold || apptLoading}
+                weeks={apptWeeks}
+                weeksLoading={apptLoading}
                 weeksError={apptErrorNow}
                 days={apptDaysErrorNow ? null : apptDays}
                 daysError={apptDaysErrorNow}
