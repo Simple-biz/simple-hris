@@ -23,6 +23,8 @@ import { motion, useReducedMotion } from 'motion/react';
 import { ChevronDown, Crown, Info, Medal, UserMinus, WifiOff } from 'lucide-react';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
+import { RankingsNoMatch, RankingsSearch } from '@/components/team/RankingsSearch';
+import { normalizeRankingQuery, rankingRowMatches, workEmailsOf } from '@/lib/manager/rankings-search';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
@@ -193,6 +195,9 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   showValues?: boolean;
 }) {
   const reduce = useReducedMotion() ?? false;
+  // Search (Kane, 2026-09-27): names + WORK emails only; it hides rows, never re-ranks.
+  // Local on purpose — a department switch remounts the pane and starts a fresh search.
+  const [query, setQuery] = useState('');
   const today = manilaTodayIso();
   const daysUsable = days !== null && !daysError;
   const daysFailed = !!daysError;
@@ -213,6 +218,11 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
     const ordered = reorder(computed.rows, { basis, window: view.window });
     return { ...computed, rows: ordered.rows, unplaced: ordered.unplaced };
   }, [weeks, days, daysUsable, members, view.window, basis, today, reorder]);
+  const q = normalizeRankingQuery(query);
+  const visibleRows = useMemo(
+    () => (q ? board.rows.filter((r) => rankingRowMatches(q, { name: r.name, workEmails: workEmailsOf(r.member) })) : board.rows),
+    [board.rows, q],
+  );
 
   if (weeksLoading && weeks.length === 0) {
     // Shaped like the board (header, podium, rows) so it lands in place.
@@ -255,6 +265,7 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <RankingsSearch value={query} onChange={setQuery} className="w-full sm:w-48" />
           {controls}
           <Segmented
             label="Average"
@@ -304,15 +315,22 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
           transition={{ duration: reduce ? 0.1 : 0.2, ease: EASE }}
           className="space-y-3"
         >
-          <Podium
-            rows={board.rows.slice(0, 3)}
-            basis={basis}
-            unit={unit}
-            showValues={showValues}
-            onOpenMember={onOpenMember}
-          />
+          {/* The podium is the team's top three; while searching it would hold whoever
+              matched (a #7 in a gold slot), so it steps aside. Positions stay real. */}
+          {!q && (
+            <Podium
+              rows={board.rows.slice(0, 3)}
+              basis={basis}
+              unit={unit}
+              showValues={showValues}
+              onOpenMember={onOpenMember}
+            />
+          )}
+          {q && visibleRows.length === 0 ? (
+            <RankingsNoMatch query={query} />
+          ) : (
           <LeaderTable
-            rows={board.rows}
+            rows={visibleRows}
             basis={basis}
             unit={unit}
             showValues={showValues}
@@ -320,6 +338,7 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
             daysLoading={daysPending}
             onOpenMember={onOpenMember}
           />
+          )}
         </motion.div>
       )}
 

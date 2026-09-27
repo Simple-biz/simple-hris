@@ -240,6 +240,13 @@ places for a peso column to appear.
   `RankingsPane`, both leaderboards, and the hold while a department's reads are out. **The hold now
   also waits for the SP read** (`spFor`), so a cold visit to AI/API shows the skeleton instead of
   bouncing to People while `/api/team-rankings` is still answering. A cached department never shows it.
+- **Every Rankings view has a search box** (Kane, 2026-09-27: *"search names and work emails"*),
+  matched by `src/lib/manager/rankings-search.ts`. **Names and WORK emails only, never a personal
+  address**: a search that matches a field the board does not show makes redaction cosmetic
+  (`employee-team-directory.md`). SP rows are keyed personal-first, so their work emails come from the
+  roster through `workEmailIndex`, and the personal address is only a key. **Filtering never re-ranks**:
+  rows keep their real position, and the podium steps aside while a query is active (its gold slot would
+  otherwise hold #7). The SP search persists across week navigation; a department switch starts fresh.
 
 **The People view opens as the LIST** (Kane, 2026-09-14), switchable to cards. The
 list is the denser of the two — it pages at 20 against the cards' 8 — so a department

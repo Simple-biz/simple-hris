@@ -101,6 +101,15 @@
         ],
         "createdAt": "2026-09-21T20:46:58.458Z",
         "reason": "Kane: hover:text-red-600 changes with hover:bg-red-50; the gray never lands on the colored background"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/team/RankingsPane.tsx"
+        ],
+        "createdAt": "2026-09-27T05:12:40.729Z",
+        "reason": "Claude (session fdd8a4bd) false-positive triage: the week chevrons are text-zinc-500 on a white bar at rest; hover sets bg-orange-50 AND text-orange-600 together; disabled hover resets bg to transparent — no state renders gray text on a colored fill"
       }
     ]
   }

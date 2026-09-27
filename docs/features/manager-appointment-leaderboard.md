@@ -41,6 +41,10 @@ defaults to this view's behaviour:
 
 Never let a PM Team change alter this view's defaults. Lead Gen's order is still the shown average.
 
+**Search** (2026-09-27) is built into the pane for both callers: names + WORK emails
+(`rankings-search.ts`), never a personal email. It filters and never re-ranks, and it hides the podium
+while a query is active ([manager-my-team.md](./manager-my-team.md) § *Rankings*).
+
 ## One "Rankings" pill; its content follows the data
 
 Kane, Q1 → (a). My Team already had a **Rankings** pill for SP-scored teams (AI/API Team). There is

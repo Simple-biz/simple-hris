@@ -28,10 +28,13 @@
  * the tier — so it can carry nothing a row does not. Opt-in, so the Employee tab is
  * unchanged.
  */
+import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ChevronLeft, ChevronRight, Crown, Medal, WifiOff } from 'lucide-react';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
+import { RankingsNoMatch, RankingsSearch } from '@/components/team/RankingsSearch';
+import { normalizeRankingQuery, rankingRowMatches } from '@/lib/manager/rankings-search';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
@@ -94,6 +97,8 @@ export function RankingsPane({
   dir,
   onNavigate,
   showPodium = false,
+  searchable = false,
+  workEmailsFor,
 }: {
   weeks: TeamRankingWeek[];
   loading: boolean;
@@ -106,8 +111,18 @@ export function RankingsPane({
   onNavigate: (nextIndex: number, direction: number) => void;
   /** The top three as a podium above the list (Manager → My Team). */
   showPodium?: boolean;
+  /**
+   * A search box over the displayed name + WORK emails (Manager → My Team; Kane
+   * 2026-09-27). Rows are keyed by the applied row's email, which is personal-first,
+   * so the work emails come from the caller's roster via `workEmailsFor` — the row's
+   * own email is never matched. It persists across week navigation, so a manager can
+   * follow one person week to week.
+   */
+  searchable?: boolean;
+  workEmailsFor?: (rowEmail: string) => readonly string[];
 }) {
   const reduce = useReducedMotion();
+  const [query, setQuery] = useState('');
 
   if (loading) {
     // The podium placeholder only where the podium will appear (Manager → My Team).
@@ -147,6 +162,10 @@ export function RankingsPane({
   };
 
   const topSp = Math.max(1, ...week.rows.map((r) => r.sp));
+  const q = searchable ? normalizeRankingQuery(query) : '';
+  const rows = q
+    ? week.rows.filter((r) => rankingRowMatches(q, { name: r.name, workEmails: workEmailsFor?.(r.email) ?? [] }))
+    : week.rows;
 
   return (
     <div className="space-y-4">
@@ -180,9 +199,12 @@ export function RankingsPane({
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
-        <span className="shrink-0 rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
-          {week.status === 'locked' ? 'Final' : 'Submitted'}
-        </span>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          {searchable && <RankingsSearch value={query} onChange={setQuery} className="min-w-0 flex-1 sm:w-48 sm:flex-none" />}
+          <span className="shrink-0 rounded-full border border-zinc-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+            {week.status === 'locked' ? 'Final' : 'Submitted'}
+          </span>
+        </div>
       </div>
 
       {/* Rows */}
@@ -198,7 +220,7 @@ export function RankingsPane({
             transition={{ duration: reduce ? 0 : 0.22, ease: EASE }}
             className="space-y-3"
           >
-          {showPodium && week.rows.length > 0 && (
+          {showPodium && !q && week.rows.length > 0 && (
             <ol className="grid gap-2 sm:grid-cols-3" aria-label="Top three this week">
               {week.rows.slice(0, 3).map((r) => {
                 const tier = TIER_STYLE[r.tier];
@@ -244,8 +266,9 @@ export function RankingsPane({
               })}
             </ol>
           )}
+          {q && rows.length === 0 && <RankingsNoMatch query={query} />}
           <ol className="space-y-2">
-            {week.rows.map((r, i) => {
+            {rows.map((r, i) => {
               const isSelf = !!selfNorm && r.email === selfNorm;
               const tier = TIER_STYLE[r.tier];
               return (

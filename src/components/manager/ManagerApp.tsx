@@ -44,6 +44,7 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { departmentHasScheduling } from '@/lib/manager/scheduling-rows';
 import { RankingsPane } from '@/components/team/RankingsPane';
 import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
+import { workEmailIndex } from '@/lib/manager/rankings-search';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
 import {
   AppointmentRankingsPane,
@@ -159,6 +160,7 @@ const NO_TEAM_MEMBERS: EmployeeRow[] = [];
 /** Stable empties for the per-department Rankings data (the panes memoise on them). */
 const NO_RANKING_WEEKS: TeamRankingWeek[] = [];
 const NO_APPOINTMENT_WEEKS: AppointmentWeek[] = [];
+const NO_WORK_EMAILS: readonly string[] = [];
 
 /** One `/api/offboarding-queue` row, as the My Team badges read it. */
 interface OffboardOutboxRow {
@@ -2952,6 +2954,14 @@ function TeamPanelInner({
     () => membersForRailKey(activeDept, rail, membersByDept),
     [activeDept, rail, membersByDept],
   );
+  // Rankings search (Kane, 2026-09-27): SP rows are keyed by the applied row's
+  // personal-first email, so their WORK emails are found through this roster index.
+  // The personal address is only a key here and is never matched.
+  const workEmailsByEmail = useMemo(() => workEmailIndex(apptMembers), [apptMembers]);
+  const workEmailsFor = useCallback(
+    (rowEmail: string): readonly string[] => workEmailsByEmail.get(normEmail(rowEmail) ?? '') ?? NO_WORK_EMAILS,
+    [workEmailsByEmail],
+  );
   // A failed read keeps the pill (so the error is visible where it was asked for)
   // only when the manager is already on this view; otherwise no data = no pill.
   const appointmentsAvailable = apptReady
@@ -3764,6 +3774,8 @@ function TeamPanelInner({
               // The top three, like the other My Team leaderboards (Kane, 2026-09-27).
               // Same SP + tier fields as the rows; the Employee tab does not pass it.
               showPodium
+              searchable
+              workEmailsFor={workEmailsFor}
             />
           )}
           {/* An APPOINTMENT department's Rankings: the average-appointments
