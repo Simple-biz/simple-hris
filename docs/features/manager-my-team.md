@@ -173,7 +173,7 @@ exist:
 | View | Appears when | Source |
 | --- | --- | --- |
 | **Scheduling** | the selected entry is in the HSL family | `departmentHasScheduling` |
-| **Rankings** | the department has SP-scored weeks **and** the viewer may read them | the data, via `/api/team-rankings` |
+| **Rankings** | the department has SP-scored weeks **and** the viewer may read them (kaner@, or a manager holding a grant for that department) | the data, via `/api/team-rankings?view=manager` |
 
 > **Scheduling is gated by a PREDICATE; Rankings is gated by the DATA.** That
 > difference is deliberate. Scheduling is a decision Kane made about HSL, so it is
@@ -182,7 +182,7 @@ exist:
 > hardcoding `devs` would break that promise
 > (`employee-team-directory.md`). Never turn the Rankings check into a department list.
 
-### Rankings — SP and tier, never pesos, and not for everyone
+### Rankings — SP and tier, never pesos, for the department's own managers
 
 Added 2026-09-14 (Kane: *"as for the AI/API Team the rankings should be shown here for
 the KPI Results"*). It renders **the same `RankingsPane`** the employee team tab uses,
@@ -196,13 +196,31 @@ places for a peso column to appear.
   read.**
 - **`vars.Ranking` is a TIER FLAG** (1 / 25 / 50 / 0). The `#1..#n` shown is derived
   by sorting SP descending and is never stored.
-- **Who may see it is `canViewTeamRankings`** — a one-name allow-list above the
-  elevated-role bypass (Kane 2026-08-29). Asked on 2026-09-14 whether managers of a
-  department should gain access, **Kane said no**: the ruling stands. Measured that
-  day, 8 people hold a live AI/API Team manager grant; seven of them see no Rankings
-  toggle at all, because a denied viewer reads the same empty week list as an
-  unscored team. **This surface therefore has no gate of its own and must not grow
-  one.**
+- **Who may see it: kaner@, plus the department's own managers — HERE only.**
+  The ruling changed on the record. On 2026-09-14, asked whether managers of a department
+  should gain access, Kane said **no**, and for 12 days only kaner@ saw this view.
+  On **2026-09-26** he chose **(b)**. His words: *"Manager - My Team - AI/API Team - Put the
+  Ranking in here please instead of the Employee Dashboard having it but do not change
+  it for kaner"*. The route now has two doors, both above the elevated-role bypass:
+  - **`canViewTeamRankings`** — the one-name allow-list (Kane 2026-08-29), **unchanged**.
+    kaner@ reads through it on both surfaces exactly as before.
+  - **`managerMayReadRankings`** — this surface only. The fetch sends `view=manager`, and
+    the caller must hold a live `department_managers` grant whose label **equals** the
+    requested department (trimmed, case-insensitive, the route's existing comparison;
+    never a payroll-key match, so a differently spelled grant fails closed). **No role is
+    consulted**: an admin / payroll / finance / hr / viewer session with no grant for the
+    department still reads nothing, as on 08-29.
+  - **The employee team tab never sends `view`**, so a manager who also works in the
+    department still sees no Rankings pill there. That is the "instead of the Employee
+    Dashboard" half, and `rankings-viewers.test.ts` pins both call sites.
+  - Measured 2026-09-26 (read-only): **9 live AI/API Team grants**, all spelled exactly
+    `"AI/API Team"` — kaner@ plus **8 new readers**: jeff@, thomas@, accounting@, aliviah@,
+    carla@, ainsleyw@, hgk2ghobden@, claire@ (claire@ is new since 09-14's count of 8).
+    `accounting@` and `hgk2ghobden@` look like a shared mailbox and a service account;
+    that was harmless under the old ruling and is not now. The grant is Kane's call.
+  - A denied viewer still reads the same empty week list as an unscored team, so **this
+    surface has no gate of its own and must not grow one** — who reads is decided in the
+    route, never by hiding the toggle here.
 - `selfNorm` is null here: a manager is looking at their team, not finding themselves
   in it.
 

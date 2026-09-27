@@ -2319,12 +2319,14 @@ function TeamPanelInner({
    * where there is something to show — and a second team adopting the AI Team Bonus
    * shape lights up with no code change. Hardcoding `devs` would break that.
    *
-   * **Who may see it is decided upstream**, by `canViewTeamRankings` inside
-   * `/api/team-rankings` — a one-name allow-list sitting ABOVE the elevated-role
-   * bypass (Kane, 2026-08-29, reaffirmed 2026-09-14 when asked whether managers of a
-   * department should gain access: they should not). A denied viewer reads the same
+   * **Who may see it is decided upstream**, inside `/api/team-rankings`: the
+   * one-name `canViewTeamRankings` allow-list (Kane, 2026-08-29), OR — because this
+   * fetch sends `view=manager` — a live `department_managers` grant for exactly this
+   * department (`managerMayReadRankings`; Kane, 2026-09-26, reversing his 2026-09-14
+   * "no"). Neither path consults an elevated role. A denied viewer reads the same
    * empty list as an unscored team, so this surface needs no gate of its own and
-   * cannot accidentally become one.
+   * cannot accidentally become one. The employee team tab never sends `view`, which
+   * is what keeps the ranking OFF the Employee Dashboard for everyone but kaner.
    *
    * Reusing that route rather than writing a manager-specific read is deliberate:
    * its projection deliberately omits `amount`, and the test pinning that projection
@@ -2771,7 +2773,7 @@ function TeamPanelInner({
     let cancelled = false;
     setRankingsLoading(true);
     setRankingsError(null);
-    fetch(`/api/team-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
+    fetch(`/api/team-rankings?department=${encodeURIComponent(activeDeptLabel)}&view=manager`, {
       cache: 'no-store',
     })
       .then((r) => r.json())

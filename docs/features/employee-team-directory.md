@@ -14,7 +14,8 @@ Key files:
 - `src/components/employee/EmployeeSidebar.tsx` — the nav label.
 - `src/lib/policies/team-policies.ts` — per-department policy copy (display-only).
 - `src/lib/supabase/team-rankings.ts` — ranking assembly (`buildRankingWeeks` is pure).
-- `src/lib/rbac/rankings-viewers.ts` — who may see Rankings at all (allow-list).
+- `src/lib/rbac/rankings-viewers.ts` — who may see Rankings at all (the allow-list, plus the
+  manager-surface grant door `managerMayReadRankings`, 2026-09-26).
 - `app/api/team-rankings/route.ts` — the gated, scoped read.
 - Tests: `src/lib/supabase/team-rankings.test.ts` · `src/lib/rbac/rankings-viewers.test.ts`
   · `src/lib/policies/team-policies.test.ts` · `src/lib/name/team-display-name.test.ts`
@@ -49,7 +50,9 @@ absent otherwise, and an employee sitting on it when the data empties is bounced
 back to Directory. That is driven by the returned data, not a department allowlist.
 
 Since **2026-08-29** it is also allow-listed to a single reader (see
-[Authorization](#authorization)). Everyone else's fetch comes back `{ weeks: [] }`,
+[Authorization](#authorization)), and **on this tab it still is**. Since 2026-09-26 a
+department's own managers read the same rankings on Manager → My Team instead, never
+here. Everyone else's fetch from this tab comes back `{ weeks: [] }`,
 so the pill vanishes through the same code path as an unscored team — there is no
 second hiding mechanism and no "restricted" state. The header sentence under the
 page title drops the words "weekly rankings" for the same reason: the copy must not
@@ -159,9 +162,11 @@ navigation. Each row shows **position, name, SP, project SP, and the tier badge*
 `buildRankingWeeks` runs it through the same `teamDisplayNames` resolver — over
 **every** week at once, keyed by email, so one person carries one label through
 the whole week scroller instead of gaining a disambiguating suffix only in the
-weeks a namesake happened to be scored. Rankings are allow-listed to one reader
-today, so this changes almost nothing visible — which is exactly why it is here:
-a future widening of `canViewTeamRankings()` must not silently reopen the leak.
+weeks a namesake happened to be scored. When this shipped, Rankings were
+allow-listed to one reader, so it changed almost nothing visible — it was there so
+that a future widening could not silently reopen the leak. **That widening happened
+on 2026-09-26:** a department's own managers now read these rows on Manager → My
+Team (§ Authorization, 1b), so this redaction is load-bearing now.
 
 > **No peso amounts, anywhere.** [manager-my-team.md](./manager-my-team.md) (§"Managers
 > do not see rates or pay") strips comp from every My Team surface, and this is the
@@ -226,20 +231,45 @@ lights up with no code change. Scoping (who may *read* whose department) is enfo
 separately in the route.
 
 That is still true after the 2026-08-29 allow-list: it gates the **viewer**, never
-the department, so the "second team lights up" property survives — such a team would
-light up for the allow-list only.
+the department, so the "second team lights up" property survives. Such a team would
+light up for the allow-list on this tab, and, since 2026-09-26, for its own granted
+managers on Manager → My Team.
 
 ## Authorization
 
-`GET /api/team-rankings?department=X` applies **two gates, in this order**.
+`GET /api/team-rankings?department=X[&view=manager]` applies **two gates, in this
+order**. This tab never sends `view`; only Manager → My Team sends `view=manager`.
 
 ### 1 — Rankings are allow-listed to one reader (2026-08-29)
 
 Kane: *"Employee - AI/API Team - Rankings lets hide this please for everyone else
 except kaner@simple.biz"* — confirmed the same day to mean **every department**, not
 just `devs`, and **no elevated bypass**. `canViewTeamRankings()`
-(`src/lib/rbac/rankings-viewers.ts`) runs before anything else; a caller who is not
-on the list gets `{ weeks: [] }` and costs no query.
+(`src/lib/rbac/rankings-viewers.ts`) runs before anything else. **On this tab** a
+caller who is not on the list gets `{ weeks: [] }` and costs no query. That is still
+true after 2026-09-26.
+
+#### 1b — the manager surface's one other door (2026-09-26)
+
+Kane chose (b) on 2026-09-26. His words: *"Manager - My Team - AI/API Team - Put the
+Ranking in here please instead of the Employee Dashboard having it but do not change
+it for kaner"*. This reverses his 2026-09-14 "no" to managers gaining access. A caller
+who is NOT on the allow-list is admitted only when **both** hold:
+`parseRankingsView` reads `view=manager` (exact string; anything else is the employee
+surface), **and** `managerMayReadRankings` finds a live `department_managers` grant
+whose label **equals** the requested department (trimmed, case-insensitive; never a
+payroll-key match). The employee view is refused before any query. The manager view
+costs one grant lookup. **No role is consulted on this path**, so the 08-29 "no
+elevated bypass" still holds, and an admin with no grant reads nothing on either
+surface. The allow-list itself is untouched (`TEAM_RANKINGS_VIEWERS` is still
+kaner@ alone), so nothing changed for kaner.
+
+What this means for this tab: **it is still kaner@'s alone.** A manager who also
+works in the department sees no Rankings pill here. They read the same weeks on
+Manager → My Team → *department* → Rankings — see
+[manager-my-team.md](./manager-my-team.md) § *Rankings*.
+`rankings-viewers.test.ts` pins that this file's `fetch` never carries `view=`, and
+that ManagerApp's always carries `&view=manager`.
 
 > **This is where the route stops mirroring `/api/team-roster`.** It used to match it
 > exactly and this section used to say so — that is no longer true. An admin,
@@ -268,10 +298,15 @@ personal-portal reads.
 The raw department label is sent to both routes; only the *display* label collapses
 (`hsl:filing_specialist` scopes as itself, renders as "HSL").
 
+Gate 2 now applies only to the allow-listed. A caller admitted through 1b is scoped
+by 1b itself, to exactly the department they are granted.
+
 Both gates return the same empty shape on purpose, so a denied viewer and a team
 that was never scored are indistinguishable to the client. `rankings-viewers.test.ts`
 pins the ordering against the source, because a gate that drifts below
 `hasElevatedRole` still passes every behavioural test while leaking to five roles.
+It also pins that the 1b block refuses the employee view first and never reads
+`elevated`, `hasElevatedRole` or `roles`.
 
 ## Policies are display-only
 
