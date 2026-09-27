@@ -3316,29 +3316,17 @@ function TeamPanelInner({
             </div>
           )}
         </div>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {unassigned ? (
-            <>
-              You do not have any departments assigned in Roles & permissions yet. Until an admin adds
-              you under{' '}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">department managers</span>,
-              your team list and leave queue stay empty.
-            </>
-          ) : scoped ? (
-            <>
-              Showing active roster members in{' '}
-              <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                {teamGate.departments.map((d) => formatDeptLabel(d) || d).join(', ')}
-              </span>{' '}
-              (matched from HR master list, case-insensitive).
-            </>
-          ) : (
-            <>
-              Showing the full active roster — your login has org-wide HR/payroll visibility, so every
-              department appears here on the manager view.
-            </>
-          )}
-        </p>
+        {/* Only the empty state explains itself. The "Showing active roster members in …"
+            line listed every assigned department (32 for Kane) and was removed on request
+            (2026-09-27) — the department rail below already names them. */}
+        {unassigned && (
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            You do not have any departments assigned in Roles & permissions yet. Until an admin adds
+            you under{' '}
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">department managers</span>,
+            your team list and leave queue stay empty.
+          </p>
+        )}
         <div className="mt-2 flex items-center gap-2">
           <div role="tablist" aria-label="Team views" className="inline-flex w-fit rounded-md border border-blue-200 bg-blue-50/40 p-0.5 dark:border-blue-900/50 dark:bg-blue-950/20">
             <SlidingTab
