@@ -13,19 +13,26 @@ import { describe, it } from 'node:test';
 const SRC = readFileSync(path.join(__dirname, 'deliverable-rankings.ts'), 'utf8');
 const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
-describe('PM Team Rankings read', () => {
-  it('the applied projection is exactly these six columns', () => {
+describe('KPI Rankings read', () => {
+  it('the applied projection is exactly these seven columns', () => {
     const m = /DELIVERABLE_APPLIED_SELECT\s*=\s*'([^']*)'/.exec(SRC);
     assert.ok(m, 'expected the projection constant to be findable');
-    assert.equal(m[1], 'period_start, period_end, employee_email, bonus_name, vars, amount');
+    assert.equal(m[1], 'period_start, period_end, employee_email, bonus_id, bonus_name, vars, amount');
   });
 
-  it('the full read goes through that constant; the probe selects no pay', () => {
+  it('the full read goes through that constant; the probes and catalog reads select no pay', () => {
     assert.match(CODE, /from\('bonus_catalog_applied'\)\s*\.select\(DELIVERABLE_APPLIED_SELECT\)/);
-    assert.match(CODE, /from\('bonus_catalog_applied'\)\s*\.select\('period_start'\)/);
-    assert.equal((CODE.match(/from\('bonus_catalog_applied'\)/g) ?? []).length, 2);
+    // The full read + three one-row probes (any row · appointments · SP), which read period_start only.
+    assert.equal((CODE.match(/from\('bonus_catalog_applied'\)/g) ?? []).length, 4);
+    assert.equal((CODE.match(/\.select\('period_start'\)/g) ?? []).length, 3);
+    // The catalog: `bonus_catalog_bonuses` HAS an `amount` column (fixed bonuses) — never read it.
+    assert.match(CODE, /from\('bonus_catalog_bonuses'\)\.select\('id, kind, formula'\)/);
+    assert.match(CODE, /from\('bonus_catalog_assignments'\)\s*\.select\('bonus_id, scope, department_key, shared_team'\)/);
     for (const [, arg] of CODE.matchAll(/\.select\(([^)]*)\)/g)) {
       assert.doesNotMatch(arg!, /\*/, `select(${arg}) must not read every column`);
+      if (!arg!.includes('DELIVERABLE_APPLIED_SELECT')) {
+        assert.doesNotMatch(arg!, /amount/, `select(${arg}) must not read pay`);
+      }
     }
   });
 

@@ -2395,7 +2395,9 @@ function TeamPanelInner({
    */
   const [leaderView, setLeaderView] = useState<LeaderboardView>({ basis: 'weekly', window: 'last3m' });
   /**
-   * PM Team's Rankings leaderboard (`docs/features/manager-pm-rankings.md`) — the same
+   * KPI Rankings leaderboard — PM Team and every other department on a per-person KPI
+   * bonus (`docs/features/manager-pm-rankings.md`; Kane 2026-09-27: *"a rankings tab for
+   * OTHER Departments as long as they were assigned a KPI Bonus"*) — the same
    * one Rankings pill, ranked by BONUS EARNED (Kane, 2026-09-26: *"based on their Bonus
    * … without displaying it"*). The server reads the pesos, ranks on them and sends
    * back KPI item counts plus POSITIONS only; nothing in this state carries a peso.
@@ -2949,10 +2951,11 @@ function TeamPanelInner({
     ? apptAvailable || (deptView === 'appointments' && apptErrorNow !== null)
     : deptView === 'appointments';
 
-  // PM Team's bonus-ranked leaderboard. Counts + positions only — no peso is in this
+  // The KPI (bonus-ranked) leaderboard, for any department on a per-person KPI bonus
+  // that has no Rankings view of its own. Counts + positions only — no peso is in this
   // payload, so it is as cacheable as the appointment weeks.
   const [deliv, setDeliv] = useManagerCachedState<DeliverableRankingsPayload | null>(
-    activeDeptLabel ? MANAGER_CACHE_KEYS.deptPmRankings(activeDeptLabel) : null,
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptKpiRankings(activeDeptLabel) : null,
     null,
   );
   const [delivError, setDelivError] = useState<string | null>(null);
@@ -3012,11 +3015,11 @@ function TeamPanelInner({
   const rankingsHold =
     !rankingsAvailable && !leaderboardAvailable && !deliverablesAvailable && (!apptReady || !delivReady);
 
-  // PM Team's daily read (days worked + the per-day order): the slow one, fetched in
+  // The KPI leaderboard's daily read (days worked + the per-day order): the slow one, fetched in
   // the background the first time the Rankings view is opened for the department in
   // this mount, and painted from cache on every return.
   const [delivDaily, setDelivDaily] = useManagerCachedState<DeliverableDailyPayload | null>(
-    activeDeptLabel ? MANAGER_CACHE_KEYS.deptPmDaily(activeDeptLabel) : null,
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptKpiDaily(activeDeptLabel) : null,
     null,
   );
   const [delivDailyError, setDelivDailyError] = useState<string | null>(null);
@@ -3779,7 +3782,8 @@ function TeamPanelInner({
               />
             </div>
           )}
-          {/* PM Team's Rankings: ranked by BONUS EARNED, showing KPI item counts only.
+          {/* KPI Rankings (PM Team, Edit, Site Building, Sales Assistant, Discovery, Client VA …):
+              ranked by BONUS EARNED, showing KPI item counts only — or the order alone.
               The pesos are read and ranked on the server; this payload carries counts
               and positions, never an amount. Same My Team gate as the appointment
               leaderboard; stacks under the one pill like every other Rankings pane. */}

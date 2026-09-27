@@ -361,10 +361,10 @@ test('no key caches presence or a signed URL — both are wrong when stale', () 
 test('dept views — one entry per department, so going back to one reads its own data', () => {
   newTab();
   bindManagerCacheIdentity('carla@simple.biz');
-  setManagerCache(MANAGER_CACHE_KEYS.deptPmRankings('PM Team'), { available: true, weeks: ['pm'] });
-  setManagerCache(MANAGER_CACHE_KEYS.deptPmRankings('Lead Gen'), { available: false, weeks: [] });
-  assert.deepEqual(getManagerCache(MANAGER_CACHE_KEYS.deptPmRankings('PM Team')), { available: true, weeks: ['pm'] });
-  assert.notEqual(MANAGER_CACHE_KEYS.deptPmRankings('PM Team'), MANAGER_CACHE_KEYS.deptPmDaily('PM Team'));
+  setManagerCache(MANAGER_CACHE_KEYS.deptKpiRankings('PM Team'), { available: true, weeks: ['pm'] });
+  setManagerCache(MANAGER_CACHE_KEYS.deptKpiRankings('Lead Gen'), { available: false, weeks: [] });
+  assert.deepEqual(getManagerCache(MANAGER_CACHE_KEYS.deptKpiRankings('PM Team')), { available: true, weeks: ['pm'] });
+  assert.notEqual(MANAGER_CACHE_KEYS.deptKpiRankings('PM Team'), MANAGER_CACHE_KEYS.deptKpiDaily('PM Team'));
   assert.notEqual(MANAGER_CACHE_KEYS.deptSpRankings('X'), MANAGER_CACHE_KEYS.deptAppointments('X'));
   assert.notEqual(MANAGER_CACHE_KEYS.deptAppointments('X'), MANAGER_CACHE_KEYS.deptAppointmentDays('X'));
 });
@@ -392,8 +392,8 @@ test('dept views — browsing a long rail never evicts the roster or the queue',
     setManagerCache(MANAGER_CACHE_KEYS.deptSpRankings(dept), { weeks: [] });
     setManagerCache(MANAGER_CACHE_KEYS.deptAppointments(dept), { available: false, weeks: [] });
     setManagerCache(MANAGER_CACHE_KEYS.deptAppointmentDays(dept), []);
-    setManagerCache(MANAGER_CACHE_KEYS.deptPmRankings(dept), { available: false });
-    setManagerCache(MANAGER_CACHE_KEYS.deptPmDaily(dept), { days: [] });
+    setManagerCache(MANAGER_CACHE_KEYS.deptKpiRankings(dept), { available: false });
+    setManagerCache(MANAGER_CACHE_KEYS.deptKpiDaily(dept), { days: [] });
   }
   reload(s);
   bindManagerCacheIdentity('kaner@simple.biz');
@@ -403,7 +403,7 @@ test('dept views — browsing a long rail never evicts the roster or the queue',
   const dept = keys.filter((k) => k.startsWith('mgr-tab:dept:'));
   assert.ok(dept.length <= 48, `dept group held at ${dept.length}`);
   // The newest department is the one that must survive.
-  assert.ok(hasManagerCache(MANAGER_CACHE_KEYS.deptPmDaily('Dept 29')));
+  assert.ok(hasManagerCache(MANAGER_CACHE_KEYS.deptKpiDaily('Dept 29')));
 });
 
 test('dept views — the shell cap still holds on its own, unaffected by the dept group', () => {

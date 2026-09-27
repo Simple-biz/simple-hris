@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Manager → My Team → PM Team → Rankings: the roster ranked by the BONUS they earned
+ * Manager → My Team → <department> → Rankings (PM Team, and every other department on a
+ * per-person KPI bonus): the roster ranked by the BONUS they earned
  * (Kane, 2026-09-26: *"based on their Bonus … without displaying it"*), showing only
  * KPI item counts — per day worked, per week, per month, over a chosen window.
  *
@@ -26,6 +27,8 @@ import type { ApptRosterMember } from '@/lib/manager/appointment-rankings';
 import {
   ALL_METRIC,
   applyMoneyOrder,
+  kpiVariableLabel,
+  metricShowsValues,
   projectDeliverableWeeks,
   type DeliverableMetricInfo,
   type DeliverableWeek,
@@ -71,18 +74,32 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
   onViewChange: (next: DeliverableLeaderboardView) => void;
   onOpenMember?: (member: M) => void;
 }) {
+  // One KPI → no picker, and the board speaks that KPI's own words ("Tickets completed")
+  // rather than its bonus name, which is often just the department's ("Edit").
+  const single = metrics.length === 1 ? metrics[0]! : null;
   // A KPI the data no longer carries (a retired bonus, another department) falls back
   // to All rather than rendering an empty board under a stale label.
-  const metric =
-    view.metric === ALL_METRIC || metrics.some((m) => m.key === view.metric) ? view.metric : ALL_METRIC;
+  const metric = single
+    ? single.key
+    : view.metric === ALL_METRIC || metrics.some((m) => m.key === view.metric)
+      ? view.metric
+      : ALL_METRIC;
   const projected = useMemo(() => projectDeliverableWeeks(weeks, metric), [weeks, metric]);
   const labels = useMemo(() => Object.fromEntries(metrics.map((m) => [m.key, m.label])), [metrics]);
+  // The breakdown under each name lists SHOWN KPIs only — an order-only KPI has no count.
+  const shownLabels = useMemo(
+    () => Object.fromEntries(metrics.filter((m) => m.shown).map((m) => [m.key, m.label])),
+    [metrics],
+  );
   const reorder = useCallback(
     (rows: LeaderboardRow<M>[], ctx: { basis: AverageBasis; window: AverageWindow }) =>
       applyMoneyOrder(rows, ctx.basis === 'daily' ? dailyOrder : order, ctx.window, metric),
     [order, dailyOrder, metric],
   );
-  const label = metric === ALL_METRIC ? null : (labels[metric] ?? metric);
+  const showValues = metricShowsValues(metric, metrics);
+  const unitLabel = single ? kpiVariableLabel(single.key) : metric === ALL_METRIC ? null : (labels[metric] ?? metric);
+  const pickedLabel = !single && metric !== ALL_METRIC ? (labels[metric] ?? metric) : null;
+  const orderOnlyAmongAll = metric === ALL_METRIC && showValues ? metrics.filter((m) => !m.shown) : [];
   const metricOptions = useMemo(
     () => [{ value: ALL_METRIC, label: 'All bonuses' }, ...metrics.map((m) => ({ value: m.key, label: m.label }))],
     [metrics],
@@ -100,35 +117,57 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       view={{ basis: view.basis, window: view.window }}
       onViewChange={(next) => onViewChange({ ...view, ...next })}
       onOpenMember={onOpenMember}
-      unit={label ? { one: label, many: label } : { one: 'KPI item', many: 'KPI items' }}
-      partLabels={metric === ALL_METRIC ? labels : undefined}
+      unit={unitLabel ? { one: unitLabel, many: unitLabel } : { one: 'KPI item', many: 'KPI items' }}
+      partLabels={!single && metric === ALL_METRIC && showValues ? shownLabels : undefined}
       animationKey={metric}
       reorder={reorder}
-      rankNote={label ? `Ranked by ${label} bonus earned · amounts hidden` : 'Ranked by bonus earned · amounts hidden'}
+      showValues={showValues}
+      rankNote={
+        pickedLabel ? `Ranked by ${pickedLabel} bonus earned · amounts hidden` : 'Ranked by bonus earned · amounts hidden'
+      }
       controls={
-        // The house dropdown, compact and blue so it reads as one set with the
-        // Average / Window toggles beside it. Left-aligned so a long bonus name
-        // opens toward the toggles, never off the left edge on a phone.
-        <SmoothSelect
-          aria-label="KPI"
-          leading="KPI"
-          size="sm"
-          accent="blue"
-          align="start"
-          value={metric}
-          onChange={(next) => onViewChange({ ...view, metric: next })}
-          options={metricOptions}
-          className="w-full sm:w-auto"
-          triggerClassName="w-full min-w-[11.5rem] sm:w-[13.5rem]"
-        />
+        metrics.length > 1 ? (
+          // The house dropdown, compact and blue so it reads as one set with the
+          // Average / Window toggles beside it. Left-aligned so a long bonus name
+          // opens toward the toggles, never off the left edge on a phone.
+          <SmoothSelect
+            aria-label="KPI"
+            leading="KPI"
+            size="sm"
+            accent="blue"
+            align="start"
+            value={metric}
+            onChange={(next) => onViewChange({ ...view, metric: next })}
+            options={metricOptions}
+            className="w-full sm:w-auto"
+            triggerClassName="w-full min-w-[11.5rem] sm:w-[13.5rem]"
+          />
+        ) : undefined
       }
       notes={
-        skippedRows > 0 ? (
-          <p className="text-[11.5px]">
-            {skippedRows} bonus {skippedRows === 1 ? 'row scores' : 'rows score'} several KPIs at once (a manager&rsquo;s
-            team-total bonus) and {skippedRows === 1 ? "isn't" : "aren't"} counted as anyone&rsquo;s own.
-          </p>
-        ) : null
+        <>
+          {!showValues && (
+            <p className="text-[11.5px]">
+              {single || pickedLabel ? `${pickedLabel ?? single!.label} is` : 'These bonuses are'} entered as an
+              amount, not a count, so this board shows who earned the most &mdash; never how much.
+            </p>
+          )}
+          {orderOnlyAmongAll.length > 0 && (
+            <p className="text-[11.5px]">
+              {orderOnlyAmongAll.map((m) => m.label).join(', ')}{' '}
+              {orderOnlyAmongAll.length === 1 ? 'is' : 'are'} entered as an amount, so{' '}
+              {orderOnlyAmongAll.length === 1 ? "it isn't" : "they aren't"} in the items shown; the order still
+              counts {orderOnlyAmongAll.length === 1 ? 'it' : 'them'}.
+            </p>
+          )}
+          {skippedRows > 0 && (
+            <p className="text-[11.5px]">
+              {skippedRows} bonus {skippedRows === 1 ? 'row isn’t' : 'rows aren’t'} one person&rsquo;s own
+              KPI (a team split, a personal bonus, or several KPIs in one row) and{' '}
+              {skippedRows === 1 ? "isn't" : "aren't"} counted.
+            </p>
+          )}
+        </>
       }
     />
   );

@@ -71,3 +71,20 @@ without displaying it"*. It has no `NEEDS` lines. The brief's `CHOSEN` lines aft
 - [x] Full suite 4,748/4,750 (2 failures predate this work; both fail on HEAD) · tsc clean except the
       stale `.next/types` · a live read-only run (43 ranked, 0 unplaced, no `amount` in the payload).
 - [x] Feature doc, INDEX + README rows, sibling docs, reference docs, memory, Open items 237, one commit.
+
+## Widening — every per-person KPI-bonus department (2026-09-27)
+
+Kane: *"Lets create a rankings tab for OTHER Departments as long as they were assigned a KPI Bonus"*.
+The brief was posted in session `fdd8a4bd` with no `NEEDS`. Its CHOSEN lines: (1) only one person's own
+KPI counts (one variable · not `shared_team` · not employee-scoped, on evidence); (2) a value is shown
+only when the formula multiplies the variable by a rate, so Client VA `=Appt_Bonus` is order-only;
+(3) departments with their own Rankings view keep it (appointments, SP); (4) HSL is not built here;
+(5) no picker with one KPI.
+
+- [x] `sp-ranking-row.ts`: `isSpRankingRow` lifted to a pure module, re-exported by `team-rankings.ts`.
+- [x] `classifyBonuses` + `isCountVariable` + served-elsewhere in `buildKpiData`; `PM_KPI_VARS` removed.
+- [x] Read: 3 one-row probes, `bonus_id` in the projection, catalog defs + assignments (server-only).
+- [x] Client: `shown` / `hidden`, `metricShowsValues`, `kpiVariableLabel`; the pane's `showValues`.
+- [x] Cache keys renamed `dept:kpi-rankings:` / `dept:kpi-daily:`.
+- [x] Live read-only run over 14 departments; docs, INDEX, memory, Open items 238.
+- [ ] HSL — its own brief (Open items 238).

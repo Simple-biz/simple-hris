@@ -6,28 +6,40 @@ import { describe, it } from 'node:test';
 import {
   buildKpiData,
   buildMoneyOrder,
+  classifyBonuses,
+  isCountVariable,
   toClientPayload,
   type AppliedMoneyRow,
+  type BonusAssignmentRow,
+  type BonusDefRow,
 } from './deliverable-money-order';
-import { ALL_METRIC, applyMoneyOrder, projectDeliverableWeeks } from './deliverable-rankings';
+import { ALL_METRIC, applyMoneyOrder, metricShowsValues, projectDeliverableWeeks } from './deliverable-rankings';
 import { computeLeaderboard } from './appointment-averages';
 import type { ApptRosterMember } from './appointment-rankings';
 
 /* Kane, 2026-09-26: *"based on their Bonus … hook the money like the highest money
- * value without displaying it"*. The pesos decide the order and must never leave the
- * server (`manager-my-team.md:13-17`; `employee-team-directory.md:177-179`). Rates
- * below are PM Team's live ones (measured 2026-09-26): TrustPilot / BBB ₱1,000,
- * SmartCustomer ₱500, Units ₱2,500. Every amount ends in a SENTINEL fraction so a leak
- * is findable in the serialized payload. */
+ * value without displaying it"*; 2026-09-27: *"a rankings tab for OTHER Departments as
+ * long as they were assigned a KPI Bonus"*. The pesos decide the order and must never
+ * leave the server (`manager-my-team.md:13-17`; `employee-team-directory.md:177-179`).
+ * Formulas, scopes and rates below are the LIVE catalog's (measured 2026-09-27). Every
+ * amount ends in a SENTINEL fraction so a leak is findable in the serialized payload. */
 
 const S = 0.37; // no count in these fixtures ends in .37
 const row = (
   period_start: string,
   employee_email: string,
+  bonus_id: string,
   bonus_name: string,
   vars: Record<string, unknown>,
   amount: number,
-): AppliedMoneyRow => ({ period_start, period_end: '', employee_email, bonus_name, vars, amount });
+): AppliedMoneyRow => ({ period_start, period_end: '', employee_email, bonus_id, bonus_name, vars, amount });
+const def = (id: string, formula: string, kind = 'formula'): BonusDefRow => ({ id, kind, formula });
+const asg = (bonus_id: string, department_key: string, scope = 'department', shared_team = false): BonusAssignmentRow => ({
+  bonus_id,
+  scope,
+  department_key,
+  shared_team,
+});
 
 const member = (name: string, personal: string, work: string): ApptRosterMember => ({
   name,
@@ -40,59 +52,200 @@ const member = (name: string, personal: string, work: string): ApptRosterMember 
 const ann = member('Ann', 'ann@gmail.com', 'ann@simple.biz');
 const bea = member('Bea', 'bea@gmail.com', 'bea@simple.biz');
 const MANAGER = { FB: 3, SP: 12, BBB: 5, TransUnion: 9, TrustPilot: 7, SmartCustomer: 4 };
-
-// Ann: many cheap items (SmartCustomer ₱500). Bea: fewer, dearer ones (a Sale ₱2,500).
-const applied: AppliedMoneyRow[] = [
-  row('2026-09-13', 'ann@gmail.com', 'SmartCustomer', { SmartCustomer: 4 }, 2000 + S),
-  row('2026-09-13', 'bea@gmail.com', 'Total Sales and Referral', { Units: 2 }, 5000 + S),
-  row('2026-09-06', 'ann@gmail.com', 'SmartCustomer', { SmartCustomer: 4 }, 2000 + S),
-  row('2026-09-06', 'bea@gmail.com', 'Total Sales and Referral', { Units: 1.5 }, 3750 + S),
-  row('2026-09-06', 'bea@gmail.com', 'TrustPilot', { TrustPilot: 1 }, 1000 + S),
-  row('2026-09-13', 'scottcam000@gmail.com', 'Scott Cameron', MANAGER, 99999 + S),
-  row('2026-09-06', 'scottcam000@gmail.com', 'Scott Cameron', MANAGER, 88888 + S),
-];
 const statuses = [
   { period_start: '2026-09-13', status: 'ready' },
   { period_start: '2026-09-06', status: 'ready' },
 ];
-const data = buildKpiData({ applied, statuses, locks: [], currentWeekStart: '2026-09-13' });
 
-describe('buildKpiData', () => {
-  it('is available because a PM KPI variable is present; every one-variable bonus is a KPI', () => {
+// PM Team, as live: department-scoped count bonuses + Scott's EMPLOYEE-scoped manager bonus.
+const PM_DEFS = [
+  def('b_sc', '=SmartCustomer*500'),
+  def('b_units', '=Units*2500'),
+  def('b_tp', '=TrustPilot*1000'),
+  def('b_scott', '=SmartCustomer*100+TrustPilot*150+BBB*150'),
+];
+const PM_ASG = [asg('b_sc', 'pm_team'), asg('b_units', 'pm_team'), asg('b_tp', 'pm_team'), asg('b_scott', 'pm_team', 'employee')];
+// Ann: many cheap items (SmartCustomer ₱500). Bea: fewer, dearer ones (a Sale ₱2,500).
+const PM_APPLIED: AppliedMoneyRow[] = [
+  row('2026-09-13', 'ann@gmail.com', 'b_sc', 'SmartCustomer', { SmartCustomer: 4 }, 2000 + S),
+  row('2026-09-13', 'bea@gmail.com', 'b_units', 'Total Sales and Referral', { Units: 2 }, 5000 + S),
+  row('2026-09-06', 'ann@gmail.com', 'b_sc', 'SmartCustomer', { SmartCustomer: 4 }, 2000 + S),
+  row('2026-09-06', 'bea@gmail.com', 'b_units', 'Total Sales and Referral', { Units: 1.5 }, 3750 + S),
+  row('2026-09-06', 'bea@gmail.com', 'b_tp', 'TrustPilot', { TrustPilot: 1 }, 1000 + S),
+  row('2026-09-13', 'scottcam000@gmail.com', 'b_scott', 'Scott Cameron', MANAGER, 99999 + S),
+  row('2026-09-06', 'scottcam000@gmail.com', 'b_scott', 'Scott Cameron', MANAGER, 88888 + S),
+];
+const build = (applied: AppliedMoneyRow[], deptKey: string, defs: BonusDefRow[], assignments: BonusAssignmentRow[]) =>
+  buildKpiData({ applied, statuses, locks: [], currentWeekStart: '2026-09-13', deptKey, defs, assignments });
+const data = build(PM_APPLIED, 'pm_team', PM_DEFS, PM_ASG);
+
+describe('isCountVariable — a value may be SHOWN only when the formula multiplies it by a rate', () => {
+  it('reads the live count formulas as counts', () => {
+    assert.equal(isCountVariable('=Tickets_Completed*50', 'Tickets_Completed'), true);
+    assert.equal(isCountVariable('AMP*1250', 'AMP'), true);
+    assert.equal(isCountVariable('=sum(Site_Star_Ranking*1000)', 'Site_Star_Ranking'), true);
+    assert.equal(isCountVariable('=IF(Appts_Set>=10, Appts_Set*500, Appts_Set*250)', 'Appts_Set'), true);
+    assert.equal(isCountVariable('=100 * Units_Sold', 'Units_Sold'), true);
+  });
+
+  it('a variable that IS the pesos is not a count (Client VA =Appt_Bonus, AI/API =AI_Bonus)', () => {
+    assert.equal(isCountVariable('=Appt_Bonus', 'Appt_Bonus'), false);
+    assert.equal(isCountVariable('=AI_Bonus', 'AI_Bonus'), false);
+    assert.equal(isCountVariable('=Appt_Bonus*1', 'Appt_Bonus'), false, 'a ×1 is still the pesos');
+  });
+
+  it('matches whole names, and fails closed on anything it cannot read', () => {
+    assert.equal(isCountVariable('=Units_Sold*150', 'Units'), false, 'Units is not Units_Sold');
+    assert.equal(isCountVariable('=units*IF(headcount < 6, 125, 150) / headcount', 'units'), false);
+    assert.equal(isCountVariable(null, 'X'), false);
+    assert.equal(isCountVariable('', 'X'), false);
+  });
+});
+
+describe('classifyBonuses — only one person\'s own KPI counts (on evidence)', () => {
+  const c = classifyBonuses({
+    deptKey: 'hr',
+    defs: [def('hr', '=sum(New_Hires_After_4_Weeks*1000/HR_Team_Members)'), def('lr', '=Units_Sold*30')],
+    assignments: [asg('hr', 'hr', 'department', true), asg('lr', 'hr', 'employee'), asg('lr', 'callback', 'employee')],
+  });
+
+  it('a shared-team split pays every member the same — not a ranking', () => {
+    assert.equal(c.get('hr')!.personal, false);
+  });
+
+  it("an employee-scoped bonus is one person's own, not the team's KPI", () => {
+    assert.equal(c.get('lr')!.personal, false);
+  });
+
+  it('a bonus with NO assignment for this department keeps counting (a retired bonus keeps its history)', () => {
+    const r = classifyBonuses({ deptKey: 'edit', defs: [def('old', '=Tickets*50')], assignments: [asg('old', 'qc')] });
+    assert.equal(r.get('old')!.personal, true);
+  });
+});
+
+describe('buildKpiData — PM Team', () => {
+  it('is available; every personal one-variable bonus is a KPI, shown because each is a count', () => {
     assert.equal(data.available, true);
+    assert.equal(data.servedBy, null);
     assert.deepEqual(data.metrics, [
-      { key: 'SmartCustomer', label: 'SmartCustomer' },
-      { key: 'Units', label: 'Total Sales and Referral' },
-      { key: 'TrustPilot', label: 'TrustPilot' },
+      { key: 'SmartCustomer', label: 'SmartCustomer', shown: true },
+      { key: 'Units', label: 'Total Sales and Referral', shown: true },
+      { key: 'TrustPilot', label: 'TrustPilot', shown: true },
     ]);
   });
 
-  it("skips and counts the manager's team-total rows — they are nobody's own items or pesos", () => {
+  it("skips and counts Scott's employee-scoped, multi-variable manager rows", () => {
     assert.equal(data.skippedRows, 2);
     for (const w of data.moneyWeeks) assert.ok(w.rows.every((r) => r.email !== 'scottcam000@gmail.com'));
   });
 
   it('labels a KPI with its NEWEST bonus name, so a rename reads as renamed', () => {
-    const renamed = buildKpiData({
-      applied: [
-        row('2026-09-06', 'a@b.c', 'TransUnion', { TransUnion: 1 }, 1000),
-        row('2026-09-13', 'a@b.c', 'TransUnion Reviews', { TransUnion: 1 }, 1000),
+    const renamed = build(
+      [
+        row('2026-09-06', 'a@b.c', 'tu', 'TransUnion', { TransUnion: 1 }, 1000),
+        row('2026-09-13', 'a@b.c', 'tu', 'TransUnion Reviews', { TransUnion: 1 }, 1000),
       ],
-      statuses: [],
-      locks: [],
-      currentWeekStart: '2026-09-13',
-    });
-    assert.deepEqual(renamed.metrics, [{ key: 'TransUnion', label: 'TransUnion Reviews' }]);
+      'pm_team',
+      [def('tu', '=TransUnion*1000')],
+      [asg('tu', 'pm_team')],
+    );
+    assert.deepEqual(renamed.metrics, [{ key: 'TransUnion', label: 'TransUnion Reviews', shown: true }]);
+  });
+});
+
+describe('buildKpiData — the other departments', () => {
+  it('Edit (one count bonus) lights up with no code change', () => {
+    const edit = build(
+      [row('2026-09-13', 'a@b.c', 'e', 'Edit', { Tickets_Completed: 12 }, 600)],
+      'edit',
+      [def('e', '=Tickets_Completed*50')],
+      [asg('e', 'edit')],
+    );
+    assert.equal(edit.available, true);
+    assert.deepEqual(edit.metrics, [{ key: 'Tickets_Completed', label: 'Edit', shown: true }]);
   });
 
-  it('a department without any PM KPI variable does not get the view', () => {
-    const other = buildKpiData({
-      applied: [row('2026-09-13', 'a@b.c', 'Lead Gen', { Appts_Set: 4 }, 1000)],
-      statuses: [],
-      locks: [],
-      currentWeekStart: '2026-09-13',
+  it('Client VA (=Appt_Bonus) is ranked but ORDER-ONLY: the value never reaches the client', () => {
+    const cva = build(
+      [
+        row('2026-09-13', 'ann@gmail.com', 'cva', 'Client VA', { Appt_Bonus: 1750 + S }, 1750 + S),
+        row('2026-09-06', 'ann@gmail.com', 'cva', 'Client VA', { Appt_Bonus: 1250 + S }, 1250 + S),
+        row('2026-09-13', 'bea@gmail.com', 'cva', 'Client VA', { Appt_Bonus: 4000 + S }, 4000 + S),
+        row('2026-09-06', 'bea@gmail.com', 'cva', 'Client VA', { Appt_Bonus: 3000 + S }, 3000 + S),
+      ],
+      'client_va',
+      [def('cva', '=Appt_Bonus')],
+      [asg('cva', 'client_va')],
+    );
+    assert.equal(cva.available, true);
+    assert.deepEqual(cva.metrics, [{ key: 'Appt_Bonus', label: 'Client VA', shown: false }]);
+    assert.equal(metricShowsValues(ALL_METRIC, cva.metrics), false);
+    const w = cva.weeks.find((x) => x.periodStart === '2026-09-13')!;
+    assert.deepEqual(w.rows[0], { email: 'ann@gmail.com', counts: {}, hidden: ['Appt_Bonus'] });
+
+    const order = buildMoneyOrder({
+      moneyWeeks: cva.moneyWeeks,
+      metrics: cva.metrics,
+      members: [ann, bea],
+      days: null,
+      basis: 'weekly',
+      todayIso: '2026-09-26',
     });
-    assert.equal(other.available, false);
+    const json = JSON.stringify(toClientPayload(cva, order, '2026-09-13'));
+    assert.doesNotMatch(json, /\.37|1750|1250|4000|3000/, 'Client VA’s peso-valued variable leaked');
+    const beaAt = order.people.findIndex((e) => e.includes('bea@gmail.com'));
+    assert.equal(order.positions.all[ALL_METRIC]![beaAt], 1, 'still ranked by the bonus');
+  });
+
+  it('a department of team splits only (HR / QC / Accounting) gets no board', () => {
+    const hr = build(
+      [row('2026-09-13', 'a@b.c', 'hr', 'HR', { HR_Team_Members: 9, New_Hires_After_4_Weeks: 78 }, 8666.67)],
+      'hr',
+      [def('hr', '=sum(New_Hires_After_4_Weeks*1000/HR_Team_Members)')],
+      [asg('hr', 'hr', 'department', true)],
+    );
+    assert.equal(hr.available, false);
+    assert.equal(hr.skippedRows, 1);
+  });
+
+  it('a department with its own Rankings view is left to it — appointments or SP', () => {
+    const lg = build([row('2026-09-13', 'a@b.c', 'lg', 'Lead Gen', { Appts_Set: 4 }, 1000)], 'lead_gen', [], []);
+    assert.equal(lg.available, false);
+    assert.equal(lg.servedBy, 'appointments');
+    const cb = build(
+      [
+        row('2026-09-13', 'a@b.c', 'cb', 'Call Back', { Appts_Set: 4 }, 200),
+        row('2026-09-13', 'b@b.c', 'lr', 'Lead Receptionist', { Units_Sold: 2 }, 60),
+      ],
+      'callback',
+      [],
+      [],
+    );
+    assert.equal(cb.servedBy, 'appointments');
+    const devs = build(
+      [
+        row('2026-09-13', 'a@b.c', 'ai', 'AI Team Bonus', { SP: 30, Ranking: 1, Project_SP: 0 }, 3100),
+        row('2026-09-13', 'a@b.c', 'tmp', 'AI Team (TEMP BONUS)', { AI_Bonus: 500 }, 500),
+      ],
+      'devs',
+      [],
+      [],
+    );
+    assert.equal(devs.available, false);
+    assert.equal(devs.servedBy, 'sp');
+  });
+
+  it('a KPI scored by a count bonus AND a peso-valued one is order-only (fail closed)', () => {
+    const mixed = build(
+      [
+        row('2026-09-13', 'a@b.c', 'n', 'Units', { Units_Sold: 2 }, 300),
+        row('2026-09-06', 'a@b.c', 'm', 'Units (manual)', { Units_Sold: 450 }, 450),
+      ],
+      'sales_assistant',
+      [def('n', '=Units_Sold*150'), def('m', '=Units_Sold')],
+      [asg('n', 'sales_assistant'), asg('m', 'sales_assistant')],
+    );
+    assert.equal(mixed.metrics[0]!.shown, false);
   });
 });
 
@@ -163,11 +316,11 @@ describe('toClientPayload — no peso ever leaves the server', () => {
   });
   const json = JSON.stringify(toClientPayload(data, order, '2026-09-13'));
 
-  it('carries no amount, no money field, and none of the sentinel pesos', () => {
-    assert.doesNotMatch(json, /amount|money/i);
+  it('carries no amount, no money field, no formula, and none of the sentinel pesos', () => {
+    assert.doesNotMatch(json, /amount|money|formula/i);
     assert.doesNotMatch(json, /\.37/, 'a sentinel peso fraction leaked into the payload');
-    for (const n of ['2000', '5000', '3750', '1000', '4000', '9750', '99999', '88888']) {
-      assert.ok(!json.includes(n), `peso figure ${n} leaked into the payload`);
+    for (const n of ['2000', '5000', '3750', '1000', '4000', '9750', '99999', '88888', '2500', '500']) {
+      assert.ok(!new RegExp(`\\b${n}\\b`).test(json), `peso figure or rate ${n} leaked into the payload`);
     }
   });
 

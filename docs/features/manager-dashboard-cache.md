@@ -176,8 +176,8 @@ That is why the roster payload is the cached unit and the gate is derived.
 | `deptSpRankings(label)` | `GET /api/team-rankings?view=manager` | `{ weeks }` — SP + tier, never pesos |
 | `deptAppointments(label)` | `GET /api/manager/appointment-rankings` | `{ available, weeks }` — counts |
 | `deptAppointmentDays(label)` | `GET /api/manager/appointment-rankings/days` | day counts |
-| `deptPmRankings(label)` | `GET /api/manager/deliverable-rankings` | KPI counts + POSITIONS; the pesos never leave the server |
-| `deptPmDaily(label)` | `… /deliverable-rankings?basis=daily` | day counts + per-day positions |
+| `deptKpiRankings(label)` | `GET /api/manager/deliverable-rankings` | KPI counts + POSITIONS; the pesos never leave the server |
+| `deptKpiDaily(label)` | `… /deliverable-rankings?basis=daily` | day counts + per-day positions |
 
 ### Per-department views (`dept:` keys, 2026-09-27)
 

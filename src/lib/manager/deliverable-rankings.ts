@@ -1,8 +1,11 @@
 /**
- * KPI rankings — Manager → My Team → PM Team → Rankings. Ranks the current roster
- * by the BONUS they earned (Kane, 2026-09-26: *"this should be based on their Bonus
- * … hook the money like the highest money value without displaying it"*), and
- * shows only KPI item COUNTS. Doc: `docs/features/manager-pm-rankings.md`.
+ * KPI rankings — Manager → My Team → <department> → Rankings, for PM Team and every
+ * other department scored on a per-person KPI bonus (Kane, 2026-09-27: *"Lets create
+ * a rankings tab for OTHER Departments as long as they were assigned a KPI Bonus"*).
+ * Ranks the current roster by the BONUS they earned (Kane, 2026-09-26: *"this should
+ * be based on their Bonus … hook the money like the highest money value without
+ * displaying it"*), and shows only KPI item COUNTS — or, for a KPI whose variable IS
+ * the pesos, the order alone. Doc: `docs/features/manager-pm-rankings.md`.
  *
  * This module is the CLIENT-SAFE half. It never sees a peso:
  *
@@ -14,19 +17,19 @@
  *
  * ## Adaptable: the KPIs come from the data
  *
- * PM Team is scored on one-variable bonuses (`=TrustPilot*1000`, `=Units*2500`, …;
- * eight of them on 2026-09-26). Every ONE-variable row in the department is a KPI item,
- * keyed by its variable and labelled with its newest bonus name, so a new bonus joins
- * the picker and "All bonuses" with no code change, and a rate change reaches the order
- * through `amount`. {@link PM_KPI_VARS} decides only WHETHER a department has this view
- * (availability, like Lead Gen's exact `Appts_Set`), never what is ranked inside it.
+ * Every row that is one person's own KPI (the server decides: one variable, a
+ * department-scoped bonus, not a shared-team split — `deliverable-money-order.ts`) is
+ * a KPI item, keyed by its variable and labelled with its newest bonus name. A new
+ * bonus joins the picker and "All bonuses" with no code change, and a rate change
+ * reaches the order through `amount`.
  *
- * ## Rows that are not one KPI count are left out, and counted
+ * ## Shown, or order-only
  *
- * "Scott Cameron" (`PM Team - Manager`) is ONE row a week with 15–17 keys of the whole
- * team's totals. Counting it would hand one person the team's work. A row counts only
- * when its `vars` hold exactly one key; every other row is skipped and counted
- * (`skippedRows`), so the pane says so instead of silently dropping it.
+ * A KPI's number reaches this module only when the bonus formula multiplies the
+ * variable by a rate (`=Tickets_Completed*50`): then it is a COUNT. Client VA's bonus
+ * is `=Appt_Bonus`, so its variable IS the pesos: the server keeps the value, sends the
+ * metric as `shown: false` and the row's presence as `hidden`, and the board shows the
+ * order alone. {@link metricShowsValues} is the one place that decides it.
  */
 import { normEmail } from '@/lib/email/norm-email';
 import type { AverageWindow, DaysWorkedRow, LeaderboardRow } from '@/lib/manager/appointment-averages';
@@ -36,22 +39,6 @@ import type {
   ApptRosterMember,
 } from '@/lib/manager/appointment-rankings';
 
-/**
- * PM Team's KPI variables as of 2026-09-26. AVAILABILITY ONLY: a department gets the
- * view when a one-variable row carries one of these (only `pm_team` does). What is
- * ranked is whatever one-variable bonuses the department actually has.
- */
-export const PM_KPI_VARS = [
-  'Units',
-  'TransUnion',
-  'TrustPilot',
-  'BBB',
-  'FB',
-  'SmartCustomer',
-  'AMP',
-  'Site_Star_Ranking',
-] as const;
-
 /** The metric key for every KPI summed. Any other metric key is a variable name. */
 export const ALL_METRIC = 'all';
 
@@ -60,13 +47,20 @@ export interface DeliverableMetricInfo {
   key: string;
   /** The newest bonus name that scored it, e.g. "Total Sales and Referral". */
   label: string;
+  /**
+   * True when its values are COUNTS and may be shown. False when the variable is the
+   * peso amount itself (Client VA's `=Appt_Bonus`): ranked on, never shown.
+   */
+  shown: boolean;
 }
 
 export interface DeliverableWeekRow {
   /** Lower-cased, as stored (personal-email-first canonical). */
   email: string;
-  /** Only the KPIs this person HAS a row for that week — a missing key is no entry, not 0. */
+  /** Only the SHOWN KPIs this person HAS a row for that week — a missing key is no entry, not 0. */
   counts: Record<string, number>;
+  /** Order-only KPIs this person has a row for — presence, never a value. Absent when none. */
+  hidden?: string[];
 }
 
 export interface DeliverableWeek {
@@ -89,7 +83,10 @@ export interface MoneyOrder {
 }
 
 export interface DeliverableRankingsPayload {
-  /** False when no one-variable row carries a PM KPI variable: no leaderboard. */
+  /**
+   * False when the department has no per-person KPI row, or is already served by its
+   * own Rankings view (appointments, or SP): no leaderboard.
+   */
   available: boolean;
   /** Sunday of the week containing today, in Manila. */
   currentWeekStart: string;
@@ -97,7 +94,7 @@ export interface DeliverableRankingsPayload {
   weeks: DeliverableWeek[];
   /** The KPIs present in the data, ordered by label. */
   metrics: DeliverableMetricInfo[];
-  /** Rows that are not one KPI count (a manager's team-total row) — not counted. */
+  /** Rows that are not one person's own KPI (a team split, a personal bonus, several KPIs in one row) — not counted. */
   skippedRows: number;
   /** The weekly/monthly bonus order. Null only alongside an error. */
   order: MoneyOrder | null;
@@ -128,7 +125,25 @@ export function kpiItemFromVars(vars: Record<string, unknown> | null | undefined
   return { kind: 'item', key, count: Number.isFinite(n) && n > 0 ? n : 0 };
 }
 
-/** A person-week's items across every KPI they have a row for. */
+/**
+ * Whether the board may show NUMBERS for `metric`: "All" when any KPI is a count,
+ * one KPI when it is. Order-only otherwise. An unknown metric is order-only (fail closed).
+ */
+export function metricShowsValues(metric: string, metrics: readonly DeliverableMetricInfo[]): boolean {
+  if (metric === ALL_METRIC) return metrics.some((m) => m.shown);
+  return metrics.find((m) => m.key === metric)?.shown ?? false;
+}
+
+/**
+ * A KPI variable in plain words — `Tickets_Completed` → "Tickets completed". Used when a
+ * department has ONE KPI, whose bonus name is usually just the department's ("Edit").
+ */
+export function kpiVariableLabel(variable: string): string {
+  const words = variable.replace(/_/g, ' ').trim().toLowerCase();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : variable;
+}
+
+/** A person-week's items across every SHOWN KPI they have a row for. */
 export function totalItems(counts: Readonly<Record<string, number>>): number {
   let n = 0;
   for (const v of Object.values(counts)) n += v;
@@ -139,10 +154,12 @@ export function totalItems(counts: Readonly<Record<string, number>>): number {
  * The weeks the shared leaderboard computes its SHOWN figures from, for one metric.
  * `appointments` is the leaderboard's count field; here it carries KPI items.
  *
- * - `all` → every person-week with any KPI row, as the unweighted item sum, with the
- *   per-KPI split carried as `parts` (the row's breakdown).
+ * - `all` → every person-week with any KPI row, as the unweighted item sum of the
+ *   SHOWN KPIs, with their split carried as `parts` (the row's breakdown).
  * - one KPI → only person-weeks that HAVE that KPI's row. No entry ≠ zero, the rule
  *   the appointment views keep: Site Star exists only from 2026-05-17.
+ * - an order-only KPI → the same presence, with a count of 0 that the pane never
+ *   shows (`metricShowsValues`); it exists so the window and history match the order.
  *
  * The server's money projection keeps the same rows (`deliverable-money-order.ts`),
  * so both sides average over the same weeks and rank the same people.
@@ -158,7 +175,8 @@ export function projectDeliverableWeeks(
     rows: w.rows.flatMap((r) => {
       if (metric === ALL_METRIC) return [{ email: r.email, appointments: totalItems(r.counts), parts: { ...r.counts } }];
       const n = r.counts[metric];
-      return n === undefined ? [] : [{ email: r.email, appointments: n }];
+      if (n !== undefined) return [{ email: r.email, appointments: n }];
+      return r.hidden?.includes(metric) ? [{ email: r.email, appointments: 0 }] : [];
     }),
   }));
 }

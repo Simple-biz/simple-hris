@@ -1,5 +1,6 @@
 /**
- * The reads behind Manager → My Team → PM Team → Rankings. Fetch only — every rule
+ * The reads behind Manager → My Team → <department> → Rankings for PM Team and every
+ * other department on a per-person KPI bonus. Fetch only — every rule
  * lives in the pure `src/lib/manager/deliverable-rankings.ts` (counts, client-safe)
  * and `src/lib/manager/deliverable-money-order.ts` (pesos → positions, server-only).
  * Doc: `docs/features/manager-pm-rankings.md`.
@@ -14,13 +15,17 @@
  * amounts and fails on any of them, and `deliverable-rankings.test.ts` pins this
  * projection string so it can only be widened on purpose.
  *
- * ## Two reads, cheapest first
+ * ## Cheapest first
  *
- * The Rankings pill fetches this for every department a manager opens. A one-row probe
- * (`vars->>X` not null for a PM KPI variable) answers "does this department have the
- * view" before paging anything: 0 rows for Lead Gen's 6,387 and AI/API's 188, measured
- * 2026-09-26. Only then is the department read in full — ALL of its rows, not only the
- * PM variables, because a bonus added tomorrow must be ranked without a code change.
+ * The Rankings pill fetches this for every department a manager opens. Three one-row
+ * probes run first, in parallel: does the department have ANY KPI row, and is it
+ * already served by its own Rankings view (an appointment variable → Lead Gen /
+ * Callback; an `SP` + `Ranking` row → AI/API). Either answer ends the call before
+ * anything is paged, so Lead Gen's 6,387 rows are never read here. Only then is the
+ * department read in full — ALL of its rows, because a bonus added tomorrow must be
+ * ranked without a code change — with the catalog definitions and assignments that
+ * classify them (`classifyBonuses`). The formulas carry the pay RATES and never leave
+ * this process either.
  */
 import { createSupabaseServiceRoleClient } from './server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
@@ -29,24 +34,22 @@ import { readWeekBadgeInputs } from '@/lib/supabase/appointment-rankings';
 import { getDepartmentDaysWorked } from '@/lib/supabase/appointment-days';
 import { getEmployeesForAuthorizedServerRoute, type EmployeeRow } from '@/lib/supabase/employees';
 import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
-import {
-  PM_KPI_VARS,
-  type DeliverableDailyPayload,
-  type DeliverableRankingsPayload,
-} from '@/lib/manager/deliverable-rankings';
+import type { DeliverableDailyPayload, DeliverableRankingsPayload } from '@/lib/manager/deliverable-rankings';
 import {
   buildKpiData,
   buildMoneyOrder,
   toClientPayload,
   type AppliedMoneyRow,
+  type BonusAssignmentRow,
+  type BonusDefRow,
   type KpiData,
 } from '@/lib/manager/deliverable-money-order';
 
 /** The applied-row projection. Pinned by a test. `amount` is read HERE and never returned. */
-export const DELIVERABLE_APPLIED_SELECT = 'period_start, period_end, employee_email, bonus_name, vars, amount';
+export const DELIVERABLE_APPLIED_SELECT = 'period_start, period_end, employee_email, bonus_id, bonus_name, vars, amount';
 
-/** PostgREST `or` filter: the row's `vars` names at least one PM KPI variable. */
-export const PM_KPI_VARS_FILTER = PM_KPI_VARS.map((v) => `vars->>${v}.not.is.null`).join(',');
+/** PostgREST `or` filter: an appointment variable (`APPOINTMENT_VARS`) — the appointment views own it. */
+export const APPOINTMENT_VARS_FILTER = 'vars->>Appts_Set.not.is.null,vars->>Appts.not.is.null';
 
 type Loaded =
   | { kind: 'error'; error: string }
@@ -60,14 +63,27 @@ async function loadKpiData(deptKey: string, deptLabel: string, currentWeekStart:
   const key = deptKey.trim();
   if (!key) return { kind: 'unavailable' };
 
-  const probe = await supabase
-    .from('bonus_catalog_applied')
-    .select('period_start')
-    .eq('department', key)
-    .or(PM_KPI_VARS_FILTER)
-    .limit(1);
-  if (probe.error) return { kind: 'error', error: probe.error.message };
-  if ((probe.data ?? []).length === 0) return { kind: 'unavailable' };
+  const [anyRow, apptRow, spRow] = await Promise.all([
+    supabase.from('bonus_catalog_applied').select('period_start').eq('department', key).limit(1),
+    supabase
+      .from('bonus_catalog_applied')
+      .select('period_start')
+      .eq('department', key)
+      .or(APPOINTMENT_VARS_FILTER)
+      .limit(1),
+    supabase
+      .from('bonus_catalog_applied')
+      .select('period_start')
+      .eq('department', key)
+      .not('vars->>SP', 'is', null)
+      .not('vars->>Ranking', 'is', null)
+      .limit(1),
+  ]);
+  const probeErr = anyRow.error ?? apptRow.error ?? spRow.error;
+  if (probeErr) return { kind: 'error', error: probeErr.message };
+  if ((anyRow.data ?? []).length === 0) return { kind: 'unavailable' };
+  // Already served by its own Rankings view, behind its own gate. See buildKpiData.
+  if ((apptRow.data ?? []).length > 0 || (spRow.data ?? []).length > 0) return { kind: 'unavailable' };
 
   // PM Team alone is 7,121 rows — past the 1,000-row cap, so page.
   const { rows: applied, error: appliedErr } = await selectAllPaged<AppliedMoneyRow>((from, to) =>
@@ -83,8 +99,35 @@ async function loadKpiData(deptKey: string, deptLabel: string, currentWeekStart:
   // The applied read is the ranking itself: without it there is nothing honest to show.
   if (appliedErr) return { kind: 'error', error: appliedErr };
 
-  const { statuses, locks } = await readWeekBadgeInputs(supabase, key);
-  const data = buildKpiData({ applied, statuses, locks, currentWeekStart });
+  const bonusIds = [...new Set(applied.map((r) => r.bonus_id).filter((id): id is string => !!id))];
+  const [{ statuses, locks }, defsRes, assignRes] = await Promise.all([
+    readWeekBadgeInputs(supabase, key),
+    selectAllPaged<BonusDefRow>((from, to) =>
+      supabase.from('bonus_catalog_bonuses').select('id, kind, formula').in('id', bonusIds).order('id').range(from, to),
+    ),
+    selectAllPaged<BonusAssignmentRow>((from, to) =>
+      supabase
+        .from('bonus_catalog_assignments')
+        .select('bonus_id, scope, department_key, shared_team')
+        .in('bonus_id', bonusIds)
+        .order('id')
+        .range(from, to),
+    ),
+  ]);
+  // Both decide what is counted and what is SHOWN: without them the honest answer is
+  // an error, never a guess (a missing formula would already fail closed to order-only,
+  // but a missing assignment would count a team split as personal).
+  if (defsRes.error) return { kind: 'error', error: defsRes.error };
+  if (assignRes.error) return { kind: 'error', error: assignRes.error };
+  const data = buildKpiData({
+    applied,
+    statuses,
+    locks,
+    currentWeekStart,
+    deptKey: key,
+    defs: defsRes.rows,
+    assignments: assignRes.rows,
+  });
   if (!data.available) return { kind: 'unavailable' };
 
   // The same roster My Team shows for this department: `/api/manager/department-members`

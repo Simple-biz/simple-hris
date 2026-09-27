@@ -5,6 +5,7 @@ import {
   ALL_METRIC,
   applyMoneyOrder,
   kpiItemFromVars,
+  metricShowsValues,
   projectDeliverableWeeks,
   totalItems,
   type DeliverableWeek,
@@ -91,6 +92,28 @@ describe('projectDeliverableWeeks — the SHOWN figures', () => {
     assert.deepEqual(projectDeliverableWeeks(weeks, 'Site_Star_Ranking')[1]!.rows, []);
   });
 
+  it('an ORDER-ONLY KPI keeps presence (history, window) with a 0 the pane never shows', () => {
+    const cva: DeliverableWeek[] = [
+      { periodStart: '2026-09-13', periodEnd: '', badge: 'finalized', rows: [{ email: 'a@b.c', counts: {}, hidden: ['Appt_Bonus'] }] },
+      { periodStart: '2026-09-06', periodEnd: '', badge: 'finalized', rows: [{ email: 'b@b.c', counts: {} }] },
+    ];
+    assert.deepEqual(projectDeliverableWeeks(cva, 'Appt_Bonus')[0]!.rows, [{ email: 'a@b.c', appointments: 0 }]);
+    assert.deepEqual(projectDeliverableWeeks(cva, 'Appt_Bonus')[1]!.rows, [], 'no row → no entry');
+    assert.deepEqual(projectDeliverableWeeks(cva, ALL_METRIC)[0]!.rows, [{ email: 'a@b.c', appointments: 0, parts: {} }]);
+  });
+
+  it('metricShowsValues — numbers only for count KPIs; unknown fails closed', () => {
+    const metrics = [
+      { key: 'Tickets_Completed', label: 'Edit', shown: true },
+      { key: 'Appt_Bonus', label: 'Client VA', shown: false },
+    ];
+    assert.equal(metricShowsValues(ALL_METRIC, metrics), true);
+    assert.equal(metricShowsValues('Tickets_Completed', metrics), true);
+    assert.equal(metricShowsValues('Appt_Bonus', metrics), false);
+    assert.equal(metricShowsValues('Nope', metrics), false);
+    assert.equal(metricShowsValues(ALL_METRIC, [metrics[1]!]), false, 'Client VA alone is order-only');
+  });
+
   it('keeps each week badge, so the leaderboard still averages settled weeks only', () => {
     assert.deepEqual(
       projectDeliverableWeeks(weeks, 'BBB').map((w) => [w.periodStart, w.badge]),
@@ -169,5 +192,15 @@ describe('applyMoneyOrder — the server decides the order, the counts are what 
     });
     assert.deepEqual(lb.rows[0]!.parts, { BBB: 3, Units: 1 });
     assert.equal(lb.rows[0]!.avgWeekly, 2);
+  });
+});
+
+describe('kpiVariableLabel — a one-KPI department speaks in its KPI\'s own words', () => {
+  it('humanizes the variable', async () => {
+    const { kpiVariableLabel } = await import('./deliverable-rankings');
+    assert.equal(kpiVariableLabel('Tickets_Completed'), 'Tickets completed');
+    assert.equal(kpiVariableLabel('Units_Sold'), 'Units sold');
+    assert.equal(kpiVariableLabel('Sites_Built'), 'Sites built');
+    assert.equal(kpiVariableLabel(''), '');
   });
 });

@@ -24,8 +24,8 @@ whose count, gate, roster match and tenure it reuses **unchanged**. Not pushed.
 
 ## Two callers of the pane and the math
 
-Since 2026-09-26, `computeLeaderboard` and `AppointmentLeaderboardPane` also serve **PM Team's**
-Rankings ([manager-pm-rankings.md](./manager-pm-rankings.md)). That view is ranked by bonus earned and
+Since 2026-09-26, `computeLeaderboard` and `AppointmentLeaderboardPane` also serve the **KPI**
+Rankings of PM Team and (2026-09-27) every other per-person KPI-bonus department ([manager-pm-rankings.md](./manager-pm-rankings.md)). That view is ranked by bonus earned and
 shows KPI items. It reuses them rather than copying them, so this doc's rules (settled weeks, window,
 minimum history, the three averages, ties) hold on both. The additions are all opt-in, and each
 defaults to this view's behaviour:
@@ -33,7 +33,7 @@ defaults to this view's behaviour:
 - `computeLeaderboard` sums an optional per-row `parts` map into `LeaderboardRow.parts`. Appointment
   rows never carry one, so a Lead Gen row has no `parts` field (a test pins it).
 - The pane takes `unit` (default *appointments*, so every sentence here reads as before), `controls`,
-  `partLabels`, `notes`, `animationKey`, `rankNote` and `reorder`. **`reorder` is how PM Team applies
+  `partLabels`, `notes`, `animationKey`, `rankNote`, `reorder` and `showValues` (false = order-only: no figure anywhere; for a KPI whose variable is the pesos). **`reorder` is how PM Team applies
   a server-computed order without pesos in the browser.** This view passes none of them.
 - The badge + fill-forward (`badgeWeeks`) and the badge-input reads (`readWeekBadgeInputs`) were
   lifted out of `buildAppointmentWeeks` / `getAppointmentRankings` unchanged, so PM Team's weeks badge

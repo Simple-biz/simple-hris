@@ -35,6 +35,7 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { teamDisplayNames } from '@/lib/name/team-display-name';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
+import { isSpRankingRow } from '@/lib/manager/sp-ranking-row';
 
 const APPLIED = 'bonus_catalog_applied';
 const STATUS = 'hsl_bonus_period_status';
@@ -91,20 +92,8 @@ function toTier(v: unknown): RankTier {
   return n === 1 || n === 25 || n === 50 ? n : 0;
 }
 
-/**
- * True when one applied row is an SP-ranking row: the AI Team Bonus shape, which
- * carries BOTH `SP` and the `Ranking` tier flag.
- *
- * `SP` alone is not enough (2026-09-26, measured read-only). PM Team's "Scott
- * Cameron" manager bonus writes one row a week with 15–17 keys of team totals,
- * `SP` among them, and that lit up a Rankings pane for PM Team listing every one of
- * its ~360 weekly KPI rows at SP 0. AI/API Team's "AI Team (TEMP BONUS)" rows
- * (`{ AI_Bonus }`) were likewise ranked as SP 0, and made 2026-09-13 an
- * all-zero week ranked by name.
- */
-export function isSpRankingRow(vars: Record<string, unknown> | null | undefined): boolean {
-  return vars != null && 'SP' in vars && 'Ranking' in vars;
-}
+/** The AI Team Bonus shape (`SP` + `Ranking`) — one rule, shared; see its module. */
+export { isSpRankingRow };
 
 /**
  * True when a department's KPI rows carry SP-style rankings. Driven by the data

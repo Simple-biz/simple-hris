@@ -11,7 +11,8 @@ export const runtime = 'nodejs';
 /**
  * GET /api/manager/deliverable-rankings?department=<raw roster label>[&basis=daily]
  *
- * PM Team's Rankings leaderboard. The default call returns every week of the
+ * The KPI Rankings leaderboard — PM Team and every other department on a per-person
+ * KPI bonus that has no Rankings view of its own. The default call returns every week of the
  * department's KPI item COUNTS, badged, plus the weekly/monthly order by BONUS EARNED
  * as positions only. `basis=daily` returns Hubstaff days worked plus the per-day order
  * (the slow read, fetched in the background). Kane, 2026-09-26: *"based on their Bonus

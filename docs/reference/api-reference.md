@@ -3173,7 +3173,7 @@ feature doc and in no hand-written section here.**
 | `/api/manager/approver-candidates` | GET | `getServerSession` | [time-adjustment-requests](../features/time-adjustment-requests.md) |
 | `/api/manager/calltools-username` | PATCH | `getServerSession` | [onboarding-calltools-username](../features/onboarding-calltools-username.md) |
 | `/api/manager/deliverable-rankings` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-pm-rankings](../features/manager-pm-rankings.md) · [manager-my-team](../features/manager-my-team.md) |
-| ↳ | | | *(2026-09-26)* PM Team's Rankings. Ranked by bonus pesos **server-side**; the response carries KPI item counts + positions only, never `amount` (pinned by a serialization test). `?basis=daily` returns Hubstaff days + the per-day order. No email parameter. |
+| ↳ | | | *(2026-09-26; every per-person KPI-bonus department since 2026-09-27)* KPI Rankings. Three one-row probes first (any row · appointments · SP → unavailable). Ranked by bonus pesos **server-side**; formulas and assignments are read to classify rows and never returned; the response carries KPI item counts + positions only, never `amount` (pinned by a serialization test). `?basis=daily` returns Hubstaff days + the per-day order. No email parameter. |
 | `/api/manager/departed-members` | GET | `getServerSession` | *this file* |
 | `/api/manager/department-members` | GET | `getServerSession` | [identity-resolution](../features/identity-resolution.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
 | `/api/manager/medals` | GET, POST | `getServerSession` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |

@@ -150,6 +150,7 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   animationKey,
   reorder,
   rankNote,
+  showValues = true,
 }: {
   weeks: AppointmentWeek[];
   weeksLoading: boolean;
@@ -183,6 +184,12 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   ) => { rows: LeaderboardRow<M>[]; unplaced: number };
   /** What the order is based on, when it is not the shown average (PM Team: bonus earned). */
   rankNote?: string;
+  /**
+   * False = ORDER-ONLY: no per-day / per-week / per-month figure, total or day count is
+   * rendered anywhere — rank, name, weeks and tenure only. For a KPI whose variable IS
+   * the pesos (Client VA's `=Appt_Bonus`), where every "count" would be pay.
+   */
+  showValues?: boolean;
 }) {
   const reduce = useReducedMotion() ?? false;
   const today = manilaTodayIso();
@@ -251,7 +258,9 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-100/80 bg-white px-3 py-2 shadow-sm dark:border-blue-950/60 dark:bg-[#0d1117]">
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-            Top performers · average {unit.many} {BASIS_UNIT[basis]}
+            {showValues
+              ? `Top performers · average ${unit.many} ${BASIS_UNIT[basis]}`
+              : `Top performers · by bonus earned ${BASIS_UNIT[basis]}`}
           </p>
           <p className="truncate text-[11px] text-zinc-500">
             {rankNote && <span className="font-medium text-zinc-600 dark:text-zinc-300">{rankNote} · </span>}
@@ -308,11 +317,18 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
           transition={{ duration: reduce ? 0.1 : 0.2, ease: EASE }}
           className="space-y-3"
         >
-          <Podium rows={board.rows.slice(0, 3)} basis={basis} unit={unit} onOpenMember={onOpenMember} />
+          <Podium
+            rows={board.rows.slice(0, 3)}
+            basis={basis}
+            unit={unit}
+            showValues={showValues}
+            onOpenMember={onOpenMember}
+          />
           <LeaderTable
             rows={board.rows}
             basis={basis}
             unit={unit}
+            showValues={showValues}
             partLabels={partLabels}
             daysLoading={daysPending}
             onOpenMember={onOpenMember}
@@ -366,8 +382,17 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
         )}
         {notes}
         <p className="pt-1 text-[11px] leading-relaxed">
-          Only weeks Accounting has received or finalized are averaged. Per day = {unit.many} ÷ days with Hubstaff
-          time. Per week = {unit.many} ÷ weeks scored. Per month = per week × 52 ÷ 12.
+          {showValues ? (
+            <>
+              Only weeks Accounting has received or finalized are averaged. Per day = {unit.many} ÷ days with
+              Hubstaff time. Per week = {unit.many} ÷ weeks scored. Per month = per week × 52 ÷ 12.
+            </>
+          ) : (
+            <>
+              Only weeks Accounting has received or finalized are counted. The order is the bonus earned{' '}
+              {BASIS_UNIT[basis]}; the amounts are never shown.
+            </>
+          )}
         </p>
       </div>
     </div>
@@ -400,11 +425,13 @@ function Podium<M extends ApptRosterMember>({
   rows,
   basis,
   unit,
+  showValues,
   onOpenMember,
 }: {
   rows: LeaderboardRow<M>[];
   basis: AverageBasis;
   unit: LeaderboardUnit;
+  showValues: boolean;
   onOpenMember?: (member: M) => void;
 }) {
   return (
@@ -433,15 +460,19 @@ function Podium<M extends ApptRosterMember>({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">{r.name}</span>
                 <span className="block text-[11px] text-zinc-500">
-                  {fmtCount(r.totalAppointments)} {r.totalAppointments === 1 ? unit.one : unit.many} · {r.tenure}
+                  {showValues
+                    ? `${fmtCount(r.totalAppointments)} ${r.totalAppointments === 1 ? unit.one : unit.many} · ${r.tenure}`
+                    : `${r.weeksScored} ${r.weeksScored === 1 ? 'week' : 'weeks'} scored · ${r.tenure}`}
                 </span>
               </span>
-              <span className="shrink-0 text-right">
-                <span className="block text-lg font-bold leading-none tabular-nums text-zinc-900 dark:text-zinc-100">
-                  {fmt(valueOf(r, basis), basis)}
+              {showValues && (
+                <span className="shrink-0 text-right">
+                  <span className="block text-lg font-bold leading-none tabular-nums text-zinc-900 dark:text-zinc-100">
+                    {fmt(valueOf(r, basis), basis)}
+                  </span>
+                  <span className="block text-[10px] uppercase tracking-wide text-zinc-500">{BASIS_UNIT[basis]}</span>
                 </span>
-                <span className="block text-[10px] uppercase tracking-wide text-zinc-500">{BASIS_UNIT[basis]}</span>
-              </span>
+              )}
             </button>
           </li>
         );
@@ -463,6 +494,7 @@ function LeaderTable<M extends ApptRosterMember>({
   rows,
   basis,
   unit,
+  showValues,
   partLabels,
   daysLoading,
   onOpenMember,
@@ -470,6 +502,7 @@ function LeaderTable<M extends ApptRosterMember>({
   rows: LeaderboardRow<M>[];
   basis: AverageBasis;
   unit: LeaderboardUnit;
+  showValues: boolean;
   partLabels?: Readonly<Record<string, string>>;
   daysLoading: boolean;
   onOpenMember?: (member: M) => void;
@@ -481,22 +514,23 @@ function LeaderTable<M extends ApptRosterMember>({
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200/80 bg-white shadow-sm dark:border-blue-950/60 dark:bg-[#0d1117]">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[640px] text-left text-[13px]">
+        <table className={cn('w-full text-left text-[13px]', showValues ? 'min-w-[640px]' : 'min-w-[360px]')}>
           <thead className="border-b border-zinc-100 bg-zinc-50/70 text-[10px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
             <tr>
               <th scope="col" className="w-12 px-3 py-2 font-semibold">#</th>
               <th scope="col" className="px-3 py-2 font-semibold">Name</th>
-              {(['daily', 'weekly', 'monthly'] as const).map((b) => (
-                <th
-                  key={b}
-                  scope="col"
-                  className={cn('px-3 py-2 text-right font-semibold', b === basis && 'text-blue-700 dark:text-blue-300')}
-                >
-                  {BASIS_UNIT[b].replace('per ', 'Per ')}
-                </th>
-              ))}
-              <th scope="col" className="px-3 py-2 text-right font-semibold">Total</th>
-              <th scope="col" className="px-3 py-2 text-right font-semibold">Days</th>
+              {showValues &&
+                (['daily', 'weekly', 'monthly'] as const).map((b) => (
+                  <th
+                    key={b}
+                    scope="col"
+                    className={cn('px-3 py-2 text-right font-semibold', b === basis && 'text-blue-700 dark:text-blue-300')}
+                  >
+                    {BASIS_UNIT[b].replace('per ', 'Per ')}
+                  </th>
+                ))}
+              {showValues && <th scope="col" className="px-3 py-2 text-right font-semibold">Total</th>}
+              {showValues && <th scope="col" className="px-3 py-2 text-right font-semibold">Days</th>}
               <th scope="col" className="px-3 py-2 text-right font-semibold">Weeks</th>
               <th scope="col" className="px-3 py-2 text-right font-semibold">Tenure</th>
             </tr>
@@ -528,25 +562,29 @@ function LeaderTable<M extends ApptRosterMember>({
                       </span>
                     </div>
                   </td>
-                  <td
-                    className={col('daily')}
-                    title={
-                      r.weeksWithoutDays > 0
-                        ? `${r.weeksWithoutDays} week(s) had ${unit.many} but no Hubstaff days and are left out of the daily average`
-                        : undefined
-                    }
-                  >
-                    {daysLoading ? '…' : fmt(r.avgDaily, 'daily')}
-                    {!daysLoading && r.weeksWithoutDays > 0 && <span aria-hidden>*</span>}
-                  </td>
-                  <td className={col('weekly')}>{fmt(r.avgWeekly, 'weekly')}</td>
-                  <td className={col('monthly')}>{fmt(r.avgMonthly, 'monthly')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
-                    {fmtCount(r.totalAppointments)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
-                    {daysLoading ? '…' : r.daysWorked}
-                  </td>
+                  {showValues && (
+                    <>
+                      <td
+                        className={col('daily')}
+                        title={
+                          r.weeksWithoutDays > 0
+                            ? `${r.weeksWithoutDays} week(s) had ${unit.many} but no Hubstaff days and are left out of the daily average`
+                            : undefined
+                        }
+                      >
+                        {daysLoading ? '…' : fmt(r.avgDaily, 'daily')}
+                        {!daysLoading && r.weeksWithoutDays > 0 && <span aria-hidden>*</span>}
+                      </td>
+                      <td className={col('weekly')}>{fmt(r.avgWeekly, 'weekly')}</td>
+                      <td className={col('monthly')}>{fmt(r.avgMonthly, 'monthly')}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
+                        {fmtCount(r.totalAppointments)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
+                        {daysLoading ? '…' : r.daysWorked}
+                      </td>
+                    </>
+                  )}
                   <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{r.weeksScored}</td>
                   <td
                     className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400"

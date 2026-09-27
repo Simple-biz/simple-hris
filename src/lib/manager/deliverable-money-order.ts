@@ -1,5 +1,6 @@
 /**
- * The SERVER half of PM Team's Rankings: the bonus pesos, and the order they decide.
+ * The SERVER half of My Team's KPI Rankings (PM Team, and every other department on a
+ * per-person KPI bonus): the bonus pesos, and the order they decide.
  * Doc: `docs/features/manager-pm-rankings.md`.
  *
  * Kane, 2026-09-26: *"this should be based on their Bonus … hook the money like the
@@ -17,6 +18,10 @@
  * - {@link toClientPayload} is the only way out. `deliverable-money-order.test.ts`
  *   serializes its output from sentinel amounts and fails on any of them.
  *
+ * - {@link classifyBonuses} decides, from the catalog, which rows are one person's own
+ *   KPI and which values are COUNTS. The formulas it reads carry the pay RATES, so they
+ *   stay here too.
+ *
  * PURE (no I/O) so `node:test` walks it, but **server-only by contract**: a source-scan
  * test fails if any file under `src/components` or `app/` (outside `app/api`) imports it.
  */
@@ -28,6 +33,7 @@ import {
   type DaysWorkedRow,
 } from '@/lib/manager/appointment-averages';
 import {
+  appointmentsFromVars,
   badgeWeeks,
   indexRosterPeople,
   type AppointmentWeek,
@@ -36,9 +42,9 @@ import {
   type ApptStatusRow,
   type LockSettingRow,
 } from '@/lib/manager/appointment-rankings';
+import { isSpRankingRow } from '@/lib/manager/sp-ranking-row';
 import {
   ALL_METRIC,
-  PM_KPI_VARS,
   kpiItemFromVars,
   type DeliverableMetricInfo,
   type DeliverableRankingsPayload,
@@ -51,6 +57,7 @@ export type AppliedMoneyRow = {
   period_start: string;
   period_end: string | null;
   employee_email: string | null;
+  bonus_id: string | null;
   bonus_name: string | null;
   vars: Record<string, unknown> | null;
   amount: number | string | null;
@@ -58,10 +65,29 @@ export type AppliedMoneyRow = {
 
 interface MoneyWeekRow {
   email: string;
+  /** EVERY KPI's value, shown or not — server-only until `toClientPayload` splits it. */
   counts: Record<string, number>;
   /** Pesos per KPI. Server-only. */
   money: Record<string, number>;
 }
+
+/** A catalog bonus definition, as the classifier needs it. Server-only: `formula` holds the rates. */
+export interface BonusDefRow {
+  id: string;
+  kind: string | null;
+  formula: string | null;
+}
+
+/** A catalog assignment, as the classifier needs it. */
+export interface BonusAssignmentRow {
+  bonus_id: string;
+  scope: string | null;
+  department_key: string | null;
+  shared_team: boolean | null;
+}
+
+/** Why a department has no KPI leaderboard even though it has rows. */
+export type ServedElsewhere = 'appointments' | 'sp' | null;
 
 export interface MoneyWeek {
   periodStart: string;
@@ -72,6 +98,8 @@ export interface MoneyWeek {
 
 export interface KpiData {
   available: boolean;
+  /** Set when the department already has its own Rankings view; then `available` is false. */
+  servedBy: ServedElsewhere;
   /** Counts only — the part the client receives. */
   weeks: DeliverableWeek[];
   /** The same weeks with pesos. SERVER-ONLY: never serialized. */
@@ -81,7 +109,62 @@ export interface KpiData {
 }
 
 const WINDOWS: readonly AverageWindow[] = ['last4w', 'last3m', 'all'];
-const PM_KPI_SET: ReadonlySet<string> = new Set(PM_KPI_VARS);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * True when `formula` multiplies `variable` by a constant other than 1
+ * (`=Tickets_Completed*50`, `AMP*1250`, `=sum(Site_Star_Ranking*1000)`,
+ * `IF(Appts_Set>=10, Appts_Set*500, …)`), i.e. the variable is a COUNT and the pesos
+ * are derived from it. That is the ONLY kind of value the board may show.
+ *
+ * Client VA's formula is `=Appt_Bonus` (measured 2026-09-27: amount = value on all 95
+ * non-zero rows), so its variable IS the pesos and fails here. Fails closed on a
+ * missing or unreadable formula. Names match whole: `Units` never matches `Units_Sold`.
+ */
+export function isCountVariable(formula: string | null | undefined, variable: string): boolean {
+  if (!formula || !variable) return false;
+  const v = escapeRegExp(variable);
+  const num = '(\\d+(?:\\.\\d+)?)';
+  const after = new RegExp(`(?<![A-Za-z0-9_])${v}\\s*\\*\\s*${num}`, 'g');
+  const before = new RegExp(`${num}\\s*\\*\\s*${v}(?![A-Za-z0-9_])`, 'g');
+  for (const re of [after, before]) {
+    for (const m of formula.matchAll(re)) if (Number(m[1]) !== 1) return true;
+  }
+  return false;
+}
+
+/**
+ * Per bonus: are its rows one person's own KPI in `deptKey`, and which of its
+ * variables are counts.
+ *
+ * **Personal** is decided on EVIDENCE. A bonus is left out only when this department's
+ * assignments exist and none of them is a department-scoped, non-shared one:
+ * - a `shared_team` split (HR `New_Hires*1000/HR_Team_Members`, QC, Accounting's
+ *   Dancing Queen) pays every member the same share, so ranking it says nothing about
+ *   who performed;
+ * - an `employee`-scoped bonus is one person's own (Scott Cameron's manager bonus on
+ *   PM Team, Lead Receptionist, Jackie), not the team's KPI.
+ * A bonus with NO assignment for the department still counts: a retired or re-keyed
+ * bonus keeps its paid history.
+ */
+export function classifyBonuses(input: {
+  deptKey: string;
+  defs: readonly BonusDefRow[];
+  assignments: readonly BonusAssignmentRow[];
+}): Map<string, { personal: boolean; formula: string | null; fixed: boolean }> {
+  const out = new Map<string, { personal: boolean; formula: string | null; fixed: boolean }>();
+  const ids = new Set<string>([...input.defs.map((d) => d.id), ...input.assignments.map((a) => a.bonus_id)]);
+  for (const id of ids) {
+    const def = input.defs.find((d) => d.id === id) ?? null;
+    const mine = input.assignments.filter((a) => a.bonus_id === id && (a.department_key ?? '').trim() === input.deptKey);
+    const personal = mine.length === 0 || mine.some((a) => a.scope === 'department' && !a.shared_team);
+    out.set(id, { personal, formula: def?.formula ?? null, fixed: def?.kind === 'fixed' });
+  }
+  return out;
+}
 
 function pesos(v: unknown): number {
   const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : 0;
@@ -92,10 +175,15 @@ function pesos(v: unknown): number {
  * Raw rows → badged weeks of counts and pesos, through the shared `badgeWeeks` (same
  * badge order and fill-forward as the appointment views).
  *
- * - A row counts only when its `vars` hold exactly one key (`kpiItemFromVars`); every
- *   other row — the manager's team-total row — is skipped and counted.
- * - Available only when a counted row carries a {@link PM_KPI_VARS} variable. Inside
- *   that, EVERY one-variable bonus is a KPI (adaptable).
+ * - **Served elsewhere → unavailable.** A department with an appointment variable
+ *   (`Appts_Set` / `Appts`: Lead Gen, Callback) or an SP-ranking row (AI/API) already has
+ *   its own Rankings view under the one pill, behind its own gate. A second, money-ranked
+ *   pane there would widen who reads it (the SP doors are Kane's ruling).
+ * - A row counts only when it is one person's own KPI: one variable (`kpiItemFromVars`)
+ *   AND a personal bonus ({@link classifyBonuses}). Every other row is skipped and counted.
+ * - Available when at least one row counts. EVERY such bonus is a KPI (adaptable).
+ * - A KPI is **shown** only when every bonus scoring its variable is a count bonus
+ *   ({@link isCountVariable}) and none is a fixed amount; otherwise it is order-only.
  * - A KPI's label is the bonus name of its NEWEST row, so a renamed bonus reads as renamed.
  * - Two rows for one person, week and KPI are summed (both were credited). None exist today.
  */
@@ -104,16 +192,36 @@ export function buildKpiData(input: {
   statuses: readonly ApptStatusRow[] | null;
   locks: readonly LockSettingRow[] | null;
   currentWeekStart: string;
+  deptKey: string;
+  defs: readonly BonusDefRow[];
+  assignments: readonly BonusAssignmentRow[];
 }): KpiData {
+  const empty = (servedBy: ServedElsewhere, skippedRows: number): KpiData => ({
+    available: false,
+    servedBy,
+    weeks: [],
+    moneyWeeks: [],
+    metrics: [],
+    skippedRows,
+  });
+  if (input.applied.some((r) => appointmentsFromVars(r.vars) !== null)) return empty('appointments', 0);
+  if (input.applied.some((r) => isSpRankingRow(r.vars))) return empty('sp', 0);
+
+  const bonuses = classifyBonuses(input);
   const byWeek = new Map<string, { periodEnd: string; byEmail: Map<string, MoneyWeekRow> }>();
   const labels = new Map<string, { label: string; week: string }>();
+  const orderOnly = new Set<string>();
   let skippedRows = 0;
   for (const r of input.applied) {
     const read = kpiItemFromVars(r.vars);
-    if (read.kind === 'skip') {
+    const bonus = r.bonus_id ? bonuses.get(r.bonus_id) : undefined;
+    if (read.kind === 'skip' || (bonus && !bonus.personal)) {
       skippedRows += 1;
       continue;
     }
+    // Fail closed: an unknown bonus, a fixed amount, or a formula that does not
+    // multiply the variable by a rate makes the KPI order-only.
+    if (!bonus || bonus.fixed || !isCountVariable(bonus.formula, read.key)) orderOnly.add(read.key);
     const email = normEmail(r.employee_email);
     if (!email) continue;
     let week = byWeek.get(r.period_start);
@@ -130,8 +238,7 @@ export function buildKpiData(input: {
     if (!prev || r.period_start > prev.week) labels.set(read.key, { label: name, week: r.period_start });
   }
 
-  const available = [...labels.keys()].some((k) => PM_KPI_SET.has(k));
-  if (!available) return { available: false, weeks: [], moneyWeeks: [], metrics: [], skippedRows };
+  if (labels.size === 0) return empty(null, skippedRows);
 
   const scored = new Map<string, { periodEnd: string; rows: MoneyWeekRow[] }>();
   for (const [periodStart, w] of byWeek) {
@@ -145,12 +252,26 @@ export function buildKpiData(input: {
     periodStart: w.periodStart,
     periodEnd: w.periodEnd,
     badge: w.badge,
-    rows: w.rows.map((r) => ({ email: r.email, counts: { ...r.counts } })),
+    rows: w.rows.map((r) => splitShown(r, orderOnly)),
   }));
   const metrics = [...labels.entries()]
-    .map(([key, { label }]) => ({ key, label }))
+    .map(([key, { label }]) => ({ key, label, shown: !orderOnly.has(key) }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.key.localeCompare(b.key));
-  return { available: true, weeks, moneyWeeks, metrics, skippedRows };
+  return { available: true, servedBy: null, weeks, moneyWeeks, metrics, skippedRows };
+}
+
+/**
+ * A row as the client may see it: shown KPIs keep their counts, order-only KPIs become
+ * bare presence in `hidden` — the value (which for those IS the pesos) never leaves.
+ */
+function splitShown(r: MoneyWeekRow, orderOnly: ReadonlySet<string>): { email: string; counts: Record<string, number>; hidden?: string[] } {
+  const counts: Record<string, number> = {};
+  const hidden: string[] = [];
+  for (const [k, n] of Object.entries(r.counts)) {
+    if (orderOnly.has(k)) hidden.push(k);
+    else counts[k] = n;
+  }
+  return hidden.length > 0 ? { email: r.email, counts, hidden: hidden.sort() } : { email: r.email, counts };
 }
 
 /** Pesos in the leaderboard's count field — SERVER-ONLY, never returned. Same rows as the count projection. */
@@ -243,9 +364,13 @@ export function toClientPayload(
       periodStart: w.periodStart,
       periodEnd: w.periodEnd,
       badge: w.badge,
-      rows: w.rows.map((r) => ({ email: r.email, counts: { ...r.counts } })),
+      rows: w.rows.map((r) =>
+        r.hidden && r.hidden.length > 0
+          ? { email: r.email, counts: { ...r.counts }, hidden: [...r.hidden] }
+          : { email: r.email, counts: { ...r.counts } },
+      ),
     })),
-    metrics: data.metrics.map((m) => ({ key: m.key, label: m.label })),
+    metrics: data.metrics.map((m) => ({ key: m.key, label: m.label, shown: m.shown })),
     skippedRows: data.skippedRows,
     order,
     error: null,
