@@ -768,7 +768,7 @@ function TabBar({
               aria-selected={isActive}
               onClick={() => onChange(t.id)}
               className={[
-                'relative shrink-0 px-2.5 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0a0a0a] sm:px-3',
+                'relative shrink-0 px-2.5 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0d1117] sm:px-3',
                 isActive
                   ? 'text-zinc-900 dark:text-zinc-50'
                   : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200',
@@ -784,7 +784,7 @@ function TabBar({
                   aria-label={escalated ? `${t.label} details requested` : `${t.label} setup needed`}
                 >
                   <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full', escalated ? 'bg-rose-500/70' : 'bg-amber-500/70')} />
-                  <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-[#0a0a0a]', escalated ? 'bg-rose-500' : 'bg-amber-500')} />
+                  <span className={cn('relative inline-flex h-2.5 w-2.5 rounded-full ring-2 ring-white dark:ring-[#0d1117]', escalated ? 'bg-rose-500' : 'bg-amber-500')} />
                 </span>
               )}
               {isActive && (
@@ -804,7 +804,7 @@ function TabBar({
 
 function ProfileSkeleton() {
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
+    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-[#0d1117]">
       <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
         {/* Header — avatar + name + dept/ID + Active badge (mirrors the real header row). */}
         <div className="flex items-center gap-4 sm:gap-6">
@@ -1890,7 +1890,7 @@ export default function EmployeeProfile({
     (!!skillSet.role_title.trim() && !roleTitleOptions.includes(skillSet.role_title));
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0a0a0a]">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0d1117]">
       <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
         {/* ─────────── Hero ─────────── */}
         <motion.section
@@ -1953,7 +1953,7 @@ export default function EmployeeProfile({
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadingPhoto || removingPhoto}
               className={cn(
-                'absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-sm ring-2 ring-white transition-colors disabled:opacity-60 dark:ring-[#0a0a0a]',
+                'absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-sm ring-2 ring-white transition-colors disabled:opacity-60 dark:ring-[#0d1117]',
                 needsProfilePhoto
                   ? 'bg-amber-500 hover:bg-amber-600'
                   : 'bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600',
