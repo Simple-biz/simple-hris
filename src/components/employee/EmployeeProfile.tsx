@@ -2102,86 +2102,94 @@ export default function EmployeeProfile({
               className="space-y-4"
             >
               {activeTab === 'overview' && (
-                <>
-                  <Section
-                    title="Personal"
-                    description="From the HR master roster"
-                  >
-                    <Row label="Full Name" value={displayName !== '—' ? displayName : null} />
-                    <Row label="Work Email" value={workEmail} mono />
-                    <Row label="Personal Email" value={personalEmail} mono />
-                  </Section>
+                /* Information left, ID card right — once the PANE (not the viewport) is
+                   56rem wide, so a collapsed sidebar earns the split sooner. Below that the
+                   card stacks under the information, as before. */
+                <div className="@container">
+                  <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-[minmax(0,1fr)_372px] @4xl:items-start @4xl:gap-6">
+                    <div className="min-w-0 space-y-4">
+                      <Section
+                        title="Personal"
+                        description="From the HR master roster"
+                      >
+                        <Row label="Full Name" value={displayName !== '—' ? displayName : null} />
+                        <Row label="Work Email" value={workEmail} mono />
+                        <Row label="Personal Email" value={personalEmail} mono />
+                      </Section>
 
-                  <Section
-                    title="Employment"
-                    description="Authoritative source: HR roster (same as payroll)"
-                  >
-                    <Row
-                      label="Department"
-                      value={employmentDepartment ? formatDeptLabel(employmentDepartment) : '—'}
-                    />
-                    <Row
-                      label="Start Date"
-                      value={formatStartDate(master?.start_date ?? null) ?? '—'}
-                    />
-                    <Row label="Status" value="Active" status="active" />
-                  </Section>
+                      <Section
+                        title="Employment"
+                        description="Authoritative source: HR roster (same as payroll)"
+                      >
+                        <Row
+                          label="Department"
+                          value={employmentDepartment ? formatDeptLabel(employmentDepartment) : '—'}
+                        />
+                        <Row
+                          label="Start Date"
+                          value={formatStartDate(master?.start_date ?? null) ?? '—'}
+                        />
+                        <Row label="Status" value="Active" status="active" />
+                      </Section>
 
-                  {hasAnyAddress && (
-                    <Section
-                      title="Address"
-                      description="Home address on record"
-                    >
-                      {fullAddressDisplay && (
-                        <div className="flex items-start gap-3 border-b border-zinc-100 py-4 dark:border-zinc-800/40">
-                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-orange-50 ring-1 ring-inset ring-orange-100 dark:bg-orange-500/10 dark:ring-orange-500/20">
-                            <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                              Full Address
+                      {hasAnyAddress && (
+                        <Section
+                          title="Address"
+                          description="Home address on record"
+                        >
+                          {fullAddressDisplay && (
+                            <div className="flex items-start gap-3 border-b border-zinc-100 py-4 dark:border-zinc-800/40">
+                              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-orange-50 ring-1 ring-inset ring-orange-100 dark:bg-orange-500/10 dark:ring-orange-500/20">
+                                <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                                  Full Address
+                                </div>
+                                <p className="mt-1 text-[14px] leading-snug text-zinc-900 dark:text-zinc-100">
+                                  {fullAddressDisplay}
+                                </p>
+                              </div>
                             </div>
-                            <p className="mt-1 text-[14px] leading-snug text-zinc-900 dark:text-zinc-100">
-                              {fullAddressDisplay}
-                            </p>
-                          </div>
-                        </div>
+                          )}
+                          <Row label="Street" value={master?.street ?? null} />
+                          <Row label="City" value={master?.city ?? null} />
+                          <Row label="Province" value={master?.province ?? null} />
+                          <Row label="Postal Code" value={master?.postal_code ?? null} mono />
+                        </Section>
                       )}
-                      <Row label="Street" value={master?.street ?? null} />
-                      <Row label="City" value={master?.city ?? null} />
-                      <Row label="Province" value={master?.province ?? null} />
-                      <Row label="Postal Code" value={master?.postal_code ?? null} mono />
-                    </Section>
-                  )}
+                    </div>
 
-                  {/* The badge is container-query sized — every dimension inside
-                      EmployeeIdCard.tsx is `cqw` against a `@container w-full max-w-[372px]`.
-                      The exported PNG is painted from data at a fixed size, so if this host
-                      narrows below 372px the on-screen badge and its typography shrink while
-                      the download does not, and the two diverge with no error. Keep this block
-                      full-width in the content column; never nest it in a grid track. */}
-                  <div className="flex flex-col items-center gap-5 py-2">
-                    <EmployeeIdCard card={idCard} />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={handleDownloadId}
-                      disabled={savingId}
-                      className="gap-2"
-                    >
-                      {savingId ? (
-                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                      ) : (
-                        <Download className="h-4 w-4" aria-hidden />
-                      )}
-                      {savingId ? 'Saving…' : 'Download PNG'}
-                    </Button>
-                    <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                      Read-only, from the HR master roster. Anything missing or wrong here is
-                      corrected by HR, not on this screen.
-                    </p>
+                    {/* The badge is container-query sized — every dimension inside
+                        EmployeeIdCard.tsx is `cqw` against a `@container w-full max-w-[372px]`.
+                        The exported PNG is painted from data at a fixed size, so if this host
+                        narrows below 372px the on-screen badge and its typography shrink while
+                        the download does not, and the two diverge with no error. So the side
+                        track is a FIXED `372px`, never `fr`/`auto`/a percentage, and the
+                        stacked layout gives it the full content column. */}
+                    <div className="flex flex-col items-center gap-5 py-2 @4xl:py-0">
+                      <EmployeeIdCard card={idCard} />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleDownloadId}
+                        disabled={savingId}
+                        className="gap-2"
+                      >
+                        {savingId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                        ) : (
+                          <Download className="h-4 w-4" aria-hidden />
+                        )}
+                        {savingId ? 'Saving…' : 'Download PNG'}
+                      </Button>
+                      <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        Read-only, from the HR master roster. Anything missing or wrong here is
+                        corrected by HR, not on this screen.
+                      </p>
+                    </div>
                   </div>
-                </>
+                </div>
               )}
 
               {activeTab === 'compensation' && (

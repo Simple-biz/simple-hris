@@ -35,7 +35,7 @@ zero governing documents. That is what this file exists to end.
 
 | Chip | Sub-label | What is inside |
 | --- | --- | --- |
-| **Overview** | Identity, employment & ID | Personal · Employment · Address (still `hasAnyAddress`-gated) · the **ID card** |
+| **Overview** | Identity, employment & ID | Personal · Employment · Address (still `hasAnyAddress`-gated) on the left · the **ID card** in a fixed 372px right column once the pane is ≥56rem (container query), stacked below otherwise (2026-09-27) |
 | **Compensation** | Rates, stubs & payout | An inner strip: **Rates · Pay Stubs · Payout** |
 | **Skill Sets** | Skills & commendations | The skill-set editor and the commendations list, stacked on one page |
 | **Request Documents** | COE, pay stubs & certificates | unchanged |
@@ -408,7 +408,11 @@ call site passes nothing and is byte-identical.
   a 400px viewport the content column computes to 360px, under the card's `max-w-[372px]`, so
   the badge shrinks on screen while the exported PNG does not. Pre-existing — true of the old
   standalone ID chip too. At ≥768px the sidebar becomes a 256px flex sibling, leaving ~448px
-  (768) and ~1064px (1400); both clear it.
+  (768) and ~1064px (1400); both clear it. The 2026-09-27 side-by-side layout does not widen
+  this gap: the card's column is a fixed `372px` track and only appears at a ≥56rem pane, so
+  the only width at which the badge can still shrink remains phone width, where it stacks.
+  **Browser pass on the side-by-side layout also owed** — the Tailwind classes were confirmed
+  in the dev server's compiled CSS, but the employee sign-in could not be driven.
 - **`needsPayoutSetup` has no `bankInfoLoaded` gate**, unlike its immediate neighbour
   `needsSkillSetSetup`, which is gated on `skillSetLoaded`. `bankInfo` is null until
   `/api/employee-ids` resolves, and on a cache-warm paint `loading` is already false — so the

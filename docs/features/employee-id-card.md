@@ -1,8 +1,14 @@
 # Employee ID card — the company badge, inside Profile
 
 A read-only company ID badge in the Employee portal. Since the 2026-09-12 tab merge it is a
-**section of Profile → Overview**, below Personal / Employment / Address, rather than a chip
-of its own ([employee-profile.md](./employee-profile.md)); it was **Profile → ID** before that. It renders Full name, Work email, Latest department, Address
+**section of Profile → Overview** rather than a chip of its own
+([employee-profile.md](./employee-profile.md)); it was **Profile → ID** before that. Since
+2026-09-27 (Kane: *"put this on the right side of the information"*) it sits in a **fixed
+372px right-hand column** beside Personal / Employment / Address once the Overview pane is
+56rem wide (a container query, so a collapsed sidebar earns the split sooner), and stacks
+below them when narrower. The track is fixed at 372px **on purpose** — never `fr`, `auto` or a
+percentage — because the badge is `cqw`-sized and a narrower host shrinks it on screen while
+the PNG does not. It renders Full name, Work email, Latest department, Address
 and Start date over the `employee_id` serial, using values the Profile screen has already
 fetched. Built for Kane, 2026-09-04: *"an Image of an ID … like we would on school or
 company ID"*, portrait, front only, milled metal in the Simple wordmark's own navy.
