@@ -231,6 +231,10 @@ places for a peso column to appear.
     route, never by hiding the toggle here.
 - `selfNorm` is null here: a manager is looking at their team, not finding themselves
   in it.
+- **A top-3 podium** (gold / silver / bronze) opens each week here, like the other My Team
+  leaderboards (Kane, 2026-09-27: *"AI/API Team should have the top 3 as well please"*). It is
+  `RankingsPane`'s opt-in `showPodium`: it shows the SAME SP / project SP / tier fields as the rows,
+  never a peso, and the Employee tab does not pass it.
 
 **The People view opens as the LIST** (Kane, 2026-09-14), switchable to cards. The
 list is the denser of the two — it pages at 20 against the cards' 8 — so a department

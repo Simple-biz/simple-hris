@@ -21,9 +21,15 @@
  * Who may see it is decided upstream, by `canViewTeamRankings` — a one-name
  * allow-list sitting ABOVE the elevated-role bypass (Kane, 2026-08-29, reaffirmed
  * 2026-09-14). This component renders whatever weeks it is handed and gates nothing.
+ *
+ * **`showPodium`** (Manager → My Team only, Kane 2026-09-27: *"AI/API Team should have
+ * the top 3 as well please"*) adds the gold / silver / bronze top three the other My
+ * Team leaderboards open with. It shows the SAME fields as the rows — SP, project SP,
+ * the tier — so it can carry nothing a row does not. Opt-in, so the Employee tab is
+ * unchanged.
  */
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ChevronLeft, ChevronRight, Crown, WifiOff } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Crown, Medal, WifiOff } from 'lucide-react';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
@@ -57,6 +63,13 @@ const TIER_STYLE: Record<number, { label: string; className: string }> = {
   },
 };
 
+/** Gold / silver / bronze — rank, not money. The same three the My Team leaderboards use. */
+const PODIUM = [
+  'from-amber-400 to-amber-600',
+  'from-zinc-300 to-zinc-500',
+  'from-orange-400 to-orange-700',
+] as const;
+
 function formatWeek(startIso: string, endIso: string): string {
   const fmt = (iso: string, withYear: boolean) => {
     const [y, m, d] = iso.split('-').map(Number);
@@ -79,6 +92,7 @@ export function RankingsPane({
   index,
   dir,
   onNavigate,
+  showPodium = false,
 }: {
   weeks: TeamRankingWeek[];
   loading: boolean;
@@ -89,6 +103,8 @@ export function RankingsPane({
   index: number;
   dir: number;
   onNavigate: (nextIndex: number, direction: number) => void;
+  /** The top three as a podium above the list (Manager → My Team). */
+  showPodium?: boolean;
 }) {
   const reduce = useReducedMotion();
 
@@ -185,7 +201,7 @@ export function RankingsPane({
       {/* Rows */}
       <div className="overflow-x-clip">
         <AnimatePresence mode="wait" initial={false} custom={dir}>
-          <motion.ol
+          <motion.div
             key={week.periodStart}
             custom={dir}
             variants={PANE_VARIANTS}
@@ -193,8 +209,55 @@ export function RankingsPane({
             animate="center"
             exit="exit"
             transition={{ duration: reduce ? 0 : 0.22, ease: EASE }}
-            className="space-y-2"
+            className="space-y-3"
           >
+          {showPodium && week.rows.length > 0 && (
+            <ol className="grid gap-2 sm:grid-cols-3" aria-label="Top three this week">
+              {week.rows.slice(0, 3).map((r) => {
+                const tier = TIER_STYLE[r.tier];
+                return (
+                  <li
+                    key={`podium:${r.email}`}
+                    className="flex items-center gap-3 rounded-xl border border-zinc-200/80 bg-white p-3 shadow-sm dark:border-blue-950/60 dark:bg-[#0d1117]"
+                  >
+                    <span
+                      className={cn(
+                        'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white shadow-sm',
+                        PODIUM[Math.min(r.position, 3) - 1] ?? PODIUM[2],
+                      )}
+                      aria-label={`Rank ${r.position}`}
+                    >
+                      {r.position === 1 ? <Crown className="h-3.5 w-3.5" aria-hidden /> : <Medal className="h-3.5 w-3.5" aria-hidden />}
+                    </span>
+                    <TeamAvatar name={r.name} email={r.email} size="sm" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">{r.name}</span>
+                      <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {r.projectSp > 0 && <span className="truncate tabular-nums">{r.projectSp} project SP</span>}
+                        {tier && (
+                          <span
+                            className={cn(
+                              'shrink-0 rounded-full border px-1.5 py-px text-[9.5px] font-semibold uppercase tracking-wide',
+                              tier.className,
+                            )}
+                          >
+                            {tier.label}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="block text-lg font-bold leading-none tabular-nums text-zinc-900 dark:text-zinc-100">
+                        {r.sp}
+                      </span>
+                      <span className="block text-[10px] uppercase tracking-wide text-zinc-500">SP</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+          <ol className="space-y-2">
             {week.rows.map((r, i) => {
               const isSelf = !!selfNorm && r.email === selfNorm;
               const tier = TIER_STYLE[r.tier];
@@ -274,7 +337,8 @@ export function RankingsPane({
                 </motion.li>
               );
             })}
-          </motion.ol>
+          </ol>
+          </motion.div>
         </AnimatePresence>
       </div>
 

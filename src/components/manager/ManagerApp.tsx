@@ -3748,6 +3748,9 @@ function TeamPanelInner({
                 setRankingDir(dir);
                 setRankingWeekIndex(next);
               }}
+              // The top three, like the other My Team leaderboards (Kane, 2026-09-27).
+              // Same SP + tier fields as the rows; the Employee tab does not pass it.
+              showPodium
             />
           )}
           {/* An APPOINTMENT department's Rankings: the average-appointments
