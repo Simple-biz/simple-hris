@@ -13,14 +13,15 @@ week that is not yet finalized by Accounting. Built for the department's own man
 | --- | --- |
 | Every rule (pure, tested) | `src/lib/manager/appointment-rankings.ts` · `.test.ts` |
 | The reads (fetch only; projection pinned) | `src/lib/supabase/appointment-rankings.ts` · `.test.ts` |
-| Route + gate | `app/api/manager/appointment-rankings/route.ts` · guard test `src/lib/manager/appointment-rankings-route.test.ts` |
+| Route | `app/api/manager/appointment-rankings/route.ts` |
+| The gate (shared with the Rankings leaderboard) | `src/lib/manager/managed-department-gate.ts` · guard test `src/lib/manager/appointment-rankings-route.test.ts` |
 | The pane | `src/components/manager/AppointmentRankingsPane.tsx` |
 | The pill, the fetch, the view state | `src/components/manager/ManagerApp.tsx` (`apptWeeks` … `appointmentsAvailable`) |
 
 ## Who may see it: My Team's scope, NOT the SP Rankings list
 
 Kane, 2026-09-26: *"The my team tab lets you only see what Departments were assigned to you."*
-The route mirrors `/api/manager/department-members` (the roster this view sits on), line for line:
+`authorizeManagedDepartment` (`src/lib/manager/managed-department-gate.ts`, lifted out of this route on 2026-09-26 so the [Rankings leaderboard](./manager-appointment-leaderboard.md) calls the same function) mirrors `/api/manager/department-members`, the roster this view sits on, line for line:
 
 - manager / admin / elevated roles only;
 - a caller with `department_managers` rows is scoped to them via

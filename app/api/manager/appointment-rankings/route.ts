@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/lib/auth/auth-options';
-import { hasElevatedRole } from '@/lib/auth/elevated-roles';
-import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
-import { departmentMatchesManagedAssignments } from '@/lib/managed-department-scope';
+import { authorizeManagedDepartment } from '@/lib/manager/managed-department-gate';
 import { getAppointmentRankings } from '@/lib/supabase/appointment-rankings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -16,65 +12,33 @@ export const runtime = 'nodejs';
  * GET /api/manager/appointment-rankings?department=<raw roster label>
  *
  * Every week of the department's appointment counts, badged, for Manager →
- * My Team → Appointments. Counts only, never pesos (see
- * `src/lib/supabase/appointment-rankings.ts`). Doc:
+ * My Team → Appointments (and the Rankings leaderboard's weeks). Counts only,
+ * never pesos (see `src/lib/supabase/appointment-rankings.ts`). Doc:
  * `docs/features/manager-appointment-rankings.md`.
  *
- * ## The gate is My Team's own — NOT the SP Rankings allow-list
+ * ## The gate is My Team's own — NOT the SP Rankings doors
  *
- * Kane, 2026-09-26: *"The my team tab lets you only see what Departments were
- * assigned to you."* So this mirrors `/api/manager/department-members` exactly:
- *
- * - manager / admin / elevated roles only;
- * - a caller WITH `department_managers` rows is scoped to them — even when they
- *   also hold an elevated role;
- * - only an elevated caller with NO assignments may read any department.
- *
- * It deliberately does not consult `canViewTeamRankings`: that one-name list
- * governs the SP Rankings view and stays as it is. The department is re-checked
- * here on every call; the rail choosing it proves nothing.
+ * `authorizeManagedDepartment` (Kane, 2026-09-26: *"The my team tab lets you only
+ * see what Departments were assigned to you"*) mirrors
+ * `/api/manager/department-members`: assignments scope even an elevated caller;
+ * only an elevated caller with none reads any department. The department is
+ * re-checked on every call; the rail choosing it proves nothing.
  *
  * An out-of-scope department degrades to `available: false` rather than 403 — the
- * pane's pill simply does not appear, the same as a department with no
- * appointment variable.
+ * pill simply does not appear, the same as a department with no appointment
+ * variable.
  */
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  const user = session?.user as { email?: string | null; roles?: string[] } | undefined;
-  const sessionEmail = (user?.email ?? '').trim().toLowerCase();
-  if (!sessionEmail) {
-    return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  }
+  const department = req.nextUrl.searchParams.get('department')?.trim() ?? '';
+  const empty = { available: false, currentWeekStart: sundayOf(manilaTodayIso()), weeks: [] };
 
-  const roles = (user?.roles ?? []) as string[];
-  const elevated = hasElevatedRole(roles);
-  if (!(roles.includes('manager') || roles.includes('admin') || elevated)) {
+  const gate = await authorizeManagedDepartment(department);
+  if (gate.kind === 'unauthenticated') return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+  if (gate.kind === 'forbidden') {
     return NextResponse.json({ error: 'Manager or admin role required' }, { status: 403 });
   }
-
-  const department = req.nextUrl.searchParams.get('department')?.trim() ?? '';
-  const denied = () =>
-    NextResponse.json({
-      available: false,
-      currentWeekStart: sundayOf(manilaTodayIso()),
-      weeks: [],
-      error: null,
-    });
-  if (!department) return denied();
-
-  const { rows: assigns, error: dmErr } = await listDepartmentsForManager(sessionEmail);
-  if (dmErr) {
-    return NextResponse.json(
-      { available: false, currentWeekStart: sundayOf(manilaTodayIso()), weeks: [], error: dmErr },
-      { status: 500 },
-    );
-  }
-  const managed = assigns.map((a) => a.department.trim()).filter(Boolean);
-  if (managed.length > 0) {
-    if (!departmentMatchesManagedAssignments(department, managed)) return denied();
-  } else if (!elevated) {
-    return denied();
-  }
+  if (gate.kind === 'error') return NextResponse.json({ ...empty, error: gate.error }, { status: 500 });
+  if (gate.kind === 'out_of_scope') return NextResponse.json({ ...empty, error: null });
 
   // Built-in payroll key first ("Lead Gen" -> "lead_gen"); otherwise the slug an
   // in-app registry department is stored under — the same two steps the KPI

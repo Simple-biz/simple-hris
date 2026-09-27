@@ -3161,6 +3161,7 @@ feature doc and in no hand-written section here.**
 | `/api/leave-requests` | GET, POST | `requireElevatedSession` | [delete-authorization](../features/delete-authorization.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
 | `/api/leave-requests/[id]` | PATCH, DELETE | `getServerSession` | [delete-authorization](../features/delete-authorization.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
 | `/api/manager/appointment-rankings` | GET | `getServerSession` | [manager-appointment-rankings](../features/manager-appointment-rankings.md) · [manager-my-team](../features/manager-my-team.md) |
+| `/api/manager/appointment-rankings/days` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-appointment-leaderboard](../features/manager-appointment-leaderboard.md) |
 | `/api/manager/approver-candidates` | GET | `getServerSession` | [time-adjustment-requests](../features/time-adjustment-requests.md) |
 | `/api/manager/calltools-username` | PATCH | `getServerSession` | [onboarding-calltools-username](../features/onboarding-calltools-username.md) |
 | `/api/manager/departed-members` | GET | `getServerSession` | *this file* |

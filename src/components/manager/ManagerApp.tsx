@@ -49,6 +49,11 @@ import {
   type AppointmentRankView,
 } from '@/components/manager/AppointmentRankingsPane';
 import type { AppointmentWeek } from '@/lib/manager/appointment-rankings';
+import {
+  AppointmentLeaderboardPane,
+  type LeaderboardView,
+} from '@/components/manager/AppointmentLeaderboardPane';
+import type { DaysWorkedRow } from '@/lib/manager/appointment-averages';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import SchedulingPanel from './SchedulingPanel';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
@@ -2369,6 +2374,20 @@ function TeamPanelInner({
     index: 0,
     sort: 'appointments',
   });
+  /**
+   * The Rankings leaderboard for an APPOINTMENT department — average appointments
+   * per day / week / month (`docs/features/manager-appointment-leaderboard.md`).
+   * It shares the Rankings pill with SP Rankings (Kane, 2026-09-26, Q1 → a: one
+   * pill whose content follows the data), reuses `apptWeeks`, and adds only the
+   * Hubstaff days read — fetched the first time the view is opened for a department,
+   * because it is the slow read (~30 weekly files, ~6s measured). It opens on
+   * WEEKLY, which needs no days, so the view paints at once while the days load
+   * in the background for the Daily toggle. No money values, anywhere.
+   */
+  const [leaderView, setLeaderView] = useState<LeaderboardView>({ basis: 'weekly', window: 'last3m' });
+  const [apptDays, setApptDays] = useState<DaysWorkedRow[] | null>(null);
+  const [apptDaysError, setApptDaysError] = useState<string | null>(null);
+  const [apptDaysFor, setApptDaysFor] = useState('');
   // One read, passed to every SlidingTab and pane below. Reduced motion here means
   // the indicator stops TRAVELLING and panes stop rising — it never means the
   // selected state becomes invisible.
@@ -2874,6 +2893,42 @@ function TeamPanelInner({
     ? apptAvailable || (deptView === 'appointments' && apptError !== null)
     : deptView === 'appointments';
 
+  // The Rankings pill is ONE pill whose content follows the data (Kane, Q1 → a):
+  // SP weeks → RankingsPane, appointment weeks → the leaderboard. While a new
+  // department's appointment read is in flight the view holds (the pane shows its
+  // loading state) instead of bouncing to People and back.
+  const leaderboardAvailable = apptReady && apptAvailable;
+  const rankingsViewAvailable =
+    rankingsAvailable || leaderboardAvailable || (deptView === 'rankings' && !apptReady);
+  const wantDays = deptView === 'rankings' && leaderboardAvailable;
+  useEffect(() => {
+    if (!wantDays || !activeDeptLabel || apptDaysFor === activeDeptLabel) return;
+    let cancelled = false;
+    setApptDays(null);
+    setApptDaysError(null);
+    fetch(
+      `/api/manager/appointment-rankings/days?department=${encodeURIComponent(activeDeptLabel)}`,
+      { cache: 'no-store' },
+    )
+      .then((r) => r.json())
+      .then((j: { days?: DaysWorkedRow[]; error?: string | null }) => {
+        if (cancelled) return;
+        setApptDays(j.days ?? []);
+        setApptDaysError(j.error ?? null);
+        setApptDaysFor(activeDeptLabel);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setApptDays(null);
+        setApptDaysError(e.message);
+        setApptDaysFor(activeDeptLabel);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wantDays, activeDeptLabel, apptDaysFor]);
+  const daysReady = apptDaysFor === activeDeptLabel;
+
   // Leaving a department must not strand the manager on a view that department does
   // not have. Derived, never stored, so it cannot go stale — and a denied viewer
   // gets an empty week list, which lands here as "no Rankings view", identically to
@@ -2881,7 +2936,7 @@ function TeamPanelInner({
   const activeDeptView: 'roster' | 'scheduling' | 'rankings' | 'appointments' =
     schedulingAvailable && deptView === 'scheduling'
       ? 'scheduling'
-      : rankingsAvailable && deptView === 'rankings'
+      : rankingsViewAvailable && deptView === 'rankings'
         ? 'rankings'
         : appointmentsAvailable && deptView === 'appointments'
           ? 'appointments'
@@ -3417,7 +3472,7 @@ function TeamPanelInner({
           )}
           {/* The department's own views, beside the search bar. Absent for every other
               department — this is the first per-department surface. */}
-          {(schedulingAvailable || rankingsAvailable || appointmentsAvailable) && (
+          {(schedulingAvailable || rankingsViewAvailable || appointmentsAvailable) && (
             <div
               role="tablist"
               aria-label={`${activeEntry?.name ?? 'Department'} views`}
@@ -3445,7 +3500,7 @@ function TeamPanelInner({
                   <CalendarCog className="h-3.5 w-3.5" /> Scheduling
                 </SlidingTab>
               )}
-              {rankingsAvailable && (
+              {rankingsViewAvailable && (
                 <SlidingTab
                   group="myTeamDeptView"
                   selected={activeDeptView === 'rankings'}
@@ -3527,18 +3582,40 @@ function TeamPanelInner({
               surfaces and two copies would be two places for a peso column to
               appear. `selfNorm` is null: a manager is looking at their team, not
               finding themselves in it. */}
-          <RankingsPane
-            weeks={rankingWeeks}
-            loading={rankingsLoading}
-            error={rankingsError}
-            selfNorm={null}
-            index={Math.min(rankingWeekIndex, Math.max(0, rankingWeeks.length - 1))}
-            dir={rankingDir}
-            onNavigate={(next, dir) => {
-              setRankingDir(dir);
-              setRankingWeekIndex(next);
-            }}
-          />
+          {rankingsAvailable && (
+            <RankingsPane
+              weeks={rankingWeeks}
+              loading={rankingsLoading}
+              error={rankingsError}
+              selfNorm={null}
+              index={Math.min(rankingWeekIndex, Math.max(0, rankingWeeks.length - 1))}
+              dir={rankingDir}
+              onNavigate={(next, dir) => {
+                setRankingDir(dir);
+                setRankingWeekIndex(next);
+              }}
+            />
+          )}
+          {/* An APPOINTMENT department's Rankings: the average-appointments
+              leaderboard, behind My Team's own department scope (not the SP doors
+              above). If a team ever carried both kinds of data the two stack under
+              the one pill rather than growing a second pill with the same name. */}
+          {(leaderboardAvailable || (!apptReady && !rankingsAvailable)) && (
+            <div className={cn(rankingsAvailable && 'mt-6 border-t border-zinc-200 pt-6 dark:border-zinc-800')}>
+              <AppointmentLeaderboardPane
+                weeks={apptReady ? apptWeeks : []}
+                weeksLoading={!apptReady || apptLoading}
+                weeksError={apptReady ? apptError : null}
+                days={daysReady ? apptDays : null}
+                daysError={daysReady ? apptDaysError : null}
+                members={apptMembers}
+                deptName={activeEntry?.name ?? 'department'}
+                view={leaderView}
+                onViewChange={setLeaderView}
+                onOpenMember={(m) => setSelectedMember(m)}
+              />
+            </div>
+          )}
         </motion.div>
       )}
 

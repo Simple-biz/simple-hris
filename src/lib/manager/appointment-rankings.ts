@@ -338,6 +338,59 @@ export function tenureLabel(startIso: string | null, todayIso: string): string {
 
 const EMAIL_TIERS = ['personal_email', 'work_email', 'alternate_work_email', 'alternate_work_email_2'] as const;
 
+/** One human on the roster — possibly several duplicate master rows. */
+export interface RosterPerson<M extends ApptRosterMember> {
+  /** The first roster row of this person — what the People view shows. */
+  member: M;
+  name: string;
+  /** Latest readable Start Date across the person's rows (current stint), ISO. */
+  startDate: string | null;
+}
+
+/**
+ * The roster, as people, and every email that points at each one. Shared by the
+ * Appointments view and the Rankings leaderboard so the two can never match a
+ * scored row to different people.
+ *
+ * - Rows sharing a PERSONAL or WORK email are one person (duplicate master rows).
+ *   Aliases never merge: a stale alias on someone else's row would fuse two people.
+ * - Emails are claimed tier by tier (personal → work → alt1 → alt2), so a personal
+ *   email always beats an alias another row happens to carry.
+ * - `startDate` is the LATEST readable start — the current stint (Kane, 229 Q5).
+ */
+export function indexRosterPeople<M extends ApptRosterMember>(
+  members: readonly M[],
+): { people: RosterPerson<M>[]; personByEmail: Map<string, RosterPerson<M>> } {
+  const people: RosterPerson<M>[] = [];
+  const personOfMember = new Map<M, RosterPerson<M>>();
+  const sharedEmail = new Map<string, RosterPerson<M>>();
+  for (const m of members) {
+    const emails = [normEmail(m.personal_email), normEmail(m.work_email ?? null)].filter(
+      (e): e is string => !!e,
+    );
+    const existing = emails.map((e) => sharedEmail.get(e)).find((p): p is RosterPerson<M> => !!p);
+    const parsed = parseMasterStartDate(m.start_date);
+    const start = parsed ? isoOf(parsed) : null;
+    const person: RosterPerson<M> = existing ?? {
+      member: m,
+      name: m.name?.trim() || normEmail(m.work_email ?? m.personal_email) || '—',
+      startDate: null,
+    };
+    if (!existing) people.push(person);
+    if (start && (!person.startDate || start > person.startDate)) person.startDate = start;
+    personOfMember.set(m, person);
+    for (const e of emails) if (!sharedEmail.has(e)) sharedEmail.set(e, person);
+  }
+  const personByEmail = new Map<string, RosterPerson<M>>();
+  for (const tier of EMAIL_TIERS) {
+    for (const m of members) {
+      const e = normEmail(m[tier] ?? null);
+      if (e && !personByEmail.has(e)) personByEmail.set(e, personOfMember.get(m)!);
+    }
+  }
+  return { people, personByEmail };
+}
+
 /**
  * Rank the period's appointments over the roster the People view shows.
  *
@@ -360,36 +413,8 @@ export function rankAppointments<M extends ApptRosterMember>(
   members: readonly M[],
   todayIso: string,
 ): RankedAppointments<M> {
-  type Person = { member: M; startDate: string | null };
-  const people: Person[] = [];
-  const personOfMember = new Map<M, Person>();
-
-  // Merge roster rows that share a PERSONAL or WORK email into one person
-  // (duplicate master rows). Aliases never merge: a stale alias pointing at
-  // someone else's address would otherwise fuse two different people.
-  const sharedEmail = new Map<string, Person>();
-  for (const m of members) {
-    const emails = [normEmail(m.personal_email), normEmail(m.work_email ?? null)].filter(
-      (e): e is string => !!e,
-    );
-    const existing = emails.map((e) => sharedEmail.get(e)).find((p): p is Person => !!p);
-    const parsed = parseMasterStartDate(m.start_date);
-    const start = parsed ? isoOf(parsed) : null;
-    const person = existing ?? { member: m, startDate: null };
-    if (!existing) people.push(person);
-    if (start && (!person.startDate || start > person.startDate)) person.startDate = start;
-    personOfMember.set(m, person);
-    for (const e of emails) if (!sharedEmail.has(e)) sharedEmail.set(e, person);
-  }
-  // Scored emails are claimed tier by tier, so a PERSONAL email always beats an
-  // alias another row happens to carry.
-  const personByEmail = new Map<string, Person>();
-  for (const tier of EMAIL_TIERS) {
-    for (const m of members) {
-      const e = normEmail(m[tier] ?? null);
-      if (e && !personByEmail.has(e)) personByEmail.set(e, personOfMember.get(m)!);
-    }
-  }
+  type Person = RosterPerson<M>;
+  const { people, personByEmail } = indexRosterPeople(members);
 
   const totals = new Map<Person, { appointments: number; weeks: Set<string> }>();
   const strangers = new Set<string>();
@@ -409,7 +434,7 @@ export function rankAppointments<M extends ApptRosterMember>(
 
   const unranked = [...totals.entries()].map(([p, t]) => ({
     member: p.member,
-    name: p.member.name?.trim() || normEmail(p.member.work_email ?? p.member.personal_email) || '—',
+    name: p.name,
     appointments: t.appointments,
     weeksScored: t.weeks.size,
     startDate: p.startDate,

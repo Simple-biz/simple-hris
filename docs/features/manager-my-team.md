@@ -173,10 +173,10 @@ exist:
 | View | Appears when | Source |
 | --- | --- | --- |
 | **Scheduling** | the selected entry is in the HSL family | `departmentHasScheduling` |
-| **Rankings** | the department has SP-scored weeks **and** the viewer may read them (kaner@, or a manager holding a grant for that department) | the data, via `/api/team-rankings?view=manager` |
+| **Rankings** | ONE pill whose content follows the data (Kane 2026-09-26, Q1 → a): **SP** weeks the viewer may read (kaner@, or a manager holding a grant for that department) → `RankingsPane`; **appointment** weeks in the viewer's My Team scope → the average-appointments leaderboard. Both stack if a team ever has both | SP via `/api/team-rankings?view=manager`; appointments via `/api/manager/appointment-rankings` + `/days` — [manager-appointment-leaderboard.md](./manager-appointment-leaderboard.md) |
 | **Appointments** | the department's rows carry `Appts_Set` / `Appts` (Lead Gen, Callback) **and** the department is in the viewer's My Team scope | the data, via `/api/manager/appointment-rankings` — [manager-appointment-rankings.md](./manager-appointment-rankings.md) |
 
-> **Rankings and Appointments have DIFFERENT gates, on purpose — never harmonize them.**
+> **SP Rankings and the appointment views (Appointments, and the Rankings leaderboard) have DIFFERENT gates, on purpose — never harmonize them.**
 > Rankings has two doors (the one-name list, or an exact-label grant) and no role bypass.
 > Appointments mirrors this roster's own `/api/manager/department-members` scope (Kane
 > 2026-09-26: *"The my team tab lets you only see what Departments were assigned to you"*),
