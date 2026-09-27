@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useSearchParams } from 'next/navigation';
 import { normEmail } from '@/lib/email/norm-email';
 import {
@@ -29,7 +30,6 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Badge } from '@/components/ui/badge';
 import {
   Table,
-  TableBody,
   TableCell,
   TableHead,
   TableHeader,
@@ -70,6 +70,8 @@ import {
   EXCLUDED_DECIDER_HINT,
   isExcludedTimeAdjustmentDecider,
 } from '@/lib/accounting/time-adjustment-deciders';
+import { IssueMotionRow, IssueStatusSwap } from '@/components/payroll/issue-row-motion';
+import { noteIssueStatuses, type IssueFlashTone } from '@/lib/accounting/issue-row-flash';
 
 const PAGE_SIZE = 15;
 
@@ -477,6 +479,34 @@ export default function PabDisputeQueue() {
 
   useEffect(() => { setPage(1); }, [searchQuery, statusFilter]);
 
+  // A row whose status changed between two reads — this user's decision, or a colleague's
+  // landing on refresh — sweeps its outcome colour once (`issue-row-motion.tsx`). Which rows
+  // is `noteIssueStatuses` (tested): first sight is silent, and a row absent from the
+  // current filter's slice keeps its last known status, so switching filters never flashes.
+  const knownStatusRef = useRef(new Map<string, string>());
+  const flashTimersRef = useRef<number[]>([]);
+  const [flashes, setFlashes] = useState<Record<string, IssueFlashTone>>({});
+  useEffect(() => {
+    const changed = noteIssueStatuses(knownStatusRef.current, [
+      ...disputes.map((d) => [`d-${d.id}`, d.status] as const),
+      ...timeAdjustments.map((r) => [`ta-${r.id}`, r.status] as const),
+    ]);
+    if (changed.length === 0) return;
+    setFlashes((prev) => ({ ...prev, ...Object.fromEntries(changed) }));
+    const timer = window.setTimeout(() => {
+      setFlashes((prev) => {
+        const next = { ...prev };
+        for (const [key] of changed) delete next[key];
+        return next;
+      });
+    }, 1700);
+    flashTimersRef.current.push(timer);
+  }, [disputes, timeAdjustments]);
+  useEffect(() => {
+    const timers = flashTimersRef.current;
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, []);
+
   // KPI counts fold the FULL dataset, never the filtered slice — the table
   // filter narrows the rows below, the cards keep the whole picture. Time
   // adjustments count as Pending ONLY at manager_approved (Accounting's turn);
@@ -755,22 +785,44 @@ export default function PabDisputeQueue() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Table — loading, empty and the table cross-fade rather than snap */}
+      <AnimatePresence mode="wait" initial={false}>
       {loading ? (
-        <div className="flex flex-1 items-center justify-center gap-2 py-8 text-sm text-zinc-500">
+        <motion.div
+          key="loading"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: { duration: 0.1 } }}
+          transition={{ duration: 0.18 }}
+          className="flex flex-1 items-center justify-center gap-2 py-8 text-sm text-zinc-500"
+        >
           <Loader2 className="h-4 w-4 animate-spin" /> Loading issues...
-        </div>
+        </motion.div>
       ) : filtered.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center">
+        <motion.div
+          key="empty"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: { duration: 0.1 } }}
+          transition={{ duration: 0.18 }}
+          className="flex flex-1 flex-col items-center justify-center gap-2 py-12 text-center"
+        >
           <AlertCircle className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
           <p className="text-sm text-zinc-500">
             {disputes.length === 0 && timeAdjustments.length === 0
               ? 'No issues filed yet.'
               : 'No issues match your filters.'}
           </p>
-        </div>
+        </motion.div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+        <motion.div
+          key="table"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: { duration: 0.1 } }}
+          transition={{ duration: 0.18 }}
+          className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden"
+        >
           <div data-readonly-allow className="flex shrink-0 items-center justify-between text-xs text-zinc-600 dark:text-zinc-500">
             <span>
               Showing <span className="font-mono">{(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filtered.length)}</span> of <span className="font-mono">{filtered.length}</span>
@@ -799,13 +851,26 @@ export default function PabDisputeQueue() {
                   <TableHead className="min-w-[260px] text-right text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Action</TableHead>
                 </TableRow>
               </TableHeader>
-              <TableBody>
-                {pageRows.map((row) => {
+              {/* A new page or status filter swaps the whole body (out, then the rows rise
+                  in); a search, a decision or a delete changes rows IN PLACE — the leaver
+                  drifts out and the rows below close the gap. Search is deliberately not in
+                  the key, or every keystroke would replay the entrance. */}
+              <AnimatePresence mode="wait" initial={false}>
+              <motion.tbody
+                key={`${statusFilter}:${safePage}`}
+                data-slot="table-body"
+                exit={{ opacity: 0, transition: { duration: 0.1 } }}
+                className="[&_tr:last-child]:border-0"
+              >
+                <AnimatePresence>
+                {pageRows.map((row, i) => {
                   if (row.kind === 'time_adjustment') {
                     const r = row.request;
                     return (
                       <TimeAdjustmentIssueTableRow
                         key={`ta-${r.id}`}
+                        index={i}
+                        flash={flashes[`ta-${r.id}`]}
                         row={r}
                         canApprove={taCanApprove}
                         canDelete={taCanDelete}
@@ -820,7 +885,12 @@ export default function PabDisputeQueue() {
                   }
                   const d = row.dispute;
                   return (
-                  <TableRow key={d.id} className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
+                  <IssueMotionRow
+                    key={`d-${d.id}`}
+                    index={i}
+                    flash={flashes[`d-${d.id}`]}
+                    className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20"
+                  >
                     <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">{d.work_email}</TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-zinc-700 dark:text-zinc-300">{d.dispute_date}</TableCell>
                     <TableCell>
@@ -851,9 +921,11 @@ export default function PabDisputeQueue() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-0.5">
-                        <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[d.status]?.className)}>
-                          {STATUS_BADGE[d.status]?.label ?? d.status}
-                        </Badge>
+                        <IssueStatusSwap status={d.status}>
+                          <Badge variant="outline" className={cn('text-[10px]', STATUS_BADGE[d.status]?.className)}>
+                            {STATUS_BADGE[d.status]?.label ?? d.status}
+                          </Badge>
+                        </IssueStatusSwap>
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">
@@ -976,14 +1048,17 @@ export default function PabDisputeQueue() {
                         )}
                       </div>
                     </TableCell>
-                  </TableRow>
+                  </IssueMotionRow>
                   );
                 })}
-              </TableBody>
+                </AnimatePresence>
+              </motion.tbody>
+              </AnimatePresence>
             </Table>
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Time adjustment View / Approve-Deny / Delete — see TimeAdjustmentIssueRows.tsx */}
       <TimeAdjustmentIssueDialogs

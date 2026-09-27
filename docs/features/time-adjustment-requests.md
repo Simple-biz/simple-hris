@@ -580,6 +580,14 @@ What the row does, and the rules it carries over unchanged from the wizard panel
 - **View** opens the evidence (signed URLs from the same GET, never cached — they expire),
   the segments, the employee's explanation and the full decision trail
   (`timeAdjustmentTrail`: filed → named → manager → second approver → Accounting).
+  **Clicking a proof opens the proof viewer** (Kane, 2026-09-26: *"there should be a next
+  button for image and a preview panel below it so we can see how many images or proofs
+  were attached"*): *Proof N of M* with the employee and date, Previous / Next buttons and
+  ←/→ (wrapping, like the manager and employee viewers), and a numbered strip underneath
+  holding **every** attached proof with the current one ringed. A proof whose signed URL
+  has expired **keeps its place** in the strip and says so on stage — the count never
+  shrinks silently; Refresh re-signs it. Escape and a backdrop click close the viewer
+  only — the View modal under it stays open (the one-layer rule of the manager modal).
 - **Delete** appears on `denied` / `manager_denied` rows only, for `DISPUTE_DELETE_ROLES`,
   and calls the existing `DELETE /api/time-adjustments/[id]`.
 - Rows sort **before disputes**: a time adjustment changes a pay figure, a dispute changes

@@ -14,12 +14,23 @@
  * so an approval with no value would move no money, and the button stays disabled.
  */
 
-import { useEffect, useState } from 'react';
-import { Clock, Eye, ImageOff, Loader2, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  ExternalLink,
+  Eye,
+  ImageOff,
+  Loader2,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { TableCell, TableRow } from '@/components/ui/table';
+import { TableCell } from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +51,8 @@ import {
   timeAdjustmentTrail,
   TIME_ADJUSTMENT_STATUS_BADGE,
 } from '@/lib/accounting/issues-time-adjustments';
+import { ISSUE_EASE, IssueMotionRow, IssueStatusSwap } from '@/components/payroll/issue-row-motion';
+import type { IssueFlashTone } from '@/lib/accounting/issue-row-flash';
 
 export type TimeAdjustmentDecideTarget = { row: TimeAdjustmentRow; action: 'approve' | 'deny' };
 
@@ -55,6 +68,8 @@ function fmtWhen(iso: string | null): string | null {
 
 export function TimeAdjustmentIssueTableRow({
   row: r,
+  index,
+  flash,
   canApprove,
   canDelete,
   acting,
@@ -65,6 +80,10 @@ export function TimeAdjustmentIssueTableRow({
   onDelete,
 }: {
   row: TimeAdjustmentRow;
+  /** Position on the page — the entrance stagger (`issue-row-motion.tsx`). */
+  index: number;
+  /** Set for a moment after this row's status changed between two reads. */
+  flash?: IssueFlashTone | null;
   canApprove: boolean;
   canDelete: boolean;
   acting: boolean;
@@ -93,7 +112,11 @@ export function TimeAdjustmentIssueTableRow({
   const cannotActHint = blockedHint ?? ROLE_HINT;
 
   return (
-    <TableRow className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20">
+    <IssueMotionRow
+      index={index}
+      flash={flash}
+      className="border-indigo-100/70 transition-colors hover:bg-indigo-50/50 dark:border-indigo-900/30 dark:hover:bg-indigo-950/20"
+    >
       <TableCell className="font-mono text-xs text-zinc-700 dark:text-zinc-300">{r.work_email}</TableCell>
       <TableCell className="whitespace-nowrap text-sm text-zinc-700 dark:text-zinc-300">{r.adjust_date}</TableCell>
       <TableCell>
@@ -124,9 +147,11 @@ export function TimeAdjustmentIssueTableRow({
         </p>
       </TableCell>
       <TableCell>
-        <Badge variant="outline" className={cn('text-[10px]', badge.className)}>
-          {badge.label}
-        </Badge>
+        <IssueStatusSwap status={r.status}>
+          <Badge variant="outline" className={cn('text-[10px]', badge.className)}>
+            {badge.label}
+          </Badge>
+        </IssueStatusSwap>
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs">
         {appliedLabel ? (
@@ -204,7 +229,245 @@ export function TimeAdjustmentIssueTableRow({
           )}
         </div>
       </TableCell>
-    </TableRow>
+    </IssueMotionRow>
+  );
+}
+
+/* ── The proof viewer ─────────────────────────────────────────────────────── */
+
+/**
+ * Full-screen proof viewer: one image on stage, Previous / Next beside it, and a strip of
+ * every attached proof underneath so the reviewer sees at a glance how many there are and
+ * which one they are on. ←/→ step (wrapping, like the manager and employee viewers);
+ * Escape closes THIS layer only — the View modal under it stays open
+ * (time-adjustment-requests.md § detail modal: "back out ONE layer").
+ *
+ * An expired signed URL keeps its place in the strip and says so on stage, so the count
+ * never shrinks silently; Refresh on the Issues tab re-signs it.
+ */
+function ProofLightbox({
+  paths,
+  signedUrls,
+  index,
+  caption,
+  onIndex,
+  onClose,
+}: {
+  paths: string[];
+  signedUrls: Record<string, string>;
+  index: number;
+  caption: string;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+}) {
+  const reduce = useReducedMotion();
+  const count = paths.length;
+  const url = signedUrls[paths[index]] ?? null;
+  // Which way the stage slides: forward for Next / a later thumb, back otherwise.
+  const [dir, setDir] = useState<1 | -1>(1);
+
+  const go = useCallback(
+    (target: number, direction: 1 | -1) => {
+      if (count < 2) return;
+      setDir(direction);
+      onIndex((target + count) % count);
+    },
+    [count, onIndex],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowRight') go(index + 1, 1);
+      else if (e.key === 'ArrowLeft') go(index - 1, -1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [index, go, onClose]);
+
+  // Take focus for the dialog, and hand it back to the thumbnail that opened it.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    return () => opener?.focus?.();
+  }, []);
+
+  // Keep the current thumb in view when a request carries more proofs than the strip fits.
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    stripRef.current
+      ?.querySelector<HTMLElement>(`[data-proof-thumb="${index}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduce ? 'auto' : 'smooth' });
+  }, [index, reduce]);
+
+  const stop = (e: ReactMouseEvent) => e.stopPropagation();
+  // Direction reaches the EXITING image through AnimatePresence's `custom` — its own props
+  // froze at its last render, so a reversal would otherwise send it out the wrong side.
+  const shift = reduce ? 0 : 48;
+  const slide = {
+    enter: (d: 1 | -1) => ({ opacity: 0, x: d * shift, scale: reduce ? 1 : 0.98 }),
+    center: { opacity: 1, x: 0, scale: 1, transition: { duration: 0.3, ease: ISSUE_EASE } },
+    exit: (d: 1 | -1) => ({
+      opacity: 0,
+      x: -d * shift,
+      scale: reduce ? 1 : 0.98,
+      transition: { duration: 0.16, ease: [0.4, 0, 1, 1] as const },
+    }),
+  };
+  const navClass =
+    'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-white ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 sm:h-11 sm:w-11';
+  const barClass =
+    'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white/10 px-2.5 text-[11px] font-semibold text-white ring-1 ring-white/20 backdrop-blur-md transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70';
+
+  return (
+    <motion.div
+      ref={dialogRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Proof ${index + 1} of ${count}`}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.14 } }}
+      transition={{ duration: 0.2, ease: 'easeOut' }}
+      onClick={onClose}
+      className="fixed inset-0 z-[70] flex flex-col gap-3 bg-black/85 p-3 outline-none backdrop-blur-sm sm:gap-4 sm:p-6"
+    >
+      {/* Top bar — where you are, and a way out */}
+      <div className="flex shrink-0 items-center gap-2" onClick={stop}>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold tabular-nums text-white">
+            Proof {index + 1} <span className="font-normal text-white/60">of {count}</span>
+          </p>
+          <p className="mt-0.5 truncate text-[11px] text-white/60">{caption}</p>
+        </div>
+        {url && (
+          <a href={url} target="_blank" rel="noopener noreferrer" className={barClass}>
+            <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Open in new tab</span>
+          </a>
+        )}
+        <button type="button" onClick={onClose} className={barClass} aria-label="Close proof viewer">
+          <X aria-hidden className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Stage — Previous / image / Next */}
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 sm:gap-4">
+        {count > 1 && (
+          <button
+            type="button"
+            onClick={(e) => { stop(e); go(index - 1, -1); }}
+            className={navClass}
+            aria-label="Previous proof"
+            title="Previous (←)"
+          >
+            <ChevronLeft aria-hidden className="h-5 w-5" />
+          </button>
+        )}
+
+        <div className="relative flex h-full min-w-0 flex-1 items-center justify-center overflow-hidden">
+          <AnimatePresence initial={false} custom={dir} mode="popLayout">
+            {url ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <motion.img
+                key={index}
+                custom={dir}
+                variants={slide}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                src={url}
+                alt={`Proof ${index + 1} of ${count}`}
+                onClick={stop}
+                className="max-h-full max-w-full select-none rounded-xl object-contain shadow-2xl shadow-black/50"
+                draggable={false}
+              />
+            ) : (
+              <motion.div
+                key={index}
+                custom={dir}
+                variants={slide}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                onClick={stop}
+                className="flex max-w-xs flex-col items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-6 py-8 text-center"
+              >
+                <ImageOff aria-hidden className="h-6 w-6 text-white/50" />
+                <p className="text-sm font-medium text-white">This proof&apos;s link has expired</p>
+                <p className="text-xs leading-relaxed text-white/60">
+                  Close the viewer and press Refresh on Issues to load it again.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {count > 1 && (
+          <button
+            type="button"
+            onClick={(e) => { stop(e); go(index + 1, 1); }}
+            className={navClass}
+            aria-label="Next proof"
+            title="Next (→)"
+          >
+            <ChevronRight aria-hidden className="h-5 w-5" />
+          </button>
+        )}
+      </div>
+
+      {/* Preview strip — every attached proof, the current one ringed */}
+      {count > 1 && (
+        <div className="flex shrink-0 justify-center" onClick={stop}>
+          <div
+            ref={stripRef}
+            role="group"
+            aria-label={`${count} proofs attached`}
+            className="flex max-w-full gap-2 overflow-x-auto rounded-2xl bg-white/5 p-2 ring-1 ring-white/10 [scrollbar-width:none]"
+          >
+            {paths.map((p, i) => {
+              const thumb = signedUrls[p] ?? null;
+              const active = i === index;
+              return (
+                <button
+                  key={`${i}:${p}`}
+                  type="button"
+                  data-proof-thumb={i}
+                  aria-label={`Proof ${i + 1} of ${count}${thumb ? '' : ' (link expired)'}`}
+                  aria-current={active ? 'true' : undefined}
+                  onClick={() => go(i, i >= index ? 1 : -1)}
+                  className={cn(
+                    'relative h-14 w-14 shrink-0 overflow-hidden rounded-lg transition-opacity duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 sm:h-16 sm:w-16',
+                    active ? 'opacity-100' : 'opacity-50 hover:opacity-90',
+                  )}
+                >
+                  {thumb ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img src={thumb} alt="" className="h-full w-full object-cover" draggable={false} />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center bg-white/10">
+                      <ImageOff aria-hidden className="h-4 w-4 text-white/50" />
+                    </span>
+                  )}
+                  <span className="absolute bottom-0.5 right-0.5 rounded bg-black/60 px-1 font-mono text-[9px] font-medium leading-tight text-white">
+                    {i + 1}
+                  </span>
+                  {active && (
+                    <motion.span
+                      layoutId="proof-thumb-ring"
+                      transition={{ duration: reduce ? 0 : 0.3, ease: ISSUE_EASE }}
+                      className="pointer-events-none absolute inset-0 rounded-lg ring-2 ring-inset ring-white"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -242,15 +505,14 @@ export function TimeAdjustmentIssueDialogs({
   onConfirmDelete: () => void;
   deleting: boolean;
 }) {
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  // Index into viewTarget.image_paths of the proof on stage, or null when the viewer is
+  // closed. A different request never inherits the last one's open viewer.
+  const [proofIndex, setProofIndex] = useState<number | null>(null);
+  const viewRowId = viewTarget?.id ?? null;
   useEffect(() => {
-    if (!lightboxUrl) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setLightboxUrl(null);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [lightboxUrl]);
+    setProofIndex(null);
+  }, [viewRowId]);
+  const closeProof = useCallback(() => setProofIndex(null), []);
 
   // Only a note is collected now — the hours came from the employee (2026-09-15).
   const [note, setNote] = useState('');
@@ -270,26 +532,20 @@ export function TimeAdjustmentIssueDialogs({
 
   return (
     <>
-      {/* Evidence lightbox — above every dialog; Escape / click closes just this layer */}
-      {lightboxUrl && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm animate-in fade-in duration-200 motion-reduce:animate-none"
-          onClick={() => setLightboxUrl(null)}
-        >
-          <div className="relative max-h-[88vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={lightboxUrl} alt="Evidence" className="max-h-[88vh] max-w-[90vw] rounded-xl object-contain shadow-2xl" />
-            <button
-              type="button"
-              onClick={() => setLightboxUrl(null)}
-              aria-label="Close"
-              className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-zinc-800/90 text-white ring-1 ring-zinc-600 transition hover:bg-zinc-700"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Proof viewer — above every dialog; Escape / backdrop closes just this layer */}
+      <AnimatePresence>
+        {viewTarget && proofIndex != null && viewTarget.image_paths.length > 0 && (
+          <ProofLightbox
+            key="proof-lightbox"
+            paths={viewTarget.image_paths}
+            signedUrls={signedUrls}
+            index={Math.min(proofIndex, viewTarget.image_paths.length - 1)}
+            caption={`${viewTarget.work_email} · ${viewTarget.adjust_date}`}
+            onIndex={setProofIndex}
+            onClose={closeProof}
+          />
+        )}
+      </AnimatePresence>
 
       {/* View details — same shell as the dispute View modal */}
       {viewTarget && (
@@ -382,7 +638,8 @@ export function TimeAdjustmentIssueDialogs({
                         <button
                           key={idx}
                           type="button"
-                          onClick={() => setLightboxUrl(url)}
+                          onClick={() => setProofIndex(idx)}
+                          aria-label={`Open proof ${idx + 1} of ${viewTarget.image_paths.length}`}
                           className="group relative h-20 w-20 overflow-hidden rounded-md border border-zinc-200 transition-transform duration-150 hover:scale-105 hover:border-zinc-300 dark:border-zinc-700 dark:hover:border-zinc-500"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}

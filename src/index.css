@@ -1149,6 +1149,24 @@
   }
 }
 
+/* Accounting → Issues — a row whose status changed between two reads (a decision
+   just landed, yours or a colleague's) holds its outcome colour for a beat, then
+   settles. Colour, not movement, so it stays on under reduced motion: it IS the
+   confirmation. No fill-mode, so the row's hover tint is back the moment it ends. */
+@keyframes issue-row-settle {
+  0%, 22% { background-color: var(--issue-flash); }
+  100%    { background-color: transparent; }
+}
+.issue-row-flash {
+  animation: issue-row-settle 1.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.issue-row-flash-approved { --issue-flash: rgb(16 185 129 / 0.16); }
+.issue-row-flash-denied   { --issue-flash: rgb(244 63 94 / 0.14); }
+.issue-row-flash-moved    { --issue-flash: rgb(99 102 241 / 0.14); }
+.dark .issue-row-flash-approved { --issue-flash: rgb(16 185 129 / 0.22); }
+.dark .issue-row-flash-denied   { --issue-flash: rgb(244 63 94 / 0.2); }
+.dark .issue-row-flash-moved    { --issue-flash: rgb(129 140 248 / 0.2); }
+
 /* ────────────────────────────────────────────────────────────────────────
    Global responsive tables — below the sm breakpoint (<640px) every
    <table> collapses into a vertical stack of "card" rows. Each <tr>
