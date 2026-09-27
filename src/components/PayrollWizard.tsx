@@ -193,7 +193,6 @@ import {
 } from '@/lib/payroll/orphanage-rows';
 import { mesaContributesForWeek } from '@/lib/mesa/deposit-date';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
-import { sortHubstaffColumnsForDisplay } from '@/lib/supabase/hubstaff-hours-db';
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
 import {
   phpHourlyPayFromSeconds,
@@ -370,6 +369,28 @@ import OrphanageClearConfirmDialog from '@/components/payroll/OrphanageClearConf
 import OrphanageOmsPanel from '@/components/payroll/OrphanageOmsPanel';
 import { useOmsHours } from '@/components/payroll/use-oms-hours';
 import { TransferKpiCard } from '@/components/transfers/TransferToolbar';
+import {
+  createPabMergeAccumulator,
+  finishPabMerge,
+  mergeUploadRowsInto,
+  type PabMergeResult,
+} from '@/lib/payroll/pab-merge';
+import { createInflightDedupe } from '@/lib/payroll-wizard/inflight-dedupe';
+import { loadAllUploadsPabMerge } from '@/lib/payroll-wizard/load-pab-merge';
+
+/** `GET /api/hubstaff-hours?source_file=…` — one upload's rows. */
+type HubstaffSourceFileJson = {
+  columns?: string[] | null;
+  rows?: Record<string, unknown>[] | null;
+  payrollRows?: Array<{
+    email: string | null;
+    name: string | null;
+    hoursDisplay: string;
+    hoursDecimal: number;
+    department?: string | null;
+  }>;
+  error?: string | null;
+};
 
 function findHeaderColumn(header: string[], ...labels: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -4941,26 +4962,38 @@ export default function PayrollWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceFilesLoading, uploadedSourceFiles]);
 
-  // Load hubstaff data filtered by the selected source file for Initial Calculation
-  const loadCalcSourceFileData = React.useCallback(async (file: string) => {
-    setCalcSourceFileLoading(true);
-    try {
+  // ── One network read per week file, shared by whoever asks at the same time ──
+  // Step 1's preview, Step 2's calc load and Step 1's file table all read the
+  // week in view on the same render wave — until 2026-09-26 that was three
+  // separate ~800 KB GETs of the same `?source_file=`. They now share the request
+  // while it is IN FLIGHT (never a finished one — `inflight-dedupe.ts`), and each
+  // caller parses its OWN copy of the body, so no two states alias the same row
+  // objects. The generation in the key moves every time the upload list reloads
+  // (upload, delete, initialize and rename all reload it) and before the
+  // post-upload preview, so a read that started BEFORE a write is never handed to
+  // a caller that asked after it.
+  const sourceFileReadsRef = useRef(createInflightDedupe<string>());
+  const sourceFileGenerationRef = useRef(0);
+  const invalidateSourceFileReads = React.useCallback(() => {
+    sourceFileGenerationRef.current += 1;
+  }, []);
+  const fetchSourceFileJson = React.useCallback(async (file: string): Promise<HubstaffSourceFileJson> => {
+    const key = `${sourceFileGenerationRef.current}\u0000${file}`;
+    const text = await sourceFileReadsRef.current.run(key, async () => {
       const res = await fetch(
         `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
         { cache: 'no-store' },
       );
-      const json = (await res.json()) as {
-        columns?: string[] | null;
-        rows?: Record<string, unknown>[] | null;
-        payrollRows?: Array<{
-          email: string | null;
-          name: string | null;
-          hoursDisplay: string;
-          hoursDecimal: number;
-          department?: string | null;
-        }>;
-        error?: string | null;
-      };
+      return res.text();
+    });
+    return JSON.parse(text) as HubstaffSourceFileJson;
+  }, []);
+
+  // Load hubstaff data filtered by the selected source file for Initial Calculation
+  const loadCalcSourceFileData = React.useCallback(async (file: string) => {
+    setCalcSourceFileLoading(true);
+    try {
+      const json = await fetchSourceFileJson(file);
       if (json.error) {
         console.warn('[calc source file]', json.error);
       }
@@ -4986,7 +5019,7 @@ export default function PayrollWizard({
     } finally {
       setCalcSourceFileLoading(false);
     }
-  }, [users]);
+  }, [users, fetchSourceFileJson]);
 
   useEffect(() => {
     if (calcSourceFile) {
@@ -5005,54 +5038,44 @@ export default function PayrollWizard({
     let mergeFailed = false;
     (async () => {
       try {
-        const mergeRowsInto = (
-          rows: Record<string, unknown>[],
-          rowsByEmail: Map<string, Record<string, unknown>>,
-          allCols: Set<string>,
-          sourceFile?: string,
-        ) => {
-          for (let row of rows) {
-            // Resolve canonical day columns to ISO dates when a source file is provided
-            if (sourceFile && columnsAreAllCanonical(Object.keys(row))) {
-              row = resolveCanonicalColumnsToIso(row, sourceFile);
-            }
-            for (const k of Object.keys(row)) allCols.add(k);
-            const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
-            const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
-            if (!email) continue;
-            const existing = rowsByEmail.get(email) ?? {};
-            rowsByEmail.set(email, { ...existing, ...row });
-          }
-        };
-
-        const allCols = new Set<string>();
-        const rowsByEmail = new Map<string, Record<string, unknown>>();
+        let merged: PabMergeResult;
 
         if (uploadedSourceFiles.length > 0) {
-          // Fetch every archived upload in parallel and merge by email so canonical
-          // weekday columns from different weeks don't overwrite each other (each week
-          // resolves `monday`..`sunday` to distinct ISO dates via the source filename).
-          const responses = await Promise.all(
-            uploadedSourceFiles.map((file) =>
-              fetch(
-                `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-                { cache: 'no-store' },
-              )
-                .then(async (res) => {
-                  const json = (await res.json()) as {
-                    columns?: string[] | null;
-                    rows?: Record<string, unknown>[] | null;
-                  };
-                  return { file, json };
-                })
-                .catch(() => ({ file, json: { columns: null, rows: null } as { columns: null; rows: null } })),
-            ),
-          );
+          // Every archived upload, merged by email in `uploadedSourceFiles` order,
+          // so canonical weekday columns from different weeks resolve to distinct
+          // ISO dates instead of overwriting each other (`src/lib/payroll/pab-merge.ts`
+          // owns the rule — Step 2's PAY hours read this merge too). Since
+          // 2026-09-26 the server does the reading and merging in ONE request; the
+          // old one-request-per-upload fan-out is the fallback, over the same merge.
+          const load = await loadAllUploadsPabMerge(uploadedSourceFiles, {
+            postMerge: (files) =>
+              fetch('/api/payroll-wizard/pab-merge', {
+                method: 'POST',
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files }),
+              }),
+            readUpload: fetchSourceFileJson,
+          });
           if (cancelled) return;
-          for (const { file, json } of responses) {
-            if (!json.columns?.length || !json.rows?.length) continue;
-            mergeRowsInto(json.rows, rowsByEmail, allCols, file);
+          if (load.fallbackReason) {
+            console.warn(`[PAB all-files merge] ${load.fallbackReason} — merged per upload instead`);
           }
+          // A skipped week was ALWAYS skipped (the fan-out dropped it without a
+          // word); it is still skipped — failing the whole merge instead is a money
+          // ruling, not a transport change — but it is no longer silent. A missing
+          // week inside the PAB month manufactures failed days, and a missing
+          // adjacent week loses Step 2's boundary Sunday.
+          if (load.skipped.length > 0) {
+            console.warn('[PAB all-files merge] skipped uploads:', load.skipped);
+            const n = load.skipped.length;
+            toast.warning(`${n} archived Hubstaff week${n === 1 ? '' : 's'} could not be read`, {
+              description:
+                `${load.skipped.slice(0, 3).map((s) => s.file).join(', ')}${n > 3 ? ` +${n - 3} more` : ''}. ` +
+                'PAB and boundary-Sunday hours may be incomplete until they load — refresh to retry.',
+            });
+          }
+          merged = load.result;
         } else {
           const res = await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' });
           const json = (await res.json()) as {
@@ -5060,25 +5083,28 @@ export default function PayrollWizard({
             rows?: Record<string, unknown>[] | null;
           };
           if (cancelled) return;
+          const acc = createPabMergeAccumulator();
           if (json.rows?.length) {
             if (json.columns?.length) {
-              for (const col of json.columns) allCols.add(col);
+              for (const col of json.columns) acc.allCols.add(col);
             }
-            mergeRowsInto(json.rows, rowsByEmail, allCols);
+            mergeUploadRowsInto(acc, json.rows);
           }
+          merged = finishPabMerge(acc);
         }
 
         if (cancelled) return;
-        setPabAllColumns(sortHubstaffColumnsForDisplay([...allCols]));
-        setPabAllRows([...rowsByEmail.values()]);
+        setPabAllColumns(merged.columns);
+        setPabAllRows(merged.rows);
       } catch (e) {
         console.warn('[PAB all-files fetch]', e);
-        // The merge is a single try around the whole per-upload loop, so ONE
-        // failed request leaves `pabAllRows` empty — and `pabMergeLoaded` still
-        // flips true in the `finally` below, which is what the step rail needs
-        // (it must not spin forever) and what made the preview print ₱0.00
-        // Attendance Incentive for the entire company with nothing to say so.
-        // The marker stays exactly as it was; this records that it settled EMPTY.
+        // Reaching here means the WHOLE merge failed (a skipped upload does not
+        // throw — see above), which leaves `pabAllRows` empty — and
+        // `pabMergeLoaded` still flips true in the `finally` below, which is what
+        // the step rail needs (it must not spin forever) and what made the
+        // preview print ₱0.00 Attendance Incentive for the entire company with
+        // nothing to say so. The marker stays exactly as it was; this records
+        // that it settled EMPTY.
         if (!cancelled) mergeFailed = true;
       } finally {
         if (!cancelled) {
@@ -5088,7 +5114,7 @@ export default function PayrollWizard({
       }
     })();
     return () => { cancelled = true; };
-  }, [uploadedSourceFiles, sourceFilesLoading]);
+  }, [uploadedSourceFiles, sourceFilesLoading, fetchSourceFileJson]);
 
   /**
    * Columns/rows used only for PAB on Additions. Does **not** fall back to the Step 2 calc-file
@@ -11012,24 +11038,11 @@ export default function PayrollWizard({
     setHubstaffPreviewError(null);
     try {
       const latest = uploadedSourceFiles[0];
-      const res = await fetch(
-        uploadedSourceFiles.length > 0
-          ? `/api/hubstaff-hours?source_file=${encodeURIComponent(latest)}&_=${Date.now()}`
-          : `/api/hubstaff-hours?_=${Date.now()}`,
-        { cache: 'no-store' },
-      );
-      const json = (await res.json()) as {
-        columns?: string[] | null;
-        rows?: Record<string, unknown>[] | null;
-        payrollRows?: Array<{
-          email: string | null;
-          name: string | null;
-          hoursDisplay: string;
-          hoursDecimal: number;
-          department?: string | null;
-        }>;
-        error?: string | null;
-      };
+      // The latest upload is usually the week Step 2 is loading at the same
+      // moment — `fetchSourceFileJson` lets the two share one request.
+      const json: HubstaffSourceFileJson = uploadedSourceFiles.length > 0
+        ? await fetchSourceFileJson(latest)
+        : ((await (await fetch(`/api/hubstaff-hours?_=${Date.now()}`, { cache: 'no-store' })).json()) as HubstaffSourceFileJson);
       if (json.error) {
         setHubstaffPreviewError(json.error);
       }
@@ -11095,7 +11108,7 @@ export default function PayrollWizard({
     } finally {
       setHubstaffPreviewLoading(false);
     }
-  }, [users, uploadedSourceFiles, sourceFilesLoading]);
+  }, [users, uploadedSourceFiles, sourceFilesLoading, fetchSourceFileJson]);
 
   useEffect(() => {
     void loadHubstaffPreview();
@@ -11103,6 +11116,9 @@ export default function PayrollWizard({
 
   // ── Load list of uploaded source files ──
   const loadUploadedSourceFiles = React.useCallback(async (): Promise<string[]> => {
+    // Every upload / delete / initialize / rename reloads this list, so it is the
+    // one place that can retire week reads started before the write.
+    invalidateSourceFileReads();
     setSourceFilesLoading(true);
     try {
       const res = await fetch(`/api/hubstaff-hours?source_files=1&_=${Date.now()}`, { cache: 'no-store' });
@@ -11144,7 +11160,7 @@ export default function PayrollWizard({
     } finally {
       setSourceFilesLoading(false);
     }
-  }, []);
+  }, [invalidateSourceFileReads]);
 
   // Skip the initial load when initialData already shipped both the file list
   // and the rich uploads metadata. Manual refresh buttons + post-upload reloads
@@ -11347,15 +11363,7 @@ export default function PayrollWizard({
     setSourceFilePage(1);
     setSourceFileSearch('');
     try {
-      const res = await fetch(
-        `/api/hubstaff-hours?source_file=${encodeURIComponent(file)}&_=${Date.now()}`,
-        { cache: 'no-store' },
-      );
-      const json = (await res.json()) as {
-        columns?: string[] | null;
-        rows?: Record<string, unknown>[] | null;
-        error?: string | null;
-      };
+      const json = await fetchSourceFileJson(file);
       setSourceFileCols(json.columns ?? null);
       setSourceFileRows(json.rows ?? null);
     } catch {
@@ -11364,7 +11372,7 @@ export default function PayrollWizard({
     } finally {
       setSourceFileLoading(false);
     }
-  }, []);
+  }, [fetchSourceFileJson]);
 
   // Step 1's file preview follows the header pay-period selector: load the selected
   // file when landing on Step 1 or when the period changes. A ref tracks the last
@@ -11687,6 +11695,9 @@ export default function PayrollWizard({
       }
     }
 
+    // The upload just wrote rows; this preview runs BEFORE the list reload below
+    // (which would otherwise retire older week reads), so retire them here too.
+    invalidateSourceFileReads();
     await loadHubstaffPreview();
 
     // Refresh source-file list (retry once so PostgREST read sees the new rows), then open that file

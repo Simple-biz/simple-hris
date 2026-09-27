@@ -4,6 +4,7 @@ import { upsertAppSetting } from "@/lib/supabase/app-settings";
 import { mapHubstaffHoursRow, type PayrollHubstaffRow } from "@/lib/supabase/hubstaff-hours";
 import { payrollWeekFilenameError } from "@/lib/hubstaff/calendar-column-dedupe";
 import { partitionInternRows } from "@/lib/interns/intern-hours-rows";
+import { selectAllPagedUnorderedGuarded } from "@/lib/supabase/select-all-paged";
 
 function getTableName(): string {
   return process.env.NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE?.trim() || "hubstaff_hours";
@@ -990,22 +991,30 @@ export async function fetchHubstaffRowsBySourceFile(sourceFile: string): Promise
     return { columns: [], rows: [] };
   }
 
-  const PAGE = 1000;
-  const allRows: Record<string, unknown>[] = [];
-  let from = 0;
-
-  while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("*")
-      .eq("source_file", sourceFile)
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(error.message);
-    const page = (data ?? []) as Record<string, unknown>[];
-    allRows.push(...page);
-    if (page.length < PAGE) break;
-    from += PAGE;
-  }
+  // Paged WITHOUT an order on purpose, and guarded instead (2026-09-26): the
+  // wizard's Step 1 and Step 2 tables render these rows in API order, and the
+  // only total order available — the UUID `id` — would reshuffle both. A read
+  // whose pages shear (a repeated `id`) is retried, then re-read ordered by
+  // `id`; see `selectAllPagedUnorderedGuarded`. A week is ~1,100 rows, so the
+  // guard's concurrent first two pages also save a round trip on every caller.
+  const allRows = await selectAllPagedUnorderedGuarded<Record<string, unknown>>({
+    page: (from, to) =>
+      supabase.from(table).select("*").eq("source_file", sourceFile).range(from, to),
+    orderedPage: (from, to) =>
+      supabase
+        .from(table)
+        .select("*")
+        .eq("source_file", sourceFile)
+        .order("id", { ascending: true })
+        .range(from, to),
+    keyOf: (row) => row["id"],
+    label: `hubstaff_hours source_file=${sourceFile}`,
+    onRepeat: (info) =>
+      console.warn(
+        `[hubstaff_hours] ${info.label}: pages sheared on the ${info.attempt} read ` +
+          `(${info.fetched} fetched, ${info.distinct} distinct) — re-reading`,
+      ),
+  });
 
   let rows = allRows.filter((r) => !rowIsEmpty(r));
   if (hasMultipleUploadBatches(rows)) {

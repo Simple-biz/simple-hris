@@ -31,9 +31,10 @@ part and is not tapered by the rounded corners.
 
 Steps go green in a **wave**, and the ordering is the useful part — it tells Accounting *which*
 tab is still cooking rather than just "something is". Step 1 first; then 2/3; then 6; then 4/5
-and 7/8 last, because the all-weeks PAB merge fires one request per archived upload and is
+and 7/8 last, because the all-weeks PAB merge reads and merges every archived upload and is
 reliably the straggler — and since the merge, the Additions step waits on that merge **and** the HSL
-amounts.
+amounts. (It fired one request per upload until 2026-09-26; see
+[§ The all-uploads merge](#the-all-uploads-merge--how-it-loads).)
 
 **Reports (step 9) is outside the range** — it is a post-dispatch summary, not a figure anyone
 judges mid-load.
@@ -50,6 +51,11 @@ judges mid-load.
 | `src/components/PayrollWizard.tsx` `isStepDataLoading` (~5699) | the per-step data mapping |
 | `src/components/PayrollWizard.tsx` `paystubSourceStates` (~5776) | the per-LINE twin — see § below |
 | `src/index.css` `.wizard-step-progress` / `-bar` (~1540) | track, fill, done colour |
+| `src/lib/payroll/pab-merge.ts` (+ `.test.ts`) | the all-uploads merge rule, one module for both paths — § *The all-uploads merge* |
+| `app/api/payroll-wizard/pab-merge/route.ts` · `src/lib/payroll/pab-merge-stream.ts` (+ `.test.ts`) | the one-request server merge, streamed |
+| `src/lib/payroll-wizard/load-pab-merge.ts` (+ `.test.ts`) | server path → per-upload fallback, same merge |
+| `src/lib/payroll-wizard/inflight-dedupe.ts` (+ `.test.ts`) | one in-flight read of the week in view, shared |
+| `scripts/verify-pab-merge-identity.mts` | read-only live proof that both paths are byte-identical |
 
 (Line numbers drift; they are a starting point, not a citation. `isStepDataLoading` had been
 recorded at ~5030 since 2026-08-25 and was ~670 lines out by 2026-09-22.)
@@ -172,6 +178,76 @@ beside one is what let the statement stop spinning.
 `orphanageDetailLoadedFor` is **still excluded, and still unwired** — the Orphanage line rides the
 additions blob (which is what actually holds the column) rather than that marker, so the rule below
 is unchanged and untested by this.
+
+### The all-uploads merge — how it loads
+
+Steps 4, 5, 7 and 8 wait on `pabMergeLoaded`, and so, less visibly, does **Step 2's pay**:
+`payDaysByEmail` reads the same merged rows to recover a pay week's leading Sunday from the
+adjacent upload ([payroll-wizard-final-pay.md](./payroll-wizard-final-pay.md) §4). Every rule
+below exists to change how fast those rows arrive **without changing a single one of them**.
+
+**The rule lives in one module.** `src/lib/payroll/pab-merge.ts` (`mergeHubstaffUploadsForPab`)
+merges the uploads **in `uploadedSourceFiles` order** (`is_current` first, then newest-first),
+**last-wins including nulls**, resolving each upload's canonical `monday`…`sunday` columns to ISO
+dates from its own filename and keying people by `normEmail(Email)`. Reordering the input moves
+money. Until 2026-09-26 the rule was inline in `PayrollWizard.tsx`, and the browser rebuilt each
+person's merged object once per upload, which took **756–831 ms of main thread** on the live
+table (31 uploads, 40,509 rows, 2,355 people). It now folds each person into one accumulator
+object: **242 ms**, with the same keys in the same order and the same values.
+
+**Transport — one request, with the old fan-out as the fallback.**
+
+| | Until 2026-09-26 | Since |
+|---|---|---|
+| Requests | one `GET /api/hubstaff-hours?source_file=` per upload (31) | one `POST /api/payroll-wizard/pab-merge` |
+| JSON the browser downloads | **22.51 MB** | **5.05 MB** |
+| Where the merge runs | the browser main thread | the server, on the same module |
+| A failed upload | dropped without a word | retried 3× server-side, then dropped **and named** |
+
+The route reads each upload with the same `fetchHubstaffRowsBySourceFile` the per-upload route
+serves (8 at a time) and **streams** its body, because a buffered Vercel Function response is
+capped at **4.5 MB** and the merge is already 5.05 MB and grows every week. Whenever the route
+cannot be trusted — a network error, any non-2xx (a 403 on its gate, a platform size refusal, a
+timeout), or a body that fails `parseServerMergeBody` — the wizard falls back to the per-upload
+fan-out and merges **with the same module** (`src/lib/payroll-wizard/load-pab-merge.ts`). The
+fallback exists so a new route can never be the reason the merge is missing. It does not compute
+anything differently.
+
+**Proof of identity, not an assertion of it.** `pab-merge.test.ts` holds the old inline merge
+**verbatim** as its oracle: fixtures, 8-day Sun→Sun overlaps, last-wins nulls, order sensitivity,
+and 200 randomized upload sets. `scripts/verify-pab-merge-identity.mts` (read-only) replays both
+paths on the live table and exits 0 only when `JSON.stringify` of the two results is equal, which
+checks key order as well as values. **Run 2026-09-26: `identical: true`**, 2,355 people × 221
+columns. Re-run it after any change to `pab-merge.ts`, the canonical-date resolvers, or
+`fetchHubstaffRowsBySourceFile`.
+
+**A skipped week is still skipped. That is deliberate, and it is OPEN.** Both paths drop an upload
+that cannot be read, as the fan-out always did. The difference is that the wizard now toasts
+*"N archived Hubstaff weeks could not be read … PAB and boundary-Sunday hours may be incomplete"*
+and logs which weeks. Failing the whole merge instead would zero PAB company-wide because one
+irrelevant old week failed. Keeping the partial merge lets a missing week inside the PAB month
+manufacture failed days. Choosing between those is a **money ruling for Kane**, not a transport
+change (Open items 238).
+
+**No cache, on purpose.** Every load reads fresh, as before. Hour rows have been edited **in
+place** by scripts (`backfill-may10-sunday.mjs`, `delete-randal-hayes-hubstaff-hours.mjs`) without
+touching `hubstaff_uploads`, so no upload-list signature can prove a cached merge current, and a
+cached pay input that might be stale is the one thing the skip-flag policy bans
+([accounting-dashboard-cache.md](./accounting-dashboard-cache.md) § *The skip-flag policy*).
+
+**The week in view is fetched once.** Step 1's preview, Step 2's calc load, Step 1's file table
+and the merge fallback all read the same `?source_file=` on the same render wave, which used to
+mean three or four separate ~800 KB requests. They now share the **in-flight** request
+(`src/lib/payroll-wizard/inflight-dedupe.ts`): never a finished one, so nobody receives a
+response older than a request already running when they asked. The key carries a generation
+that moves on every upload-list reload (which every upload, delete, initialize and rename goes
+through) and just before the post-upload preview, so a read started before a write is never
+handed to a caller that asked after it. Each caller parses its **own** copy of the body, so no
+two states alias the same row objects.
+
+**The rail contract is untouched.** `pabMergeLoaded` still flips in the effect's `finally`, and a
+whole-merge failure still settles `pabMergeState: 'unavailable'`. No flag was added to
+`isStepDataLoading` or removed from it.
 
 ### Step-scoped fetches
 

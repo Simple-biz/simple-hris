@@ -753,6 +753,14 @@ as the leading Sunday. (Same fix applied in `current-pay.ts`.)
 resolved to true dates via its own filename), then windows. This recovers a pay week's leading
 Sunday from the **adjacent upload** where that date is the trailing day.
 
+The merge is **order-sensitive and last-wins, nulls included**, and its rule lives in ONE module,
+`src/lib/payroll/pab-merge.ts`. Since 2026-09-26 it runs on the server behind
+`POST /api/payroll-wizard/pab-merge`, with the old per-upload fan-out as the fallback over the same
+module. `scripts/verify-pab-merge-identity.mts` proves both paths byte-identical on the live table
+before anyone trusts either. A change to the merge is a change to Step 2 pay. See
+[payroll-wizard-step-load.md](./payroll-wizard-step-load.md) § *The all-uploads merge* for the
+transport, the fallback, and why a skipped week is still skipped.
+
 See [hubstaff-sunday-overlap.md](../notes/hubstaff-sunday-overlap.md) for the underlying
 last-wins collapse and the validated `ruthg@simple.biz` example (May 31–Jun 6 = ₱11,222.90).
 

@@ -882,7 +882,7 @@ This creates a problem for full-month PAB evaluation: merging multiple weekly so
 
 5. **`inferPabMonthFromColumns(cols)`** — Now successfully identifies the target month from the resolved ISO columns, enabling `getPabMonthRange()` to compute the PAB period.
 
-This resolution happens in both `EmployeeDashboard.tsx` (PAB merge `useEffect`) and `PayrollWizard.tsx` (`mergeRowsInto` function).
+This resolution happens in both `EmployeeDashboard.tsx` (PAB merge `useEffect`) and the Payroll Wizard's all-uploads merge. Until 2026-09-26 that was an inline `mergeRowsInto` in `PayrollWizard.tsx`. It is now `src/lib/payroll/pab-merge.ts`, run on the server by `POST /api/payroll-wizard/pab-merge`, with the wizard's per-upload fallback using the same module. Step 2's pay hours read this merge, so it is order-sensitive money logic, not a display helper (`payroll-wizard-step-load.md` § *The all-uploads merge*).
 
 ---
 

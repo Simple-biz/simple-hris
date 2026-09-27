@@ -533,7 +533,7 @@ The table now separates:
 
 | State | Condition | What it says |
 | --- | --- | --- |
-| Loading | `!pabMergeLoaded` | "Loading attendance for \<month\>" — the all-weeks merge is the slowest fetch in the wizard (one request per archived upload) |
+| Loading | `!pabMergeLoaded` | "Loading attendance for \<month\>" — the all-weeks merge is the slowest fetch in the wizard (every archived upload; one server request since 2026-09-26, see `payroll-wizard-step-load.md` § *The all-uploads merge*) |
 | Not evaluated | merge done, `effectivePabStatus.size === 0` | amber — "could not be evaluated… this is **not** an all-clear" |
 | Genuinely clear | merge done, verdicts exist, none ineligible | emerald, and it names the evaluated headcount |
 

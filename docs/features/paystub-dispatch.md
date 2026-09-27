@@ -986,8 +986,9 @@ document anyway. Measured on the PAB path: while `!pabMergeLoaded`, `hubstaffRow
 so `perfectAttendanceEligible` returns an **empty Set by design**, the auto-toggle writes
 `perfect_attendance: false`, and **Attendance Incentive prints ₱0.00 for the entire company** —
 indistinguishable from a missed day, from a non-payout week, and from an Ignored person's
-deliberate zero. The all-weeks PAB merge is the documented straggler (one fetch per archived
-upload), so this window is not small.
+deliberate zero. The all-weeks PAB merge is the documented straggler (it reads every archived
+upload — one fetch per upload until 2026-09-26, one server request since; see
+`payroll-wizard-step-load.md` § *The all-uploads merge*), so this window is not small.
 
 **Three states, never two.**
 

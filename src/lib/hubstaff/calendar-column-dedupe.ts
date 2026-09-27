@@ -898,6 +898,45 @@ export function resolveCanonicalColumnsToIso(
 }
 
 /**
+ * {@link resolveCanonicalColumnsToIso} with the per-FILE work done once.
+ *
+ * The original re-parses the filename and rebuilds the weekday → date map for
+ * every row it is handed. The Payroll Wizard's all-uploads PAB merge calls it
+ * ~40,000 times over 31 files, so that rebuild was most of the merge's cost.
+ * Everything here that depends only on the filename is computed once, and the
+ * per-row loop is the original's, unchanged — so for any row the result is
+ * the same object shape, the same keys in the same order and the same values
+ * (`canonical-iso-resolver.test.ts` pins that against the original).
+ */
+export function createCanonicalIsoResolver(
+  filename: string,
+): (row: Record<string, unknown>) => Record<string, unknown> {
+  const range = parseDateRangeFromFilename(filename);
+  if (!range) return (row) => row;
+
+  const datesByDow: Record<number, string> = {};
+  const cur = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate());
+  const endT = range.end.getTime();
+  while (cur.getTime() <= endT) {
+    datesByDow[cur.getDay()] = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return (row) => {
+    const mapped: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      const dow = CANONICAL_DOW_MAP[key.toLowerCase()];
+      if (dow !== undefined) {
+        const iso = datesByDow[dow];
+        if (iso) { mapped[iso] = value; continue; }
+      }
+      mapped[key] = value;
+    }
+    return mapped;
+  };
+}
+
+/**
  * Resolve canonical weekday columns (`sunday`, `monday`, …) to the ISO dates of a
  * specific 7-day pay week. Unlike {@link resolveCanonicalColumnsToIso} — which maps
  * by day-of-week across the (possibly 8-day Sun→Sun) filename range and lets the
