@@ -64,6 +64,9 @@ The pure rule lives in `src/lib/payroll/wizard-setup-spotlight.ts` and is pinned
   that open step is on screen half the time rather than a seventh.
 - **Everything done** → each step in rail order, so the card still shows the week's facts instead
   of freezing on a single slide.
+- **The priority order is shared.** `openStepsBySeverity` is the one ordering, and the dashboard's
+  greeting modal ([payroll-cycle-greeting-modal.md](./payroll-cycle-greeting-modal.md)) uses it too,
+  so the card and the modal can't disagree about what to fix first.
 - **Status is never re-derived.** The card reads `WizardSetupStep.status` exactly as
   `deriveWizardSetupSteps` produced it, so the card and the pane cannot disagree. A row whose read
   failed arrives as `pending` ("Couldn't read…") and plays as **open**. It is never folded into

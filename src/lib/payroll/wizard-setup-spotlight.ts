@@ -28,6 +28,17 @@ const SEVERITY: Record<WizardSetupStatus, number> = {
 
 export const DONE_RECAP_KEY = 'done-recap';
 
+/** Every not-done step, most severe first, rail order breaking ties. The ONE
+ *  priority order — the Overview card and the dashboard greeting modal both
+ *  read it, so "what to fix first" cannot differ between them. */
+export function openStepsBySeverity(steps: readonly WizardSetupStep[]): WizardSetupStep[] {
+  return steps
+    .map((step, i) => ({ step, i }))
+    .filter(({ step }) => step.status !== 'done')
+    .sort((a, b) => SEVERITY[a.step.status] - SEVERITY[b.step.status] || a.i - b.i)
+    .map(({ step }) => step);
+}
+
 export type SpotlightSlide =
   | {
       kind: 'step';
@@ -56,11 +67,7 @@ export type SpotlightSlide =
  * - No steps → no slides.
  */
 export function buildSpotlightSlides(steps: readonly WizardSetupStep[]): SpotlightSlide[] {
-  const indexed = steps.map((step, i) => ({ step, i }));
-  const open = indexed
-    .filter(({ step }) => step.status !== 'done')
-    .sort((a, b) => SEVERITY[a.step.status] - SEVERITY[b.step.status] || a.i - b.i)
-    .map(({ step }) => step);
+  const open = openStepsBySeverity(steps);
   const done = steps.filter((s) => s.status === 'done');
 
   if (open.length === 0) {

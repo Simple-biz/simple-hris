@@ -341,6 +341,7 @@ import LockToggleConfirmDialog, { deriveFirstName } from '@/components/payroll/L
 import { holdStagePrepped, playStagePrepped, releaseStagePrepped, stopStagePrepped } from '@/lib/sound/ping-chime';
 import { useStartProcessingBroadcast } from '@/hooks/useStartProcessingBroadcast';
 import StartProcessingBroadcastModal from '@/components/payroll/StartProcessingBroadcastModal';
+import { planWizardJump, type WizardJumpRequest } from '@/lib/payroll-wizard/step-jump';
 import { payrollNotesWeekStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import {
   cycleFxSettingKey,
@@ -2092,10 +2093,16 @@ export default function PayrollWizard({
   sessionEmail,
   sessionRole,
   initialData,
+  jumpRequest,
 }: {
   sessionEmail?: string | null;
   sessionRole?: string | null;
   initialData?: import('@/lib/accounting/prefetch').InitialAccountingData | null;
+  /** "Go to Step N" from outside the wizard — the Accounting shell's greeting
+   *  modal. Each `nonce` is applied once, through `planWizardJump`. The shell
+   *  only ever sends one for a viewer holding the wizard's EDIT grant, because
+   *  view-only users are locked out of step navigation (`ReadOnlyTab strict`). */
+  jumpRequest?: WizardJumpRequest | null;
 }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [wizardStartedAt] = useState<Date>(() => new Date());
@@ -3474,6 +3481,33 @@ export default function PayrollWizard({
   useEffect(() => {
     if (currentStep === 4 && pabSettingsEverLoaded && !pabPayoutWeekActive) setCurrentStep(3);
   }, [currentStep, pabSettingsEverLoaded, pabPayoutWeekActive]);
+
+  // "Go to Step N" from the Accounting shell's greeting modal. Waits for the
+  // upload list so "the live period" is known, applies each request once, and
+  // never does more than a click on the rail could (see planWizardJump).
+  const appliedJumpNonceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!jumpRequest || appliedJumpNonceRef.current === jumpRequest.nonce) return;
+    if (sourceFilesLoading) return;
+    appliedJumpNonceRef.current = jumpRequest.nonce;
+    const plan = planWizardJump({
+      requestedStep: jumpRequest.step,
+      requestedFile: jumpRequest.sourceFile,
+      calcSourceFile,
+      newestSourceFile,
+      isSpectator,
+      pabPayoutWeekActive,
+      stepCount: steps.length,
+    });
+    if (plan.kind === 'refused') {
+      if (plan.reason === 'spectating') {
+        toast.info(`${driverLabel} is running this cycle — you're following their step.`);
+      }
+      return;
+    }
+    if (plan.switchToFile) setCalcSourceFile(plan.switchToFile);
+    setCurrentStep(plan.step);
+  }, [jumpRequest, sourceFilesLoading, calcSourceFile, newestSourceFile, isSpectator, pabPayoutWeekActive, driverLabel]);
 
   /**
    * Contractor invoices whose billing date falls inside the active batch's pay

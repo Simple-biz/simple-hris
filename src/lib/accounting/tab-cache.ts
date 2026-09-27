@@ -477,6 +477,15 @@ export const TAB_CACHE_KEYS = {
   payrollNotesOffboarded: (sourceFile: string | null) =>
     `payroll-notes:offboarded:${sourceFile ?? ''}`,
   /**
+   * The Accounting shell's payroll-cycle greeting modal has opened for this
+   * viewer this session (value `true`). A UI flag, not data — kept HERE rather
+   * than in raw sessionStorage because this store's lifetime is exactly
+   * Kane's "once per browser session" (2026-09-26): identity-stamped, purged on
+   * sign-out and on a viewer swap, gone after the 12h ceiling. Read as
+   * `=== true`; anything else means "not shown yet".
+   */
+  cycleGreetingShown: 'shell:cycle-greeting-shown',
+  /**
    * Accounting -> Documents signing queue (`AccountingDocuments`).
    *
    * A SHARED APPROVAL QUEUE: seed-and-always-revalidate, NEVER the skip flag.

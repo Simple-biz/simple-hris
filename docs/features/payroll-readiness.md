@@ -34,6 +34,7 @@ Every row below has its own section further down — this is the index, so a
 | 2026-09-11 | **"Set rate" gains an "Effective from" date** — defaults to today, no `min`, sent verbatim, blank REFUSES. Closes the class where a leaver's final-pay rate could only ever be written effective-today and so never reached the week being paid. |
 | 2026-09-15 | **A leaver's DEPARTMENT follows "Set rate"** (Kane: *"make sure the paystub department will change"*) — `leaverPayDepartment`, read by the wizard's final-pay overlay and this tab; the Department line rides the `final_pay` snapshot so an unpaid stub follows without a re-lock. |
 | 2026-09-15 | **Offboarded tab: "Set rate" and "Set bank" are a COMPLETE OVERRIDE** (Kane: *"it's not sticking at all"*). Both dialogs show what is on file; Set rate leaves exactly ONE individual structure per person, supersedes history from the chosen date, keys to the hours-carrying email, and tells the open wizard to re-pull its rates; Set bank (Offboarded only) unlocks the rail and saves through the Accounting direct-edit route. See "Offboarded tab — complete override" below. |
+| 2026-09-26 | **A third reader:** the Accounting dashboard's **"Hi Kane" greeting modal** puts the live cycle's unfinished rows in front of the viewer once per session, with a Go to Step N jump. See [payroll-cycle-greeting-modal.md](./payroll-cycle-greeting-modal.md). |
 | 2026-09-26 | **A second reader of the Wizard Setup checklist:** the Accounting Overview's **Payroll Notes** card, which replaced New hires + Attrition, rotates through `wizardSetup`'s rows with open steps first, and shares this tab's per-week readiness cache (`readiness-cache.ts`). It renders the rows as sent and derives nothing. See [accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md). |
 
 The **Wizard Setup checklist** (2026-08-03) is a separate, later addition: a
@@ -411,11 +412,15 @@ backing query is reported into `degraded[]` (same convention as the rest of
 readiness) and that row alone reads `pending` with a "couldn't read…" detail
 — never a false done or blocked.
 
-**Two surfaces render it, and neither derives anything:** this tab, and (since 2026-09-26) the
+**Three surfaces render it, and none derives anything:** this tab; (since 2026-09-26) the
 Accounting Overview's **Payroll Notes** card, which spotlights the open rows one at a time
-([accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md)). Both
-read `wizardSetup.steps` exactly as sent and share one status palette
-(`wizard-setup-meta.ts`), so a row cannot read one way on the Overview and another way here.
+([accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md)); and
+the Accounting dashboard's **"Hi Kane" greeting modal**, which lists the live cycle's open rows
+once per session with a Go to Step N jump
+([payroll-cycle-greeting-modal.md](./payroll-cycle-greeting-modal.md)). All three read
+`wizardSetup.steps` exactly as sent and share one status palette (`wizard-setup-meta.ts`). The card
+and the modal also share one priority order (`openStepsBySeverity`). A row therefore cannot read one
+way on the dashboard and another way here.
 
 The **#** column is the wizard step the fix lives on, not a row index. Two rows share
 **step 5**. HSL and Additions merged into one step on 2026-08-28, and PAB moved ahead of it to

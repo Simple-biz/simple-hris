@@ -19,12 +19,13 @@ Siblings: `employee-dashboard-cache.md`, `manager-dashboard-cache.md`, and
 
 ## One store, three dashboards
 
-Twelve call sites across three shells read it, which is why it is neither the Accounting
+Thirteen call sites across three shells read it, which is why it is neither the Accounting
 store nor the CEO store but the shared one:
 
 | Consumer | Datasets |
 | --- | --- |
 | `components/Overview.tsx` | `overviewPayouts`, `overviewPabMetrics` |
+| `accounting/PayrollCycleGreetingModal.tsx` (the shell's "Hi Kane" modal, 2026-09-26) | `payrollReadiness(null)` — the live week, same entry and helpers as the FAB; `cycleGreetingShown` — a **UI flag** (`true` once opened this session), here rather than in raw sessionStorage because this store's purge-on-sign-out / viewer-swap / 12h lifetime IS "once per browser session" |
 | `accounting/PayrollNotesSetupCard.tsx` (the Overview's Payroll Notes card, 2026-09-26) | `payrollReadiness` — the SAME per-week entry as the FAB, via `payroll/readiness-cache.ts`; seeded in a layout effect (hydration-safe), revalidated unless under 30s old, never skip-flagged |
 | `people/PeopleTab.tsx` | `peopleRoster` |
 | `accounting/AccountingTransfers.tsx` | `transfers` |

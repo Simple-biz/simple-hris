@@ -46,6 +46,8 @@ import PeopleTab from '@/components/people/PeopleTab';
 import AccountingTransfers from '@/components/accounting/AccountingTransfers';
 import AccountingDocuments from '@/components/accounting/AccountingDocuments';
 import PayrollWizardNotesFab from '@/components/accounting/PayrollWizardNotesFab';
+import PayrollCycleGreetingModal from '@/components/accounting/PayrollCycleGreetingModal';
+import type { WizardJumpRequest } from '@/lib/payroll-wizard/step-jump';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -318,6 +320,20 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
     navigate('people');
   };
 
+  // The payroll-cycle greeting modal's buttons. Both land on the Payroll
+  // Wizard itself, never the Interns rail beside it. A jump goes in as a
+  // request the wizard applies once, when it's ready, through planWizardJump.
+  // It's offered only to edit-grant holders (the modal decides by `canJump`).
+  const [wizardJump, setWizardJump] = useState<WizardJumpRequest | null>(null);
+  const openPayrollWizard = () => {
+    if (wizardMode !== 'simple') switchWizardMode('simple');
+    navigate('payroll-wizard');
+  };
+  const goToWizardStep = (step: number, sourceFile: string | null) => {
+    setWizardJump({ step, sourceFile, nonce: Date.now() });
+    openPayrollWizard();
+  };
+
   useEffect(() => {
     if (!mobileNavOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -545,7 +561,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
                 strict
               >
                 <div className={cn('flex min-h-0 flex-1 flex-col', wizardMode !== 'simple' && 'hidden')}>
-                  <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} />
+                  <PayrollWizard sessionEmail={sessionEmail} sessionRole={roles[0] ?? null} initialData={initialData} jumpRequest={wizardJump} />
                 </div>
                 {internsVisited && (
                   <div className={cn('flex min-h-0 flex-1 flex-col overflow-y-auto', wizardMode !== 'interns' && 'hidden')}>
@@ -589,6 +605,26 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             <PayrollWizardNotesFab
               sessionEmail={sessionEmail}
               canEdit={canEditAccountingTab('payroll-wizard', roles, featurePerms)}
+            />
+          )}
+        {/* "Hi <name>" — the live payroll cycle's unfinished setup steps, once
+            per browser session (Kane 2026-09-26). Only for a viewer who can
+            open BOTH the Overview and the Payroll Wizard; the readiness route's
+            own payroll_wizard view gate still decides, and a refusal means it
+            never opens. Waits for perms + pages so a half-loaded grid can't
+            flash it at the wrong person. */}
+        {permsLoaded &&
+          pagesReady &&
+          sessionEmail &&
+          canAccessAccountingTabForUser('overview', roles, featurePerms) &&
+          visibilityOf('accounting', 'overview') === 'visible' &&
+          canAccessAccountingTabForUser('payroll-wizard', roles, featurePerms) &&
+          visibilityOf('accounting', 'payroll-wizard') === 'visible' && (
+            <PayrollCycleGreetingModal
+              viewerEmail={sessionEmail}
+              canJump={canEditAccountingTab('payroll-wizard', roles, featurePerms)}
+              onGoToStep={goToWizardStep}
+              onOpenWizard={openPayrollWizard}
             />
           )}
       </main>

@@ -90,6 +90,8 @@ See [RESPONSIVE-DESIGN.md](../design/responsive-design.md) for breakpoints, safe
 
 **RBAC tab gating** (no longer single-operator). On mount `App` fetches the viewer's roles (`GET /api/employee-roles`) and feature permissions (`GET /api/employee-feature-permissions`) in parallel, then computes `allowedAccountingTabsForUser(roles, featurePerms)`. `navigate()` and a settling effect bounce the user off any tab they cannot access (onto `allowedTabs[0]` or `payment-dispatch`), but only after `permsLoaded` flips so the initial render does not kick a non-admin off `overview`. `initialData` (from the server prefetch in `app/accounting/page.tsx`) lets Overview + PayrollWizard skip mount-time fetches.
 
+**Payroll cycle greeting modal** *(2026-09-26)*: `App` also mounts `accounting/PayrollCycleGreetingModal.tsx` ("Hi Kane" + the live cycle's unfinished Wizard Setup steps). It is gated on perms + pages loaded AND the Overview AND Payroll Wizard being accessible and visible. Its **Go to Step N** sets `wizardJump` (`{ step, sourceFile, nonce }`) → `<PayrollWizard jumpRequest>` via `goToWizardStep`, which also flips the wizard tab off the Interns rail. Jumps are offered only with the wizard's edit grant. See [payroll-cycle-greeting-modal.md](../features/payroll-cycle-greeting-modal.md).
+
 The `activeTab` cases are: `overview` -> `Overview`, `rates` -> `Rates`, `payroll-wizard` -> `PayrollWizard`, `payment-dispatch` -> `PayrollDispatch` (the same component the Payroll Clerk shell uses), `disputes` -> `PabDisputeQueue`, `mesa` -> `AccountingMesa`, `notifications` -> `NotificationsPanel`, `settings` -> `SystemSettings`, `announcements` -> a general announcement composer + wall, `s-wall` -> `SWall`. `canPostGeneral`/`isElevated` derive from roles to gate posting.
 
 ---
@@ -434,6 +436,8 @@ Triggered by trash icon. Shows the employee name + email. On confirm: calls `DEL
 ## `src/components/PayrollWizard.tsx`
 
 The core feature. A multi-step wizard for the weekly payroll cycle. Steps: Upload & Preview → Initial Calculation → Additions → Validation → HSL Payroll → Contractors → Dispatch.
+
+**`jumpRequest` prop** *(2026-09-26)*: an optional `{ step, sourceFile, nonce }` from the Accounting shell's greeting modal. One effect applies each `nonce` once, after the upload list has loaded, through `planWizardJump` (`src/lib/payroll-wizard/step-jump.ts`). A jump has exactly a rail click's power: it is refused while spectating (toast), steps outside 1..9 are refused, PAB (4) outside the payout week lands on 5, and the cycle switches only BACK to the newest upload, never into a replay.
 
 **Step navigation**: Left sidebar shows numbered steps with a `layoutId="active-indicator"` animated pill (Framer Motion) that slides between steps. Forward/back buttons in each step. Steps are rendered as `<motion.div>` wrappers inside `<AnimatePresence>` — entering steps slide in from the right (+x), exiting steps slide out to the left (-x), and the direction reverses when going back.
 
@@ -2007,6 +2011,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/accounting/HubstaffMasterMatchesModal.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) |
 | `src/components/accounting/PayProcessorsTab.tsx` | component | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) · [payment-catalog-pay-processors](../features/payment-catalog-pay-processors.md) |
 | `src/components/accounting/PaymentCatalogOverview.tsx` | component | [bonus-catalog](../features/bonus-catalog.md) |
+| `src/components/accounting/PayrollCycleGreetingModal.tsx` | component | *this file* · [payroll-cycle-greeting-modal](../features/payroll-cycle-greeting-modal.md) |
 | `src/components/accounting/PayrollNotesSetupCard.tsx` | component | *this file* · [accounting-overview-payroll-notes-card](../features/accounting-overview-payroll-notes-card.md) · [payroll-readiness](../features/payroll-readiness.md) |
 | `src/components/accounting/PayrollWizardNotesFab.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) · [hubstaff-zero-hours-gap](../features/hubstaff-zero-hours-gap.md) |
 | `src/components/accounting/SetBankDialog.tsx` | component | *this file* · [payroll-readiness](../features/payroll-readiness.md) · [people-offboarded-pay](../features/people-offboarded-pay.md) |
