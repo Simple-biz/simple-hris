@@ -151,6 +151,12 @@ export interface LeaderboardRow<M extends ApptRosterMember> {
   weeksScored: number;
   /** Scored weeks with appointments but no Hubstaff days — left out of `avgDaily` only. */
   weeksWithoutDays: number;
+  /**
+   * The window's totals per part, summed from the week rows' `parts` (PM Team's
+   * per-KPI split). Absent when no row in the window carried parts — every
+   * appointment row.
+   */
+  parts?: Record<string, number>;
   startDate: string | null;
   tenureMonths: number | null;
   tenure: string;
@@ -220,13 +226,21 @@ export function computeLeaderboard<M extends ApptRosterMember>(input: {
   const emailsOf = new Map<RosterPerson<M>, string[]>();
   for (const [email, p] of personByEmail) emailsOf.set(p, [...(emailsOf.get(p) ?? []), email]);
 
-  type Acc = { appts: number; weeks: Set<string>; dailyAppts: number; dailyDays: number; noDays: number };
+  type Acc = {
+    appts: number;
+    weeks: Set<string>;
+    dailyAppts: number;
+    dailyDays: number;
+    noDays: number;
+    parts: Map<string, number> | null;
+  };
   const acc = new Map<RosterPerson<M>, Acc>();
   const strangers = new Set<string>();
   for (const w of windowWeeks) {
     // One person may be scored under two emails in a week — sum the week first,
     // then look up the week's days once.
     const weekly = new Map<RosterPerson<M>, number>();
+    const weeklyParts = new Map<RosterPerson<M>, Map<string, number>>();
     for (const r of w.rows) {
       const p = personByEmail.get(r.email);
       if (!p) {
@@ -234,10 +248,21 @@ export function computeLeaderboard<M extends ApptRosterMember>(input: {
         continue;
       }
       weekly.set(p, (weekly.get(p) ?? 0) + r.appointments);
+      if (r.parts) {
+        const parts = weeklyParts.get(p) ?? new Map<string, number>();
+        for (const [k, n] of Object.entries(r.parts)) parts.set(k, (parts.get(k) ?? 0) + n);
+        weeklyParts.set(p, parts);
+      }
     }
     for (const [p, appts] of weekly) {
-      const a = acc.get(p) ?? { appts: 0, weeks: new Set<string>(), dailyAppts: 0, dailyDays: 0, noDays: 0 };
+      const a =
+        acc.get(p) ?? { appts: 0, weeks: new Set<string>(), dailyAppts: 0, dailyDays: 0, noDays: 0, parts: null };
       a.appts += appts;
+      const parts = weeklyParts.get(p);
+      if (parts) {
+        a.parts ??= new Map();
+        for (const [k, n] of parts) a.parts.set(k, (a.parts.get(k) ?? 0) + n);
+      }
       a.weeks.add(w.periodStart);
       let days = 0;
       for (const e of emailsOf.get(p) ?? []) days = Math.max(days, daysByKey.get(`${e}|${w.periodStart}`) ?? 0);
@@ -275,6 +300,7 @@ export function computeLeaderboard<M extends ApptRosterMember>(input: {
       daysWorked: a.dailyDays,
       weeksScored,
       weeksWithoutDays: a.noDays,
+      ...(a.parts ? { parts: Object.fromEntries(a.parts) } : {}),
       startDate: p.startDate,
       tenureMonths: p.startDate ? tenureMonths(p.startDate, input.todayIso) : null,
       tenure: tenureLabel(p.startDate, input.todayIso),

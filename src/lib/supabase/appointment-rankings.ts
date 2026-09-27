@@ -13,6 +13,7 @@
  * department's own managers, who can already open a draft week in the KPI
  * Calculator, and Kane asked for every week with a badge (Q3, 2026-09-26).
  */
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceRoleClient } from './server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { manilaTodayIso, sundayOf } from '@/lib/payroll/manila-week';
@@ -60,14 +61,29 @@ export async function getAppointmentRankings(
   // The applied read is the ranking itself: without it there is nothing honest to show.
   if (appliedErr) return empty(appliedErr);
 
-  // The badge reads fail SOFT — a failed read is `null`, which the pure module
-  // turns into "Couldn't check" on every scored week rather than a guess.
+  const { statuses, locks } = await readWeekBadgeInputs(supabase, key);
+  const { available, weeks } = buildAppointmentWeeks({ applied, statuses, locks, currentWeekStart });
+  return { available, currentWeekStart, weeks, error: null };
+}
+
+/**
+ * The two reads every week badge is decided from — the department's KPI status rows
+ * and the Payroll Wizard's lock settings. Shared with PM Team's KPI-item read
+ * (`deliverable-rankings.ts`) so the badge inputs exist once.
+ *
+ * Both fail SOFT: a failed read is `null`, which the pure `badgeWeeks` turns into
+ * "Couldn't check" on every scored week rather than a guess.
+ */
+export async function readWeekBadgeInputs(
+  supabase: SupabaseClient,
+  deptKey: string,
+): Promise<{ statuses: ApptStatusRow[] | null; locks: LockSettingRow[] | null }> {
   const [statusRes, lockRes] = await Promise.all([
     selectAllPaged<ApptStatusRow>((from, to) =>
       supabase
         .from('hsl_bonus_period_status')
         .select('period_start, status')
-        .eq('department', key)
+        .eq('department', deptKey)
         .order('period_start', { ascending: false })
         .range(from, to),
     ),
@@ -80,12 +96,8 @@ export async function getAppointmentRankings(
         .range(from, to),
     ),
   ]);
-
-  const { available, weeks } = buildAppointmentWeeks({
-    applied,
+  return {
     statuses: statusRes.error ? null : statusRes.rows,
     locks: lockRes.error ? null : lockRes.rows,
-    currentWeekStart,
-  });
-  return { available, currentWeekStart, weeks, error: null };
+  };
 }

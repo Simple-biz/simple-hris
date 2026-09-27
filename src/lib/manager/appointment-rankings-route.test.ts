@@ -23,6 +23,16 @@ const ROUTES = {
     ),
     read: 'getDepartmentDaysWorked(',
   },
+  // PM Team's bonus-ranked leaderboard (2026-09-26) — the same gate, the same order,
+  // for both of its reads.
+  deliverables: {
+    code: strip(readFileSync(path.join(ROOT, 'app', 'api', 'manager', 'deliverable-rankings', 'route.ts'), 'utf8')),
+    read: 'getDeliverableRankings(',
+  },
+  'deliverables daily': {
+    code: strip(readFileSync(path.join(ROOT, 'app', 'api', 'manager', 'deliverable-rankings', 'route.ts'), 'utf8')),
+    read: 'getDeliverableDailyRankings(',
+  },
 };
 
 describe('managed-department gate — My Team scope, not the SP Rankings doors', () => {

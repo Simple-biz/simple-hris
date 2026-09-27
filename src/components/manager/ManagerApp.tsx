@@ -54,6 +54,15 @@ import {
   type LeaderboardView,
 } from '@/components/manager/AppointmentLeaderboardPane';
 import type { DaysWorkedRow } from '@/lib/manager/appointment-averages';
+import {
+  DeliverableLeaderboardPane,
+  type DeliverableLeaderboardView,
+} from '@/components/manager/DeliverableLeaderboardPane';
+import {
+  ALL_METRIC,
+  type DeliverableDailyPayload,
+  type DeliverableRankingsPayload,
+} from '@/lib/manager/deliverable-rankings';
 import ManagerSidebar, { type ManagerTab } from './ManagerSidebar';
 import SchedulingPanel from './SchedulingPanel';
 import LeaveRequestsPanel from '@/components/LeaveRequestsPanel';
@@ -2388,6 +2397,25 @@ function TeamPanelInner({
   const [apptDays, setApptDays] = useState<DaysWorkedRow[] | null>(null);
   const [apptDaysError, setApptDaysError] = useState<string | null>(null);
   const [apptDaysFor, setApptDaysFor] = useState('');
+  /**
+   * PM Team's Rankings leaderboard (`docs/features/manager-pm-rankings.md`) — the same
+   * one Rankings pill, ranked by BONUS EARNED (Kane, 2026-09-26: *"based on their Bonus
+   * … without displaying it"*). The server reads the pesos, ranks on them and sends
+   * back KPI item counts plus POSITIONS only; nothing in this state carries a peso.
+   * Which departments have it is decided by the DATA (PM's KPI variables), never a list
+   * here. The daily read (days worked + the per-day order) is the slow one and loads in
+   * the background the first time the view is opened, exactly like Lead Gen's days.
+   */
+  const [deliv, setDeliv] = useState<DeliverableRankingsPayload | null>(null);
+  const [delivFor, setDelivFor] = useState('');
+  const [delivLoading, setDelivLoading] = useState(false);
+  const [delivView, setDelivView] = useState<DeliverableLeaderboardView>({
+    basis: 'weekly',
+    window: 'last3m',
+    metric: ALL_METRIC,
+  });
+  const [delivDaily, setDelivDaily] = useState<DeliverableDailyPayload | null>(null);
+  const [delivDailyFor, setDelivDailyFor] = useState('');
   // One read, passed to every SlidingTab and pane below. Reduced motion here means
   // the indicator stops TRAVELLING and panes stop rising — it never means the
   // selected state becomes invisible.
@@ -2893,13 +2921,90 @@ function TeamPanelInner({
     ? apptAvailable || (deptView === 'appointments' && apptError !== null)
     : deptView === 'appointments';
 
+  // PM Team's bonus-ranked leaderboard. Stamped with the label it was fetched FOR, like
+  // the appointment read, so one team's weeks never paint against another's roster.
+  useEffect(() => {
+    if (!activeDeptLabel) return;
+    let cancelled = false;
+    setDelivLoading(true);
+    fetch(`/api/manager/deliverable-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
+      cache: 'no-store',
+    })
+      .then((r) => r.json())
+      .then((j: Partial<DeliverableRankingsPayload>) => {
+        if (cancelled) return;
+        setDeliv({
+          available: !!j.available,
+          currentWeekStart: j.currentWeekStart ?? '',
+          weeks: j.weeks ?? [],
+          metrics: j.metrics ?? [],
+          skippedRows: j.skippedRows ?? 0,
+          order: j.order ?? null,
+          error: j.error ?? null,
+        });
+        setDelivFor(activeDeptLabel);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setDeliv({
+          available: false,
+          currentWeekStart: '',
+          weeks: [],
+          metrics: [],
+          skippedRows: 0,
+          order: null,
+          error: e.message,
+        });
+        setDelivFor(activeDeptLabel);
+      })
+      .finally(() => {
+        if (!cancelled) setDelivLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDeptLabel]);
+  const delivReady = delivFor === activeDeptLabel;
+  const deliverablesAvailable = delivReady && !!deliv?.available;
+
   // The Rankings pill is ONE pill whose content follows the data (Kane, Q1 → a):
-  // SP weeks → RankingsPane, appointment weeks → the leaderboard. While a new
-  // department's appointment read is in flight the view holds (the pane shows its
-  // loading state) instead of bouncing to People and back.
+  // SP weeks → RankingsPane, appointment weeks → the leaderboard, PM Team's KPI
+  // bonuses → the bonus-ranked leaderboard. While a new department's reads are in
+  // flight the view holds (a pane shows its loading state) instead of bouncing to
+  // People and back.
   const leaderboardAvailable = apptReady && apptAvailable;
   const rankingsViewAvailable =
-    rankingsAvailable || leaderboardAvailable || (deptView === 'rankings' && !apptReady);
+    rankingsAvailable ||
+    leaderboardAvailable ||
+    deliverablesAvailable ||
+    (deptView === 'rankings' && (!apptReady || !delivReady));
+  const rankingsHold =
+    !rankingsAvailable && !leaderboardAvailable && !deliverablesAvailable && (!apptReady || !delivReady);
+  const wantDelivDaily = deptView === 'rankings' && deliverablesAvailable;
+  useEffect(() => {
+    if (!wantDelivDaily || !activeDeptLabel || delivDailyFor === activeDeptLabel) return;
+    let cancelled = false;
+    setDelivDaily(null);
+    fetch(
+      `/api/manager/deliverable-rankings?department=${encodeURIComponent(activeDeptLabel)}&basis=daily`,
+      { cache: 'no-store' },
+    )
+      .then((r) => r.json())
+      .then((j: Partial<DeliverableDailyPayload>) => {
+        if (cancelled) return;
+        setDelivDaily({ days: j.days ?? [], order: j.order ?? null, error: j.error ?? null });
+        setDelivDailyFor(activeDeptLabel);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setDelivDaily({ days: [], order: null, error: e.message });
+        setDelivDailyFor(activeDeptLabel);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wantDelivDaily, activeDeptLabel, delivDailyFor]);
+  const delivDailyReady = delivDailyFor === activeDeptLabel && delivDaily !== null;
   const wantDays = deptView === 'rankings' && leaderboardAvailable;
   useEffect(() => {
     if (!wantDays || !activeDeptLabel || apptDaysFor === activeDeptLabel) return;
@@ -3600,11 +3705,11 @@ function TeamPanelInner({
               leaderboard, behind My Team's own department scope (not the SP doors
               above). If a team ever carried both kinds of data the two stack under
               the one pill rather than growing a second pill with the same name. */}
-          {(leaderboardAvailable || (!apptReady && !rankingsAvailable)) && (
+          {(leaderboardAvailable || rankingsHold) && (
             <div className={cn(rankingsAvailable && 'mt-6 border-t border-zinc-200 pt-6 dark:border-zinc-800')}>
               <AppointmentLeaderboardPane
-                weeks={apptReady ? apptWeeks : []}
-                weeksLoading={!apptReady || apptLoading}
+                weeks={leaderboardAvailable ? apptWeeks : []}
+                weeksLoading={rankingsHold || apptLoading}
                 weeksError={apptReady ? apptError : null}
                 days={daysReady ? apptDays : null}
                 daysError={daysReady ? apptDaysError : null}
@@ -3612,6 +3717,34 @@ function TeamPanelInner({
                 deptName={activeEntry?.name ?? 'department'}
                 view={leaderView}
                 onViewChange={setLeaderView}
+                onOpenMember={(m) => setSelectedMember(m)}
+              />
+            </div>
+          )}
+          {/* PM Team's Rankings: ranked by BONUS EARNED, showing KPI item counts only.
+              The pesos are read and ranked on the server; this payload carries counts
+              and positions, never an amount. Same My Team gate as the appointment
+              leaderboard; stacks under the one pill like every other Rankings pane. */}
+          {deliverablesAvailable && deliv && (
+            <div
+              className={cn(
+                (rankingsAvailable || leaderboardAvailable) && 'mt-6 border-t border-zinc-200 pt-6 dark:border-zinc-800',
+              )}
+            >
+              <DeliverableLeaderboardPane
+                weeks={deliv.weeks}
+                metrics={deliv.metrics}
+                skippedRows={deliv.skippedRows}
+                order={deliv.order}
+                weeksLoading={delivLoading && deliv.weeks.length === 0}
+                weeksError={deliv.error}
+                days={delivDailyReady && !delivDaily.error ? delivDaily.days : null}
+                dailyOrder={delivDailyReady ? delivDaily.order : null}
+                daysError={delivDailyReady ? delivDaily.error : null}
+                members={apptMembers}
+                deptName={activeEntry?.name ?? 'department'}
+                view={delivView}
+                onViewChange={setDelivView}
                 onOpenMember={(m) => setSelectedMember(m)}
               />
             </div>

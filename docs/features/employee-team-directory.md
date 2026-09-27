@@ -225,10 +225,22 @@ placeholder identity.
 
 ### Which departments get a Rankings tab
 
-`hasSpRankings()` tests the **data** — does any applied row carry a `vars.SP` key —
-rather than a hardcoded department list. A second team put on the same bonus shape
-lights up with no code change. Scoping (who may *read* whose department) is enforced
+`hasSpRankings()` tests the **data**, never a hardcoded department list: does any
+applied row have the AI Team Bonus shape, i.e. carry **both `vars.SP` and
+`vars.Ranking`** (`isSpRankingRow`). A second team put on the same bonus shape lights
+up with no code change. Scoping (who may *read* whose department) is enforced
 separately in the route.
+
+**`SP` alone is not the shape (2026-09-26, measured read-only).** Until then the test
+was "any `vars.SP` key". PM Team's **"Scott Cameron"** manager bonus writes one row a
+week with 15–17 keys of team totals, `SP` among them, so PM Team lit up. Its Rankings
+pane listed every one of its ~360 weekly KPI rows (each person about 8 times) at SP 0,
+for 12 weeks, to the 8 PM Team grant holders on Manager → My Team. For the same reason
+`buildRankingWeeks` now ranks **only** SP-ranking rows. AI/API Team's "AI Team (TEMP
+BONUS)" rows (`{ AI_Bonus }`) had been ranked at SP 0, which made **2026-09-13** an
+all-zero week ranked by name, and it was the week the pane opened on. A week with no
+SP-ranking row no longer appears, so AI/API opens on 09-06. Tests pin both. PM Team's
+real ranking is its own view: [manager-pm-rankings.md](./manager-pm-rankings.md).
 
 That is still true after the 2026-08-29 allow-list: it gates the **viewer**, never
 the department, so the "second team lights up" property survives. Such a team would

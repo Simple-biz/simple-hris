@@ -204,4 +204,54 @@ describe('computeLeaderboard', () => {
   it('carries tenure from the roster (current stint)', () => {
     assert.equal(run('weekly').rows.find((r) => r.name === 'Ann')!.tenure, '1y 8m');
   });
+
+  it('appointment rows carry no parts, so a Lead Gen row has no breakdown field', () => {
+    for (const r of run('weekly').rows) assert.equal('parts' in r, false);
+  });
+
+  it('sums a row breakdown (PM Team "All KPIs") over the WINDOW only, across a person\'s emails', () => {
+    const withParts: AppointmentWeek[] = [
+      {
+        periodStart: '2026-09-13',
+        periodEnd: '',
+        badge: 'with_accounting',
+        rows: [
+          { email: 'ann@gmail.com', appointments: 3, parts: { TrustPilot: 1, Units: 2 } },
+          { email: 'ann@simple.biz', appointments: 1.5, parts: { Units: 1.5 } },
+        ],
+      },
+      {
+        periodStart: '2026-09-06',
+        periodEnd: '',
+        badge: 'with_accounting',
+        rows: [{ email: 'ann@gmail.com', appointments: 2, parts: { BBB: 2 } }],
+      },
+      {
+        periodStart: '2026-08-30',
+        periodEnd: '',
+        badge: 'with_accounting',
+        rows: [{ email: 'ann@gmail.com', appointments: 9, parts: { BBB: 9 } }],
+      },
+    ];
+    const lb = computeLeaderboard({
+      weeks: withParts.slice(0, 2),
+      days: [],
+      members: [ann],
+      basis: 'weekly',
+      window: 'all',
+      todayIso: '2026-09-26',
+    });
+    assert.deepEqual(lb.rows[0]!.parts, { TrustPilot: 1, Units: 3.5, BBB: 2 });
+    assert.equal(lb.rows[0]!.totalAppointments, 6.5);
+
+    const all = computeLeaderboard({
+      weeks: withParts,
+      days: [],
+      members: [ann],
+      basis: 'weekly',
+      window: 'last4w',
+      todayIso: '2026-09-26',
+    });
+    assert.deepEqual(all.rows[0]!.parts, { TrustPilot: 1, Units: 3.5, BBB: 11 });
+  });
 });

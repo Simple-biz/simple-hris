@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 import {
   buildRankingWeeks,
   hasSpRankings,
+  isSpRankingRow,
   type AppliedRow,
   type StatusRow,
 } from './team-rankings';
@@ -29,6 +30,10 @@ function applied(over: Partial<AppliedRow> & { employee_email: string }): Applie
     ...over,
   };
 }
+
+// 2026-09-26, measured read-only: PM Team's "Scott Cameron" manager bonus carries
+// SP among 15–17 team-total keys, and lit up a Rankings pane of ~360 SP-0 rows a week.
+const SCOTT = { FB: 3, SP: 12, BBB: 5, TransUnion: 9, TrustPilot: 7, SmartCustomer: 4, Emails: 4 };
 
 const readyStatus: StatusRow = {
   department: 'devs',
@@ -187,5 +192,48 @@ describe('team rankings — which departments get the tab', () => {
     assert.equal(hasSpRankings([{ vars: { tickets: 12 } }]), false);
     assert.equal(hasSpRankings([{ vars: null }]), false);
     assert.equal(hasSpRankings([]), false);
+  });
+
+  it('an SP key WITHOUT the Ranking tier flag is not the AI Team Bonus shape', () => {
+    assert.equal(hasSpRankings([{ vars: SCOTT }, { vars: { TrustPilot: 1 } }]), false);
+    assert.equal(isSpRankingRow(SCOTT), false);
+    assert.equal(isSpRankingRow({ SP: 3, Ranking: 0, Project_SP: 0 }), true);
+    assert.equal(isSpRankingRow({ AI_Bonus: 500 }), false);
+    assert.equal(isSpRankingRow(null), false);
+  });
+});
+
+describe('team rankings — only SP-ranking rows are ranked', () => {
+  it('drops another bonus on the same week instead of ranking it at SP 0', () => {
+    const weeks = buildRankingWeeks(
+      [
+        applied({ employee_email: 'a@simple.biz', employee_name: 'Ann', vars: { SP: 40, Ranking: 1, Project_SP: 0 } }),
+        applied({ employee_email: 'a@simple.biz', employee_name: 'Ann', bonus_name: 'AI Team (TEMP BONUS)', vars: { AI_Bonus: 500 } }),
+        applied({ employee_email: 's@simple.biz', employee_name: 'Scott', bonus_name: 'Scott Cameron', vars: SCOTT }),
+      ],
+      [readyStatus],
+    );
+    assert.equal(weeks.length, 1);
+    assert.deepEqual(
+      weeks[0]!.rows.map((r) => [r.position, r.email, r.sp]),
+      [[1, 'a@simple.biz', 40]],
+      'one row per SP score — never a duplicate person or a manager at SP 12',
+    );
+  });
+
+  it('a week scored ONLY on a non-SP bonus does not appear (AI/API 2026-09-13, TEMP BONUS)', () => {
+    const weeks = buildRankingWeeks(
+      [
+        applied({ employee_email: 'a@simple.biz', vars: { SP: 10, Ranking: 0, Project_SP: 0 } }),
+        applied({
+          employee_email: 'a@simple.biz',
+          period_start: '2026-08-09',
+          bonus_name: 'AI Team (TEMP BONUS)',
+          vars: { AI_Bonus: 500 },
+        }),
+      ],
+      [readyStatus, { ...readyStatus, period_start: '2026-08-09', period_end: '2026-08-15' }],
+    );
+    assert.deepEqual(weeks.map((w) => w.periodStart), [WEEK]);
   });
 });

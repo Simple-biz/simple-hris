@@ -73,6 +73,12 @@ export interface AppointmentWeekRow {
   /** Lower-cased, as stored (personal-email-first canonical). */
   email: string;
   appointments: number;
+  /**
+   * What `appointments` is made of, when it is a sum — PM Team's "All KPIs" count
+   * carries its per-KPI split here (`deliverable-rankings.ts`). Appointment rows
+   * never set it. Counts only, never pesos.
+   */
+  parts?: Readonly<Record<string, number>>;
 }
 
 export interface AppointmentWeek {
@@ -200,41 +206,65 @@ export function buildAppointmentWeeks(input: {
   }
   if (byWeek.size === 0) return { available: false, weeks: [] };
 
+  const scored = new Map<string, { periodEnd: string; rows: AppointmentWeekRow[] }>();
+  for (const [periodStart, w] of byWeek) {
+    scored.set(periodStart, {
+      periodEnd: w.periodEnd,
+      rows: [...w.byEmail.entries()]
+        .map(([email, appointments]) => ({ email, appointments }))
+        .sort((a, b) => b.appointments - a.appointments || a.email.localeCompare(b.email)),
+    });
+  }
+  return { available: true, weeks: badgeWeeks({ ...input, scored }) };
+}
+
+/**
+ * Scored weeks → badged weeks, newest first. Shared by every count view on My Team
+ * (appointments, and PM Team's KPI items — `deliverable-rankings.ts`), so the badge
+ * order and the fill-forward rule exist exactly once.
+ *
+ * `statuses` / `locks` are `null` when their read FAILED (see
+ * {@link buildAppointmentWeeks}). Every week from the newest scored week up to
+ * `currentWeekStart` is listed; an unscored one gets no rows and `not_scored`.
+ */
+export function badgeWeeks<R>(input: {
+  scored: ReadonlyMap<string, { periodEnd: string; rows: R[] }>;
+  statuses: readonly ApptStatusRow[] | null;
+  locks: readonly LockSettingRow[] | null;
+  currentWeekStart: string;
+}): { periodStart: string; periodEnd: string; badge: AppointmentWeekBadge; rows: R[] }[] {
+  const byWeek = new Map(input.scored);
+  if (byWeek.size === 0) return [];
+
   // Fill forward from the newest scored week to the current week. Bounded so a
   // bad clock can never spin.
   const starts = [...byWeek.keys()].sort();
   let cursor = starts[starts.length - 1]!;
   for (let i = 0; i < 60 && cursor < input.currentWeekStart; i += 1) {
     cursor = addWeeks(cursor, 1);
-    if (!byWeek.has(cursor)) byWeek.set(cursor, { periodEnd: weekEndFromStart(cursor), byEmail: new Map() });
+    if (!byWeek.has(cursor)) byWeek.set(cursor, { periodEnd: weekEndFromStart(cursor), rows: [] });
   }
 
   const statusByWeek = new Map<string, string>();
   for (const s of input.statuses ?? []) statusByWeek.set(s.period_start, s.status);
   const lockInfo = input.locks ? finalizedWeeks(input.locks) : null;
+  const earliest = lockInfo?.earliestRecord ?? null;
 
-  const weeks: AppointmentWeek[] = [...byWeek.entries()]
+  return [...byWeek.entries()]
     .sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0))
-    .map(([periodStart, w]) => {
-      const rows = [...w.byEmail.entries()]
-        .map(([email, appointments]) => ({ email, appointments }))
-        .sort((a, b) => b.appointments - a.appointments || a.email.localeCompare(b.email));
-      const earliest = lockInfo?.earliestRecord ?? null;
-      return {
-        periodStart,
-        periodEnd: w.periodEnd,
-        badge: weekBadge({
-          hasRows: rows.length > 0,
-          status: statusByWeek.get(periodStart) ?? null,
-          finalized: lockInfo?.finalized.has(periodStart) ?? false,
-          beforeLockRecord: earliest !== null && periodStart < earliest,
-          statusReadFailed: input.statuses === null,
-          lockReadFailed: input.locks === null,
-        }),
-        rows,
-      };
-    });
-  return { available: true, weeks };
+    .map(([periodStart, w]) => ({
+      periodStart,
+      periodEnd: w.periodEnd,
+      badge: weekBadge({
+        hasRows: w.rows.length > 0,
+        status: statusByWeek.get(periodStart) ?? null,
+        finalized: lockInfo?.finalized.has(periodStart) ?? false,
+        beforeLockRecord: earliest !== null && periodStart < earliest,
+        statusReadFailed: input.statuses === null,
+        lockReadFailed: input.locks === null,
+      }),
+      rows: w.rows,
+    }));
 }
 
 export interface AppointmentMonth {

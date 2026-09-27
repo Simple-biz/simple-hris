@@ -11,7 +11,7 @@ week that is not yet finalized by Accounting. Built for the department's own man
 
 | Piece | File |
 | --- | --- |
-| Every rule (pure, tested) | `src/lib/manager/appointment-rankings.ts` · `.test.ts` |
+| Every rule (pure, tested) | `src/lib/manager/appointment-rankings.ts` · `.test.ts` — `weekBadge` / fill-forward live in `badgeWeeks`, which PM Team's Rankings ([manager-pm-rankings.md](./manager-pm-rankings.md)) also calls, so the badge order below is one rule for both |
 | The reads (fetch only; projection pinned) | `src/lib/supabase/appointment-rankings.ts` · `.test.ts` |
 | Route | `app/api/manager/appointment-rankings/route.ts` |
 | The gate (shared with the Rankings leaderboard) | `src/lib/manager/managed-department-gate.ts` · guard test `src/lib/manager/appointment-rankings-route.test.ts` |

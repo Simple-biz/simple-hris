@@ -92,13 +92,28 @@ function toTier(v: unknown): RankTier {
 }
 
 /**
+ * True when one applied row is an SP-ranking row: the AI Team Bonus shape, which
+ * carries BOTH `SP` and the `Ranking` tier flag.
+ *
+ * `SP` alone is not enough (2026-09-26, measured read-only). PM Team's "Scott
+ * Cameron" manager bonus writes one row a week with 15–17 keys of team totals,
+ * `SP` among them, and that lit up a Rankings pane for PM Team listing every one of
+ * its ~360 weekly KPI rows at SP 0. AI/API Team's "AI Team (TEMP BONUS)" rows
+ * (`{ AI_Bonus }`) were likewise ranked as SP 0, and made 2026-09-13 an
+ * all-zero week ranked by name.
+ */
+export function isSpRankingRow(vars: Record<string, unknown> | null | undefined): boolean {
+  return vars != null && 'SP' in vars && 'Ranking' in vars;
+}
+
+/**
  * True when a department's KPI rows carry SP-style rankings. Driven by the data
- * itself (a `vars.SP` key), not a hardcoded department list, so a second team
- * adopting the same bonus shape lights up without a code change. The route still
- * scopes WHO may read it.
+ * itself (an {@link isSpRankingRow} row), not a hardcoded department list, so a
+ * second team adopting the same bonus shape lights up without a code change. The
+ * route still scopes WHO may read it.
  */
 export function hasSpRankings(rows: { vars: Record<string, unknown> | null }[]): boolean {
-  return rows.some((r) => r.vars != null && 'SP' in r.vars);
+  return rows.some((r) => isSpRankingRow(r.vars));
 }
 
 /**
@@ -106,8 +121,11 @@ export function hasSpRankings(rows: { vars: Record<string, unknown> | null }[]):
  * thin fetch around this, so every visibility and ordering rule is unit-testable
  * without a database (`team-rankings.test.ts`).
  *
- * Drops: rows whose week is missing a status row or is still `draft`, and rows
- * with no employee email. Sorts weeks newest-first and rows by SP descending.
+ * Drops: rows that are not SP-ranking rows ({@link isSpRankingRow} — another
+ * bonus's row is not a 0-SP score), rows whose week is missing a status row or is
+ * still `draft`, and rows with no employee email. A week none of whose rows is an
+ * SP-ranking row therefore does not appear. Sorts weeks newest-first and rows by
+ * SP descending.
  */
 export function buildRankingWeeks(
   applied: AppliedRow[],
@@ -120,6 +138,7 @@ export function buildRankingWeeks(
 
   const byWeek = new Map<string, TeamRankingWeek>();
   for (const r of applied) {
+    if (!isSpRankingRow(r.vars)) continue; // a TEMP BONUS or manager row is not an SP score
     const status = statusByStart.get(r.period_start);
     if (!status) continue; // draft or missing — a week mid-scoring stays private
     const email = (r.employee_email ?? '').trim().toLowerCase();

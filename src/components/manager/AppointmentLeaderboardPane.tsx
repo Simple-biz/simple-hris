@@ -12,8 +12,13 @@
  * - **No money values** (Kane, 2026-09-26). Counts and averages of counts only.
  * - Basis and window are owned by the PARENT — My Team panes unmount on every
  *   view switch, and the manager should come back to what they were looking at.
+ * - **Two callers, one pane.** PM Team's KPI-item leaderboard
+ *   (`DeliverableLeaderboardPane.tsx`, doc `manager-pm-rankings.md`) renders THIS
+ *   component with its own `unit`, a KPI picker in `controls` and a per-KPI
+ *   breakdown via `partLabels` — extracted, not copied, so "no money values" is
+ *   enforced in one place. Every such prop defaults to the appointment wording.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { ChevronDown, Crown, Info, Medal, UserMinus, WifiOff } from 'lucide-react';
 import { TeamAvatar } from '@/components/team/team-ui';
@@ -57,6 +62,19 @@ const PODIUM = [
 function fmt(n: number | null, basis: AverageBasis): string {
   return n === null ? '—' : n.toFixed(BASIS_DECIMALS[basis]);
 }
+
+/** A total count: whole numbers as they are, half credits (PM Team's Units) to one decimal. */
+function fmtCount(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
+}
+
+/** What the counted thing is called, in the header, podium, tooltips and footnote. */
+export interface LeaderboardUnit {
+  one: string;
+  many: string;
+}
+
+const APPOINTMENTS: LeaderboardUnit = { one: 'appointment', many: 'appointments' };
 
 function dateLabel(iso: string, withYear: boolean): string {
   const [y, m, d] = iso.split('-').map(Number);
@@ -125,6 +143,13 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   view,
   onViewChange,
   onOpenMember,
+  unit = APPOINTMENTS,
+  controls,
+  partLabels,
+  notes,
+  animationKey,
+  reorder,
+  rankNote,
 }: {
   weeks: AppointmentWeek[];
   weeksLoading: boolean;
@@ -137,6 +162,27 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   view: LeaderboardView;
   onViewChange: (next: LeaderboardView) => void;
   onOpenMember?: (member: M) => void;
+  /** Defaults to appointments. */
+  unit?: LeaderboardUnit;
+  /** Extra controls, rendered before the basis / window toggles (PM Team's KPI picker). */
+  controls?: ReactNode;
+  /** Labels for a row's `parts`, in display order — shows the breakdown under each name. */
+  partLabels?: Readonly<Record<string, string>>;
+  /** Extra footnote lines, above the method note. */
+  notes?: ReactNode;
+  /** Replays the entrance when it changes (PM Team: the chosen KPI). */
+  animationKey?: string;
+  /**
+   * Re-orders the computed rows — PM Team puts them in the server's BONUS order
+   * (positions only; the pesos never reach the browser). The shown figures do not
+   * change. Must be referentially stable. Returns how many rows it could not place.
+   */
+  reorder?: (
+    rows: LeaderboardRow<M>[],
+    ctx: { basis: AverageBasis; window: AverageWindow },
+  ) => { rows: LeaderboardRow<M>[]; unplaced: number };
+  /** What the order is based on, when it is not the shown average (PM Team: bonus earned). */
+  rankNote?: string;
 }) {
   const reduce = useReducedMotion() ?? false;
   const today = manilaTodayIso();
@@ -146,18 +192,19 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   // state, never a half-computed order; only a FAILED read falls back to weekly,
   // and the toggle then shows Weekly so the header never names the wrong basis.
   const basis: AverageBasis = view.basis === 'daily' && daysFailed ? 'weekly' : view.basis;
-  const board = useMemo(
-    () =>
-      computeLeaderboard({
-        weeks,
-        days: daysUsable ? days : null,
-        members,
-        window: view.window,
-        basis,
-        todayIso: today,
-      }),
-    [weeks, days, daysUsable, members, view.window, basis, today],
-  );
+  const board = useMemo(() => {
+    const computed = computeLeaderboard({
+      weeks,
+      days: daysUsable ? days : null,
+      members,
+      window: view.window,
+      basis,
+      todayIso: today,
+    });
+    if (!reorder) return { ...computed, unplaced: 0 };
+    const ordered = reorder(computed.rows, { basis, window: view.window });
+    return { ...computed, rows: ordered.rows, unplaced: ordered.unplaced };
+  }, [weeks, days, daysUsable, members, view.window, basis, today, reorder]);
 
   if (weeksLoading && weeks.length === 0) {
     return (
@@ -204,11 +251,15 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-100/80 bg-white px-3 py-2 shadow-sm dark:border-blue-950/60 dark:bg-[#0d1117]">
         <div className="min-w-0">
           <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-            Top performers · average appointments {BASIS_UNIT[basis]}
+            Top performers · average {unit.many} {BASIS_UNIT[basis]}
           </p>
-          <p className="truncate text-[11px] text-zinc-500">{range}</p>
+          <p className="truncate text-[11px] text-zinc-500">
+            {rankNote && <span className="font-medium text-zinc-600 dark:text-zinc-300">{rankNote} · </span>}
+            {range}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {controls}
           <Segmented
             label="Average"
             value={basis}
@@ -251,14 +302,21 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
         </div>
       ) : (
         <motion.div
-          key={`${view.window}:${basis}`}
+          key={`${animationKey ?? ''}:${view.window}:${basis}`}
           initial={reduce ? { opacity: 0 } : { opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: reduce ? 0.1 : 0.2, ease: EASE }}
           className="space-y-3"
         >
-          <Podium rows={board.rows.slice(0, 3)} basis={basis} onOpenMember={onOpenMember} />
-          <LeaderTable rows={board.rows} basis={basis} daysLoading={daysPending} onOpenMember={onOpenMember} />
+          <Podium rows={board.rows.slice(0, 3)} basis={basis} unit={unit} onOpenMember={onOpenMember} />
+          <LeaderTable
+            rows={board.rows}
+            basis={basis}
+            unit={unit}
+            partLabels={partLabels}
+            daysLoading={daysPending}
+            onOpenMember={onOpenMember}
+          />
         </motion.div>
       )}
 
@@ -290,6 +348,15 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
             names={noDays.map((r) => r.name)}
           />
         )}
+        {board.unplaced > 0 && (
+          <p className="flex items-start gap-1.5">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              {board.unplaced} {board.unplaced === 1 ? 'person' : 'people'} couldn&rsquo;t be placed in the ranking
+              order and {board.unplaced === 1 ? 'is' : 'are'} listed last.
+            </span>
+          </p>
+        )}
         {board.notOnRoster > 0 && (
           <p className="flex items-center gap-1.5">
             <UserMinus className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -297,9 +364,10 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
             {board.notOnRoster === 1 ? 'is' : 'are'} no longer on the {deptName} roster and not ranked.
           </p>
         )}
+        {notes}
         <p className="pt-1 text-[11px] leading-relaxed">
-          Only weeks Accounting has received or finalized are averaged. Per day = appointments ÷ days with Hubstaff
-          time. Per week = appointments ÷ weeks scored. Per month = per week × 52 ÷ 12.
+          Only weeks Accounting has received or finalized are averaged. Per day = {unit.many} ÷ days with Hubstaff
+          time. Per week = {unit.many} ÷ weeks scored. Per month = per week × 52 ÷ 12.
         </p>
       </div>
     </div>
@@ -331,10 +399,12 @@ function valueOf<M extends ApptRosterMember>(r: LeaderboardRow<M>, basis: Averag
 function Podium<M extends ApptRosterMember>({
   rows,
   basis,
+  unit,
   onOpenMember,
 }: {
   rows: LeaderboardRow<M>[];
   basis: AverageBasis;
+  unit: LeaderboardUnit;
   onOpenMember?: (member: M) => void;
 }) {
   return (
@@ -363,7 +433,7 @@ function Podium<M extends ApptRosterMember>({
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">{r.name}</span>
                 <span className="block text-[11px] text-zinc-500">
-                  {r.totalAppointments} appointments · {r.tenure}
+                  {fmtCount(r.totalAppointments)} {r.totalAppointments === 1 ? unit.one : unit.many} · {r.tenure}
                 </span>
               </span>
               <span className="shrink-0 text-right">
@@ -380,14 +450,27 @@ function Podium<M extends ApptRosterMember>({
   );
 }
 
+/** "Sales & Referrals 4.5 · TransUnion 3" — non-zero parts only, in label order. */
+function partsLine(parts: Readonly<Record<string, number>> | undefined, labels: Readonly<Record<string, string>>): string {
+  if (!parts) return '';
+  return Object.keys(labels)
+    .filter((k) => (parts[k] ?? 0) > 0)
+    .map((k) => `${labels[k]} ${fmtCount(parts[k]!)}`)
+    .join(' · ');
+}
+
 function LeaderTable<M extends ApptRosterMember>({
   rows,
   basis,
+  unit,
+  partLabels,
   daysLoading,
   onOpenMember,
 }: {
   rows: LeaderboardRow<M>[];
   basis: AverageBasis;
+  unit: LeaderboardUnit;
+  partLabels?: Readonly<Record<string, string>>;
   daysLoading: boolean;
   onOpenMember?: (member: M) => void;
 }) {
@@ -435,14 +518,21 @@ function LeaderTable<M extends ApptRosterMember>({
                   <td className="px-3 py-2">
                     <div className="flex min-w-0 items-center gap-2.5">
                       <TeamAvatar name={r.name} email={email} size="sm" />
-                      <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">{r.name}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-zinc-900 dark:text-zinc-100">{r.name}</span>
+                        {partLabels && (
+                          <span className="block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {partsLine(r.parts, partLabels) || `No ${unit.many} in this window`}
+                          </span>
+                        )}
+                      </span>
                     </div>
                   </td>
                   <td
                     className={col('daily')}
                     title={
                       r.weeksWithoutDays > 0
-                        ? `${r.weeksWithoutDays} week(s) had appointments but no Hubstaff days and are left out of the daily average`
+                        ? `${r.weeksWithoutDays} week(s) had ${unit.many} but no Hubstaff days and are left out of the daily average`
                         : undefined
                     }
                   >
@@ -451,7 +541,9 @@ function LeaderTable<M extends ApptRosterMember>({
                   </td>
                   <td className={col('weekly')}>{fmt(r.avgWeekly, 'weekly')}</td>
                   <td className={col('monthly')}>{fmt(r.avgMonthly, 'monthly')}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">{r.totalAppointments}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
+                    {fmtCount(r.totalAppointments)}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-zinc-600 dark:text-zinc-400">
                     {daysLoading ? '…' : r.daysWorked}
                   </td>
