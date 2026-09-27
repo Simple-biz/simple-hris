@@ -20,6 +20,7 @@
  */
 import { useCallback, useMemo } from 'react';
 import { AppointmentLeaderboardPane, type LeaderboardView } from '@/components/manager/AppointmentLeaderboardPane';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import type { AverageBasis, AverageWindow, DaysWorkedRow, LeaderboardRow } from '@/lib/manager/appointment-averages';
 import type { ApptRosterMember } from '@/lib/manager/appointment-rankings';
 import {
@@ -82,6 +83,10 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
     [order, dailyOrder, metric],
   );
   const label = metric === ALL_METRIC ? null : (labels[metric] ?? metric);
+  const metricOptions = useMemo(
+    () => [{ value: ALL_METRIC, label: 'All bonuses' }, ...metrics.map((m) => ({ value: m.key, label: m.label }))],
+    [metrics],
+  );
 
   return (
     <AppointmentLeaderboardPane
@@ -101,21 +106,21 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       reorder={reorder}
       rankNote={label ? `Ranked by ${label} bonus earned · amounts hidden` : 'Ranked by bonus earned · amounts hidden'}
       controls={
-        <label className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">KPI</span>
-          <select
-            value={metric}
-            onChange={(e) => onViewChange({ ...view, metric: e.target.value })}
-            className="rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-semibold text-zinc-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
-          >
-            <option value={ALL_METRIC}>All bonuses</option>
-            {metrics.map((m) => (
-              <option key={m.key} value={m.key}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        // The house dropdown, compact and blue so it reads as one set with the
+        // Average / Window toggles beside it. Left-aligned so a long bonus name
+        // opens toward the toggles, never off the left edge on a phone.
+        <SmoothSelect
+          aria-label="KPI"
+          leading="KPI"
+          size="sm"
+          accent="blue"
+          align="start"
+          value={metric}
+          onChange={(next) => onViewChange({ ...view, metric: next })}
+          options={metricOptions}
+          className="w-full sm:w-auto"
+          triggerClassName="w-full min-w-[11.5rem] sm:w-[13.5rem]"
+        />
       }
       notes={
         skippedRows > 0 ? (

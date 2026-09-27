@@ -155,6 +155,9 @@ interface ManagerRosterPayload {
 
 /** Stable empty roster, so `teamMembers` keeps its identity across renders. */
 const NO_TEAM_MEMBERS: EmployeeRow[] = [];
+/** Stable empties for the per-department Rankings data (the panes memoise on them). */
+const NO_RANKING_WEEKS: TeamRankingWeek[] = [];
+const NO_APPOINTMENT_WEEKS: AppointmentWeek[] = [];
 
 /** One `/api/offboarding-queue` row, as the My Team badges read it. */
 interface OffboardOutboxRow {
@@ -2353,10 +2356,11 @@ function TeamPanelInner({
    * Reusing that route rather than writing a manager-specific read is deliberate:
    * its projection deliberately omits `amount`, and the test pinning that projection
    * string is what keeps pay off this surface too.
+   *
+   * The DATA for this and the three views below is cached per department and
+   * declared after `activeDeptLabel` (its key needs the label); only the view state
+   * lives here.
    */
-  const [rankingWeeks, setRankingWeeks] = useState<TeamRankingWeek[]>([]);
-  const [rankingsLoading, setRankingsLoading] = useState(false);
-  const [rankingsError, setRankingsError] = useState<string | null>(null);
   const [rankingWeekIndex, setRankingWeekIndex] = useState(0);
   const [rankingDir, setRankingDir] = useState(1);
   /**
@@ -2374,10 +2378,6 @@ function TeamPanelInner({
    * The view state lives here, not in the pane: panes unmount on every view switch,
    * and the manager should come back to the week and sort they left.
    */
-  const [apptWeeks, setApptWeeks] = useState<AppointmentWeek[]>([]);
-  const [apptAvailable, setApptAvailable] = useState(false);
-  const [apptLoading, setApptLoading] = useState(false);
-  const [apptError, setApptError] = useState<string | null>(null);
   const [apptView, setApptView] = useState<AppointmentRankView>({
     mode: 'week',
     index: 0,
@@ -2394,9 +2394,6 @@ function TeamPanelInner({
    * in the background for the Daily toggle. No money values, anywhere.
    */
   const [leaderView, setLeaderView] = useState<LeaderboardView>({ basis: 'weekly', window: 'last3m' });
-  const [apptDays, setApptDays] = useState<DaysWorkedRow[] | null>(null);
-  const [apptDaysError, setApptDaysError] = useState<string | null>(null);
-  const [apptDaysFor, setApptDaysFor] = useState('');
   /**
    * PM Team's Rankings leaderboard (`docs/features/manager-pm-rankings.md`) — the same
    * one Rankings pill, ranked by BONUS EARNED (Kane, 2026-09-26: *"based on their Bonus
@@ -2406,16 +2403,11 @@ function TeamPanelInner({
    * here. The daily read (days worked + the per-day order) is the slow one and loads in
    * the background the first time the view is opened, exactly like Lead Gen's days.
    */
-  const [deliv, setDeliv] = useState<DeliverableRankingsPayload | null>(null);
-  const [delivFor, setDelivFor] = useState('');
-  const [delivLoading, setDelivLoading] = useState(false);
   const [delivView, setDelivView] = useState<DeliverableLeaderboardView>({
     basis: 'weekly',
     window: 'last3m',
     metric: ALL_METRIC,
   });
-  const [delivDaily, setDelivDaily] = useState<DeliverableDailyPayload | null>(null);
-  const [delivDailyFor, setDelivDailyFor] = useState('');
   // One read, passed to every SlidingTab and pane below. Reduced motion here means
   // the indicator stops TRAVELLING and panes stop rising — it never means the
   // selected state becomes invisible.
@@ -2844,73 +2836,109 @@ function TeamPanelInner({
   // For every non-HSL department `formatDeptLabel` is a no-op, so the entry name IS
   // the raw cell.
   const activeDeptLabel = activeEntry?.name ?? '';
+
+  // ── Per-department Rankings data, cached (`manager-dashboard-cache.md`) ──
+  //
+  // Kane, 2026-09-27: *"add proper caching on this please so when I go to other
+  // departments it wont have to load the data again"*. Every dataset below is keyed
+  // by the RAW department label, so going back to a department RESEEDS from that
+  // department's own entry during render — it paints at once, with no skeleton —
+  // and survives a tab switch and a reload like every other `mgr-tab:` dataset.
+  //
+  // **A cached value paints; it never decides.** Each fetch effect still runs on
+  // every visit and overwrites its entry (stale-while-revalidate). There is no
+  // "already loaded, skip it" path: KPI weeks are re-scored by other managers.
+  //
+  // `null` = nothing known for this department yet — the ONLY state that shows a
+  // loading hold. Only a SUCCESSFUL read is cached; a failed one writes `null` back
+  // (drops the entry) and records its error in plain state stamped with the label
+  // (`…For`), so a previous answer never sits under an error banner. Late responses
+  // for a department the manager has left are dropped by each effect's `cancelled`.
+  const [spRankings, setSpRankings] = useManagerCachedState<{ weeks: TeamRankingWeek[] } | null>(
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptSpRankings(activeDeptLabel) : null,
+    null,
+  );
+  const [rankingsError, setRankingsError] = useState<string | null>(null);
+  const rankingWeeks = spRankings?.weeks ?? NO_RANKING_WEEKS;
+  const rankingsLoading = spRankings === null;
   useEffect(() => {
-    if (!activeDeptLabel) {
-      setRankingWeeks([]);
-      return;
-    }
+    if (!activeDeptLabel) return;
     let cancelled = false;
-    setRankingsLoading(true);
     setRankingsError(null);
+    // The week stepper resets when the DEPARTMENT changes, never when a background
+    // revalidation lands under a manager who has already stepped to another week.
+    setRankingWeekIndex(0);
     fetch(`/api/team-rankings?department=${encodeURIComponent(activeDeptLabel)}&view=manager`, {
       cache: 'no-store',
     })
       .then((r) => r.json())
       .then((j: { weeks?: TeamRankingWeek[]; error?: string | null }) => {
         if (cancelled) return;
-        setRankingWeeks(j.weeks ?? []);
-        setRankingsError(j.error ?? null);
-        setRankingWeekIndex(0);
+        if (j.error) {
+          setSpRankings(null);
+          setRankingsError(j.error);
+          return;
+        }
+        setSpRankings({ weeks: j.weeks ?? [] });
       })
       .catch((e: Error) => {
-        if (!cancelled) setRankingsError(e.message);
-      })
-      .finally(() => {
-        if (!cancelled) setRankingsLoading(false);
+        if (cancelled) return;
+        setSpRankings(null);
+        setRankingsError(e.message);
       });
     return () => {
       cancelled = true;
     };
-  }, [activeDeptLabel]);
+  }, [activeDeptLabel, setSpRankings]);
 
   const rankingsAvailable = rankingWeeks.length > 0;
 
-  // Appointments. The payload is stamped with the label it was fetched FOR, so a
-  // department switch can never paint one team's weeks against another team's roster
-  // while the next response is in flight.
+  // Appointments. The cached value belongs to its key's department by construction;
+  // `apptFor` stamps the last ANSWER (a failure included), so a department whose read
+  // failed is "answered" rather than held on a loading state forever.
+  const [appt, setAppt] = useManagerCachedState<{ available: boolean; weeks: AppointmentWeek[] } | null>(
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptAppointments(activeDeptLabel) : null,
+    null,
+  );
+  const [apptError, setApptError] = useState<string | null>(null);
   const [apptFor, setApptFor] = useState('');
   useEffect(() => {
     if (!activeDeptLabel) return;
     let cancelled = false;
-    setApptLoading(true);
-    setApptError(null);
+    setApptView((v) => ({ ...v, index: 0 }));
     fetch(`/api/manager/appointment-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
       cache: 'no-store',
     })
       .then((r) => r.json())
       .then((j: { available?: boolean; weeks?: AppointmentWeek[]; error?: string | null }) => {
         if (cancelled) return;
-        setApptWeeks(j.weeks ?? []);
-        setApptAvailable(!!j.available);
-        setApptError(j.error ?? null);
+        if (j.error) {
+          setAppt(null);
+          setApptError(j.error);
+        } else {
+          setAppt({ available: !!j.available, weeks: j.weeks ?? [] });
+          setApptError(null);
+        }
         setApptFor(activeDeptLabel);
-        setApptView((v) => ({ ...v, index: 0 }));
       })
       .catch((e: Error) => {
         if (cancelled) return;
-        setApptWeeks([]);
-        setApptAvailable(false);
+        setAppt(null);
         setApptError(e.message);
         setApptFor(activeDeptLabel);
-      })
-      .finally(() => {
-        if (!cancelled) setApptLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [activeDeptLabel]);
-  const apptReady = apptFor === activeDeptLabel;
+  }, [activeDeptLabel, setAppt]);
+  const apptAnswered = apptFor === activeDeptLabel;
+  const apptReady = appt !== null || apptAnswered;
+  const apptWeeks = appt?.weeks ?? NO_APPOINTMENT_WEEKS;
+  const apptAvailable = !!appt?.available;
+  const apptErrorNow = apptAnswered ? apptError : null;
+  // Derived, never stored: the skeleton is for having nothing to show, not for a
+  // request in flight (`manager-dashboard-cache.md` § Loading flags).
+  const apptLoading = !apptReady;
   const apptMembers = useMemo(
     () => membersForRailKey(activeDept, rail, membersByDept),
     [activeDept, rail, membersByDept],
@@ -2918,60 +2946,63 @@ function TeamPanelInner({
   // A failed read keeps the pill (so the error is visible where it was asked for)
   // only when the manager is already on this view; otherwise no data = no pill.
   const appointmentsAvailable = apptReady
-    ? apptAvailable || (deptView === 'appointments' && apptError !== null)
+    ? apptAvailable || (deptView === 'appointments' && apptErrorNow !== null)
     : deptView === 'appointments';
 
-  // PM Team's bonus-ranked leaderboard. Stamped with the label it was fetched FOR, like
-  // the appointment read, so one team's weeks never paint against another's roster.
+  // PM Team's bonus-ranked leaderboard. Counts + positions only — no peso is in this
+  // payload, so it is as cacheable as the appointment weeks.
+  const [deliv, setDeliv] = useManagerCachedState<DeliverableRankingsPayload | null>(
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptPmRankings(activeDeptLabel) : null,
+    null,
+  );
+  const [delivError, setDelivError] = useState<string | null>(null);
+  const [delivFor, setDelivFor] = useState('');
   useEffect(() => {
     if (!activeDeptLabel) return;
     let cancelled = false;
-    setDelivLoading(true);
     fetch(`/api/manager/deliverable-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
       cache: 'no-store',
     })
       .then((r) => r.json())
       .then((j: Partial<DeliverableRankingsPayload>) => {
         if (cancelled) return;
-        setDeliv({
-          available: !!j.available,
-          currentWeekStart: j.currentWeekStart ?? '',
-          weeks: j.weeks ?? [],
-          metrics: j.metrics ?? [],
-          skippedRows: j.skippedRows ?? 0,
-          order: j.order ?? null,
-          error: j.error ?? null,
-        });
+        if (j.error) {
+          setDeliv(null);
+          setDelivError(j.error);
+        } else {
+          setDeliv({
+            available: !!j.available,
+            currentWeekStart: j.currentWeekStart ?? '',
+            weeks: j.weeks ?? [],
+            metrics: j.metrics ?? [],
+            skippedRows: j.skippedRows ?? 0,
+            order: j.order ?? null,
+            error: null,
+          });
+          setDelivError(null);
+        }
         setDelivFor(activeDeptLabel);
       })
       .catch((e: Error) => {
         if (cancelled) return;
-        setDeliv({
-          available: false,
-          currentWeekStart: '',
-          weeks: [],
-          metrics: [],
-          skippedRows: 0,
-          order: null,
-          error: e.message,
-        });
+        setDeliv(null);
+        setDelivError(e.message);
         setDelivFor(activeDeptLabel);
-      })
-      .finally(() => {
-        if (!cancelled) setDelivLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [activeDeptLabel]);
-  const delivReady = delivFor === activeDeptLabel;
-  const deliverablesAvailable = delivReady && !!deliv?.available;
+  }, [activeDeptLabel, setDeliv]);
+  const delivAnswered = delivFor === activeDeptLabel;
+  const delivReady = deliv !== null || delivAnswered;
+  const deliverablesAvailable = !!deliv?.available;
+  const delivErrorNow = delivAnswered ? delivError : null;
 
   // The Rankings pill is ONE pill whose content follows the data (Kane, Q1 → a):
   // SP weeks → RankingsPane, appointment weeks → the leaderboard, PM Team's KPI
   // bonuses → the bonus-ranked leaderboard. While a new department's reads are in
   // flight the view holds (a pane shows its loading state) instead of bouncing to
-  // People and back.
+  // People and back — and with a cached department there is nothing to hold for.
   const leaderboardAvailable = apptReady && apptAvailable;
   const rankingsViewAvailable =
     rankingsAvailable ||
@@ -2980,11 +3011,20 @@ function TeamPanelInner({
     (deptView === 'rankings' && (!apptReady || !delivReady));
   const rankingsHold =
     !rankingsAvailable && !leaderboardAvailable && !deliverablesAvailable && (!apptReady || !delivReady);
+
+  // PM Team's daily read (days worked + the per-day order): the slow one, fetched in
+  // the background the first time the Rankings view is opened for the department in
+  // this mount, and painted from cache on every return.
+  const [delivDaily, setDelivDaily] = useManagerCachedState<DeliverableDailyPayload | null>(
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptPmDaily(activeDeptLabel) : null,
+    null,
+  );
+  const [delivDailyError, setDelivDailyError] = useState<string | null>(null);
+  const [delivDailyFor, setDelivDailyFor] = useState('');
   const wantDelivDaily = deptView === 'rankings' && deliverablesAvailable;
   useEffect(() => {
     if (!wantDelivDaily || !activeDeptLabel || delivDailyFor === activeDeptLabel) return;
     let cancelled = false;
-    setDelivDaily(null);
     fetch(
       `/api/manager/deliverable-rankings?department=${encodeURIComponent(activeDeptLabel)}&basis=daily`,
       { cache: 'no-store' },
@@ -2992,25 +3032,38 @@ function TeamPanelInner({
       .then((r) => r.json())
       .then((j: Partial<DeliverableDailyPayload>) => {
         if (cancelled) return;
-        setDelivDaily({ days: j.days ?? [], order: j.order ?? null, error: j.error ?? null });
+        if (j.error) {
+          setDelivDaily(null);
+          setDelivDailyError(j.error);
+        } else {
+          setDelivDaily({ days: j.days ?? [], order: j.order ?? null, error: null });
+          setDelivDailyError(null);
+        }
         setDelivDailyFor(activeDeptLabel);
       })
       .catch((e: Error) => {
         if (cancelled) return;
-        setDelivDaily({ days: [], order: null, error: e.message });
+        setDelivDaily(null);
+        setDelivDailyError(e.message);
         setDelivDailyFor(activeDeptLabel);
       });
     return () => {
       cancelled = true;
     };
-  }, [wantDelivDaily, activeDeptLabel, delivDailyFor]);
-  const delivDailyReady = delivDailyFor === activeDeptLabel && delivDaily !== null;
+  }, [wantDelivDaily, activeDeptLabel, delivDailyFor, setDelivDaily]);
+  const delivDailyErrorNow = delivDailyFor === activeDeptLabel ? delivDailyError : null;
+
+  // Lead Gen's days worked, same pattern.
+  const [apptDays, setApptDays] = useManagerCachedState<DaysWorkedRow[] | null>(
+    activeDeptLabel ? MANAGER_CACHE_KEYS.deptAppointmentDays(activeDeptLabel) : null,
+    null,
+  );
+  const [apptDaysError, setApptDaysError] = useState<string | null>(null);
+  const [apptDaysFor, setApptDaysFor] = useState('');
   const wantDays = deptView === 'rankings' && leaderboardAvailable;
   useEffect(() => {
     if (!wantDays || !activeDeptLabel || apptDaysFor === activeDeptLabel) return;
     let cancelled = false;
-    setApptDays(null);
-    setApptDaysError(null);
     fetch(
       `/api/manager/appointment-rankings/days?department=${encodeURIComponent(activeDeptLabel)}`,
       { cache: 'no-store' },
@@ -3018,8 +3071,13 @@ function TeamPanelInner({
       .then((r) => r.json())
       .then((j: { days?: DaysWorkedRow[]; error?: string | null }) => {
         if (cancelled) return;
-        setApptDays(j.days ?? []);
-        setApptDaysError(j.error ?? null);
+        if (j.error) {
+          setApptDays(null);
+          setApptDaysError(j.error);
+        } else {
+          setApptDays(j.days ?? []);
+          setApptDaysError(null);
+        }
         setApptDaysFor(activeDeptLabel);
       })
       .catch((e: Error) => {
@@ -3031,8 +3089,8 @@ function TeamPanelInner({
     return () => {
       cancelled = true;
     };
-  }, [wantDays, activeDeptLabel, apptDaysFor]);
-  const daysReady = apptDaysFor === activeDeptLabel;
+  }, [wantDays, activeDeptLabel, apptDaysFor, setApptDays]);
+  const apptDaysErrorNow = apptDaysFor === activeDeptLabel ? apptDaysError : null;
 
   // Leaving a department must not strand the manager on a view that department does
   // not have. Derived, never stored, so it cannot go stale — and a denied viewer
@@ -3710,9 +3768,9 @@ function TeamPanelInner({
               <AppointmentLeaderboardPane
                 weeks={leaderboardAvailable ? apptWeeks : []}
                 weeksLoading={rankingsHold || apptLoading}
-                weeksError={apptReady ? apptError : null}
-                days={daysReady ? apptDays : null}
-                daysError={daysReady ? apptDaysError : null}
+                weeksError={apptErrorNow}
+                days={apptDaysErrorNow ? null : apptDays}
+                daysError={apptDaysErrorNow}
                 members={apptMembers}
                 deptName={activeEntry?.name ?? 'department'}
                 view={leaderView}
@@ -3736,11 +3794,11 @@ function TeamPanelInner({
                 metrics={deliv.metrics}
                 skippedRows={deliv.skippedRows}
                 order={deliv.order}
-                weeksLoading={delivLoading && deliv.weeks.length === 0}
-                weeksError={deliv.error}
-                days={delivDailyReady && !delivDaily.error ? delivDaily.days : null}
-                dailyOrder={delivDailyReady ? delivDaily.order : null}
-                daysError={delivDailyReady ? delivDaily.error : null}
+                weeksLoading={false}
+                weeksError={delivErrorNow}
+                days={delivDailyErrorNow ? null : (delivDaily?.days ?? null)}
+                dailyOrder={delivDaily?.order ?? null}
+                daysError={delivDailyErrorNow}
                 members={apptMembers}
                 deptName={activeEntry?.name ?? 'department'}
                 view={delivView}
@@ -3765,7 +3823,7 @@ function TeamPanelInner({
           <AppointmentRankingsPane
             weeks={apptReady ? apptWeeks : []}
             loading={!apptReady || apptLoading}
-            error={apptReady ? apptError : null}
+            error={apptErrorNow}
             members={apptMembers}
             deptName={activeEntry?.name ?? 'department'}
             view={apptView}

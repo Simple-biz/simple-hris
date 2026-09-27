@@ -133,6 +133,11 @@ grant holders. `hasSpRankings` now needs **`SP` and `Ranking`** (the AI Team Bon
 
 ## Loading
 
+- **Cached per department** (2026-09-27, Kane: *"so when I go to other departments it wont have
+  to load the data again"*). Both payloads live in the Manager shell cache under `dept:` keys
+  ([manager-dashboard-cache.md](./manager-dashboard-cache.md) § *Per-department views*).
+  Returning to a department, switching tabs or reloading paints at once and revalidates in the
+  background. The cached payload is counts + positions, so the cache carries no peso either.
 - The weekly payload (counts + weekly/monthly order) is fetched when the department is selected.
   It takes **~6.5s cold** for PM Team (measured 2026-09-27; 7,121 applied rows plus the roster) and
   weighs ~140 KB.

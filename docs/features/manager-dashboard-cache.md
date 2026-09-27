@@ -173,6 +173,32 @@ That is why the roster payload is the cached unit and the gate is derived.
 | `skillSets` | `GET /api/employee-skill-sets` | RAW rows; shared profile only, never pay |
 | `transfers` | 3 × `GET /api/department-transfers` | one unit — a decided request moves between scopes in one load |
 | `bonusHistory` | 3 summary routes | RAW |
+| `deptSpRankings(label)` | `GET /api/team-rankings?view=manager` | `{ weeks }` — SP + tier, never pesos |
+| `deptAppointments(label)` | `GET /api/manager/appointment-rankings` | `{ available, weeks }` — counts |
+| `deptAppointmentDays(label)` | `GET /api/manager/appointment-rankings/days` | day counts |
+| `deptPmRankings(label)` | `GET /api/manager/deliverable-rankings` | KPI counts + POSITIONS; the pesos never leave the server |
+| `deptPmDaily(label)` | `… /deliverable-rankings?basis=daily` | day counts + per-day positions |
+
+### Per-department views (`dept:` keys, 2026-09-27)
+
+Kane: *"add proper caching on this please so when I go to other departments it wont have
+to load the data again"*. My Team's Rankings and Appointments data is cached **one entry
+per dataset per RAW department label**. The key carries the label, so
+`useManagerCachedState` reseeds during render when the manager comes back to a department,
+and it paints with no skeleton. It still refetches (the rule above).
+
+- **Only a successful read is cached.** A failed read writes `null` back, which drops it, and
+  keeps its error in plain state stamped with the label (`apptFor`, `delivFor`, …). A
+  department whose read failed is therefore "answered", not held on a loading state.
+- **`dept:` keys are trimmed as their OWN group** (`MAX_DEPT_ENTRIES` = 48, oldest-written
+  first) and never count against the shared 32. A rail of 20+ departments × 5 datasets would
+  otherwise evict the roster and the approval queue. Tests pin both caps and prove the roster
+  survives 150 department writes.
+- **The week stepper resets on a department CHANGE**, never when a background revalidation
+  lands under a manager who has already stepped to another week.
+- The two days reads keep their existing once-per-mount guard (`…For === label`): they are
+  the slow reads, and a return within the same mount paints from cache without re-reading
+  Hubstaff. A tab switch remounts and revalidates.
 
 **Every key in `MANAGER_CACHE_KEYS` is wired to a live call site.** An unused key is an
 invitation to cache something under a shape it was not written for.

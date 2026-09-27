@@ -861,6 +861,15 @@ app theme and renders inconsistently across browsers.
 
 - **Default primitive:** `SmoothSelect` (theme-aware, teal accent by default).
   Reach for it before a native `<select>`, whose popup ignores the app theme.
+  Since 2026-09-27 the menu animates **out** as well as in (`motion` +
+  `AnimatePresence`: 180ms in and 120ms out on the exponential ease-out
+  `[0.22, 1, 0.36, 1]`, a 4px drift and 0.97 scale, opacity only under reduced
+  motion). A portalled menu closes where it was drawn. Opt-in props, each
+  defaulting to the old look: `size="sm"` (a 26px trigger that lines up with
+  segmented toggles), `accent="blue"` (for surfaces whose other controls are
+  blue), `leading` (a muted prefix label inside the trigger, e.g. "KPI"), and
+  `align="start"` (a left-aligned menu that opens toward the page, not off its
+  left edge on a phone). First user of all four: My Team → Rankings' KPI picker.
 - **Themed collapsible picker** (the "beautifully wrapped dropdown" pattern —
   `HslBonusCalculator.tsx` branch picker): a sticky, `backdrop-blur-md` themed
   header (`sticky top-0 z-10 … bg-white/90 dark:bg-zinc-950/90`) over a body that

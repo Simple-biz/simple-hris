@@ -352,3 +352,76 @@ test('no key caches presence or a signed URL — both are wrong when stale', () 
     'presence is a liveness signal and signed URLs expire — neither may be cached',
   );
 });
+
+// ── Per-department My Team views (2026-09-27) ────────────────────────────────
+// Kane: "add proper caching on this please so when I go to other departments it
+// wont have to load the data again". One entry per dataset per department label,
+// trimmed as its own group so a long rail can never evict the shell's entries.
+
+test('dept views — one entry per department, so going back to one reads its own data', () => {
+  newTab();
+  bindManagerCacheIdentity('carla@simple.biz');
+  setManagerCache(MANAGER_CACHE_KEYS.deptPmRankings('PM Team'), { available: true, weeks: ['pm'] });
+  setManagerCache(MANAGER_CACHE_KEYS.deptPmRankings('Lead Gen'), { available: false, weeks: [] });
+  assert.deepEqual(getManagerCache(MANAGER_CACHE_KEYS.deptPmRankings('PM Team')), { available: true, weeks: ['pm'] });
+  assert.notEqual(MANAGER_CACHE_KEYS.deptPmRankings('PM Team'), MANAGER_CACHE_KEYS.deptPmDaily('PM Team'));
+  assert.notEqual(MANAGER_CACHE_KEYS.deptSpRankings('X'), MANAGER_CACHE_KEYS.deptAppointments('X'));
+  assert.notEqual(MANAGER_CACHE_KEYS.deptAppointments('X'), MANAGER_CACHE_KEYS.deptAppointmentDays('X'));
+});
+
+test('dept views — a reload repaints them, and another manager never reads them', () => {
+  const s = newTab();
+  bindManagerCacheIdentity('carla@simple.biz');
+  setManagerCache(MANAGER_CACHE_KEYS.deptSpRankings('AI/API Team'), { weeks: [{ periodStart: '2026-09-06' }] });
+  reload(s);
+  bindManagerCacheIdentity('carla@simple.biz');
+  assert.ok(hasManagerCache(MANAGER_CACHE_KEYS.deptSpRankings('AI/API Team')));
+  reload(s);
+  bindManagerCacheIdentity('jeff@simple.biz');
+  assert.equal(getManagerCache(MANAGER_CACHE_KEYS.deptSpRankings('AI/API Team')), undefined);
+});
+
+test('dept views — browsing a long rail never evicts the roster or the queue', () => {
+  const s = newTab();
+  bindManagerCacheIdentity('kaner@simple.biz');
+  setManagerCache(ROSTER, { rows: ['me'] });
+  setManagerCache(QUEUE, [{ id: 'a' }]);
+  // 30 departments × 5 datasets = 150 dept entries, all written AFTER the shell's.
+  for (let d = 0; d < 30; d += 1) {
+    const dept = `Dept ${d}`;
+    setManagerCache(MANAGER_CACHE_KEYS.deptSpRankings(dept), { weeks: [] });
+    setManagerCache(MANAGER_CACHE_KEYS.deptAppointments(dept), { available: false, weeks: [] });
+    setManagerCache(MANAGER_CACHE_KEYS.deptAppointmentDays(dept), []);
+    setManagerCache(MANAGER_CACHE_KEYS.deptPmRankings(dept), { available: false });
+    setManagerCache(MANAGER_CACHE_KEYS.deptPmDaily(dept), { days: [] });
+  }
+  reload(s);
+  bindManagerCacheIdentity('kaner@simple.biz');
+  assert.deepEqual(getManagerCache(ROSTER), { rows: ['me'] }, 'the roster survived 150 department writes');
+  assert.deepEqual(getManagerCache(QUEUE), [{ id: 'a' }]);
+  const keys = Array.from({ length: s.length }, (_, i) => s.key(i)).filter((k): k is string => !!k);
+  const dept = keys.filter((k) => k.startsWith('mgr-tab:dept:'));
+  assert.ok(dept.length <= 48, `dept group held at ${dept.length}`);
+  // The newest department is the one that must survive.
+  assert.ok(hasManagerCache(MANAGER_CACHE_KEYS.deptPmDaily('Dept 29')));
+});
+
+test('dept views — the shell cap still holds on its own, unaffected by the dept group', () => {
+  const s = newTab();
+  bindManagerCacheIdentity('kaner@simple.biz');
+  for (let i = 0; i < 10; i += 1) setManagerCache(MANAGER_CACHE_KEYS.deptSpRankings(`D${i}`), { weeks: [] });
+  for (let i = 0; i < 40; i += 1) setManagerCache(`legacy:key-${i}`, { i });
+  const keys = Array.from({ length: s.length }, (_, i) => s.key(i)).filter((k): k is string => !!k);
+  const shell = keys.filter((k) => !k.startsWith('mgr-tab:dept:') && k !== 'mgr-tab:@identity');
+  assert.ok(shell.length <= 32, `shell group held at ${shell.length}`);
+  assert.equal(keys.filter((k) => k.startsWith('mgr-tab:dept:')).length, 10, 'no dept entry was spent on shell overflow');
+});
+
+test('dept views — no key builder is spelled after pay, presence or a signed URL', () => {
+  const spelled = Object.entries(MANAGER_CACHE_KEYS)
+    .filter(([, v]) => typeof v === 'function')
+    .map(([k, v]) => `${k}:${(v as (d: string) => string)('X')}`)
+    .join(' ');
+  assert.ok(spelled.includes('dept:'), 'expected the dept key builders');
+  assert.doesNotMatch(spelled, /presence|last-seen|signed|amount|money|pay-rate|rate/i);
+});

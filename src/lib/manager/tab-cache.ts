@@ -112,6 +112,17 @@ const MAX_AGE_MS = 12 * 60 * 60 * 1000;
  */
 const MAX_ENTRIES = 32;
 
+/**
+ * Per-department My Team views (`dept:` keys — see {@link MANAGER_CACHE_KEYS}) are
+ * trimmed as their OWN group, oldest-written first, and never count against
+ * {@link MAX_ENTRIES}. A manager clicking through a rail of 20+ departments mints up
+ * to five of these per department, and inside the shared ceiling that would evict
+ * the roster and the approval queue — the entries the rest of the dashboard paints
+ * from. 48 holds the rankings of the last ~10 departments visited.
+ */
+const DEPT_KEY_PREFIX = 'dept:';
+const MAX_DEPT_ENTRIES = 48;
+
 interface Envelope<T> {
   /** Schema version — see {@link SCHEMA_VERSION}. */
   v: number;
@@ -293,7 +304,19 @@ export function hasManagerCache(key: string): boolean {
  */
 function trimToCapacity(s: Storage, keepKey: string): void {
   const stored = storedDataKeys(s);
-  if (stored.length <= MAX_ENTRIES) return;
+  const isDept = (k: string) => k.startsWith(STORAGE_PREFIX + DEPT_KEY_PREFIX);
+  trimGroup(s, stored.filter(isDept), MAX_DEPT_ENTRIES, keepKey);
+  trimGroup(
+    s,
+    stored.filter((k) => !isDept(k)),
+    MAX_ENTRIES,
+    keepKey,
+  );
+}
+
+/** Evict the oldest of `stored` (full storage keys) until at most `max` remain. */
+function trimGroup(s: Storage, stored: string[], max: number, keepKey: string): void {
+  if (stored.length <= max) return;
   const dated = stored
     .filter((k) => k !== keepKey)
     .map((k) => {
@@ -310,7 +333,7 @@ function trimToCapacity(s: Storage, keepKey: string): void {
       return { k, at: env && Number.isFinite(env.at) ? env.at : 0 };
     })
     .sort((a, b) => a.at - b.at);
-  let excess = stored.length - MAX_ENTRIES;
+  let excess = stored.length - max;
   for (const { k } of dated) {
     if (excess <= 0) break;
     try {
@@ -490,6 +513,28 @@ export const MANAGER_CACHE_KEYS = {
   teamDeptRailKey: 'team:dept-rail-key',
   /** The three `/api/department-transfers` scopes, cached as one raw triple. */
   transfers: 'transfers:scopes',
+  /*
+   * My Team → <department> → Rankings / Appointments — ONE entry per dataset per RAW
+   * department label (Kane, 2026-09-27: *"so when I go to other departments it wont
+   * have to load the data again"*). Returning to a department reseeds from its own
+   * entry; the fetch still runs (the rule above). `dept:` keys are trimmed as their
+   * own group (`MAX_DEPT_ENTRIES`), so browsing departments never evicts the shell.
+   *
+   * None of them carries a peso: SP + tier (`team-rankings.ts`), appointment counts,
+   * day counts, and PM Team's KPI counts + POSITIONS (`manager-pm-rankings.md` — the
+   * pesos are ranked on the server and never sent). Only a successful read is cached;
+   * a failed one writes `null` back.
+   */
+  /** `/api/team-rankings?view=manager` — `{ weeks }`. */
+  deptSpRankings: (department: string) => `${DEPT_KEY_PREFIX}sp-rankings:${department}`,
+  /** `/api/manager/appointment-rankings` — `{ available, weeks }`. */
+  deptAppointments: (department: string) => `${DEPT_KEY_PREFIX}appointments:${department}`,
+  /** `/api/manager/appointment-rankings/days` — the days-worked rows. */
+  deptAppointmentDays: (department: string) => `${DEPT_KEY_PREFIX}appointment-days:${department}`,
+  /** `/api/manager/deliverable-rankings` — counts + the weekly/monthly positions. */
+  deptPmRankings: (department: string) => `${DEPT_KEY_PREFIX}pm-rankings:${department}`,
+  /** `/api/manager/deliverable-rankings?basis=daily` — days + the per-day positions. */
+  deptPmDaily: (department: string) => `${DEPT_KEY_PREFIX}pm-daily:${department}`,
   /** The Bonus History tab's three raw summary payloads. */
   bonusHistory: 'bonus-history:summaries',
 } as const;

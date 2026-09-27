@@ -1,9 +1,49 @@
 'use client';
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+/** Exponential ease-out — the same curve the My Team panes rise on. */
+const EASE_OUT = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * Accent families. `teal` is the house default; `blue` matches surfaces whose
+ * other controls are blue (My Team's Rankings toggles), so the open trigger and the
+ * highlighted row read as one control set rather than two.
+ */
+const ACCENTS = {
+  teal: {
+    trigger: 'hover:border-teal-300 focus-visible:border-teal-500 focus-visible:ring-teal-500/20 dark:hover:border-teal-700',
+    open: 'border-teal-400 ring-2 ring-teal-500/20',
+    chevron: 'text-teal-500',
+    active: 'bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-200',
+    check: 'text-teal-500 dark:text-teal-400',
+    search: 'focus:border-teal-300 focus:ring-teal-200',
+  },
+  blue: {
+    trigger: 'hover:border-blue-300 focus-visible:border-blue-500 focus-visible:ring-blue-500/20 dark:hover:border-blue-800',
+    open: 'border-blue-400 ring-2 ring-blue-500/20 dark:border-blue-700',
+    chevron: 'text-blue-600 dark:text-blue-400',
+    active: 'bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-200',
+    check: 'text-blue-600 dark:text-blue-400',
+    search: 'focus:border-blue-300 focus:ring-blue-200',
+  },
+} as const;
+
+const SIZES = {
+  md: {
+    trigger: 'h-9 rounded-lg px-3 text-xs font-medium',
+    option: 'px-2.5 py-1.5 text-xs',
+  },
+  /** Sits beside the 26px segmented toggles (`text-[11px]`, `rounded-md`). */
+  sm: {
+    trigger: 'h-[26px] rounded-md px-2 text-[11px] font-semibold',
+    option: 'px-2 py-1.5 text-[11.5px]',
+  },
+} as const;
 
 export interface SmoothSelectOption<T extends string = string> {
   value: T;
@@ -35,11 +75,20 @@ interface SmoothSelectProps<T extends string = string> {
    *  trigger width, follows it on scroll/resize, and flips upward when there
    *  is no room below. */
   portal?: boolean;
+  /** `md` (default) or `sm`, a compact trigger that lines up with segmented toggles. */
+  size?: keyof typeof SIZES;
+  /** `teal` (default) or `blue`. */
+  accent?: keyof typeof ACCENTS;
+  /** A muted prefix inside the trigger, before the selected label (e.g. "KPI"). */
+  leading?: ReactNode;
+  /** Non-portal menu edge: `end` (default, right-aligned) or `start` (left-aligned). */
+  align?: 'start' | 'end';
 }
 
 /**
- * A lightweight, dependency-free dropdown with a smooth open/close animation,
- * teal selection accent, and full keyboard support. Replaces the generic
+ * A lightweight dropdown with a smooth open AND close animation (`motion`; opacity
+ * only under reduced motion), teal selection accent (or `accent="blue"`), and full
+ * keyboard support. Replaces the generic
  * native <select> styling. The option list is capped in height and scrolls, so
  * long lists (e.g. departments) never overflow the viewport.
  */
@@ -54,7 +103,14 @@ export function SmoothSelect<T extends string = string>({
   searchable = false,
   searchPlaceholder = 'Search…',
   portal = false,
+  size = 'md',
+  accent = 'teal',
+  leading,
+  align = 'end',
 }: SmoothSelectProps<T>) {
+  const tone = ACCENTS[accent];
+  const dims = SIZES[size];
+  const reduceMotion = useReducedMotion() ?? false;
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [query, setQuery] = useState('');
@@ -95,11 +151,14 @@ export function SmoothSelect<T extends string = string>({
   // outside-press dismissal and focus trap still see it as dialog content), or
   // document.body when not in a dialog.
   useLayoutEffect(() => {
-    if (!portal || !open) {
+    if (!portal) {
       setPortalHost(null);
       setMenuPos(null);
       return;
     }
+    // Closing keeps the host and the last position so the menu can animate OUT
+    // where it was; the next open re-measures before paint.
+    if (!open) return;
     setPortalHost(
       (rootRef.current?.closest('[data-slot="dialog-content"]') as HTMLElement | null) ?? document.body,
     );
@@ -197,9 +256,22 @@ export function SmoothSelect<T extends string = string>({
     listRef.current?.querySelector(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, open]);
 
-  const menu = open ? (
-    <div
+  const up = !!(portal && menuPos?.up);
+  const offset = reduceMotion ? 0 : up ? 4 : -4;
+  const menu = (
+    <AnimatePresence>
+      {open && (
+    <motion.div
+      key="smooth-select-menu"
       ref={menuRef}
+      initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: offset, scale: 0.97 }}
+      animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+      exit={
+        reduceMotion
+          ? { opacity: 0, transition: { duration: 0.08 } }
+          : { opacity: 0, y: offset, scale: 0.97, transition: { duration: 0.12, ease: EASE_OUT } }
+      }
+      transition={{ duration: reduceMotion ? 0.1 : 0.18, ease: EASE_OUT }}
       style={
         portal
           ? menuPos
@@ -216,11 +288,8 @@ export function SmoothSelect<T extends string = string>({
         'z-50 rounded-xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10',
         portal
           ? 'pointer-events-auto z-[70]'
-          : 'absolute right-0 mt-1.5 min-w-full origin-top',
-        'motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-150',
-        portal && menuPos?.up
-          ? 'origin-bottom motion-safe:slide-in-from-bottom-1'
-          : 'origin-top motion-safe:slide-in-from-top-1',
+          : cn('absolute mt-1.5 min-w-full', align === 'start' ? 'left-0' : 'right-0'),
+        up ? 'origin-bottom' : 'origin-top',
         'dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-black/40',
       )}
     >
@@ -237,7 +306,10 @@ export function SmoothSelect<T extends string = string>({
             }}
             onKeyDown={onListKeyDown}
             placeholder={searchPlaceholder}
-            className="h-8 w-full rounded-lg border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-teal-300 focus:outline-none focus:ring-1 focus:ring-teal-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            className={cn(
+              'h-8 w-full rounded-lg border border-zinc-200 bg-white pl-8 pr-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200',
+              tone.search,
+            )}
           />
         </div>
       )}
@@ -266,11 +338,12 @@ export function SmoothSelect<T extends string = string>({
                 onMouseEnter={() => setActive(idx)}
                 onClick={() => commit(idx)}
                 className={cn(
-                  'flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition-colors duration-100',
+                  'flex w-full items-center justify-between gap-3 whitespace-nowrap rounded-lg text-left font-medium transition-colors duration-100',
+                  dims.option,
                   opt.disabled
                     ? 'cursor-not-allowed text-zinc-400 dark:text-zinc-600'
                     : isActive
-                      ? 'bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-200'
+                      ? tone.active
                       : 'text-zinc-700 dark:text-zinc-300',
                   isSelected && !opt.disabled && 'font-semibold',
                 )}
@@ -282,15 +355,17 @@ export function SmoothSelect<T extends string = string>({
                   )}
                 </span>
                 {isSelected && !opt.disabled && (
-                  <Check className="h-3.5 w-3.5 shrink-0 text-teal-500 dark:text-teal-400" />
+                  <Check className={cn('h-3.5 w-3.5 shrink-0', tone.check)} />
                 )}
               </button>
             );
           })
         )}
       </div>
-    </div>
-  ) : null;
+    </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <div ref={rootRef} className={cn('relative', className)}>
@@ -303,22 +378,29 @@ export function SmoothSelect<T extends string = string>({
         onClick={() => !disabled && setOpen((o) => !o)}
         onKeyDown={onListKeyDown}
         className={cn(
-          'group flex h-9 w-full items-center justify-between gap-2 rounded-lg border bg-white px-3 text-xs font-medium text-zinc-700 shadow-sm transition-all duration-200',
-          'hover:border-teal-300 hover:shadow-md',
-          'focus:outline-none focus-visible:border-teal-500 focus-visible:ring-2 focus-visible:ring-teal-500/20',
+          'group flex w-full items-center justify-between gap-2 border bg-white text-zinc-700 shadow-sm transition-all duration-200',
+          dims.trigger,
+          'hover:shadow-md',
+          'focus:outline-none focus-visible:ring-2',
+          tone.trigger,
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:border-zinc-200 disabled:hover:shadow-none dark:disabled:hover:border-zinc-800',
-          open
-            ? 'border-teal-400 ring-2 ring-teal-500/20'
-            : 'border-zinc-200 dark:border-zinc-800',
-          'dark:bg-zinc-900/60 dark:text-zinc-300 dark:hover:border-teal-700',
+          open ? tone.open : 'border-zinc-200 dark:border-zinc-800',
+          'dark:bg-zinc-900/60 dark:text-zinc-300',
           triggerClassName,
         )}
       >
-        <span className="truncate">{selected?.label}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {leading != null && (
+            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              {leading}
+            </span>
+          )}
+          <span className="truncate">{selected?.label}</span>
+        </span>
         <ChevronDown
           className={cn(
-            'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform duration-200',
-            open && 'rotate-180 text-teal-500',
+            'h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform duration-200 ease-out motion-reduce:transition-none',
+            open && cn('rotate-180', tone.chevron),
           )}
         />
       </button>
