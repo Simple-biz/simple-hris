@@ -48,10 +48,15 @@
  * machine that generated the letter, which is the machine of the rep who has to
  * act. `audit_log` holds the second copy for engineering
  * (`documents.termination_writeback`).
+ *
+ * ── 3. Which blanks may stay empty ──────────────────────────────────────────
+ * One: the starting rate (Kane, 2026-09-28). See
+ * {@link TERMINATION_OPTIONAL_BLANKS}.
  */
 
 import {
   TERMINATION_WRITEBACK_COLUMNS,
+  type TerminationBlankField,
   type TerminationBlockedReason,
   type TerminationDocumentRow,
   type TerminationSearchCandidate,
@@ -282,4 +287,27 @@ export function readManualRepairs(raw: string | null | undefined): TerminationMa
 
 export function serializeManualRepairs(list: readonly TerminationManualRepair[]): string {
   return JSON.stringify(list);
+}
+
+// ─── 3. Which blanks may stay empty ──────────────────────────────────────────
+
+/**
+ * The blanks a rep may leave EMPTY and still generate. Exactly one: the
+ * STARTING rate. Kane, 2026-09-28, from Carla: a termination letter only has to
+ * confirm the contract ended — start date, last team, LAST hourly rate, end date,
+ * reason, and accounting's signature. An old leaver usually has no digital hire
+ * record, so a required starting rate blocked the letter on a figure nobody
+ * holds. The page already prints an ending rate on its own
+ * (termination-document.ts, `rowRateEnd`), and the route never required it.
+ *
+ * Every OTHER blank stays required here, which is STRICTER than the route: the
+ * route requires only the three NOT NULL facts (`TERMINATION_REQUIRED_FACTS`,
+ * termination-route-rules.ts), and the panel additionally requires the start
+ * date and the ending rate, both of which Carla named. The test pins this set to
+ * exactly `['starting_rate']` and proves no route-required fact is in it.
+ */
+export const TERMINATION_OPTIONAL_BLANKS: readonly TerminationBlankField[] = ['starting_rate'];
+
+export function isOptionalTerminationBlank(field: TerminationBlankField): boolean {
+  return TERMINATION_OPTIONAL_BLANKS.includes(field);
 }

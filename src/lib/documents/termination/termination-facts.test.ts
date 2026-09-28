@@ -19,7 +19,7 @@ import path from 'node:path';
 
 import { normalizeMasterDate } from '@/lib/roster/master-date';
 import { sanitizeOffboardDay } from '@/lib/roster/offboard-date-sanity';
-import { isTerminationDepartureReason } from './types';
+import { isLedgerOnlyTerminationFacts, isTerminationDepartureReason } from './types';
 import { reasonKey } from './reason-key';
 import {
   arbitrateTerminationFacts,
@@ -29,6 +29,7 @@ import {
   workAliasesForRateContext,
   type TerminationArbitrationInput,
   type TerminationCandidateObservation,
+  type TerminationLedgerRow,
   type TerminationMasterRow,
 } from './termination-arbitration';
 import type { TerminationCycleHoursSignal } from './termination-cycle-hours';
@@ -92,6 +93,10 @@ function arbInput(over: Partial<TerminationArbitrationInput> = {}): TerminationA
     masterRows: [masterRow()],
     currentUploadId: CURRENT_UPLOAD,
     gmlActive: false,
+    // The ledger arm's roster map. Empty means "no master row carries either
+    // address in any column" — a CLAIM, and the ledger tests below that need the
+    // opposite say so by passing a populated map.
+    rosterStatus: new Map(),
     // The healthy shape: both "is this person working" reads SUCCEEDED and both
     // said no. Every refusal that depends on them is exercised by overriding
     // these two, never by leaving them out — an omitted read is a BLOCK.
@@ -101,6 +106,10 @@ function arbInput(over: Partial<TerminationArbitrationInput> = {}): TerminationA
     cycleHours: HOURS_MISS,
     evidence: { offDate: '2026-06-03', reason: 'resigned' },
     sheetRows: [],
+    // The ledger identity read only runs when no master row exists; [] and no
+    // error is what production hands the ladder otherwise.
+    ledgerRows: [],
+    ledgerReadError: null,
     readsDegraded: false,
     degraded: [],
     now: NOW,
@@ -640,6 +649,357 @@ test('no_master: zero master rows refuses before anything else is consulted', ()
     arbInput({ masterRows: [], gmlActive: true, evidence: null }),
   );
   assert.equal(result.blocked?.code, 'no_master');
+});
+
+// ─── The ledger arm (Kane, 2026-09-28) ───────────────────────────────────────
+// A leaver with NO master row is documented from the offboarded-sheet ledger.
+// About 2,532 ledger addresses left before the master list began (2026-04-21)
+// and used to be refused `no_master`, with copy that sent the rep to HR for a
+// roster row nobody can create. Raph Sepnio (`raphs@`) is the measured case.
+
+const RAPH = 'raphs@simple.biz';
+const RAPH_INBOX = 'raph.sepnio@gmail.com';
+
+function ledgerRow(over: Partial<TerminationLedgerRow> = {}): TerminationLedgerRow {
+  return {
+    id: '44737',
+    name: 'Sepnio, Raphael',
+    personalEmail: RAPH_INBOX,
+    departmentRaw: 'Sales',
+    startDateRaw: '1/10/2025',
+    offBoardedAtRaw: '2026-03-02',
+    offBoardedReason: 'Performance',
+    ...over,
+  };
+}
+
+/** What `latestDepartureRecord` hands the ladder for these rows in production:
+ *  the latest NORMALIZED date, first one wins a tie, undated rows skipped. */
+function evidenceOf(rows: TerminationLedgerRow[]): TerminationArbitrationInput['evidence'] {
+  let best: { offDate: string; reason: string | null } | null = null;
+  for (const r of rows) {
+    const d = normalizeMasterDate(r.offBoardedAtRaw);
+    if (!d || (best && d <= best.offDate)) continue;
+    best = { offDate: d, reason: r.offBoardedReason };
+  }
+  return best;
+}
+
+function ledgerInput(
+  rows: TerminationLedgerRow[],
+  over: Partial<TerminationArbitrationInput> = {},
+): TerminationArbitrationInput {
+  return arbInput({
+    workEmail: RAPH,
+    masterRows: [],
+    // Production reads the table twice for this person: the departure-evidence
+    // read (no identity cells, G1) and the ledger identity read. Same rows.
+    sheetRows: rows.map((r) => ({ offBoardedAtRaw: r.offBoardedAtRaw, offBoardedReason: r.offBoardedReason })),
+    ledgerRows: rows,
+    evidence: evidenceOf(rows),
+    ...over,
+  });
+}
+
+test('ledger arm: a leaver with NO master row is documented from the offboarded sheet', () => {
+  const result = arbitrateTerminationFacts(ledgerInput([ledgerRow()]));
+
+  assert.equal(result.blocked, null, result.blocked?.message);
+  const f = result.facts;
+  assert.ok(f);
+  assert.equal(f.workerName, 'Raphael Sepnio');
+  assert.equal(f.terminationDate, '2026-03-02');
+  assert.equal(f.reasonKey, 'performance');
+  assert.equal(f.endingDepartmentLabel, 'Sales');
+  assert.equal(f.startDate, '2025-01-10');
+  assert.equal(f.identity.masterRowId, null, 'a master row id here would give the write-back a target');
+  assert.deepEqual(f.identity.candidateRowIds, []);
+  assert.equal(f.identity.matchedColumn, 'offboarded_sheet.work_email');
+  assert.equal(f.identity.offDateSource, 'offboarded_sheet');
+  assert.equal(f.identity.personalEmail, RAPH_INBOX);
+  assert.equal(isLedgerOnlyTerminationFacts(f), true);
+  // G1: the ledger's personal inbox is display and search only — it never keys a rate.
+  assert.deepEqual(result.rateContext?.workAliases, [RAPH]);
+});
+
+test('ledger arm: with a master row the ledger identity cells are never read (negative control)', () => {
+  const result = arbitrateTerminationFacts(
+    arbInput({
+      // Even if a ledger read were handed in beside a master row, it is not read.
+      ledgerRows: [
+        ledgerRow({
+          name: 'Somebody Else',
+          departmentRaw: 'Retired Dept',
+          startDateRaw: '1/1/2020',
+          offBoardedAtRaw: '2026-06-03',
+          offBoardedReason: 'resigned',
+        }),
+      ],
+    }),
+  );
+  assert.equal(result.blocked, null, result.blocked?.message);
+  assert.equal(result.facts?.workerName, 'Jane Doe');
+  assert.equal(result.facts?.endingDepartmentLabel, 'Accounting');
+  assert.equal(result.facts?.startDate, '2024-03-04');
+  assert.equal(result.facts?.identity.matchedColumn, 'Work Email');
+  assert.equal(isLedgerOnlyTerminationFacts(result.facts!), false);
+});
+
+test('ledger arm: a FAILED ledger read blocks — it never becomes "no record of this person"', () => {
+  const result = arbitrateTerminationFacts(
+    ledgerInput([], { ledgerReadError: 'canceling statement due to statement timeout' }),
+  );
+  assert.equal(result.blocked?.code, 'evidence_read_failed');
+  assert.equal(result.facts, null);
+});
+
+test('no_master now means NEITHER the roster nor the ledger keys a row — and never sends the rep to HR', () => {
+  const result = arbitrateTerminationFacts(ledgerInput([]));
+  assert.equal(result.blocked?.code, 'no_master');
+  // HR cannot create a master row, and re-adding a leaver to the sheet makes
+  // them ACTIVE. The old copy's instruction is the bug this arm closed.
+  assert.doesNotMatch(result.blocked?.message ?? '', /\bHR\b/);
+});
+
+test('ledger arm: the roster carrying this address in ANOTHER column refuses — live is still_active, stamped is no_master', () => {
+  const live = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow()], { rosterStatus: new Map([[RAPH, { active: true }]]) }),
+  );
+  assert.equal(live.blocked?.code, 'still_active');
+
+  const stamped = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow()], { rosterStatus: new Map([[RAPH, { active: false }]]) }),
+  );
+  assert.equal(stamped.blocked?.code, 'no_master');
+  assert.match(stamped.blocked?.message ?? '', /different work email/);
+});
+
+test('ledger arm: a personal inbox on a LIVE master row refuses still_active; on a stamped row it does not', () => {
+  const live = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow()], { rosterStatus: new Map([[RAPH_INBOX, { active: true }]]) }),
+  );
+  assert.equal(live.blocked?.code, 'still_active');
+  assert.ok((live.blocked?.message ?? '').includes(RAPH_INBOX));
+
+  // The same inbox on a STAMPED row is someone who has since left again under
+  // another work email. This letter's departure is still true.
+  const stamped = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow()], { rosterStatus: new Map([[RAPH_INBOX, { active: false }]]) }),
+  );
+  assert.equal(stamped.blocked, null, stamped.blocked?.message);
+});
+
+test('ledger arm: rows naming two people, or carrying two inboxes, are ambiguous — never picked', () => {
+  const twoInboxes = arbitrateTerminationFacts(
+    ledgerInput([
+      ledgerRow(),
+      ledgerRow({ id: '50001', personalEmail: 'someone.else@gmail.com', offBoardedAtRaw: '2025-11-01' }),
+    ]),
+  );
+  assert.equal(twoInboxes.blocked?.code, 'ambiguous_identity');
+
+  const twoNames = arbitrateTerminationFacts(
+    ledgerInput([
+      ledgerRow(),
+      ledgerRow({ id: '50001', name: 'Cruz, Maria', personalEmail: null, offBoardedAtRaw: '2025-11-01' }),
+    ]),
+  );
+  assert.equal(twoNames.blocked?.code, 'ambiguous_identity');
+  if (twoNames.blocked?.code === 'ambiguous_identity') {
+    // The candidate list is master rows by contract; ledger rows are named in the message.
+    assert.deepEqual(twoNames.blocked.candidates, []);
+    assert.match(twoNames.blocked.message, /Maria Cruz/);
+  }
+
+  // Negative control: one person, the name written two ways. It is compared as
+  // the composed legal name, which is what prints.
+  const oneName = arbitrateTerminationFacts(
+    ledgerInput([
+      ledgerRow(),
+      ledgerRow({
+        id: '50001',
+        name: 'Raphael Sepnio',
+        personalEmail: null,
+        startDateRaw: null,
+        offBoardedAtRaw: '2025-11-01',
+      }),
+    ]),
+  );
+  assert.equal(oneName.blocked, null, oneName.blocked?.message);
+  assert.equal(oneName.facts?.workerName, 'Raphael Sepnio');
+});
+
+test('ledger arm: an UNDATED ledger row is a date the rep supplies — not a refusal, and not a "failed sanity" claim', () => {
+  const undated = arbitrateTerminationFacts(ledgerInput([ledgerRow({ offBoardedAtRaw: null })]));
+  assert.equal(undated.blocked, null, undated.blocked?.message);
+  assert.equal(undated.facts?.terminationDate, null);
+  assert.ok(undated.facts?.blanks.includes('termination_date'));
+  assert.equal(undated.blankReasons?.termination_date, 'not_on_file');
+  assert.equal(
+    undated.facts?.degraded.some((d) => /not a usable calendar day/.test(d)),
+    false,
+    'nothing failed a gate — the date was simply never recorded',
+  );
+  assert.equal(undated.facts?.reasonKey, 'performance');
+
+  // A date that IS on the row but fails the gate keeps the existing wording.
+  const typo = arbitrateTerminationFacts(ledgerInput([ledgerRow({ offBoardedAtRaw: '2027-04-20' })]));
+  assert.equal(typo.blocked, null, typo.blocked?.message);
+  assert.equal(typo.blankReasons?.termination_date, 'date_failed_sanity');
+});
+
+test('ledger arm: G2 and the allowlist still refuse — a temporary pause, and a non-departure marker', () => {
+  const pause = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow({ offBoardedReason: 'Temporary Pause' })]),
+  );
+  assert.equal(pause.blocked?.code, 'temporary_pause');
+  assert.equal(pause.facts, null);
+
+  const marker = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow({ offBoardedReason: 'duplicate_cleanup' })]),
+  );
+  assert.equal(marker.blocked?.code, 'not_a_departure');
+});
+
+test('ledger arm: two rows for one departure with different reasons leave the reason BLANK — a pause among them still refuses', () => {
+  const conflict = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow(), ledgerRow({ id: '44738', offBoardedReason: 'resigned' })]),
+  );
+  assert.equal(conflict.blocked, null, conflict.blocked?.message);
+  assert.equal(conflict.facts?.reasonKey, null);
+  assert.ok(conflict.facts?.blanks.includes('reason'));
+  assert.ok(conflict.facts?.degraded.some((d) => /different reasons/.test(d)));
+
+  const paused = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow(), ledgerRow({ id: '44738', offBoardedReason: 'temporary_pause' })]),
+  );
+  assert.equal(paused.blocked?.code, 'temporary_pause');
+
+  // A disagreement is never a way round the allowlist: an off-list label among
+  // them refuses exactly as it would alone (622 ledger-only leavers carry
+  // "No Show" / "No Show During Orientation", measured 2026-09-28).
+  const offList = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow(), ledgerRow({ id: '44738', offBoardedReason: 'No Show' })]),
+  );
+  assert.equal(offList.blocked?.code, 'not_a_departure');
+});
+
+test('ledger arm: department and start date come from the LATEST departure row, and a disagreement there is a blank', () => {
+  const twoStints = arbitrateTerminationFacts(
+    ledgerInput([
+      ledgerRow({
+        id: '1',
+        departmentRaw: 'Lead Gen',
+        startDateRaw: '6/1/2023',
+        offBoardedAtRaw: '2023-12-01',
+        offBoardedReason: 'resigned',
+      }),
+      ledgerRow({ id: '2' }),
+    ]),
+  );
+  assert.equal(twoStints.blocked, null, twoStints.blocked?.message);
+  assert.equal(twoStints.facts?.endingDepartmentLabel, 'Sales');
+  assert.equal(twoStints.facts?.startDate, '2025-01-10');
+
+  const split = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow({ id: '1', departmentRaw: 'Lead Gen', startDateRaw: '1/12/2025' }), ledgerRow({ id: '2' })]),
+  );
+  assert.equal(split.blocked, null, split.blocked?.message);
+  assert.equal(split.facts?.endingDepartmentLabel, null);
+  assert.equal(split.facts?.startDate, null);
+  assert.ok(split.facts?.blanks.includes('ending_department'));
+  assert.ok(split.facts?.blanks.includes('start_date'));
+});
+
+test('ledger arm: a later stint whose own departure is undated refuses reengaged_after_departure', () => {
+  const result = arbitrateTerminationFacts(
+    ledgerInput([
+      ledgerRow({ id: '1', startDateRaw: '6/1/2023', offBoardedAtRaw: '2023-12-01', offBoardedReason: 'resigned' }),
+      ledgerRow({ id: '2', startDateRaw: '1/10/2025', offBoardedAtRaw: null }),
+    ]),
+  );
+  assert.equal(result.blocked?.code, 'reengaged_after_departure');
+  if (result.blocked?.code === 'reengaged_after_departure') {
+    assert.equal(result.blocked.rowId, '2');
+    assert.equal(result.blocked.offDate, '2023-12-01');
+    assert.equal(result.blocked.startDate, '2025-01-10');
+  }
+});
+
+test('ledger arm: G4, T4 and the legal-name guard still refuse', () => {
+  const rehire = arbitrateTerminationFacts(ledgerInput([ledgerRow({ startDateRaw: '3/2/2026' })]));
+  assert.equal(rehire.blocked?.code, 'rehire_after_offboard');
+  assert.match(rehire.blocked?.message ?? '', /ledger row/);
+
+  const hours = arbitrateTerminationFacts(ledgerInput([ledgerRow()], { cycleHours: HOURS_HIT }));
+  assert.equal(hours.blocked?.code, 'still_active');
+
+  const unreadable = arbitrateTerminationFacts(
+    ledgerInput([ledgerRow()], { cycleHours: HOURS_UNREADABLE }),
+  );
+  assert.equal(unreadable.blocked?.code, 'evidence_read_failed');
+
+  const email = arbitrateTerminationFacts(ledgerInput([ledgerRow({ name: 'raphs@simple.biz' })]));
+  assert.equal(email.blocked?.code, 'bad_name');
+  const none = arbitrateTerminationFacts(ledgerInput([ledgerRow({ name: null })]));
+  assert.equal(none.blocked?.code, 'bad_name');
+});
+
+test('search: a ledger-only leaver is SELECTABLE; an address only a queue row carries is still no_master', () => {
+  const candidates = buildTerminationCandidates({
+    observations: [
+      observation({
+        source: 'sheet',
+        matchedColumn: 'offboarded_sheet.name',
+        workEmail: RAPH,
+        personalEmail: RAPH_INBOX,
+        name: 'Sepnio, Raphael',
+        departmentRaw: 'Sales',
+        rawOffDate: '2026-03-02',
+        rawReason: 'Performance',
+        onCurrentUpload: false,
+        uploadSeq: 0,
+      }),
+      observation({
+        source: 'queue',
+        matchedColumn: 'offboarding_queue.employee_name',
+        workEmail: 'queueonly@simple.biz',
+        personalEmail: null,
+        name: 'Queue Only',
+        rawOffDate: '2026-03-02',
+        rawReason: 'resigned',
+        onCurrentUpload: false,
+        uploadSeq: 0,
+      }),
+    ],
+    gmlStatus: new Map(),
+    gmlStatusError: null,
+    now: NOW,
+  });
+  assert.equal(candidates.find((c) => c.workEmail === RAPH)?.blockedCode, null);
+  assert.equal(candidates.find((c) => c.workEmail === 'queueonly@simple.biz')?.blockedCode, 'no_master');
+});
+
+test('search: a ledger-only leaver whose personal inbox is on a live row is greyed still_active', () => {
+  const [raph] = buildTerminationCandidates({
+    observations: [
+      observation({
+        source: 'sheet',
+        matchedColumn: 'offboarded_sheet.work_email',
+        workEmail: RAPH,
+        personalEmail: RAPH_INBOX,
+        name: 'Sepnio, Raphael',
+        rawOffDate: '2026-03-02',
+        rawReason: 'Performance',
+        onCurrentUpload: false,
+        uploadSeq: 0,
+      }),
+    ],
+    gmlStatus: new Map([[RAPH_INBOX, { active: true }]]),
+    gmlStatusError: null,
+    now: NOW,
+  });
+  assert.equal(raph?.blockedCode, 'still_active');
 });
 
 test('no_departure_evidence: nothing stamps this person as having left', () => {

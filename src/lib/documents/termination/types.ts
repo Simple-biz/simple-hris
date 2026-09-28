@@ -200,6 +200,24 @@ export interface TerminationFacts {
   degraded: string[];
 }
 
+/**
+ * True when this facts sheet was built from the offboarded-sheet LEDGER because
+ * no master row carries the work email (Kane, 2026-09-28) — the person left
+ * before the master list began on 2026-04-21, as a rule.
+ *
+ * Read off the identity the resolver froze, not a separate flag, so the log
+ * row's `facts` snapshot answers the same question for every letter ever issued.
+ * Both halves are required: the master path always records `'Work Email'`, and a
+ * ledger letter never has a master row id — which is also why it can never write
+ * anything back.
+ */
+export function isLedgerOnlyTerminationFacts(facts: Pick<TerminationFacts, 'identity'>): boolean {
+  return (
+    facts.identity.matchedColumn === 'offboarded_sheet.work_email' &&
+    facts.identity.masterRowId === null
+  );
+}
+
 /** Departure reasons a termination document may state. This is
  *  VALID_OFFBOARD_REASONS minus 'temporary_pause' — G2, in the type system. */
 export const TERMINATION_DEPARTURE_REASONS = [

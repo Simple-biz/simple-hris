@@ -108,4 +108,8 @@ export const SERVER_ONLY_MODULES = [
   // the module that must never quietly lose its marker and drift back into a
   // shared helper.
   'termination-evidence.ts',
+  // The LEDGER identity read (Kane, 2026-09-28). It selects `personal_email`
+  // as data, which is precisely why it is split from the evidence read above —
+  // and why it must stay server-side.
+  'termination-ledger.ts',
 ] as const;

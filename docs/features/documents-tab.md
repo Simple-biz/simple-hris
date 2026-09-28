@@ -630,44 +630,64 @@ signature row — their printed **name and title** appear on the certificate, so
 Accounting → Documents to Payroll makes it read `Alissa Re · Payroll Coordinator` with no
 hardcoding.
 
-## Termination Letters — ledger-only leavers (`no_master`)
+## Termination Letters — ledger-only leavers (the ledger arm)
 
-Added 2026-09-23. A leaver who left **before the master list began (its first row is
-2026-04-21)** exists only on the `offboarded_sheet` ledger, so the Termination tab refuses them
-with `no_master`: it identifies on a master row, and none exists. Measured 2026-09-23: about
-**2,532 ledger addresses carry no master row** in any of the four email columns (counted by
-email, not folded by person).
+A leaver who left **before the master list began (its first row is 2026-04-21)** exists only on
+the `offboarded_sheet` ledger. **The tab documents them from the ledger** (Kane, 2026-09-28, from
+[Carla's notes](../meetings/2026-09-28-carla-termination-letters-blocked.md)). Until then it refused
+them `no_master`, with copy that sent the rep to HR for a master row nobody can create. The app
+never inserts master rows; only the sheet sync does. **Do not send HR to re-add the person to the
+master sheet:** the sync inserts them ACTIVE and unstamped, the tab then refuses them as
+`still_active`, and they are counted in active headcount. That rule still stands.
 
-**Nothing in the app can repair this.** The app never inserts `global_master_list` rows; only the
-sheet sync does. **Do not send HR to re-add the person to the master sheet:** the sync inserts
-them ACTIVE and unstamped, and the tab then refuses them as `still_active`, and they are
-counted in active headcount.
+Measured 2026-09-28 (read-only, the real `arbitrateTerminationFacts`, hours passed as
+`unavailable`): **2,567 ledger work emails have no master row** with that address as its Work Email.
+The 2026-09-23 count was 2,532, counted across all four email columns. Of the 2,567:
 
-The repair is [`scripts/insert-ledger-only-master-row.mts`](../../scripts/insert-ledger-only-master-row.mts),
-**one work email per run**, dry run by default and `--apply` to write. It INSERTs one master row
-copied from the ledger and pre-stamped with the LATEST ledger departure (reason verbatim), then
-reads it back. Rules it holds:
+- **1,550 now reach a facts sheet.** Nearly all of them need the rep to type the department and the
+  start date (1,546 each, because the ledger rarely holds them), 395 need the termination date, and
+  4 need the reason.
+- **832 are still refused `not_a_departure`.** The ledger's own labels are not on the seven-reason
+  allowlist: "No Show" 351, "No Show During Orientation" 279, "Policy Violation" 116, "Declined
+  Offer" 42, "Productivity" 16, and a tail. That is the allowlist working as ruled. Whether any of
+  these labels should map to a departure reason is **OPEN, Kane's call** (Open items 248).
+- **The rest are refused** for a reason that holds for them: 129 `ambiguous_identity`, 35
+  `still_active`, 10 `bad_name`, 6 `no_master`, 5 `temporary_pause`.
 
-- **Refuses if any master row carries the work OR personal email** in any email column. A
-  recycled work email would otherwise stamp its live holder by association.
-- **Refuses if the ledger names more than one personal email for the work email, or that
-  inbox under another work email.** Which human it is cannot be known.
-- **Runs the proposed row through `arbitrateTerminationFacts` and writes nothing unless the
-  verdict is facts.** Hours are passed as `unavailable`, and the live tab still runs T4 itself.
-- `last_seen_upload_id` / `first_seen_upload_id` are **NULL**, which never equals the current
-  upload, so the row is never active and never outranks a sheet row. `source_file` =
-  `manual_ledger_only_<date>`, `off_boarded_by` = `system:ledger-only-master-row`. The sync never
-  deletes or un-stamps it (`global-master-list-db.ts:1007-1025`).
-- `Start Date` and `Department` are NULL unless passed (`--start-date MM/DD/YY` must fall before
-  the departure; `--department` must be a label some master row already carries). A NULL start
-  date is a blank the rep fills through the blank-only write-back. Department is never written
-  back, so the rep types it on the letter.
-- **Not a batch tool.** It was approved for one person (Raph Sepnio, `raphs@`). Folding the
-  ~2,532 needs its own dedupe (by personal email) and a separate decision.
+How it works (`termination-arbitration.ts`, `ledgerOnlySubject`; `termination-ledger.ts`):
 
-The rep-facing `no_master` copy ("HR has to repair the roster row first",
-`TerminationDocsPanel.tsx:151`) is misleading for this case, because there is no row to repair.
-It is logged as an open item, not changed here.
+- **The ledger identity read is its own module.** It runs only when the master identity read
+  SUCCEEDED and found no row, so a person with a master row pays for no extra query. Its error
+  blocks with `evidence_read_failed`, never `no_master`. It selects `personal_email` as data, never
+  as a filter, and that is why it is not part of `termination-evidence.ts`. G1 pins that the
+  departure-evidence read never touches a personal column, and the pin still holds.
+- **Refusals the roster can no longer make for it:** `no_master` when the ledger has no row either,
+  or when a STAMPED master row carries the address in another column (issue the letter from that
+  master record instead). `still_active` when an UNSTAMPED master row carries the address, or when
+  the ledger's personal inbox is on a live master row. `ambiguous_identity` (candidates `[]`, the
+  names in the message) when the ledger rows carry two personal inboxes, or two different composed
+  legal names. Work emails are reused across people.
+- **Then the whole ladder runs unchanged** on one stand-in row with **no id and no stamp**: reason
+  allowlist, temporary pause, G4, T3 against every ledger row's own start date (a later stint with
+  an undated departure refuses `reengaged_after_departure`), T4 hours (identity widened to the
+  ledger's names and inbox), legal name.
+- **Every ledger row is a departure record, dated or not.** An undated row is a termination date the
+  rep supplies (`not_on_file`), not a refusal. Name comes from the latest-departure rows; department
+  and start date too, but only where those rows agree, because a value copied from an earlier stint
+  would print the wrong engagement. If ledger rows for one departure state different reasons, a
+  pause or an off-list label still refuses, and the reason goes blank only when every stated reason
+  is on the allowlist.
+- **No write-back, ever.** There is no master row id to key the undo on, so the panel shows a note
+  instead of the checkbox, and the route skips it anyway. The letter's facts snapshot records
+  `matchedColumn: 'offboarded_sheet.work_email'` and `masterRowId: null`
+  (`isLedgerOnlyTerminationFacts`).
+
+[`scripts/insert-ledger-only-master-row.mts`](../../scripts/insert-ledger-only-master-row.mts) is
+**no longer needed for a letter**. It stays as the one-person tool for when a master row is wanted
+for its own sake. A row it inserts moves that person off the ledger arm and onto the master path,
+and that is the only route to the blank-only write-back. Its rules are the precedent the ledger arm
+copied: no master collision on either address, one personal inbox, one name, and the tab's own
+verdict before any write. **It is not a batch tool.**
 
 ### Deploy notes — ledger-only insert
 
@@ -677,4 +697,5 @@ March 2, 2026, Performance; start date and department blank). **`--apply` PENDIN
 Revert = delete the one printed row id. **Measured 2026-09-25 (read-only): the row EXISTS.** It is
 `cac9eb83-525c-4cd4-98ef-8a5ffa0e35ce`, `off_boarded_at` 2026-03-02, `Performance`, `Department`
 null, as the dry run predicted (session log 2026-09-25, item 211). The note stays PENDING until
-Kane confirms that is his run; the backlog decision and the `no_master` copy are still open.
+Kane confirms that is his run. The backlog decision and the `no_master` copy were both closed on
+2026-09-28 by the ledger arm (Open items 245), not by folding the backlog through this script.

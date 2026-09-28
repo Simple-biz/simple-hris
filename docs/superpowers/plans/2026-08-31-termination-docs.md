@@ -87,6 +87,8 @@ Frozen implementation contract (17 new modules, verified signatures, guards G1�
 - [ ] `src/lib/documents/termination/termination-facts.ts` — the 3-arm resolver. Refusal order:
       no_master → ambiguous_identity → **still_active** → no_departure_evidence →
       **temporary_pause** → not_a_departure → rehire_after_offboard → bad_name.
+      *(Kane, 2026-09-28: zero master rows is no longer `no_master` — it is the LEDGER arm,
+      which builds the facts sheet from `offboarded_sheet`; see contract C4 step 1.)*
 - [ ] `src/lib/documents/termination/termination-log.ts` — the table, storage under a
       `termination/` prefix in the existing bucket, audit row.
 - [ ] `src/lib/documents/termination/termination-writeback.ts` — blank-only guarded UPDATE

@@ -26,6 +26,13 @@
  * email. Do not loop this over the ~2,500 ledger-only addresses — that is a
  * different decision with its own dedupe (by personal email) and review.
  *
+ * NO LONGER NEEDED FOR A LETTER (Kane, 2026-09-28). The Termination tab now
+ * builds a ledger-only leaver's facts sheet from `offboarded_sheet` directly
+ * (termination-arbitration.ts, `ledgerOnlySubject`), with the same identity
+ * rules this script enforces. Run it only when a master row is wanted for its
+ * own sake — and note that a row it inserts moves that person OFF the ledger arm
+ * and onto the master path, which is what the write-back needs.
+ *
  * ## What stops it creating the wrong person
  *
  *   1. NO master row may carry the work OR personal email in ANY of the four
@@ -255,12 +262,19 @@ if (!refusals.length) {
     }],
     currentUploadId: null,
     gmlActive: false,
+    // Empty is TRUE here, not a default: the collision scan above refused any
+    // master row carrying either address, and that is the only thing this map
+    // answers (the ledger arm, which the proposed row bypasses anyway).
+    rosterStatus: new Map(),
     gmlStatusError: null,
     masterReadError: null,
     evidenceReadError: null,
     cycleHours: { state: 'unavailable' },
     evidence: departureDay ? { offDate: departureDay, reason: departureReason } : null,
     sheetRows: mine.map((r) => ({ offBoardedAtRaw: str(r.off_boarded_at), offBoardedReason: str(r.off_boarded_reason) })),
+    // The proposed row IS a master row, so the ledger arm never runs.
+    ledgerRows: [],
+    ledgerReadError: null,
     readsDegraded: false,
     degraded: [],
     now: NOW,

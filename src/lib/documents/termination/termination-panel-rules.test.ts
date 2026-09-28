@@ -22,7 +22,9 @@ import {
   MANUAL_REPAIR_STORAGE_KEY,
   WRITEBACK_TRAIL_LOST_MARKER,
   buildManualRepairs,
+  TERMINATION_OPTIONAL_BLANKS,
   dropManualRepair,
+  isOptionalTerminationBlank,
   isWritebackTrailLost,
   manualRepairKey,
   mergeManualRepairs,
@@ -33,10 +35,12 @@ import {
   type TerminationManualRepair,
 } from './termination-panel-rules';
 import type {
+  TerminationBlankField,
   TerminationBlockedReason,
   TerminationDocumentRow,
   TerminationSearchCandidate,
 } from './types';
+import { TERMINATION_REQUIRED_FACTS } from './termination-route-rules';
 
 const DIR = path.join(process.cwd(), 'src', 'lib', 'documents', 'termination');
 const RULES_SRC = fs.readFileSync(path.join(DIR, 'termination-writeback-rules.ts'), 'utf8');
@@ -377,4 +381,57 @@ test('B9: the panel keeps the hand-repair off the toast layer and out of the way
 
 test('B9: the storage key is versioned, so a shape change cannot be read as the old shape', () => {
   assert.match(MANUAL_REPAIR_STORAGE_KEY, /\.v\d+$/);
+});
+
+// ─── Optional blanks · the starting rate only (Kane, 2026-09-28) ─────────────
+
+test('optional blanks: EXACTLY the starting rate may stay empty', () => {
+  // Carla: a termination letter confirms the contract ended — start date, last
+  // team, LAST hourly rate, end date, reason, signature. A second optional field
+  // added here is a rule change, not a refactor, and must fail this pin.
+  assert.deepEqual([...TERMINATION_OPTIONAL_BLANKS], ['starting_rate']);
+  const every: TerminationBlankField[] = [
+    'termination_date',
+    'reason',
+    'ending_department',
+    'start_date',
+    'starting_rate',
+    'ending_rate',
+  ];
+  assert.deepEqual(
+    every.filter((f) => isOptionalTerminationBlank(f)),
+    ['starting_rate'],
+  );
+});
+
+test('optional blanks: no fact the ROUTE requires can be optional in the panel', () => {
+  // The panel may be stricter than the route (it also requires the start date
+  // and the ending rate) but never looser — a route-required fact left optional
+  // here would enable a button whose POST is a guaranteed 400.
+  for (const f of TERMINATION_REQUIRED_FACTS) {
+    assert.equal(isOptionalTerminationBlank(f), false, `${f} is route-required`);
+  }
+  assert.equal(isOptionalTerminationBlank('start_date'), false);
+  assert.equal(isOptionalTerminationBlank('ending_rate'), false);
+});
+
+test('optional blanks + ledger letters: the panel uses the shared rules, not a copy', () => {
+  // The required check and the currency check both consult the rule, so an empty
+  // starting rate neither blocks the button nor demands a currency.
+  assert.ok(PANEL_CODE.includes('isOptionalTerminationBlank(field)'));
+  assert.match(
+    PANEL_CODE,
+    /facts\.blanks\.includes\('starting_rate'\) &&\s*\(draft\.starting_rate \?\? ''\)\.trim\(\) !== ''/,
+    'an empty optional starting rate still demands a currency',
+  );
+  // A ledger letter has no master row: the write-back is neither offered nor sent.
+  assert.ok(PANEL_CODE.includes('isLedgerOnlyTerminationFacts(facts)'));
+  assert.ok(PANEL_CODE.includes('write_back: writeBack && !isLedgerOnlyTerminationFacts(facts)'));
+  assert.ok(PANEL_CODE.includes('{!ledgerOnly && ('), 'the write-back opt-in is rendered for a ledger letter');
+});
+
+test('no_master copy never sends the rep to HR for a row nobody can create', () => {
+  const copy = /no_master:\s*'([^']*)'/.exec(PANEL_CODE)?.[1] ?? '';
+  assert.ok(copy.length > 0, 'no_master copy not found');
+  assert.doesNotMatch(copy, /HR/);
 });

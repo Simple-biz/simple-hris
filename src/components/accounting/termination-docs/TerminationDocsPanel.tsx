@@ -16,9 +16,11 @@
  *      — the People → Offboarded search console, re-used with this route's own
  *      phase lines.
  *   2. Show the server-resolved facts sheet read-only, with where each fact
- *      came from, and turn every fact the server could NOT resolve into a
- *      required input. A blank is the normal state of an old leaver — this
- *      surface prompts, it does not refuse.
+ *      came from, and turn every fact the server could NOT resolve into an
+ *      input — required, except the starting rate, which may stay empty (Kane,
+ *      2026-09-28). A blank is the normal state of an old leaver — this surface
+ *      prompts, it does not refuse. A leaver with no master row at all is built
+ *      from the offboarded-sheet ledger and cannot write anything back.
  *   3. Generate. One confirm dialog names the person, the printed date and the
  *      printed reason, says the letter is signed immediately and permanent, and
  *      lists any letters this person already has so a second one is deliberate.
@@ -97,6 +99,7 @@ import {
   TERMINATION_CURRENCIES,
   TERMINATION_DEPARTURE_REASONS,
   TERMINATION_SEARCH_MIN_QUERY,
+  isLedgerOnlyTerminationFacts,
   isTerminationCurrency,
   isTerminationDepartureReason,
   type TerminationBlankField,
@@ -123,6 +126,7 @@ import {
   MANUAL_REPAIR_STORAGE_KEY,
   buildManualRepairs,
   dropManualRepair,
+  isOptionalTerminationBlank,
   isWritebackTrailLost,
   manualRepairKey,
   mergeManualRepairs,
@@ -147,12 +151,17 @@ import {
  * employee-voice strings.
  */
 const REFUSAL_COPY: Record<TerminationBlockedReason['code'], string> = {
+  // Kane, 2026-09-28. A leaver with no master row is now issued from the
+  // offboarded-sheet ledger, so this refusal no longer means "left before the
+  // master list began" — and it never sends the rep to HR, who cannot create a
+  // master row. What is left: a record with no work email, or an address that
+  // only a completed offboarding-queue entry carries.
   no_master:
-    'No master-list row carries this address, so there is no employment record to certify. HR has to repair the roster row first.',
+    'This record has no work email that the master list or the offboarded sheet identifies a person by, and a letter is always keyed on one. Search by the person’s name to find the work email their records use.',
   ambiguous_identity:
     'Two or more equally current master rows under this one work email name different people, so which person a letter would be about cannot be known. Compare the rows below and have HR repair the master list — it is never guessed for you.',
   still_active:
-    'Still on the active roster: at least one master row for this address carries no off-board stamp. A termination letter here would state something untrue.',
+    'Still on the active roster: a master row carrying this address — or, for someone with no master row, their personal inbox — has no off-board stamp. A termination letter here would state something untrue.',
   no_departure_evidence:
     'No departure stamp anywhere — the master list, the offboarded sheet and the offboarding queue are all silent for this address.',
   temporary_pause:
@@ -320,10 +329,16 @@ function parseRateInput(raw: string): number | null {
 
 /** Per-blank validation: the rep-facing problem, or null when the value is good.
  *  Every rule here mirrors a server guard or a DB CHECK — none may be relaxed to
- *  unblock a generation. */
+ *  unblock a generation. An EMPTY optional blank (the starting rate only —
+ *  `TERMINATION_OPTIONAL_BLANKS`, Kane 2026-09-28) is fine; a typed value in it is
+ *  validated exactly like any other. */
 function blankError(field: TerminationBlankField, raw: string): string | null {
   const v = (raw ?? '').trim();
-  if (!v) return 'Required — the letter cannot be generated while this is blank.';
+  if (!v) {
+    return isOptionalTerminationBlank(field)
+      ? null
+      : 'Required — the letter cannot be generated while this is blank.';
+  }
   switch (field) {
     case 'termination_date':
     case 'start_date':
@@ -893,8 +908,11 @@ export default function TerminationDocsPanel({
   const missingRateCurrencies = useMemo<RateBlankField[]>(() => {
     if (!facts) return [];
     const out: RateBlankField[] = [];
+    // The starting rate is OPTIONAL: left empty it prints nothing and needs no
+    // currency. Only a figure the rep actually typed has to be denominated.
     if (
       facts.blanks.includes('starting_rate') &&
+      (draft.starting_rate ?? '').trim() !== '' &&
       !effectiveRateCurrency(facts.startingRate, currencyDraft.starting_rate)
     ) {
       out.push('starting_rate');
@@ -906,7 +924,7 @@ export default function TerminationDocsPanel({
       out.push('ending_rate');
     }
     return out;
-  }, [facts, currencyDraft]);
+  }, [facts, currencyDraft, draft]);
 
   const draftReason = (draft.reason ?? '').trim();
   const effectiveReasonKey: TerminationDepartureReason | null =
@@ -916,6 +934,10 @@ export default function TerminationDocsPanel({
     (effectiveReasonKey ? OFFBOARD_REASON_LABELS[effectiveReasonKey] ?? effectiveReasonKey : null);
   const effectiveDeptLabel =
     facts?.endingDepartmentLabel ?? ((draft.ending_department ?? '').trim() || null);
+
+  /** Built from the offboarded-sheet ledger: no master row exists, so the sources
+   *  read "the ledger", and there is nothing to write back into. */
+  const ledgerOnly = !!facts && isLedgerOnlyTerminationFacts(facts);
 
   const readyToGenerate =
     !!facts &&
@@ -1025,7 +1047,9 @@ export default function TerminationDocsPanel({
         body: JSON.stringify({
           work_email: facts.identity.workEmail,
           filled,
-          write_back: writeBack,
+          // A ledger letter has no master row to write into; the route would only
+          // report every cell as skipped. The opt-in is not even offered.
+          write_back: writeBack && !isLedgerOnlyTerminationFacts(facts),
         } satisfies TerminationGenerateRequest),
       });
       const json = (await res.json()) as TerminationGenerateResponse;
@@ -1767,7 +1791,7 @@ export default function TerminationDocsPanel({
                       search or act on. */}
                   {factsBlocked.code === 'reengaged_after_departure' && (
                     <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
-                      Departure {formatDayOnly(factsBlocked.offDate)}, and a master row for this
+                      Departure {formatDayOnly(factsBlocked.offDate)}, and another record for this
                       person starts {formatDayOnly(factsBlocked.startDate)} — after it.
                     </p>
                   )}
@@ -1806,6 +1830,22 @@ export default function TerminationDocsPanel({
                     </div>
                   )}
 
+                  {/* Ledger-only: no master row exists (Kane, 2026-09-28). Said
+                      up front, in words, because every source below changes. */}
+                  {ledgerOnly && (
+                    <div className="rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2.5 dark:border-orange-900/50 dark:bg-orange-950/20">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-800 dark:text-orange-300">
+                        From the offboarded sheet
+                      </p>
+                      <p className="mt-1 text-[12px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+                        This person has no master-list row, usually because they left before the
+                        master list began on April 21, 2026. The facts below come from their row on
+                        the offboarded sheet. Fill in whatever it does not hold. Nothing you type is
+                        written back anywhere: it is saved only on this letter and its log row.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Resolved facts — read-only, each with its source. */}
                   <div>
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-orange-700 dark:text-orange-300">
@@ -1816,9 +1856,11 @@ export default function TerminationDocsPanel({
                         label="Legal name"
                         value={facts.workerName}
                         source={
-                          facts.identity.onCurrentUpload
-                            ? 'the master-list row on the current upload'
-                            : 'the newest master-list row carrying this work email'
+                          ledgerOnly
+                            ? 'their row on the offboarded sheet'
+                            : facts.identity.onCurrentUpload
+                              ? 'the master-list row on the current upload'
+                              : 'the newest master-list row carrying this work email'
                         }
                       />
                       <FactRow
@@ -1831,7 +1873,7 @@ export default function TerminationDocsPanel({
                         <FactRow
                           label="Personal email"
                           value={facts.identity.personalEmail}
-                          source="the same master-list row"
+                          source={ledgerOnly ? 'the same offboarded-sheet row' : 'the same master-list row'}
                           mono
                         />
                       )}
@@ -1853,14 +1895,22 @@ export default function TerminationDocsPanel({
                         <FactRow
                           label="Department at departure"
                           value={facts.endingDepartmentLabel}
-                          source="the master-list Department cell"
+                          source={
+                            ledgerOnly
+                              ? 'the offboarded-sheet department'
+                              : 'the master-list Department cell'
+                          }
                         />
                       )}
                       {facts.startDate && (
                         <FactRow
                           label="Start date"
                           value={facts.startDateLabel ?? formatDayOnly(facts.startDate)}
-                          source="the master-list Start Date cell"
+                          source={
+                            ledgerOnly
+                              ? 'the offboarded-sheet start date'
+                              : 'the master-list Start Date cell'
+                          }
                         />
                       )}
                       {facts.startingRate.amount != null && (
@@ -1933,7 +1983,7 @@ export default function TerminationDocsPanel({
                               >
                                 {BLANK_LABEL[field]}
                                 <span className="ml-1 text-amber-600 dark:text-amber-400">
-                                  · required
+                                  {isOptionalTerminationBlank(field) ? '· optional' : '· required'}
                                 </span>
                               </label>
                               <p className="mt-0.5 text-[11px] leading-relaxed text-amber-900/80 dark:text-amber-200/70">
@@ -1942,6 +1992,8 @@ export default function TerminationDocsPanel({
                                   ? BLANK_REASON_COPY[rate.blankReason]
                                   : 'nothing usable was on file in any source'}
                                 .
+                                {isOptionalTerminationBlank(field) &&
+                                  ' Leave it empty and the letter prints the ending rate on its own.'}
                               </p>
                               <div className="mt-2">
                                 {field === 'termination_date' || field === 'start_date' ? (
@@ -2062,7 +2114,11 @@ export default function TerminationDocsPanel({
                     </div>
                   )}
 
-                  {/* Blank-only write-back opt-in. */}
+                  {/* Blank-only write-back opt-in. Not offered for a ledger
+                      letter: there is no master row to write into, and a
+                      checkbox that can only ever report "skipped" is a dead
+                      control. */}
+                  {!ledgerOnly && (
                   <div className="flex items-start gap-2.5 rounded-xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900/50">
                     {/* The Checkbox renders a role="checkbox" SPAN, not an
                         input, so `htmlFor` would associate with nothing —
@@ -2098,6 +2154,7 @@ export default function TerminationDocsPanel({
                       </span>
                     </div>
                   </div>
+                  )}
 
                   <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200/70 pt-4 dark:border-zinc-800/70">
                     <div className="min-w-0 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
@@ -2505,7 +2562,7 @@ export default function TerminationDocsPanel({
                 </div>
               ) : null}
 
-              {writeBack && (
+              {writeBack && !ledgerOnly && (
                 <p className="rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-[12px] leading-relaxed text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
                   Whichever of the off-board date, the off-board reason and the Start Date you
                   filled in above will also be written into the master list, and only where that

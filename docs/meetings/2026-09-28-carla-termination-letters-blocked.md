@@ -2,8 +2,9 @@
 
 Relayed by Kane on 2026-09-28 as pasted notes. The meeting's own date was not stated; this file
 is dated for the day the notes arrived. Surface: Accounting → Documents → Termination Letters.
-**No code shipped.** The session hard-stopped on two conflicts with documented rules (Open items
-245, [Sep 25 log](../audits/audit-2026-09-25-session-log.md)).
+The session first hard-stopped on two conflicts with documented rules. **Kane ruled the same day
+("Docs are stale change it!"), choosing (b) on both, and the change was built and committed
+locally** (Open items 245 and 248, [Sep 25 log](../audits/audit-2026-09-25-session-log.md)).
 
 ## What Carla said (the notes, verbatim)
 
@@ -56,21 +57,36 @@ it now names the week and says when the refusal will clear. The request "rather 
 document generation altogether" does not override that ruling. If Kane wants it revisited, that
 is a new ruling.
 
-## Pending Kane (the two conflicts)
+## Decision (Kane, 2026-09-28): the docs were stale on both points
 
-1. **Ledger-only leavers (`no_master`).** Either keep the refusal and rewrite its copy to give
-   the real unblock path (a one-person engineering insert, never "ask HR"), or let the tab build
-   the facts sheet from the `offboarded_sheet` ledger when no master row exists. In the second
-   case every other refusal still applies, there is no roster write, and the missing facts
-   become inputs.
-2. **Starting rate.** Either keep it required when it is blank, or make it optional in the panel
-   to match the route and the renderer. Start date and ending rate stay required.
+1. **Ledger-only leavers are documented from the ledger.** When no master row has the address as
+   its work email, the tab builds the facts sheet from `offboarded_sheet` instead of refusing
+   `no_master`. Every other refusal still applies. New refusals were added for what the roster can
+   no longer vouch for: the address on another master row, the ledger's personal inbox on a live
+   row, and ledger rows that name two people. There is no write-back, because there is no master
+   row to write into. `no_master` now means that neither the roster nor the ledger has a row, and
+   its copy no longer sends anyone to HR.
+2. **The starting rate is optional.** The letter prints the ending rate alone. The start date and
+   the ending rate stay required, as Carla listed them.
+
+Measured after the change (read-only, 2026-09-28, hours not checked): **1,550 of the 2,567
+ledger-only work emails now reach a facts sheet.** Almost all of them need the department and the
+start date typed (the ledger rarely holds either).
+
+## New finding: 832 ledger-only leavers still refuse on the ledger's own labels
+
+`not_a_departure` refuses 832 of them because the ledger's labels are not on the seven-reason
+allowlist. The labels are "No Show" 351, "No Show During Orientation" 279, "Policy Violation" 116,
+"Declined Offer" 42, "Productivity" 16, and a tail. The allowlist is a ruling, so nothing was
+mapped. Whether "Policy Violation" or "Productivity" should read as a departure reason, and whether
+someone who never started should get a letter at all, are Kane's calls (Open items 248).
 
 ## Gaps found
 
 - `docs/features/termination-docs.md` was planned (plan task 8, `:148-152`) but was **never
   written**. The feature's rules live in the frozen contract, the INDEX row, the memory entry and
-  `documents-tab.md` § ledger-only.
+  `documents-tab.md` § ledger arm. This change updated those in place and did not write the missing
+  doc (still OPEN, item 245).
 
 Links: [[termination-docs]] · [[ledger-only-leaver-no-master-row]] ·
-[documents-tab.md](../features/documents-tab.md) · Open items 191, 245.
+[documents-tab.md](../features/documents-tab.md) · Open items 191, 245, 248.

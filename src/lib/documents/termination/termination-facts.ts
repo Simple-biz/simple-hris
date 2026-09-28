@@ -57,12 +57,14 @@ import { escapeLikePattern } from './reason-key';
 import {
   applyTerminationRates,
   arbitrateTerminationFacts,
+  type TerminationLedgerRow,
   type TerminationMasterRow,
 } from './termination-arbitration';
 import {
   latestDepartureRecord,
   loadTerminationDepartureEvidence,
 } from './termination-evidence';
+import { loadTerminationLedgerRows } from './termination-ledger';
 import {
   readCycleHoursSignal,
   type TerminationHoursIdentity,
@@ -133,6 +135,15 @@ export async function resolveTerminationFacts(workEmail: string): Promise<Termin
 
     const masterRows = master.rows.map(toMasterRow);
 
+    // The LEDGER identity read — only when the identity read SUCCEEDED and found
+    // no master row (Kane, 2026-09-28). A person with a master row pays for no
+    // extra query and gains no new failure mode; a failed master read never gets
+    // this far as a verdict (T1 blocks on `masterReadError`).
+    const ledger =
+      !master.error && masterRows.length === 0
+        ? await loadTerminationLedgerRows(supabase, norm)
+        : { rows: [], error: null };
+
     const arbitration = arbitrateTerminationFacts({
       workEmail: norm,
       masterRows,
@@ -140,10 +151,14 @@ export async function resolveTerminationFacts(workEmail: string): Promise<Termin
       // Corroboration only — the T2 decision reads `masterRows` directly, and an
       // ERRORED map is a hard T1 block rather than a silent "not active".
       gmlActive: gml.map.get(norm)?.active === true,
+      // The ledger arm's two roster questions (this address in another column;
+      // the ledger's personal inbox on a live row) are asked of the SAME map, so
+      // no personal email ever becomes a query filter (G1).
+      rosterStatus: gml.map,
       gmlStatusError: gml.error,
       masterReadError: master.error,
       evidenceReadError: evidence.error,
-      cycleHours: readCycleHoursSignal(hours, hoursIdentity(masterRows, norm)),
+      cycleHours: readCycleHoursSignal(hours, hoursIdentity(masterRows, ledger.rows, norm)),
       evidence: latestDepartureRecord([
         ...masterRows.map((r) => ({
           offBoardedAtRaw: r.offBoardedAtRaw,
@@ -153,6 +168,8 @@ export async function resolveTerminationFacts(workEmail: string): Promise<Termin
         ...evidence.queueRows,
       ]),
       sheetRows: evidence.sheetRows,
+      ledgerRows: ledger.rows,
+      ledgerReadError: ledger.error,
       readsDegraded: degraded.length > 0,
       degraded,
     });
@@ -234,8 +251,17 @@ function personalEmailScreenPort(supabase: ServiceClient): TerminationAliasScree
  * local part of each address on any domain, and a token-subset name comparison —
  * because a working person's Hubstaff login is routinely an address the master
  * row does not carry at all.
+ *
+ * A LEDGER-ONLY subject (no master row) takes its names and personal inbox from
+ * the ledger rows instead. Keyed on the work email alone, the hours signal would
+ * be the narrowest read in the feature for exactly the people the roster cannot
+ * vouch for. With a master row the ledger is not consulted, as before.
  */
-function hoursIdentity(rows: TerminationMasterRow[], workEmail: string): TerminationHoursIdentity {
+function hoursIdentity(
+  rows: TerminationMasterRow[],
+  ledger: TerminationLedgerRow[],
+  workEmail: string,
+): TerminationHoursIdentity {
   const emails = new Set<string>([workEmail]);
   const names = new Set<string>();
   for (const r of rows) {
@@ -244,6 +270,13 @@ function hoursIdentity(rows: TerminationMasterRow[], workEmail: string): Termina
       if (n) emails.add(n);
     }
     if (r.name) names.add(r.name);
+  }
+  if (rows.length === 0) {
+    for (const r of ledger) {
+      const n = normEmail(r.personalEmail);
+      if (n) emails.add(n);
+      if (r.name) names.add(r.name);
+    }
   }
   return { emails: [...emails], names: [...names] };
 }

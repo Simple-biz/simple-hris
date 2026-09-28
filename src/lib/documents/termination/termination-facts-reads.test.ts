@@ -712,3 +712,93 @@ test('G1: an alias whose SCREEN read fails is dropped, not trusted', async () =>
   );
   assert.ok(res.facts?.degraded.some((d) => /could not be checked/.test(d)));
 });
+
+// ── The ledger arm (Kane, 2026-09-28): no master row, built from the ledger ──
+
+test('ledger arm: a leaver with NO master row resolves from offboarded_sheet, and the inbox reaches no query', async () => {
+  // Raph Sepnio's shape: left before the master list began (2026-04-21), so the
+  // ledger row is the only record. The master fixture is EMPTY — no identity
+  // row, and nothing in the status map — which is exactly what used to refuse
+  // `no_master` with copy that sent the rep to HR.
+  const WORK = 'raphs@simple.biz';
+  const INBOX = 'raph.sepnio@gmail.com';
+  const fake = harness(
+    tables(masterListFixture([]), {
+      offboarded_sheet: ilikeTableFixture([
+        {
+          id: 44737,
+          work_email: WORK,
+          name: 'Sepnio, Raphael',
+          personal_email: INBOX,
+          department: 'Sales',
+          start_date: '1/10/2025',
+          off_boarded_at: '2026-03-02',
+          off_boarded_reason: 'Performance',
+        },
+      ]),
+    }),
+  );
+  const { resolveTerminationFacts } = await factsModule();
+
+  const res = await resolveTerminationFacts(WORK);
+
+  assert.equal(res.blocked, null, res.blocked?.message ?? res.error ?? '');
+  assert.equal(res.facts?.workerName, 'Raphael Sepnio');
+  assert.equal(res.facts?.terminationDate, '2026-03-02');
+  assert.equal(res.facts?.reasonKey, 'performance');
+  assert.equal(res.facts?.startDate, '2025-01-10');
+  assert.equal(res.facts?.identity.masterRowId, null);
+  assert.equal(res.facts?.identity.matchedColumn, 'offboarded_sheet.work_email');
+
+  // Two reads of the ledger, both WORK-keyed: the departure evidence (which
+  // never selects a personal column, G1) and the ledger identity read, which
+  // carries the cells the letter is now built from.
+  const sheetReads = fake.opsFor('offboarded_sheet');
+  const cols = (op: (typeof sheetReads)[number]) => (op.columns ?? '').split(',').map((c) => c.trim());
+  for (const op of sheetReads) {
+    assert.deepEqual(chainArgs(op, 'ilike'), ['work_email', WORK], 'an offboarded_sheet read is not work-keyed');
+  }
+  const ledgerRead = sheetReads.find((op) => cols(op).includes('personal_email'));
+  assert.ok(ledgerRead, 'no ledger identity read was made');
+  for (const col of ['id', 'name', 'department', 'start_date', 'off_boarded_at', 'off_boarded_reason']) {
+    assert.ok(cols(ledgerRead).includes(col), `the ledger identity read does not select ${col}`);
+  }
+  assert.equal(
+    sheetReads.filter((op) => cols(op).includes('personal_email')).length,
+    1,
+    'the departure-evidence read started selecting a personal column',
+  );
+
+  // G1: the ledger's personal inbox is READ, never filtered on — the roster
+  // questions go to the status map already in memory.
+  const offenders = fake
+    .ops.filter((op) => op.chain.some((c) => c.toLowerCase().includes(INBOX)))
+    .map((op) => `${op.table}: ${op.chain.join('.')}`);
+  assert.deepEqual(offenders, [], `a personal email reached a query:\n${offenders.join('\n')}`);
+});
+
+test('ledger arm: the ledger identity read runs ONLY when no master row exists, and a failure blocks', async () => {
+  // A person with a master row pays for no extra query and gains no new failure mode.
+  const withMaster = harness(
+    tables(masterListFixture([masterRow({ off_boarded_at: '2026-06-03', off_boarded_reason: 'resigned' })])),
+  );
+  const { resolveTerminationFacts } = await factsModule();
+  await resolveTerminationFacts(LEAVER);
+  assert.equal(
+    withMaster
+      .opsFor('offboarded_sheet')
+      .filter((op) => (op.columns ?? '').includes('personal_email')).length,
+    0,
+    'the ledger identity read ran for a person who has a master row',
+  );
+
+  // No master row, and the identity read FAILS: that is not "no record".
+  const ledgerOnlyFails: FakeTableFixture = (op) =>
+    (op.columns ?? '').includes('personal_email')
+      ? { data: null, error: { message: 'canceling statement due to statement timeout' } }
+      : [];
+  harness(tables(masterListFixture([]), { offboarded_sheet: ledgerOnlyFails }));
+  const res = await resolveTerminationFacts('raphs@simple.biz');
+  assert.equal(res.facts, null);
+  assert.equal(res.blocked?.code, 'evidence_read_failed');
+});

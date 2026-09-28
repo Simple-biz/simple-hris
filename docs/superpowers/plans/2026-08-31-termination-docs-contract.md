@@ -195,7 +195,12 @@ export type TerminationRateSource =
   | 'rate_history_as_of'  // resolveRateAsOfDate(history, offDate)
   | 'rep_supplied';       // the rep typed it into a blank
 
-/** A rate on the document. `amount === null` means BLANK — the rep must fill it. */
+/** A rate on the document. `amount === null` means BLANK — the rep must fill it,
+ *  EXCEPT the starting rate, which may stay blank (Kane, 2026-09-28, from Carla:
+ *  the letter then prints the ending rate alone). The panel's optional set is
+ *  pinned to exactly ['starting_rate'] (termination-panel-rules.ts,
+ *  TERMINATION_OPTIONAL_BLANKS); the route still requires only the three
+ *  NOT NULL facts, and the panel additionally requires start date + ending rate. */
 export interface TerminationRate {
   amount: number | null;
   currency: TerminationCurrency;
@@ -719,7 +724,7 @@ export async function resolveTerminationFacts(
 Additional imports: `@/lib/roster/offboard-evidence` (`loadOffboardEvidenceByEmail`), `@/lib/name/name-parts` (`parseNameParts`), `@/lib/documents/coe-facts` (`formatCoeStartDate` ONLY), `./termination-rates`.
 
 Frozen order — first refusal wins:
-1. Offboard-safe master read: paged `global_master_list` on `"Work Email" ILIKE escapeLikePattern(norm)`, **NO `off_boarded_at` filter**. Zero rows → `no_master`.
+1. Offboard-safe master read: paged `global_master_list` on `"Work Email" ILIKE escapeLikePattern(norm)`, **NO `off_boarded_at` filter**. Zero rows → **the LEDGER arm, not a refusal** (Kane, 2026-09-28; this line used to read "Zero rows → `no_master`"). The master list begins 2026-04-21, so ~2,567 ledger work emails that left earlier have no master row, and `no_master` sent the rep to HR for a row nobody can create. `./termination-ledger` reads that work email's `offboarded_sheet` rows WITH their identity cells (only when the master read succeeded and was empty; its error blocks `evidence_read_failed`), and `ledgerOnlySubject` (termination-arbitration.ts) refuses: `no_master` when the ledger has no row either, or the roster carries the address in another column STAMPED (issue from that master record); `still_active` when the roster carries it UNSTAMPED, or the ledger's personal inbox sits on a live master row; `ambiguous_identity` (candidates `[]`) when the ledger rows carry two personal inboxes or two different composed legal names. Otherwise it builds ONE stand-in master row (id `null`, no stamp; name, and the department / start date only where the latest-departure rows agree) and steps 2–11 run on it unchanged, with every ledger row a departure record (an undated one is a `termination_date` blank, `not_on_file`) and every ledger row's start date a T3 probe. The stand-in has no id, so the write-back never runs; the identity records `matchedColumn: 'offboarded_sheet.work_email'`, `masterRowId: null` (`isLedgerOnlyTerminationFacts`). Ledger rows for one departure that state different reasons refuse on a pause or an off-list label and blank the reason only when all are allowlisted.
 2. Arbitrate: read the current upload id from `master_list_uploads where is_current = true`; the row with `last_seen_upload_id === currentUploadId` wins for `Name`/`Department`/`Start Date`/alternates ("PROMOTION", `src/lib/roster/recently-offboarded.ts:497-520`); if none is on the current upload, the highest `last_seen_upload_id` wins. Record every candidate id.
 3. `fetchGmlStatusMap()` → `active === true` ⇒ **`still_active`** (G3).
 4. `loadOffboardEvidenceByEmail('work')` — **`'work'` is not optional** (G1). No entry ⇒ `no_departure_evidence`. **Note the verified signature returns `Promise<Map<…>>` with NO error channel and every source read is `.catch(() => {})`** — so "no entry" can mean "the read broke". Cross-check: if the arbitrated master row itself carries `off_boarded_at`, use it; if neither the map nor any master row nor `offboarded_sheet` has anything, and any read errored, return **`evidence_read_failed`**, not `no_departure_evidence`.

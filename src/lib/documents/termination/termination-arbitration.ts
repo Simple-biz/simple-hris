@@ -88,10 +88,30 @@ export interface TerminationMasterRow {
   uploadSeq: number;
 }
 
-/** One `offboarded_sheet` row carrying this work email. */
+/** One departure stamp — an `offboarded_sheet` row or a completed
+ *  `offboarding_queue` row — reduced to the two cells a departure record needs. */
 export interface TerminationSheetRow {
   offBoardedAtRaw: string | null;
   offBoardedReason: string | null;
+}
+
+/**
+ * One `offboarded_sheet` (ledger) row carrying this work email, WITH the identity
+ * cells. They are read because a leaver with NO master row is documented from the
+ * ledger alone (Kane, 2026-09-28): the master list begins 2026-04-21, so about
+ * 2,532 ledger addresses that left earlier have nothing else to be read from.
+ * For a person who HAS a master row these extra cells are never consulted — the
+ * roster of record supplies name, department and start date.
+ */
+export interface TerminationLedgerRow extends TerminationSheetRow {
+  /** `offboarded_sheet.id`. Named in a refusal; never a write-back key. */
+  id: string | null;
+  name: string | null;
+  /** Normalized. Used to tell two people apart and to ask the roster whether
+   *  this inbox is live — never to source a printed fact (G1). */
+  personalEmail: string | null;
+  departmentRaw: string | null;
+  startDateRaw: string | null;
 }
 
 /** What `resolveTerminationRates` needs. Structurally identical to that
@@ -304,6 +324,9 @@ interface Bucket {
   matchedColumn: TerminationSearchCandidate['matchedColumn'];
   /** Rank of the source that currently owns the identity fields. */
   rank: readonly [number, number, number];
+  /** An `offboarded_sheet` row named this key. With no master row carrying the
+   *  address, that ledger row is what the facts sheet is built from. */
+  fromLedger: boolean;
 }
 
 /** Identity-field precedence: on the current upload beats any other row, then
@@ -362,9 +385,11 @@ export function buildTerminationCandidates(
         rawReason: o.rawReason,
         matchedColumn: o.matchedColumn,
         rank,
+        fromLedger: o.source === 'sheet',
       });
       continue;
     }
+    if (o.source === 'sheet') cur.fromLedger = true;
 
     // Latest departure date wins, and the reason rides along with it — the same
     // rule loadOffboardEvidenceByEmail applies (offboard-evidence.ts:86-94).
@@ -407,10 +432,21 @@ export function buildTerminationCandidates(
       // person is working, and `active: false` by absence is exactly how a
       // broken read used to render every candidate as issuable.
       blockedCode = 'evidence_read_failed';
-    } else if (!known) {
+    } else if (!known && !b.fromLedger) {
       // The status map indexes every email column of every master row, so an
-      // absent entry means no `global_master_list` row carries this address.
+      // absent entry means no `global_master_list` row carries this address —
+      // and with no ledger row either (a completed queue row alone never vouches
+      // for a departure) there is nothing to build a letter from.
       blockedCode = 'no_master';
+    } else if (
+      !known &&
+      b.personalEmail !== null &&
+      input.gmlStatus.get(b.personalEmail)?.active === true
+    ) {
+      // A LEDGER-ONLY leaver (Kane, 2026-09-28) is issuable from the ledger —
+      // unless their personal inbox sits on a live master row, which is the
+      // resolver's `still_active` arm for this shape (ledgerOnlySubject).
+      blockedCode = 'still_active';
     } else if (active && !hasDepartureRecord) {
       // NOT `active` alone. An unstamped duplicate row is the NORMAL shape of a
       // recent leaver — HR keeps them on the master sheet through final pay and
@@ -477,6 +513,17 @@ export interface TerminationArbitrationInput {
    *  G3 decision, because the map keys the shared PERSONAL column too, so
    *  someone else's live row can raise this flag for a genuine leaver. */
   gmlActive: boolean;
+  /**
+   * `fetchGmlStatusMap()`'s WHOLE map: every email column of every master row,
+   * stamped and unstamped. Read ONLY by the ledger arm — when no master row
+   * carries this address as its Work Email — where it answers the two questions
+   * `gmlActive` cannot: does the roster carry this address in ANOTHER column
+   * (then this is not a ledger-only person), and is the ledger's PERSONAL inbox
+   * on a live row (then the person, or someone sharing that inbox, is working
+   * under another work email). Required rather than defaulted: an empty map by
+   * omission would read as "nobody on the roster uses either address".
+   */
+  rosterStatus: ReadonlyMap<string, { active: boolean }>;
   /** `fetchGmlStatusMap()`'s error, verbatim. Non-null means the active check
    *  COULD NOT RUN, which is a hard `evidence_read_failed` block (T1): "not
    *  active" by absence is the one reading a failed read may never get. */
@@ -512,6 +559,18 @@ export interface TerminationArbitrationInput {
   /** `offboarded_sheet` rows for this work email — the cross-check that tells
    *  "no departure" apart from "the evidence read broke". */
   sheetRows: TerminationSheetRow[];
+  /**
+   * The LEDGER identity read (`./termination-ledger`): the same `offboarded_sheet`
+   * rows WITH their identity cells. Read only when the master identity read
+   * succeeded and found no row — `[]` otherwise, and never consulted then. On
+   * the ledger arm these rows are both the identity and the departure records,
+   * so the name printed and the date printed come from one read.
+   */
+  ledgerRows: TerminationLedgerRow[];
+  /** That read's error, verbatim. Non-null blocks the ledger arm with
+   *  `evidence_read_failed` — an empty ledger from a broken read must never
+   *  become `no_master`. */
+  ledgerReadError: string | null;
   /** True when a NON-fatal read reported an error (the current-upload lookup,
    *  say). The four reads that must succeed have their own fields above. */
   readsDegraded: boolean;
@@ -583,6 +642,164 @@ function blocked(reason: TerminationBlockedReason): TerminationArbitration {
   return { blocked: reason, facts: null, rateContext: null, blankReasons: null };
 }
 
+/** The legal name a letter prints: first middle last [+ extension], whitespace
+ *  collapsed. The nickname is dropped on purpose — a legal page states the legal
+ *  name. '' when nothing composes. */
+function composeLegalName(raw: string | null): string {
+  const parts = parseNameParts(raw);
+  const core = [parts.first, parts.middle, parts.last].filter(Boolean).join(' ').trim();
+  return (core && parts.extension ? `${core} ${parts.extension}` : core).replace(/\s+/g, ' ').trim();
+}
+
+/** What the ledger arm hands the rest of the ladder: a refusal, or ONE stand-in
+ *  identity row plus every ledger row as a re-engagement probe. */
+type LedgerSubject =
+  | { blocked: TerminationBlockedReason }
+  | { blocked: null; identityRow: TerminationMasterRow; probeRows: TerminationMasterRow[] };
+
+/**
+ * THE LEDGER ARM (Kane, 2026-09-28). No master row carries this address as its
+ * Work Email, so the person is documented from `offboarded_sheet` alone.
+ *
+ * Who lands here: anyone who left before the master list began (its first row is
+ * 2026-04-21). Measured 2026-09-23, about 2,532 ledger addresses have no master
+ * row in any of the four email columns. Refusing them `no_master` told the rep to
+ * have HR repair a roster row that does not exist and cannot be created — the
+ * app never inserts master rows, and re-adding the person to the sheet would
+ * create them ACTIVE.
+ *
+ * What does NOT change: this returns a stand-in identity row, and the whole
+ * remaining ladder — reason allowlist, temporary pause, re-hire, re-engagement,
+ * hours, legal name — runs on it exactly as it runs on a master row. The stand-in
+ * has NO id, so there is nothing to write back (the route skips write-back
+ * without a master row id), and it carries no stamp of its own: the departures
+ * are the ledger rows themselves (`ledgerRows`), dated or not.
+ *
+ * What is ADDED, because the roster no longer vouches for the identity — the
+ * identity rules of the one-person precedent `scripts/insert-ledger-only-master-row.mts`:
+ *   · the roster must not carry this address in ANY other column — live, it is a
+ *     working person's address; stamped, the roster knows them under another
+ *     work email and the letter belongs on that record;
+ *   · the ledger's personal inbox must not be on a LIVE master row — the person,
+ *     or someone sharing that inbox, is working under another work email;
+ *   · the ledger rows must name ONE person — one personal inbox at most, and one
+ *     legal name. Work emails are reused across people, and a letter whose
+ *     subject is a coin flip is the outcome `ambiguous_identity` exists to stop.
+ *
+ * Name, department and start date come from the row(s) that recorded the LATEST
+ * dated departure, and only where those rows agree. A department or start date
+ * copied from an earlier stint would print the wrong engagement, so a
+ * disagreement is a BLANK the rep fills, never a pick.
+ */
+function ledgerOnlySubject(
+  input: TerminationArbitrationInput,
+  workEmail: string,
+  day: (raw: string | null | undefined) => string | null,
+): LedgerSubject {
+  // A failed ledger read is not an empty ledger (T1's rule, for this read).
+  if (input.ledgerReadError !== null) {
+    return {
+      blocked: {
+        code: 'evidence_read_failed',
+        message: `No master row carries ${workEmail}, and the offboarded-sheet read that would describe them failed (${input.ledgerReadError}). Retry — "no record of this person" is a verdict a failed read may never produce.`,
+      },
+    };
+  }
+  const ledger = input.ledgerRows;
+  if (ledger.length === 0) {
+    return {
+      blocked: {
+        code: 'no_master',
+        message: `Neither the master list nor the offboarded-sheet ledger has a row whose work email is ${workEmail}, so there is no record to build a letter from. Search by the person's name instead — their records may use a different work email.`,
+      },
+    };
+  }
+
+  const onRoster = input.rosterStatus.get(workEmail);
+  if (onRoster) {
+    return {
+      blocked: onRoster.active
+        ? {
+            code: 'still_active',
+            message: `${workEmail} has no master row of its own, but an UNSTAMPED master row carries it as a personal or alternate address — someone on the live roster still uses it. No letter is issued for an address a working person uses.`,
+          }
+        : {
+            code: 'no_master',
+            message: `${workEmail} has no master row of its own, but a master row carries it as a personal or alternate address, so the roster knows this person under a different work email. Search their name and issue the letter from that master-list record instead.`,
+          },
+    };
+  }
+
+  const inboxes = distinctValues(ledger.map((r) => normEmail(r.personalEmail)));
+  const liveInbox = inboxes.find((inbox) => input.rosterStatus.get(inbox)?.active === true);
+  if (liveInbox) {
+    return {
+      blocked: {
+        code: 'still_active',
+        message: `${workEmail} has no master row, but the personal inbox on its ledger row, ${liveInbox}, is carried by a LIVE master row — this person, or someone who shares that inbox, is on the roster now under another work email. Search that inbox: if they have since left, issue the letter from their current record; if they are working, no letter is issued.`,
+      },
+    };
+  }
+  if (inboxes.length > 1) {
+    return {
+      blocked: {
+        code: 'ambiguous_identity',
+        message: `The offboarded-sheet ledger has ${ledger.length} rows under ${workEmail} carrying ${inboxes.length} different personal emails (${inboxes.join(' / ')}). A work email is reused across people, so which person a letter would be about cannot be known, and it is never guessed. Engineering has to split the ledger rows before a letter can be issued.`,
+        candidates: [],
+      },
+    };
+  }
+  // Compared as the COMPOSED legal name, which is what prints: "Sepnio, Raphael"
+  // and "Raphael Sepnio" are one person; "Raph Sepnio" and "Raphael Sepnio" are
+  // not provably so, and are refused.
+  const names = new Map<string, string>();
+  for (const r of ledger) {
+    const composed = composeLegalName(r.name);
+    if (composed && !names.has(composed.toLowerCase())) names.set(composed.toLowerCase(), composed);
+  }
+  if (names.size > 1) {
+    return {
+      blocked: {
+        code: 'ambiguous_identity',
+        message: `The offboarded-sheet ledger has ${ledger.length} rows under ${workEmail} naming different people (${[...names.values()].join(' / ')}). A work email is reused across people, so which person a letter would be about cannot be known, and it is never guessed. Engineering has to correct or split the ledger rows before a letter can be issued.`,
+        candidates: [],
+      },
+    };
+  }
+
+  const dated = ledger
+    .map((r) => ({ r, d: day(r.offBoardedAtRaw) }))
+    .filter((x): x is { r: TerminationLedgerRow; d: string } => x.d !== null);
+  const latest = dated.reduce<string | null>((m, x) => (!m || x.d > m ? x.d : m), null);
+  const fieldRows = latest ? dated.filter((x) => x.d === latest).map((x) => x.r) : ledger;
+  const agreed = (values: Array<string | null>): string | null => {
+    const d = distinctValues(values);
+    return d.length === 1 ? d[0] : null;
+  };
+
+  const identityRow: TerminationMasterRow = {
+    id: null,
+    name:
+      fieldRows.map((r) => trimOrNull(r.name)).find((n) => !!n) ??
+      ledger.map((r) => trimOrNull(r.name)).find((n) => !!n) ??
+      null,
+    workEmail,
+    personalEmail: inboxes[0] ?? null,
+    alternateWorkEmail: null,
+    alternateWorkEmail2: null,
+    departmentRaw: agreed(fieldRows.map((r) => r.departmentRaw)),
+    startDateRaw: agreed(fieldRows.map((r) => r.startDateRaw)),
+    offBoardedAtRaw: null,
+    offBoardedReason: null,
+    uploadId: null,
+    uploadSeq: 0,
+  };
+  // Every ledger row's OWN start date, for the re-engagement test: a later stint
+  // whose departure is undated is exactly the row the stand-in does not speak for.
+  const probeRows = ledger.map((r) => ({ ...identityRow, id: r.id, startDateRaw: r.startDateRaw }));
+  return { blocked: null, identityRow, probeRows };
+}
+
 /**
  * The whole refusal ladder and every printed fact, with no I/O.
  *
@@ -646,6 +863,13 @@ function blocked(reason: TerminationBlockedReason): TerminationArbitration {
  * `off_boarded_at`, while 294 of those people ARE offboarded. It refuses only
  * when NOTHING first-party records a departure at all (T2 empty).
  *
+ * NO MASTER ROW IS NOT A REFUSAL EITHER (Kane, 2026-09-28). A leaver with no
+ * master row under this work email is documented from the offboarded-sheet
+ * ledger: `ledgerOnlySubject` applies the identity rules the roster can no longer
+ * vouch for, builds one stand-in row, and T2–T4 then run on it unchanged.
+ * `no_master` is left for an address that neither the roster nor the ledger keys
+ * a row on, or one the roster carries under a different work email.
+ *
  * Never throws for a data problem — a refusal is data, and the caller wraps this
  * in the 3-arm `TerminationFactsResult`.
  */
@@ -701,20 +925,31 @@ export function arbitrateTerminationFacts(
     );
   }
 
-  // ── 1. no_master ──────────────────────────────────────────────────────────
-  if (input.masterRows.length === 0) {
-    return blocked({
-      code: 'no_master',
-      message: `No global_master_list row carries ${workEmail}. Search again — this tab is keyed on the WORK email, and a personal address only ever narrows the candidate list.`,
-    });
+  // ── 1. No master row: the LEDGER arm, or no_master ──────────────────────────
+  // Kane, 2026-09-28: a leaver with no master row is documented from the
+  // offboarded-sheet ledger instead of refused. `ledgerOnlySubject` holds the
+  // identity rules that replace the roster's; `no_master` now means that neither
+  // the roster nor the ledger has a row keyed on this work email.
+  let masterRows = input.masterRows;
+  let probeRows: TerminationMasterRow[] | null = null;
+  if (masterRows.length === 0) {
+    const ledger = ledgerOnlySubject(input, workEmail, day);
+    if (ledger.blocked !== null) return blocked(ledger.blocked);
+    masterRows = [ledger.identityRow];
+    probeRows = ledger.probeRows;
   }
+  const ledgerOnly = probeRows !== null;
+  // The ledger rows ARE the departure records on the ledger arm — the same read
+  // the identity came from, so the name and the date printed cannot come from
+  // two different reads of the table.
+  const departureSheetRows: TerminationSheetRow[] = ledgerOnly ? input.ledgerRows : input.sheetRows;
 
   // Newest-upload first: on the current upload beats everything, then the upload
   // sequence, then the row id so the order is stable across reads. This is the
   // PROMOTION rule (recently-offboarded.ts:497-520) — vano@ carried a retired
   // "Sales" row and a live "Lead Gen" row, both stamped, and only the upload id
   // separates them.
-  const ordered = [...input.masterRows].sort((a, z) => {
+  const ordered = [...masterRows].sort((a, z) => {
     const ac = a.uploadId !== null && a.uploadId === input.currentUploadId ? 1 : 0;
     const zc = z.uploadId !== null && z.uploadId === input.currentUploadId ? 1 : 0;
     if (ac !== zc) return zc - ac;
@@ -811,8 +1046,8 @@ export function arbitrateTerminationFacts(
   // `offboarding_queue` row, and letting a queue row alone vouch for a departure
   // would hand a person the roster still shows as working a facts sheet.
   const firstPartyDeparture =
-    input.masterRows.some((r) => !!trimOrNull(r.offBoardedAtRaw)) ||
-    input.sheetRows.some((r) => !!trimOrNull(r.offBoardedAtRaw));
+    masterRows.some((r) => !!trimOrNull(r.offBoardedAtRaw)) ||
+    departureSheetRows.some((r) => !!trimOrNull(r.offBoardedAtRaw));
 
   if (!firstPartyDeparture && (liveOnCurrentUpload.length > 0 || input.gmlActive)) {
     // Nothing FIRST-PARTY records a departure and the roster still carries this
@@ -832,7 +1067,7 @@ export function arbitrateTerminationFacts(
 
   // ── T2 (part 2). …AND THE RECORD MUST BE READABLE ──────────────────────────────────
   const records: DepartureRecord[] = [];
-  for (const r of input.masterRows) {
+  for (const r of masterRows) {
     if (!trimOrNull(r.offBoardedAtRaw)) continue;
     records.push({
       source: 'global_master_list',
@@ -840,8 +1075,13 @@ export function arbitrateTerminationFacts(
       reason: trimOrNull(r.offBoardedReason),
     });
   }
-  for (const r of input.sheetRows) {
-    if (!trimOrNull(r.offBoardedAtRaw)) continue;
+  for (const r of departureSheetRows) {
+    // On the ledger arm a ledger row IS the departure record, dated or not — it
+    // is a row on the Offboarded list, and nothing else describes this person.
+    // An undated one is a termination date the rep supplies, never a refusal.
+    // With a master row, an undated sheet row still proves nothing (the roster
+    // speaks for the person), so it is skipped as before.
+    if (!trimOrNull(r.offBoardedAtRaw) && !ledgerOnly) continue;
     records.push({
       source: 'offboarded_sheet',
       day: day(r.offBoardedAtRaw),
@@ -890,7 +1130,30 @@ export function arbitrateTerminationFacts(
     }
   }
   const onWinningDay = winningDay ? dated.filter((r) => r.day === winningDay) : records;
-  const rawReason = onWinningDay.map((r) => r.reason).find((v) => !!v) ?? null;
+  let rawReason = onWinningDay.map((r) => r.reason).find((v) => !!v) ?? null;
+  // Ledger arm only: several ledger rows for the same departure that state
+  // DIFFERENT reasons. The first-found reason would be a coin flip on a signed
+  // page. So a Temporary Pause among them is returned (G2 refuses it below), then
+  // any reason OFF the allowlist (the allowlist refuses it below — a
+  // disagreement is never a way round it), and only when every stated reason is
+  // a real departure does the reason become a BLANK the rep chooses.
+  let ledgerReasonConflict: string[] | null = null;
+  if (ledgerOnly) {
+    const stated = distinctValues(onWinningDay.map((r) => r.reason));
+    if (new Set(stated.map((s) => reasonKey(s))).size > 1) {
+      const pause = stated.find((s) => reasonKey(s) === 'temporary_pause');
+      const offList = stated.find((s) => {
+        const key = reasonKey(s);
+        return key !== null && !TERMINATION_DEPARTURE_REASON_SET.has(key);
+      });
+      if (pause) rawReason = pause;
+      else if (offList) rawReason = offList;
+      else {
+        rawReason = null;
+        ledgerReasonConflict = stated;
+      }
+    }
+  }
 
   // ── T2 (part 3). …AND ITS REASON MUST BE A DEPARTURE (G2) ──────────────────────────────────────────────────
   const k = reasonKey(rawReason);
@@ -942,7 +1205,9 @@ export function arbitrateTerminationFacts(
   if (terminationDate && startDate && terminationDate <= startDate) {
     return blocked({
       code: 'rehire_after_offboard',
-      message: `${workEmail} started on ${startDate}, on or after the ${terminationDate} offboard stamp — this record describes a RE-HIRE, and the stamp belongs to the previous stint. Fix the master row before documenting a departure.`,
+      message: ledgerOnly
+        ? `The offboarded-sheet ledger row for ${workEmail} starts on ${startDate}, on or after its own ${terminationDate} departure — one of those two dates is wrong, and a letter never states a departure that precedes the start. Engineering has to correct the ledger row, then load the facts again.`
+        : `${workEmail} started on ${startDate}, on or after the ${terminationDate} offboard stamp — this record describes a RE-HIRE, and the stamp belongs to the previous stint. Fix the master row before documenting a departure.`,
       offDate: terminationDate,
       startDate,
     });
@@ -964,7 +1229,10 @@ export function arbitrateTerminationFacts(
   // clearest evidence rather than whichever row happened to sort first.
   if (terminationDate) {
     let reengaged: { row: TerminationMasterRow; startDate: string } | null = null;
-    for (const r of ordered) {
+    // On the ledger arm the probe is EVERY ledger row, not the one stand-in: a
+    // later stint whose own departure is undated is the row the stand-in does not
+    // speak for.
+    for (const r of probeRows ?? ordered) {
       const rowStart = day(r.startDateRaw);
       if (!rowStart || rowStart <= terminationDate) continue;
       if (!reengaged || rowStart > reengaged.startDate) reengaged = { row: r, startDate: rowStart };
@@ -972,7 +1240,9 @@ export function arbitrateTerminationFacts(
     if (reengaged) {
       return blocked({
         code: 'reengaged_after_departure',
-        message: `${workEmail} carries a master row (${reengaged.row.id ?? 'row with no id'}${reengaged.row.uploadId ? ` on upload ${reengaged.row.uploadId}` : ''}) whose Start Date is ${reengaged.startDate} — AFTER the ${terminationDate} departure this letter would document. That is a RE-ENGAGEMENT: the stamp belongs to a previous stint and the person was taken back on. Have HR reconcile the rows before anything is issued.`,
+        message: ledgerOnly
+          ? `${workEmail}'s offboarded-sheet ledger has a row (${reengaged.row.id ?? 'row with no id'}) starting ${reengaged.startDate} — AFTER the ${terminationDate} departure this letter would document. That is a later stint whose own departure date is missing or unusable, so the letter would state the wrong departure. Engineering has to date the later ledger row, then load the facts again.`
+          : `${workEmail} carries a master row (${reengaged.row.id ?? 'row with no id'}${reengaged.row.uploadId ? ` on upload ${reengaged.row.uploadId}` : ''}) whose Start Date is ${reengaged.startDate} — AFTER the ${terminationDate} departure this letter would document. That is a RE-ENGAGEMENT: the stamp belongs to a previous stint and the person was taken back on. Have HR reconcile the rows before anything is issued.`,
         offDate: terminationDate,
         startDate: reengaged.startDate,
         rowId: reengaged.row.id,
@@ -1018,12 +1288,8 @@ export function arbitrateTerminationFacts(
   }
 
   // ── bad_name ──────────────────────────────────────────────────────────────
-  const parts = parseNameParts(winner.name);
-  const core = [parts.first, parts.middle, parts.last].filter(Boolean).join(' ').trim();
-  const composed = (core && parts.extension ? `${core} ${parts.extension}` : core)
-    .replace(/\s+/g, ' ')
-    .trim();
   // The nickname is dropped on purpose — a legal page states the legal name.
+  const composed = composeLegalName(winner.name);
   // The `@` clause is this feature's ADDITION to the COE's guard: parseNameParts
   // returns an '@'-address parked in the Name column whole in `first`
   // (name-parts.ts:163), and it sails through the comma/quote test, so
@@ -1031,7 +1297,9 @@ export function arbitrateTerminationFacts(
   if (!composed || /[,"“”]/.test(composed) || composed.includes('@')) {
     return blocked({
       code: 'bad_name',
-      message: `The master row for ${workEmail} does not compose to a printable legal name. Fix the master list — printing a malformed name on a legal document is worse than declining to issue it.`,
+      message: ledgerOnly
+        ? `The offboarded-sheet ledger row for ${workEmail} does not compose to a printable legal name. Engineering has to correct the name on the ledger row — printing a malformed name on a legal document is worse than declining to issue it.`
+        : `The master row for ${workEmail} does not compose to a printable legal name. Fix the master list — printing a malformed name on a legal document is worse than declining to issue it.`,
       rawName: winner.name,
     });
   }
@@ -1059,8 +1327,11 @@ export function arbitrateTerminationFacts(
     onCurrentUpload,
     candidateRowIds,
     // This resolver is keyed on the work email by contract (G1); the rep's
-    // original query column is recorded on the search candidate, not here.
-    matchedColumn: 'Work Email',
+    // original query column is recorded on the search candidate, not here. The
+    // ledger arm names the ledger's work-email column instead, and that — with
+    // `masterRowId: null` — is how the panel and the log row know the letter was
+    // built from the ledger (see `isLedgerOnlyTerminationFacts`).
+    matchedColumn: ledgerOnly ? 'offboarded_sheet.work_email' : 'Work Email',
     offDateSource,
   };
 
@@ -1088,7 +1359,14 @@ export function arbitrateTerminationFacts(
   };
 
   const blankReasons: Partial<Record<TerminationBlankField, TerminationBlankReason>> = {};
-  if (!terminationDate) {
+  // Ledger arm: no ledger row carried a date cell at all. The date was never
+  // recorded — nothing failed a gate, so the "not a usable calendar day" note
+  // below would be false.
+  const neverDated =
+    ledgerOnly && !input.evidence && !departureSheetRows.some((r) => !!trimOrNull(r.offBoardedAtRaw));
+  if (!terminationDate && neverDated) {
+    blankReasons.termination_date = 'not_on_file';
+  } else if (!terminationDate) {
     // Step 4 proved a departure stamp EXISTS, so a null day here can only mean
     // the stamped value failed one of the three date gates: it claimed the
     // future (franm@'s hand-typed 2027-04-20), it named a day that does not
@@ -1101,6 +1379,11 @@ export function arbitrateTerminationFacts(
     );
   }
   if (!facts.reasonKey) blankReasons.reason = 'not_on_file';
+  if (ledgerReasonConflict) {
+    facts.degraded.push(
+      `The ledger rows for this departure state different reasons (${ledgerReasonConflict.join(' / ')}), so none is printed for you. Choose the one that is true.`,
+    );
+  }
   if (!endingDepartmentLabel) blankReasons.ending_department = 'not_on_file';
   if (!startDate) blankReasons.start_date = startDateRaw ? 'date_failed_sanity' : 'not_on_file';
   facts.blanks = computeTerminationBlanks(facts);
