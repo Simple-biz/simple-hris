@@ -110,6 +110,20 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
   const unitLabel = single ? kpiVariableLabel(single.key) : metric === ALL_METRIC ? null : (labels[metric] ?? metric);
   const pickedLabel = !single && metric !== ALL_METRIC ? (labels[metric] ?? metric) : null;
   const orderOnlyAmongAll = metric === ALL_METRIC && showValues ? metrics.filter((m) => !m.shown) : [];
+  // Team splits (HR / QC / Accounting; Kane 2026-09-28, ruling (b)): every member carries
+  // the team's figure, so the board says why its people tie. A team KPI hidden by the
+  // count rule is hidden because its formula pays no flat rate per item — never because
+  // it is "an amount", which is Client VA's reason and would be false here.
+  const picked = single ?? (metric === ALL_METRIC ? null : (metrics.find((m) => m.key === metric) ?? null));
+  const inView = picked ? [picked] : metrics;
+  const teamInView = inView.filter((m) => m.team);
+  const hiddenAreTeam = inView.length > 0 && inView.every((m) => m.team);
+  const historyNote =
+    teamInView.length > 0 && teamInView.length === inView.length
+      ? showValues
+        ? `${names(teamInView)} ${teamInView.length === 1 ? 'is a team bonus' : 'are team bonuses'}: every member carries the team's figure, so this line sits on the team average and everyone who scored a week ties.`
+        : `${names(teamInView)} ${teamInView.length === 1 ? 'is a team bonus that doesn’t' : 'are team bonuses that don’t'} pay one flat rate per item, so only the ranking is shown — and everyone who scored a week ties.`
+      : undefined;
   const metricOptions = useMemo(
     () => [{ value: ALL_METRIC, label: 'All bonuses' }, ...metrics.map((m) => ({ value: m.key, label: m.label }))],
     [metrics],
@@ -133,6 +147,7 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       reorder={reorder}
       weekRankFor={weekRankFor}
       weekRankedBy={`Each week is ranked by the ${pickedLabel ? `${pickedLabel} ` : ''}bonus earned that week; the amounts are never shown.`}
+      historyNote={historyNote}
       showValues={showValues}
       rankNote={
         pickedLabel ? `Ranked by ${pickedLabel} bonus earned · amounts hidden` : 'Ranked by bonus earned · amounts hidden'
@@ -158,29 +173,59 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       }
       notes={
         <>
-          {!showValues && (
-            <p className="text-[11.5px]">
-              {single || pickedLabel ? `${pickedLabel ?? single!.label} is` : 'These bonuses are'} entered as an
-              amount, not a count, so this board shows who earned the most &mdash; never how much.
-            </p>
+          {!showValues &&
+            (hiddenAreTeam ? (
+              <p className="text-[11.5px]">
+                {single || pickedLabel ? `${pickedLabel ?? single!.label} doesn’t` : 'These bonuses don’t'} pay one
+                flat rate per item, so this board shows the order alone &mdash; never a figure.
+              </p>
+            ) : (
+              <p className="text-[11.5px]">
+                {single || pickedLabel ? `${pickedLabel ?? single!.label} is` : 'These bonuses are'} entered as an
+                amount, not a count, so this board shows who earned the most &mdash; never how much.
+              </p>
+            ))}
+          {orderOnlyAmongAll.filter((m) => !m.team).length > 0 && (
+            <OrderOnlyAmongAll
+              ms={orderOnlyAmongAll.filter((m) => !m.team)}
+              why={['entered as an amount', 'entered as an amount']}
+            />
           )}
-          {orderOnlyAmongAll.length > 0 && (
+          {orderOnlyAmongAll.filter((m) => m.team).length > 0 && (
+            <OrderOnlyAmongAll
+              ms={orderOnlyAmongAll.filter((m) => m.team)}
+              why={['a team bonus with no flat rate per item', 'team bonuses with no flat rate per item']}
+            />
+          )}
+          {teamInView.length > 0 && (
             <p className="text-[11.5px]">
-              {orderOnlyAmongAll.map((m) => m.label).join(', ')}{' '}
-              {orderOnlyAmongAll.length === 1 ? 'is' : 'are'} entered as an amount, so{' '}
-              {orderOnlyAmongAll.length === 1 ? "it isn't" : "they aren't"} in the items shown; the order still
-              counts {orderOnlyAmongAll.length === 1 ? 'it' : 'them'}.
+              {names(teamInView)} {teamInView.length === 1 ? 'is a team bonus' : 'are team bonuses'}: every member
+              carries the team&rsquo;s figure each week, so the people who worked the same weeks tie.
             </p>
           )}
           {skippedRows > 0 && (
             <p className="text-[11.5px]">
-              {skippedRows} bonus {skippedRows === 1 ? 'row isn’t' : 'rows aren’t'} one person&rsquo;s own
-              KPI (a team split, a personal bonus, or several KPIs in one row) and{' '}
-              {skippedRows === 1 ? "isn't" : "aren't"} counted.
+              {skippedRows} bonus {skippedRows === 1 ? 'row isn’t' : 'rows aren’t'} counted: one named
+              person&rsquo;s own bonus, or several KPIs in one row.
             </p>
           )}
         </>
       }
     />
+  );
+}
+
+function names(ms: readonly DeliverableMetricInfo[]): string {
+  return ms.map((m) => m.label).join(', ');
+}
+
+/** On "All bonuses": the order-only KPIs left out of the items shown, and why. */
+function OrderOnlyAmongAll({ ms, why }: { ms: readonly DeliverableMetricInfo[]; why: readonly [string, string] }) {
+  const one = ms.length === 1;
+  return (
+    <p className="text-[11.5px]">
+      {names(ms)} {one ? 'is' : 'are'} {one ? why[0] : why[1]}, so {one ? "it isn't" : "they aren't"} in the items
+      shown; the order still counts {one ? 'it' : 'them'}.
+    </p>
   );
 }

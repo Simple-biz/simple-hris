@@ -108,19 +108,31 @@ describe('isCountVariable — a value may be SHOWN only when the formula multipl
   });
 });
 
-describe('classifyBonuses — only one person\'s own KPI counts (on evidence)', () => {
+describe('classifyBonuses — a person\'s own KPI or a team split counts; a named person\'s bonus does not (on evidence)', () => {
   const c = classifyBonuses({
     deptKey: 'hr',
     defs: [def('hr', '=sum(New_Hires_After_4_Weeks*1000/HR_Team_Members)'), def('lr', '=Units_Sold*30')],
     assignments: [asg('hr', 'hr', 'department', true), asg('lr', 'hr', 'employee'), asg('lr', 'callback', 'employee')],
   });
 
-  it('a shared-team split pays every member the same — not a ranking', () => {
+  it('a department-scoped shared-team split is a TEAM bonus (Kane 2026-09-28, ruling (b)): counted, not personal', () => {
     assert.equal(c.get('hr')!.personal, false);
+    assert.equal(c.get('hr')!.team, true);
   });
 
-  it("an employee-scoped bonus is one person's own, not the team's KPI", () => {
+  it("an employee-scoped bonus is one person's own: neither personal nor team, so never counted", () => {
     assert.equal(c.get('lr')!.personal, false);
+    assert.equal(c.get('lr')!.team, false);
+  });
+
+  it('a bonus with an unshared department assignment beside a shared one is personal, not team', () => {
+    const r = classifyBonuses({
+      deptKey: 'qc',
+      defs: [def('x', '=units*10')],
+      assignments: [asg('x', 'qc', 'department', true), asg('x', 'qc', 'department', false)],
+    });
+    assert.equal(r.get('x')!.personal, true);
+    assert.equal(r.get('x')!.team, false);
   });
 
   it('a bonus with NO assignment for this department keeps counting (a retired bonus keeps its history)', () => {
@@ -134,9 +146,9 @@ describe('buildKpiData — PM Team', () => {
     assert.equal(data.available, true);
     assert.equal(data.servedBy, null);
     assert.deepEqual(data.metrics, [
-      { key: 'SmartCustomer', label: 'SmartCustomer', shown: true },
-      { key: 'Units', label: 'Total Sales and Referral', shown: true },
-      { key: 'TrustPilot', label: 'TrustPilot', shown: true },
+      { key: 'SmartCustomer', label: 'SmartCustomer', shown: true, team: false },
+      { key: 'Units', label: 'Total Sales and Referral', shown: true, team: false },
+      { key: 'TrustPilot', label: 'TrustPilot', shown: true, team: false },
     ]);
   });
 
@@ -155,7 +167,7 @@ describe('buildKpiData — PM Team', () => {
       [def('tu', '=TransUnion*1000')],
       [asg('tu', 'pm_team')],
     );
-    assert.deepEqual(renamed.metrics, [{ key: 'TransUnion', label: 'TransUnion Reviews', shown: true }]);
+    assert.deepEqual(renamed.metrics, [{ key: 'TransUnion', label: 'TransUnion Reviews', shown: true, team: false }]);
   });
 });
 
@@ -168,7 +180,7 @@ describe('buildKpiData — the other departments', () => {
       [asg('e', 'edit')],
     );
     assert.equal(edit.available, true);
-    assert.deepEqual(edit.metrics, [{ key: 'Tickets_Completed', label: 'Edit', shown: true }]);
+    assert.deepEqual(edit.metrics, [{ key: 'Tickets_Completed', label: 'Edit', shown: true, team: false }]);
   });
 
   it('Client VA (=Appt_Bonus) is ranked but ORDER-ONLY: the value never reaches the client', () => {
@@ -184,7 +196,7 @@ describe('buildKpiData — the other departments', () => {
       [asg('cva', 'client_va')],
     );
     assert.equal(cva.available, true);
-    assert.deepEqual(cva.metrics, [{ key: 'Appt_Bonus', label: 'Client VA', shown: false }]);
+    assert.deepEqual(cva.metrics, [{ key: 'Appt_Bonus', label: 'Client VA', shown: false, team: false }]);
     assert.equal(metricShowsValues(ALL_METRIC, cva.metrics), false);
     const w = cva.weeks.find((x) => x.periodStart === '2026-09-13')!;
     assert.deepEqual(w.rows[0], { email: 'ann@gmail.com', counts: {}, hidden: ['Appt_Bonus'] });
@@ -201,17 +213,6 @@ describe('buildKpiData — the other departments', () => {
     assert.doesNotMatch(json, /\.37|1750|1250|4000|3000/, 'Client VA’s peso-valued variable leaked');
     const beaAt = order.people.findIndex((e) => e.includes('bea@gmail.com'));
     assert.equal(order.positions.all[ALL_METRIC]![beaAt], 1, 'still ranked by the bonus');
-  });
-
-  it('a department of team splits only (HR / QC / Accounting) gets no board', () => {
-    const hr = build(
-      [row('2026-09-13', 'a@b.c', 'hr', 'HR', { HR_Team_Members: 9, New_Hires_After_4_Weeks: 78 }, 8666.67)],
-      'hr',
-      [def('hr', '=sum(New_Hires_After_4_Weeks*1000/HR_Team_Members)')],
-      [asg('hr', 'hr', 'department', true)],
-    );
-    assert.equal(hr.available, false);
-    assert.equal(hr.skippedRows, 1);
   });
 
   it('a department with its own Rankings view is left to it — appointments or SP', () => {
@@ -253,6 +254,138 @@ describe('buildKpiData — the other departments', () => {
     );
     assert.equal(mixed.metrics[0]!.shown, false);
   });
+
+  it('a department of team splits only (HR / QC / Accounting) gets a TEAM board (Kane 2026-09-28, ruling (b))', () => {
+    const hr = build(
+      [row('2026-09-13', 'a@b.c', 'hr', 'HR', { HR_Team_Members: 9, New_Hires_After_4_Weeks: 78 }, 8666.67)],
+      'hr',
+      [def('hr', '=sum(New_Hires_After_4_Weeks*1000/HR_Team_Members)')],
+      [asg('hr', 'hr', 'department', true)],
+    );
+    assert.equal(hr.available, true);
+    assert.equal(hr.skippedRows, 0);
+    assert.deepEqual(hr.metrics, [{ key: 'New_Hires_After_4_Weeks', label: 'HR', shown: true, team: true }]);
+  });
+});
+
+describe('buildKpiData — team splits (HR / QC / Accounting), live formulas measured 2026-09-28', () => {
+  const HR_DEFS = [
+    def('hr', '=sum(New_Hires_After_4_Weeks*1000/HR_Team_Members)'),
+    def('si', '=sum(10000*Sales_Rep_Hires)+(5000*Other_Hires)'),
+  ];
+  const HR_ASG = [asg('hr', 'hr', 'department', true), asg('si', 'hr', 'employee')];
+  const HR_TEAM = { HR_Team_Members: 9, New_Hires_After_4_Weeks: 78 };
+  const HR_ROWS: AppliedMoneyRow[] = [
+    row('2026-09-13', 'ann@gmail.com', 'hr', 'HR', HR_TEAM, 8666 + S),
+    row('2026-09-13', 'bea@gmail.com', 'hr', 'HR', HR_TEAM, 8666 + S),
+    row('2026-09-06', 'ann@gmail.com', 'hr', 'HR', { HR_Team_Members: 9, New_Hires_After_4_Weeks: 45 }, 5000 + S),
+    row('2026-09-06', 'bea@gmail.com', 'hr', 'HR', { HR_Team_Members: 9, New_Hires_After_4_Weeks: 45 }, 5000 + S),
+    row('2026-09-13', 'arli@gmail.com', 'si', 'HR - Special Interviewer', { Sales_Rep_Hires: 1, Other_Hires: 2 }, 20000 + S),
+  ];
+  const hr = build(HR_ROWS, 'hr', HR_DEFS, HR_ASG);
+
+  it("HR ranks on its new hires: the team-size divisor is not a KPI, and the named person's bonus is skipped", () => {
+    assert.equal(hr.available, true);
+    assert.deepEqual(hr.metrics, [{ key: 'New_Hires_After_4_Weeks', label: 'HR', shown: true, team: true }]);
+    assert.equal(hr.skippedRows, 1, 'HR - Special Interviewer is employee-scoped');
+    assert.deepEqual(
+      hr.weeks.map((w) => w.rows),
+      [
+        [
+          { email: 'ann@gmail.com', counts: { New_Hires_After_4_Weeks: 78 } },
+          { email: 'bea@gmail.com', counts: { New_Hires_After_4_Weeks: 78 } },
+        ],
+        [
+          { email: 'ann@gmail.com', counts: { New_Hires_After_4_Weeks: 45 } },
+          { email: 'bea@gmail.com', counts: { New_Hires_After_4_Weeks: 45 } },
+        ],
+      ],
+    );
+  });
+
+  it('every member carries the same team figure, so everyone ties — on the board AND in each week', () => {
+    const order = buildMoneyOrder({
+      moneyWeeks: hr.moneyWeeks,
+      metrics: hr.metrics,
+      members: [ann, bea],
+      days: null,
+      basis: 'weekly',
+      todayIso: '2026-09-26',
+    });
+    assert.deepEqual(order.positions.all[ALL_METRIC], [1, 1]);
+    assert.deepEqual(order.positions.all.New_Hires_After_4_Weeks, [1, 1]);
+    for (const w of order.weeks!) assert.deepEqual(w.positions[ALL_METRIC], [1, 1]);
+  });
+
+  it('the team payload carries no peso, no rate and no team size', () => {
+    const order = buildMoneyOrder({
+      moneyWeeks: hr.moneyWeeks,
+      metrics: hr.metrics,
+      members: [ann, bea],
+      days: null,
+      basis: 'weekly',
+      todayIso: '2026-09-26',
+    });
+    const json = JSON.stringify(toClientPayload(hr, order, '2026-09-13'));
+    assert.doesNotMatch(json, /amount|money|formula|HR_Team_Members|\.37/i);
+    for (const n of ['8666', '5000', '1000', '20000', '10000']) {
+      assert.ok(!new RegExp(`\\b${n}\\b`).test(json), `peso figure or rate ${n} leaked into the payload`);
+    }
+  });
+
+  it('QC ranks on units, ORDER-ONLY: its rate is conditional, so isCountVariable fails closed', () => {
+    const qc = build(
+      [
+        row('2026-09-13', 'ann@gmail.com', 'qc', 'QC', { units: 290, headcount: 9 }, 4833 + S),
+        row('2026-09-13', 'bea@gmail.com', 'qc', 'QC', { units: 290, headcount: 9 }, 4833 + S),
+      ],
+      'qc',
+      [def('qc', '=units*IF(headcount < 6, 125, 150) / headcount')],
+      [asg('qc', 'qc', 'department', true)],
+    );
+    assert.deepEqual(qc.metrics, [{ key: 'units', label: 'QC', shown: false, team: true }]);
+    assert.deepEqual(qc.weeks[0]!.rows[0], { email: 'ann@gmail.com', counts: {}, hidden: ['units'] });
+  });
+
+  it("Accounting's five day counts are ONE team item, keyed in formula order, and order-only (tiered)", () => {
+    const DAYS = { Friday: 20, Monday: 31, Tuesday: 25, Thursday: 18, Wednesday: 16 };
+    const acc = build(
+      [row('2026-09-13', 'ann@gmail.com', 'dq', 'Dancing Queen Bonus', DAYS, 1150 + S)],
+      'accounting',
+      [
+        def(
+          'dq',
+          '=SUM(IF(Monday>=30, 450, IF(Monday>=22, 300, 0)), IF(Tuesday>=30, 450, 0), IF(Wednesday>=30, 450, 0), IF(Thursday>=30, 450, 0), IF(Friday>=30, 450, 0))',
+        ),
+      ],
+      [asg('dq', 'accounting', 'department', true)],
+    );
+    const key = 'Monday+Tuesday+Wednesday+Thursday+Friday';
+    assert.deepEqual(acc.metrics, [{ key, label: 'Dancing Queen Bonus', shown: false, team: true }]);
+    assert.deepEqual(acc.moneyWeeks[0]!.rows[0]!.counts, { [key]: 110 });
+  });
+
+  it('fails closed: a multi-variable team row with no readable formula is skipped, never summed with its team size', () => {
+    const blind = build(
+      [row('2026-09-13', 'ann@gmail.com', 'qc', 'QC', { units: 290, headcount: 9 }, 4833 + S)],
+      'qc',
+      [],
+      [asg('qc', 'qc', 'department', true)],
+    );
+    assert.equal(blind.available, false);
+    assert.equal(blind.skippedRows, 1);
+  });
+
+  it('a variable the formula never uses is not a team KPI', () => {
+    const extra = build(
+      [row('2026-09-13', 'ann@gmail.com', 'hr', 'HR', { ...HR_TEAM, Notes_Count: 4 }, 8666 + S)],
+      'hr',
+      HR_DEFS,
+      HR_ASG,
+    );
+    assert.deepEqual(extra.weeks[0]!.rows[0]!.counts, { New_Hires_After_4_Weeks: 78 });
+  });
+
 });
 
 describe('buildMoneyOrder — ranked on pesos, returned as positions', () => {

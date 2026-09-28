@@ -18,10 +18,14 @@
  * ## Adaptable: the KPIs come from the data
  *
  * Every row that is one person's own KPI (the server decides: one variable, a
- * department-scoped bonus, not a shared-team split — `deliverable-money-order.ts`) is
- * a KPI item, keyed by its variable and labelled with its newest bonus name. A new
- * bonus joins the picker and "All bonuses" with no code change, and a rate change
- * reaches the order through `amount`.
+ * department-scoped, unshared bonus — `deliverable-money-order.ts`) is a KPI item,
+ * keyed by its variable and labelled with its newest bonus name. A new bonus joins the
+ * picker and "All bonuses" with no code change, and a rate change reaches the order
+ * through `amount`.
+ *
+ * A **team split** (HR, QC, Accounting: a department-scoped `shared_team` bonus) is a
+ * KPI too since 2026-09-28 (Kane, ruling (b)). Every member carries the team's figure,
+ * so its metric says `team: true` and the board says why everyone ties.
  *
  * ## Shown, or order-only
  *
@@ -49,9 +53,15 @@ export interface DeliverableMetricInfo {
   label: string;
   /**
    * True when its values are COUNTS and may be shown. False when the variable is the
-   * peso amount itself (Client VA's `=Appt_Bonus`): ranked on, never shown.
+   * peso amount itself (Client VA's `=Appt_Bonus`), or when a team formula pays no flat
+   * rate per item (QC, Accounting): ranked on, never shown.
    */
   shown: boolean;
+  /**
+   * True when a team split scores it (HR / QC / Accounting): every member carries the
+   * same team figure each week, so the people who worked the same weeks tie.
+   */
+  team: boolean;
 }
 
 export interface DeliverableWeekRow {
@@ -117,7 +127,7 @@ export interface DeliverableRankingsPayload {
   weeks: DeliverableWeek[];
   /** The KPIs present in the data, ordered by label. */
   metrics: DeliverableMetricInfo[];
-  /** Rows that are not one person's own KPI (a team split, a personal bonus, several KPIs in one row) — not counted. */
+  /** Rows that are not counted: one named person's own bonus, or several KPIs in one row. */
   skippedRows: number;
   /** The weekly/monthly bonus order. Null only alongside an error. */
   order: MoneyOrder | null;
@@ -134,18 +144,21 @@ export interface DeliverableDailyPayload {
 export type KpiRead = { kind: 'item'; key: string; count: number } | { kind: 'skip' };
 
 /**
- * One applied row's KPI item, or `skip` when it is not exactly one variable. A count
- * is never negative, and an unreadable cell counts as nothing entered (0), matching
- * `appointmentsFromVars`. Fractions stand: Units carries half credits (65 of 207
- * non-zero rows, measured 2026-09-26).
+ * One stored KPI cell as a count. Never negative, and an unreadable cell counts as
+ * nothing entered (0), matching `appointmentsFromVars`. Fractions stand: Units carries
+ * half credits (65 of 207 non-zero rows, measured 2026-09-26).
  */
+export function kpiCount(raw: unknown): number {
+  const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : 0;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** One applied row's KPI item, or `skip` when it is not exactly one variable. */
 export function kpiItemFromVars(vars: Record<string, unknown> | null | undefined): KpiRead {
   const keys = vars ? Object.keys(vars) : [];
   if (keys.length !== 1) return { kind: 'skip' };
   const key = keys[0]!;
-  const raw = vars![key];
-  const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : 0;
-  return { kind: 'item', key, count: Number.isFinite(n) && n > 0 ? n : 0 };
+  return { kind: 'item', key, count: kpiCount(vars![key]) };
 }
 
 /**
@@ -160,10 +173,15 @@ export function metricShowsValues(metric: string, metrics: readonly DeliverableM
 /**
  * A KPI variable in plain words — `Tickets_Completed` → "Tickets completed". Used when a
  * department has ONE KPI, whose bonus name is usually just the department's ("Edit").
+ * A team item summed from several variables (`Monday+Tuesday+…`, Accounting) names each.
  */
 export function kpiVariableLabel(variable: string): string {
-  const words = variable.replace(/_/g, ' ').trim().toLowerCase();
-  return words ? words[0]!.toUpperCase() + words.slice(1) : variable;
+  const parts = variable
+    .split('+')
+    .map((p) => p.replace(/_/g, ' ').trim().toLowerCase())
+    .filter(Boolean)
+    .map((w) => w[0]!.toUpperCase() + w.slice(1));
+  return parts.length > 0 ? parts.join(' + ') : variable;
 }
 
 /** A person-week's items across every SHOWN KPI they have a row for. */

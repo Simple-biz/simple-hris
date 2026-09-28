@@ -1,7 +1,8 @@
 # Manager KPI Rankings — every KPI-bonus team ranked by bonus earned, shown as KPI items only
 
 Manager → My Team → **PM Team** (and, since 2026-09-27, **every other department on a per-person
-KPI bonus**: Edit, Site Building, Sales Assistant, Discovery, Client VA) → **Rankings**. It ranks the
+KPI bonus**: Edit, Site Building, Sales Assistant, Discovery, Client VA; since 2026-09-28 also the
+**team-split** departments HR, QC and Accounting) → **Rankings**. It ranks the
 department's **current roster** by
 the **KPI bonus they earned**, averaged per day worked, per week or per month, over **Last 4 weeks ·
 Last 3 months · All time**, for **All bonuses** or any single KPI. What is shown is **KPI item counts
@@ -12,7 +13,9 @@ Lead Gen and AI/API Team"* and, mid-build, *"this should be based on their Bonus
 their bonuses have changes we still have adaptability and hook the money like the highest money
 value without displaying it"*. Widened on 2026-09-27: *"Lets create a rankings tab for OTHER
 Departments as long as they were assigned a KPI Bonus this way we can let the Managers see who is
-top performing"*. Plan: [2026-09-26-manager-pm-rankings.md](../superpowers/plans/2026-09-26-manager-pm-rankings.md).
+top performing"*. Widened again on 2026-09-28 (session `77e1ce37`, ruling (b) on Open items 247):
+*"My Team - HR, QC, and some others that have KPI Bonus dont have the rankings and the view modal
+performance please add them"*. Plan: [2026-09-26-manager-pm-rankings.md](../superpowers/plans/2026-09-26-manager-pm-rankings.md).
 The doc keeps its first slug; the surface is no longer PM-only.
 It is a sibling of Lead Gen's [appointment leaderboard](./manager-appointment-leaderboard.md), and it
 renders **the same pane** and runs **the same `computeLeaderboard`**. Not pushed.
@@ -22,7 +25,7 @@ renders **the same pane** and runs **the same `computeLeaderboard`**. Not pushed
 | Piece | File |
 | --- | --- |
 | Counts, the KPI projection, applying the order (client-safe, pure, tested) | `src/lib/manager/deliverable-rankings.ts` · `.test.ts` |
-| Pesos → positions; which rows count and which values show (**server-only**, pure, tested) | `src/lib/manager/deliverable-money-order.ts` (`classifyBonuses`, `isCountVariable`, `buildKpiData`) · `.test.ts` |
+| Pesos → positions; which rows count and which values show (**server-only**, pure, tested) | `src/lib/manager/deliverable-money-order.ts` (`classifyBonuses`, `teamKpiFromVars`, `isCountVariable`, `buildKpiData`) · `.test.ts` |
 | "Is this an SP department" (one rule, shared with SP Rankings) | `src/lib/manager/sp-ranking-row.ts` |
 | The reads (3 probes, paged applied read, catalog defs + assignments, roster, days) | `src/lib/supabase/deliverable-rankings.ts` · `.test.ts` |
 | Route (`?basis=daily` for the second read) | `app/api/manager/deliverable-rankings/route.ts` |
@@ -71,7 +74,7 @@ Kane: *"if their bonuses have changes we still have adaptability."*
 - **Every ONE-variable row in the department is a KPI item.** It is keyed by its variable
   (`TrustPilot`, `Units`, …) and labelled with its **newest** row's bonus name. A bonus added to
   the catalog therefore joins the picker and "All bonuses" with no code change, and a rename reads
-  as renamed.
+  as renamed. A team split's row is a KPI item too, keyed as *Which rows count* § 2 says.
 - **A rate change reaches the order through `amount`.** Measured 2026-09-26, every PM bonus has paid
   one flat rate per item so far (TransUnion / TrustPilot / BBB / Facebook / Site Star ₱1,000,
   AMPlify ₱1,250, Sales ₱2,500, SmartCustomer ₱500). Today's order is therefore the rate-weighted
@@ -86,8 +89,9 @@ Kane: *"if their bonuses have changes we still have adaptability."*
 
 ## Which departments get it
 
-A department gets the KPI leaderboard when it has **at least one row that is one person's own KPI**
-and **no Rankings view of its own**. Measured read-only 2026-09-27:
+A department gets the KPI leaderboard when it has **at least one row that counts** (one person's own
+KPI, or a team split's) and **no Rankings view of its own**. Measured read-only 2026-09-27; the team
+rows 2026-09-28, through the real read:
 
 | Department | Result | Why |
 | --- | --- | --- |
@@ -99,7 +103,9 @@ and **no Rankings view of its own**. Measured read-only 2026-09-27:
 | Client VA | **order only**, 72 ranked | `=Appt_Bonus`: the variable IS the pesos |
 | Lead Gen · Callback | own view | an appointment variable → the [appointment leaderboard](./manager-appointment-leaderboard.md) |
 | AI/API Team | own view | `SP` + `Ranking` rows → `RankingsPane` behind the SP doors |
-| HR · QC · Accounting | none | every bonus is a **shared-team split** |
+| HR | *New hires after 4 weeks*, **team** board, 8 ranked, **all tied #1** over 4 weeks and 3 months | `shared_team` split; `HR_Team_Members` is the divisor, not a KPI |
+| QC | **team**, **order only**, 9 ranked, all tied #1 in every window | `shared_team`; `units*IF(headcount < 6, 125, 150) / headcount` pays no flat rate, so it fails closed |
+| Accounting | **team**, **order only**, 18 ranked, all tied #1 over 4 weeks | `shared_team` Dancing Queen: the five day counts summed as one item; tiered, so order only |
 | US Manager Bonus | none | one person's **employee-scoped** bonus |
 | HSL (20 sub-teams) | **not built** | scores in `hsl_bonus_entries`, not the Payment Catalog. See *Not built* |
 
@@ -110,35 +116,57 @@ and **no Rankings view of its own**. Measured read-only 2026-09-27:
   `isSpRankingRow`), never a department list.
 - **Looks like a bug, isn't: Discovery ties all three people at #1.** Every week they carry the same
   `Units_Sold`, which looks like a team figure entered per person, but the bonus is not flagged
-  `shared_team`. The board reports the data. Flagging the assignment shared would remove the board;
-  that is the catalog owner's call.
+  `shared_team`. The board reports the data. Flagging the assignment shared would turn it into a
+  team board (the same ties, plus the team note); that is the catalog owner's call.
+- **Looks like a bug, isn't: HR, QC and Accounting tie everyone.** Each stores ONE team figure,
+  copied to every member (see *Which rows count* § 2). Kane ruled on 2026-09-28 that they get a
+  board anyway. A longer window can split the tie, but only by **which weeks a person was on the
+  team** (measured through the real read: HR all time, 3 distinct places among 8; Accounting last
+  3 months, 5 among 18),
+  never by performance. The board says so in a note. Never "fix" the ties.
 
-## Only rows that are one person's own KPI count
+## Which rows count
 
-A row counts only when all three hold. Every other row is left out of **both** the counts and the
-order, and a footer counts it.
+A row counts in one of two ways. Every other row is left out of **both** the counts and the order,
+and a footer counts it (*"N bonus rows aren't counted: one named person's own bonus, or several
+KPIs in one row"*).
 
-1. **One variable.** **"Scott Cameron"** (`PM Team - Manager`) is ONE row a week with 15–17 keys of
-   the whole team's totals. Counting it would hand the team's work, and its pesos, to one person
-   (18 rows on 2026-09-27).
-2. **Not a shared-team split** (`bonus_catalog_assignments.shared_team`). HR's
+1. **One person's own KPI**: a department-scoped, **unshared** bonus with **one variable**.
+   **"Scott Cameron"** (`PM Team - Manager`) is ONE row a week with 15–17 keys of the whole team's
+   totals. Counting it would hand the team's work, and its pesos, to one person (18 rows on
+   2026-09-27).
+2. **A team split's KPI** (`bonus_catalog_assignments.shared_team`, department-scoped). Counted
+   since **2026-09-28**. Until then the rule was *not a shared-team split*, because HR's
    `New_Hires*1000/HR_Team_Members`, QC's and Accounting's Dancing Queen pay every member the same
-   share, so ranking them says nothing about who performed. **The figures are the team's too**
-   (measured read-only 2026-09-28): every member's variables are identical in every week (HR 0 of
-   20 weeks differ, QC 0 of 23, Accounting 0 of 22). Ranked anyway, the last 4 weeks tie everyone
-   at #1 (HR 8, QC 9, Accounting 18), and a longer window orders people only by which weeks they
-   were on the team. QC's per-officer `qc_score_assignments` is a seeded-random even deal, not
-   performance. Kane asked for HR and QC boards on 2026-09-28; hard-stopped (Open items 247).
-3. **Not an employee-scoped bonus.** One person's own bonus (Scott's, Lead Receptionist, Jackie) is
-   not the team's KPI.
+   share, so ranking them says nothing about who performed. **Kane eased it on the record** (ruling
+   (b), Open items 247) after being shown that the figures are the team's too. Measured read-only
+   2026-09-28: every member's variables are identical in every week (HR 0 of 20 weeks differ, QC 0
+   of 23, Accounting 0 of 22), so the last 4 weeks tie everyone at #1 (HR 8, QC 9, Accounting 18).
+   QC's per-officer `qc_score_assignments` is a seeded-random even deal, not performance, so it is
+   no substitute. The KPI is read by `teamKpiFromVars`:
+   - the variables the formula **uses**, minus any it **divides by** (the team size):
+     `HR_Team_Members`, `headcount`;
+   - one left → keyed by it (`New_Hires_After_4_Weeks`, `units`);
+   - several left → **one** item, their sum, keyed by the names in formula order
+     (`Monday+Tuesday+Wednesday+Thursday+Friday`), because the row has one amount and it cannot be
+     split per variable;
+   - **fails closed**: with no readable formula a row of more than one variable is skipped, never
+     summed with its own headcount.
 
-2 and 3 are decided on **evidence** (`classifyBonuses`). A bonus is left out only when this
-department's assignments exist and none is department-scoped and unshared. A bonus with **no**
-assignment keeps counting, so a retired bonus keeps its paid history. A failed catalog read fails
-the whole call; it is never guessed.
+   The metric carries **`team: true`** (a boolean, the only new field on the wire). The board and
+   the View modal then say every member carries the team's figure, so people who worked the same
+   weeks tie.
+3. **Never an employee-scoped bonus.** One named person's own bonus (Scott's, Lead Receptionist,
+   Jackie, HR - Special Interviewer, Lead Gen (COP)) is not the team's KPI, in either form.
 
-**Seam:** a per-person bonus with two variables (the AI Team Bonus shape) is left out by rule 1.
-Ranking it on pesos alone, with no count to show, is a new ruling.
+All three are decided on **evidence** (`classifyBonuses`): **personal** when one of the department's
+assignments is department-scoped and unshared, or there is none at all (a retired bonus keeps its
+paid history); **team** when none is personal and one is a department-scoped shared split; neither
+otherwise. A failed catalog read fails the whole call; it is never guessed.
+
+**Seam:** a per-person (unshared) bonus with two variables (the AI Team Bonus shape) is still left
+out by rule 1. Ranking it on pesos alone, with no count to show, is a new ruling; the team-split
+reading in rule 2 does not reach it.
 
 ## Shown, or order-only
 
@@ -154,6 +182,12 @@ A KPI's value may be **shown** only when its bonus formula **multiplies the vari
   who earned the most — never how much"*.
 - **Fails closed.** A missing or unreadable formula, a fixed-amount bonus, a `×1`, or ONE
   peso-valued bonus among several scoring the same variable → order-only.
+- **A team split fails the same way** (2026-09-28). QC's `units*IF(headcount < 6, 125, 150)` pays a
+  conditional rate and Accounting's day counts pay tiers, so both are **order-only**. HR's
+  `New_Hires_After_4_Weeks*1000` is a count and is shown. The rule was NOT widened to read QC's
+  `IF(...)` as a rate; the test pinning it stays. A team KPI's note gives its real reason: *"QC
+  doesn't pay one flat rate per item, so this board shows the order alone — never a figure"*. It
+  never says "entered as an amount", which is Client VA's reason and would be false here.
 - On **All bonuses** in a department that mixes both, the item sum and breakdown count shown KPIs
   only, and a note names the order-only ones (they still count toward the order).
 - The formulas carry the pay **rates**, so they are read and used on the server only; the payload

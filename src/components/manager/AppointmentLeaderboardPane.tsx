@@ -106,6 +106,7 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   showValues = true,
   weekRankFor,
   weekRankedBy,
+  historyNote,
 }: {
   weeks: AppointmentWeek[];
   weeksLoading: boolean;
@@ -154,6 +155,11 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   weekRankFor?: (member: M) => WeekRankSource;
   /** The View modal's sentence for what each week is ranked by. */
   weekRankedBy?: string;
+  /**
+   * The View modal's KPI note, in place of its default order-only sentence. The KPI
+   * board passes one for a team split (every member carries the team's figure).
+   */
+  historyNote?: string;
 }) {
   const reduce = useReducedMotion() ?? false;
   // The View modal (Kane, 2026-09-28). The row is KEPT after close so the exit
@@ -333,6 +339,7 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
         partLabels={partLabels}
         board={{ basis, window: view.window }}
         rankedBy={weekRankedBy ?? `Each week is ranked by ${unit.many} that week, among the roster with an entry.`}
+        note={historyNote}
       />
 
       <div className="space-y-1 px-1 text-[11.5px] text-zinc-500 dark:text-zinc-400">

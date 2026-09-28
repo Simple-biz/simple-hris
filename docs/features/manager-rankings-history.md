@@ -1,8 +1,9 @@
 # Manager Rankings → View — one person's KPI and ranking performance, week by week
 
 Manager → My Team → any department whose **Rankings** board has a **Tenure** column (Lead Gen and
-Callback's appointment leaderboard; PM Team, Edit, Site Building, Sales Assistant, Discovery and
-Client VA's KPI leaderboard) → **Actions → View**. It opens a modal holding two line charts that
+Callback's appointment leaderboard; PM Team, Edit, Site Building, Sales Assistant, Discovery,
+Client VA, and since 2026-09-28 the team splits HR, QC and Accounting on the KPI leaderboard) →
+**Actions → View**. It opens a modal holding two line charts that
 share one week axis. **KPI performance** plots the person's count each settled week against the
 team's weekly average. **Ranking performance** plots their position each week, with #1 at the top.
 Stat tiles and a week-by-week table sit with them. It is built for the department's own managers.
@@ -23,7 +24,7 @@ It sits on top of [manager-appointment-leaderboard.md](./manager-appointment-lea
 | The payload field and the client lookup | `MoneyOrder.weeks` · `WeekPositions` · `weekRankLookup` in `src/lib/manager/deliverable-rankings.ts` |
 | The modal (shell, tiles, notes, table) | `src/components/manager/RankingHistoryModal.tsx` |
 | The two strips | `src/components/manager/RankingHistoryChart.tsx` |
-| The View column and the modal's state | `src/components/manager/AppointmentLeaderboardPane.tsx` (`openHistory`, `weekRankFor`) |
+| The View column and the modal's state | `src/components/manager/AppointmentLeaderboardPane.tsx` (`openHistory`, `weekRankFor`, `historyNote`) |
 | The KPI board's server order, handed to the modal | `src/components/manager/DeliverableLeaderboardPane.tsx` |
 | The toggle and date helpers both share | `src/components/manager/leaderboard-ui.tsx` |
 
@@ -81,9 +82,14 @@ those boards is therefore decided on the server too:
   last 3 months)"*).
 - **Its own window toggle**, seeded from the board's window on every open. Changing it never moves
   the board. Switching it redraws the lines.
-- **Order-only KPIs** (Client VA, `=Appt_Bonus`: the variable IS the pesos) get **no KPI strip, no
-  value tile and no value column**. They show only the rank strip, "Weeks scored", the best and
-  latest rank, and the amount-not-count sentence.
+- **Order-only KPIs** (Client VA, `=Appt_Bonus`: the variable IS the pesos; QC and Accounting,
+  whose team formulas pay no flat rate per item) get **no KPI strip, no value tile and no value
+  column**. They show only the rank strip, "Weeks scored", the best and latest rank, and a note.
+- **The note is the board's to give** (`historyNote` → the modal's `note`). With none, an order-only
+  KPI gets the amount-not-count sentence (Client VA). A **team split** (HR / QC / Accounting,
+  2026-09-28) passes its own: every member carries the team's figure, so the person's line sits on
+  the team average and everyone who scored a week ties at #1. That is the data, not a bug
+  ([manager-pm-rankings.md](./manager-pm-rankings.md) § *Which rows count*).
 - **Never a money figure.** The same rule as both boards: no amounts, no ratios, no "% of leader".
   The modal's values are counts, and its ranks are positions.
 - **It never fetches.** Everything comes from data the board already holds, so it opens straight

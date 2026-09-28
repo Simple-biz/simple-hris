@@ -104,8 +104,8 @@ describe('projectDeliverableWeeks — the SHOWN figures', () => {
 
   it('metricShowsValues — numbers only for count KPIs; unknown fails closed', () => {
     const metrics = [
-      { key: 'Tickets_Completed', label: 'Edit', shown: true },
-      { key: 'Appt_Bonus', label: 'Client VA', shown: false },
+      { key: 'Tickets_Completed', label: 'Edit', shown: true, team: false },
+      { key: 'Appt_Bonus', label: 'Client VA', shown: false, team: false },
     ];
     assert.equal(metricShowsValues(ALL_METRIC, metrics), true);
     assert.equal(metricShowsValues('Tickets_Completed', metrics), true);
@@ -202,5 +202,11 @@ describe('kpiVariableLabel — a one-KPI department speaks in its KPI\'s own wor
     assert.equal(kpiVariableLabel('Units_Sold'), 'Units sold');
     assert.equal(kpiVariableLabel('Sites_Built'), 'Sites built');
     assert.equal(kpiVariableLabel(''), '');
+  });
+
+  it("a team item summed from several variables (Accounting's days) names each part", async () => {
+    const { kpiVariableLabel } = await import('./deliverable-rankings');
+    assert.equal(kpiVariableLabel('New_Hires_After_4_Weeks'), 'New hires after 4 weeks');
+    assert.equal(kpiVariableLabel('Monday+Tuesday+Friday'), 'Monday + Tuesday + Friday');
   });
 });

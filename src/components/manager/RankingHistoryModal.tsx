@@ -64,6 +64,7 @@ export function RankingHistoryModal<M extends ApptRosterMember>({
   partLabels,
   board,
   rankedBy,
+  note,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -76,13 +77,18 @@ export function RankingHistoryModal<M extends ApptRosterMember>({
   onWindowChange: (w: AverageWindow) => void;
   rankBy: WeekRankSource;
   unit: LeaderboardUnit;
-  /** False = order-only (the KPI's value IS the pesos): no count is drawn or listed. */
+  /**
+   * False = order-only (the KPI's value IS the pesos, or a team formula pays no flat
+   * rate per item): no count is drawn or listed.
+   */
   showValues: boolean;
   partLabels?: Readonly<Record<string, string>>;
   /** The board the row was opened from, for the "#3 on the board" line. */
   board: { basis: AverageBasis; window: AverageWindow };
   /** What each week is ranked by, in words. */
   rankedBy: string;
+  /** Replaces the default order-only sentence (a team split says why everyone ties). */
+  note?: string;
 }) {
   const history = React.useMemo(
     () => (row ? buildPersonHistory({ weeks, members, member: row.member, window, rankBy }) : null),
@@ -192,10 +198,14 @@ export function RankingHistoryModal<M extends ApptRosterMember>({
             {history.weeksScored === 0 && points.length > 0 && (
               <Note>No entries for {person} in these weeks.</Note>
             )}
-            {!showValues && (
-              <Note>
-                This KPI is entered as an amount, not a count, so only the ranking is shown &mdash; never how much.
-              </Note>
+            {note ? (
+              <Note>{note}</Note>
+            ) : (
+              !showValues && (
+                <Note>
+                  This KPI is entered as an amount, not a count, so only the ranking is shown &mdash; never how much.
+                </Note>
+              )
             )}
             {history.leftOut.length > 0 && (
               <Note>

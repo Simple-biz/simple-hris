@@ -19,8 +19,8 @@
  *   serializes its output from sentinel amounts and fails on any of them.
  *
  * - {@link classifyBonuses} decides, from the catalog, which rows are one person's own
- *   KPI and which values are COUNTS. The formulas it reads carry the pay RATES, so they
- *   stay here too.
+ *   KPI, which are a team split, and which values are COUNTS. The formulas it reads
+ *   carry the pay RATES, so they stay here too ({@link teamKpiFromVars} reads them too).
  *
  * PURE (no I/O) so `node:test` walks it, but **server-only by contract**: a source-scan
  * test fails if any file under `src/components` or `app/` (outside `app/api`) imports it.
@@ -48,8 +48,10 @@ import { isSpRankingRow } from '@/lib/manager/sp-ranking-row';
 import { rankWeek } from '@/lib/manager/ranking-history';
 import {
   ALL_METRIC,
+  kpiCount,
   kpiItemFromVars,
   type DeliverableMetricInfo,
+  type KpiRead,
   type DeliverableRankingsPayload,
   type DeliverableWeek,
   type MoneyOrder,
@@ -140,34 +142,71 @@ export function isCountVariable(formula: string | null | undefined, variable: st
   return false;
 }
 
+export interface BonusClass {
+  /** One person's own KPI: a department-scoped, unshared bonus (or one with no assignment here). */
+  personal: boolean;
+  /** A department-scoped `shared_team` split: every member carries the team's figure. */
+  team: boolean;
+  formula: string | null;
+  fixed: boolean;
+}
+
 /**
- * Per bonus: are its rows one person's own KPI in `deptKey`, and which of its
- * variables are counts.
+ * Per bonus: are its rows one person's own KPI in `deptKey`, a team split, or neither,
+ * and which of its variables are counts.
  *
- * **Personal** is decided on EVIDENCE. A bonus is left out only when this department's
- * assignments exist and none of them is a department-scoped, non-shared one:
- * - a `shared_team` split (HR `New_Hires*1000/HR_Team_Members`, QC, Accounting's
- *   Dancing Queen) pays every member the same share, so ranking it says nothing about
- *   who performed;
- * - an `employee`-scoped bonus is one person's own (Scott Cameron's manager bonus on
- *   PM Team, Lead Receptionist, Jackie), not the team's KPI.
- * A bonus with NO assignment for the department still counts: a retired or re-keyed
- * bonus keeps its paid history.
+ * Decided on EVIDENCE, from this department's assignments:
+ * - **personal** when one of them is department-scoped and unshared, or there is none
+ *   at all (a retired or re-keyed bonus keeps its paid history);
+ * - **team** when none is personal and one is a department-scoped `shared_team` split
+ *   (HR `New_Hires*1000/HR_Team_Members`, QC, Accounting's Dancing Queen). Every member
+ *   carries the same team figure, so they tie; counted since Kane's ruling (b) on
+ *   2026-09-28 (*"HR, QC, and some others that have KPI Bonus dont have the rankings"*);
+ * - **neither** for an `employee`-scoped bonus: one named person's own (Scott Cameron's
+ *   manager bonus on PM Team, Lead Receptionist, Jackie), never the team's KPI.
  */
 export function classifyBonuses(input: {
   deptKey: string;
   defs: readonly BonusDefRow[];
   assignments: readonly BonusAssignmentRow[];
-}): Map<string, { personal: boolean; formula: string | null; fixed: boolean }> {
-  const out = new Map<string, { personal: boolean; formula: string | null; fixed: boolean }>();
+}): Map<string, BonusClass> {
+  const out = new Map<string, BonusClass>();
   const ids = new Set<string>([...input.defs.map((d) => d.id), ...input.assignments.map((a) => a.bonus_id)]);
   for (const id of ids) {
     const def = input.defs.find((d) => d.id === id) ?? null;
     const mine = input.assignments.filter((a) => a.bonus_id === id && (a.department_key ?? '').trim() === input.deptKey);
     const personal = mine.length === 0 || mine.some((a) => a.scope === 'department' && !a.shared_team);
-    out.set(id, { personal, formula: def?.formula ?? null, fixed: def?.kind === 'fixed' });
+    const team = !personal && mine.some((a) => a.scope === 'department' && a.shared_team === true);
+    out.set(id, { personal, team, formula: def?.formula ?? null, fixed: def?.kind === 'fixed' });
   }
   return out;
+}
+
+/**
+ * A team split's KPI item: the row's variables that its formula USES, minus the team
+ * size it divides by. HR `New_Hires_After_4_Weeks*1000/HR_Team_Members` → new hires;
+ * QC `units*IF(headcount < 6, 125, 150) / headcount` → units. Several left (Accounting's
+ * `Monday` … `Friday`) → ONE item, their sum, keyed by the names in formula order
+ * (`Monday+Tuesday+…`), because the row has one amount and it cannot be split per day.
+ *
+ * Fails closed: with no readable formula the team size cannot be told from the KPI, so
+ * a row of more than one variable is skipped — never summed with its own headcount.
+ */
+export function teamKpiFromVars(vars: Record<string, unknown> | null | undefined, formula: string | null): KpiRead {
+  if (!formula) return kpiItemFromVars(vars);
+  const used = Object.keys(vars ?? {})
+    .map((k) => {
+      const name = `(?<![A-Za-z0-9_])${escapeRegExp(k)}(?![A-Za-z0-9_])`;
+      const at = formula.search(new RegExp(name));
+      const divisor = new RegExp(`/\\s*\\(?\\s*${name}`).test(formula);
+      return { k, at, divisor };
+    })
+    .filter((v) => v.at >= 0 && !v.divisor)
+    .sort((a, b) => a.at - b.at);
+  if (used.length === 0) return { kind: 'skip' };
+  let count = 0;
+  for (const { k } of used) count += kpiCount(vars![k]);
+  return { kind: 'item', key: used.map((v) => v.k).join('+'), count };
 }
 
 function pesos(v: unknown): number {
@@ -183,8 +222,10 @@ function pesos(v: unknown): number {
  *   (`Appts_Set` / `Appts`: Lead Gen, Callback) or an SP-ranking row (AI/API) already has
  *   its own Rankings view under the one pill, behind its own gate. A second, money-ranked
  *   pane there would widen who reads it (the SP doors are Kane's ruling).
- * - A row counts only when it is one person's own KPI: one variable (`kpiItemFromVars`)
- *   AND a personal bonus ({@link classifyBonuses}). Every other row is skipped and counted.
+ * - A row counts when it is one person's own KPI (one variable, `kpiItemFromVars`, AND a
+ *   personal bonus) or a team split's KPI ({@link teamKpiFromVars}; its metric carries
+ *   `team`). Every other row (a named person's bonus, a multi-variable personal row) is
+ *   skipped and counted ({@link classifyBonuses}).
  * - Available when at least one row counts. EVERY such bonus is a KPI (adaptable).
  * - A KPI is **shown** only when every bonus scoring its variable is a count bonus
  *   ({@link isCountVariable}) and none is a fixed amount; otherwise it is order-only.
@@ -215,14 +256,16 @@ export function buildKpiData(input: {
   const byWeek = new Map<string, { periodEnd: string; byEmail: Map<string, MoneyWeekRow> }>();
   const labels = new Map<string, { label: string; week: string }>();
   const orderOnly = new Set<string>();
+  const teamKeys = new Set<string>();
   let skippedRows = 0;
   for (const r of input.applied) {
-    const read = kpiItemFromVars(r.vars);
     const bonus = r.bonus_id ? bonuses.get(r.bonus_id) : undefined;
-    if (read.kind === 'skip' || (bonus && !bonus.personal)) {
+    const read = bonus?.team ? teamKpiFromVars(r.vars, bonus.formula) : kpiItemFromVars(r.vars);
+    if (read.kind === 'skip' || (bonus && !bonus.personal && !bonus.team)) {
       skippedRows += 1;
       continue;
     }
+    if (bonus?.team) teamKeys.add(read.key);
     // Fail closed: an unknown bonus, a fixed amount, or a formula that does not
     // multiply the variable by a rate makes the KPI order-only.
     if (!bonus || bonus.fixed || !isCountVariable(bonus.formula, read.key)) orderOnly.add(read.key);
@@ -259,7 +302,7 @@ export function buildKpiData(input: {
     rows: w.rows.map((r) => splitShown(r, orderOnly)),
   }));
   const metrics = [...labels.entries()]
-    .map(([key, { label }]) => ({ key, label, shown: !orderOnly.has(key) }))
+    .map(([key, { label }]) => ({ key, label, shown: !orderOnly.has(key), team: teamKeys.has(key) }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.key.localeCompare(b.key));
   return { available: true, servedBy: null, weeks, moneyWeeks, metrics, skippedRows };
 }
@@ -418,7 +461,7 @@ export function toClientPayload(
           : { email: r.email, counts: { ...r.counts } },
       ),
     })),
-    metrics: data.metrics.map((m) => ({ key: m.key, label: m.label, shown: m.shown })),
+    metrics: data.metrics.map((m) => ({ key: m.key, label: m.label, shown: m.shown, team: m.team })),
     skippedRows: data.skippedRows,
     order,
     error: null,
