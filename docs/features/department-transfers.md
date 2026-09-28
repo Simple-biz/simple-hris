@@ -128,6 +128,22 @@ the endpoint still drops the manager's own departments, because its other caller
 calculators' add-external-member pickers and "Add missing as externals", `qc-scoring.md`,
 `hsl-kpi-calculator-2026-07.md`) treat every person it returns as external to the team. Do not
 fold the two back into one behaviour.
+
+**A calculator caller must merge the manager's own roster back in, minus the card** (2026-09-28).
+Without that step, anyone in a second department the manager holds cannot be reached from the
+first one's card. `cjm@` holds Client VA and Lead Gen. Once Lead Gen was granted on 2026-09-23,
+the Lead Gen VAs she had added to Client VA as externals every week (`rjq@`, `charlesla@`: 08-30,
+09-06, 09-13) showed *"No one on the master list matches"* in the Client VA picker.
+"Add missing as externals" always merged `teamMembers`. `DeptBonusCalculator`'s Add External
+Member modal now does the same through `src/lib/manager/external-member-candidates.ts` (tested):
+it offers the endpoint's results plus the manager's **unfiltered** roster, minus every address
+already on **this card**. "External" means external to the card, not to every team the manager
+holds. Because the roster is unfiltered, someone the departed guard hides from this week's table
+is offered too, with a **"Hidden this week"** chip and a confirm-step warning. `johnpaulc@`
+(Client VA, working) is hidden on 2026-09-20 by a stale Lead Gen off-board record (audit item
+131), and this picker is his only route onto the card. Pay key: personal-first, like every roster
+row (`qc-scoring.md` § Add missing). **The HSL calculator's `HslAddMemberModal` does NOT have this
+merge yet** (it has no manager roster; audit item 241).
 `?q=` matches name / department / **work email** / personal email; `?department=` filters to one
 dept. The server scans the whole roster and returns the filtered `people` (capped at 200), the
 full `departments` list for the filter dropdown, and `builtinSubs` — the data sub-team **map**

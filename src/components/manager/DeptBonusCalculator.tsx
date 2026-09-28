@@ -76,6 +76,12 @@ import {
 } from './OffboardedSuggestions';
 import { offboardedRelevantToWeek } from '@/lib/roster/offboarded-week-relevance';
 import { useDepartedMembers, isDepartedMember } from '@/components/manager/useDepartedMembers';
+import {
+  externalPickMatches,
+  mergeExternalPicks,
+  rosterExternalCandidates,
+  type ExternalPick,
+} from '@/lib/manager/external-member-candidates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { assignmentReachesMember, buildCommonScopeIndex } from '@/lib/bonus-catalog/assignment-scope';
@@ -1580,6 +1586,26 @@ export default function DeptBonusCalculator({
   } | null>(null);
   // "Add External Member" modal: the dept key it's adding into (null = closed).
   const [extAddKey, setExtAddKey] = useState<string | null>(null);
+  // Every address already on the card the modal is adding into. "External" means
+  // external to THIS card: the picker offers anyone not on it.
+  const extCardEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of (extAddKey ? state[extAddKey]?.members : null) ?? []) {
+      const n = normEmail(m.email);
+      if (n) set.add(n);
+    }
+    return set;
+  }, [extAddKey, state]);
+  // The manager's own roster, minus the card. Without it, anyone in a second
+  // department the manager holds is unreachable: transfer-candidates drops every
+  // department they manage (cjm@ holds Client VA and Lead Gen, so her Lead Gen VAs
+  // vanished from the Client VA picker once Lead Gen was granted on 2026-09-23).
+  // UNFILTERED roster: someone the departed guard hides from this week's table is
+  // offered here, flagged, because this picker is how the table's gaps are filled.
+  const extRosterPicks = useMemo(
+    () => (extAddKey ? rosterExternalCandidates(teamMembersAll, extCardEmails, departedMembers) : []),
+    [extAddKey, teamMembersAll, extCardEmails, departedMembers],
+  );
 
   // -- Compare-with-sheet (manager mode, QC departments) -------------------------
   // Jackie pastes her sheet, Compare diffs it against the officers' first pass,
@@ -5150,6 +5176,8 @@ export default function DeptBonusCalculator({
               deptName={DEPARTMENTS.find((d) => d.key === extAddKey)?.name ?? humanizeDeptKey(extAddKey)}
               color={deptColor(extAddKey)}
               offboarded={offboardedForWeek}
+              rosterPicks={extRosterPicks}
+              cardEmails={extCardEmails}
               reduce={!!reduceMotion}
               onAdd={(name, email) => {
                 const err = addExternalMember(extAddKey, name, email);
@@ -5980,6 +6008,8 @@ interface ExternalCandidate {
   offboarded?: boolean;
   off_boarded_at?: string | null;
   hubstaff_email?: string | null;
+  /** From the manager's own roster, hidden from this week's table by the departed guard. */
+  hiddenThisWeek?: boolean;
 }
 
 /** The identity email an external candidate would be keyed under — personal
@@ -6001,14 +6031,17 @@ function candidateEmail(c: ExternalCandidate): string {
 }
 
 /** "Add External Member" modal: search the Global Master List for someone
- *  outside the manager's departments (same endpoint the transfer dialog uses,
- *  so a plain manager needs no extra permissions), pick them, then pass ONE
- *  warning step that makes the manager double-check the person before they're
- *  added — the applied rows are keyed and paid exactly as selected. */
+ *  outside this card's team (same endpoint the transfer dialog uses, so a plain
+ *  manager needs no extra permissions), merged with the manager's own roster
+ *  minus the card; pick them, then pass ONE warning step that makes the manager
+ *  double-check the person before they're added — the applied rows are keyed
+ *  and paid exactly as selected. */
 function AddExternalMemberModal({
   deptName,
   color,
   offboarded,
+  rosterPicks,
+  cardEmails,
   onAdd,
   onClose,
   reduce,
@@ -6018,6 +6051,11 @@ function AddExternalMemberModal({
   /** Recently offboarded people (fetched once by the calculator) — rendered as
    *  a second, clearly-labeled group so final bonuses can still be scored. */
   offboarded: OffboardedCandidate[];
+  /** The manager's own roster people who are not on this card
+   *  (`rosterExternalCandidates`). The endpoint never returns them. */
+  rosterPicks: ExternalPick[];
+  /** Every address already on this card — server results matching one are dropped. */
+  cardEmails: ReadonlySet<string>;
   /** Attempt the add; returns an error message to surface, or null on success. */
   onAdd: (name: string, email: string) => string | null;
   onClose: () => void;
@@ -6043,8 +6081,9 @@ function AddExternalMemberModal({
     };
   }, [onClose]);
 
-  // Debounced Global-Master-List search. The endpoint already excludes the
-  // manager's own departments — everyone it returns is external to the team.
+  // Debounced Global-Master-List search. The endpoint excludes EVERY department
+  // the manager holds, so the rest of their own roster is merged in locally
+  // below (`rosterPicks`) — the same two records "Add missing as externals" uses.
   useEffect(() => {
     let cancelled = false;
     const handle = setTimeout(() => {
@@ -6085,6 +6124,13 @@ function AddExternalMemberModal({
   // The offboarded group filters locally — the list is small and fetched once,
   // so it must not re-query per keystroke like the active candidates do.
   const offboardedShown = offboarded.filter((c) => matchesOffboardedQuery(c, query));
+  // The roster picks filter locally with the server's own `?q=` fields, then merge
+  // with the server results (a person both hold is listed once).
+  const activeShown: ExternalCandidate[] = mergeExternalPicks(
+    candidates,
+    rosterPicks.filter((c) => externalPickMatches(c, query)),
+    cardEmails,
+  );
 
   return (
     <motion.div
@@ -6146,13 +6192,13 @@ function AddExternalMemberModal({
                 <div className="flex items-center justify-center gap-2 px-3 py-10 text-xs text-zinc-400">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Searching the master list…
                 </div>
-              ) : candidates.length === 0 && offboardedShown.length === 0 ? (
+              ) : activeShown.length === 0 && offboardedShown.length === 0 ? (
                 <div className="px-3 py-10 text-center text-xs text-zinc-400">
                   No one on the master list matches{query.trim() ? ` “${query.trim()}”` : ''}.
                 </div>
               ) : (
                 <>
-                  {candidates.map((c) => {
+                  {activeShown.map((c) => {
                     const email = candidateEmail(c);
                     const isSelected =
                       !!selected && !selected.offboarded && candidateEmail(selected) === email && selected.name === c.name;
@@ -6191,6 +6237,14 @@ function AddExternalMemberModal({
                             {email || 'no email on file'}
                           </span>
                         </span>
+                        {c.hiddenThisWeek && (
+                          <span
+                            className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                            title="Not on this week’s table: an off-board record predates this week and no timesheet for the week shows them working. Add them only if they worked this week."
+                          >
+                            Hidden this week
+                          </span>
+                        )}
                         {c.department && (
                           <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title={c.department ?? undefined}>
                             {formatDeptLabel(c.department)}
@@ -6309,8 +6363,18 @@ function AddExternalMemberModal({
                 the pay week, ask Accounting to use People → Pay instead.
               </p>
             )}
+            {selected?.hiddenThisWeek && (
+              <p className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[11px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                An <span className="font-semibold">off-board record</span> predates this week, and no timesheet for
+                the week shows them working, so they are not on this week’s table. Add them only if they worked
+                this week.
+              </p>
+            )}
             <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-              This person is outside the {deptName} team. Once added, they’ll receive the{' '}
+              {selected?.hiddenThisWeek
+                ? `This person is not on this week’s ${deptName} table.`
+                : `This person is outside the ${deptName} team.`}{' '}
+              Once added, they’ll receive the{' '}
               <span className="font-semibold text-zinc-700 dark:text-zinc-300">{deptName} team’s common bonus</span> in
               this week’s KPI submission, paid out under the details above — please make sure this is
               the right person before confirming. You can still remove them any time before submitting
