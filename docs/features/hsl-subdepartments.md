@@ -376,7 +376,11 @@ Attestation tier guess mispriced 11 rows). For that shape, take §7a but set
 #### 7d-catalog-scored: the programme exists, it just isn't in code (`rulesFromCatalog`)
 
 Added 2026-09-22 for **Intake Specialist**, then **Filing Specialist** hours
-later — *"Filing Specialist the Hard coded is still in there"*. Filing had been
+later — *"Filing Specialist the Hard coded is still in there"*. **Taken by five
+more branches on 2026-09-28** (Medical Records, Care Team, Callback Team,
+Attestation, Case Managers). That leaves **seven of the fourteen** scored
+entirely from the Payment Catalog, and five still in code. See *The second
+cutover* below. Filing had been
 ruled the OTHER way first (`b3dc6a98`: the Library formula's bands moved into
 `schema.ts`, assignment to be retired) and was reversed once Carla and Alivia
 saw the card still carrying both. The retirement script from that first ruling
@@ -418,8 +422,75 @@ case. Both branches were in exactly that state.
 | --- | --- | --- | --- |
 | `intake_specialist` | 2026-09-13 · ₱282,700 · ₱0 from code · 76 catalog rows | ₱3,440,500 / 1,367 rows / 13 weeks | ₱558,450 (4 weeks, no status row) |
 | `filing_specialist` | 2026-09-13 · ₱99,275 · ₱0 from code · 41 catalog rows | ₱967,600 / 370 rows / 12 weeks | ₱117,925 (2026-06-28, 2026-07-05) |
+| `medical_records` | 2026-09-20 · **0 rows** · ₱0 from code | ₱289,012.56 / 389 rows | **₱0** — every week `ready` |
+| `care_team` | 2026-09-20 · **0 rows** · ₱0 from code | ₱65,600 / 25 rows | **₱0** |
+| `callback_team` | 2026-09-20 · **0 rows** · ₱0 from code | ₱1,672,450 / 345 rows | **₱0** |
+| `attestation` | 2026-09-20 · **0 rows** · ₱0 from code | ₱558,625 / 249 rows | **₱0** |
+| `case_managers` | 2026-09-20 · **0 rows** · ₱0 from code | ₱1,528,350 / 504 rows | **₱0** |
 
 The `ready` remainder needs a deliberate *Mark as Unready* first.
+
+**The second cutover, 2026-09-28 — five branches, one ruling.** Kane: *"KPI
+Calculator - HSL Branch - still has all the Hardcoded KPI stuff we should
+deprecate that and uses the things that were set in Payment Catalog"*, then
+*"Delete the HARD CODED Formulas in the KPI CALCULATOR"*. On 2026-09-23
+Accounting (Alivia, Carla) had assigned a Library formula to seven more
+branches. Each one re-expressed that branch's code rules, so every card showed
+the same work twice, which is the §3.1 double-pay shape.
+**Five were deleted, because for them the Library formula pays exactly what the
+code did.** `schema.test.ts` proves each by running the formula text, as
+measured in production that day, through the real engine against the deleted
+rule, including the 0–120 case Attestation sweep. Those literals prove the
+cutover. They cannot stop a later edit of the Library row.
+
+| branch | Library bonus (2026-09-23) | why it pays the same |
+| --- | --- | --- |
+| `medical_records` | "HSL - Medical Records" `=(PPL*100)+(RFC)` | Portal Log Ins ×₱100, RFC a typed peso amount. **₱100 vs ₱250 stays UNRESOLVED** (`hsl-catalog-migration.md` §1.2); the Library says ₱100, as the code did |
+| `care_team` | "HSL - Care Team" `=(Church_Attendees*50)` | **assigned per PERSON**, to ruffag@ and jcp@, the only two people who have ever scored Church Attendees (every row since 2026-08-02). A new member earns nothing until Accounting assigns them too |
+| `callback_team` | "HSL - Callback" `=(Transfers*50)+(Signups*250)` | department-scoped, so it still reaches Simple Texting (§7b) |
+| `attestation` | "HSL - Attestation" | the sheet formula verbatim. The Filing (20/30/40) and Attestation (25/35/50) ladders are now two Library rows, and a test pins that no code dept scores `attested_cases` |
+| `case_managers` | "HSL - Case Managers" | the same seven terms and rates, SSA.Gov included |
+
+"Cut over only when the live week stands on ₱0 of code rules" (above) held in
+its strongest form. The live week, 2026-09-20, had **no saved rows at all** on
+any of the five when the rules were deleted, and **no editable week carries a
+peso of exposure**. Intake had carried ₱558,450 of editable exposure. **The one
+open hole is the deploy gap.** Kane pushes, not the session. If a manager
+scores 2026-09-20 on the old bundle before the push, that week then carries
+code-rule pesos, and any row they touch after the deploy rescores at ₱0. Re-run
+`scripts/probe-hsl-hardcoded-columns.mts --dept <key>` for each of the five
+immediately before pushing. **Deploy note, PENDING:** a non-zero "P from code
+rules" on an editable week is the stop sign. Audit item 246.
+
+**Not deleted, and why — each needs Kane or Accounting first:**
+
+- `collections` — its Library bonus (`Referral_Leads*250 + HSL_Testimonials*250`,
+  weekly) **drops the ₱2,500 manager-only Monthly Flat** (₱77,000 to 30 people in
+  the 2026-08-30 period) and adds a term the code never paid. That is a money
+  ruling. Hard-stopped, audit item 246.
+- `post_hearing_prep` — its Library bonus (`PPL*100 + Five_Star_Reviews*250`)
+  **drops the ₱2,500 Monthly Bonus** checkbox (Carla, 2026-09-08; itself disputed
+  against ₱3,500, [[pre-post-hearing-2500-vs-3500]]), and a Library total sits
+  **outside** `monthlyMax`, so the ₱3,500/wk cap would bound nothing.
+  Hard-stopped, audit item 246.
+- `ssd_medical_records` · `healthcare_team_lead` · `hsl_managers` — **nothing
+  is assigned in the Payment Catalog**, so deleting their rules would pay ₱0.
+  SSD's `team_split` / `team_pool` shares depend on the whole team's inputs,
+  which a per-person Library formula cannot see. Managers Weekly's specs are
+  dated per person (`HSL_MANAGERS`). They stay in code until Accounting builds
+  their Library bonuses.
+
+**The deleted rules keep their LABELS, never their pay.**
+`src/lib/hsl-bonus/retired-rules.ts` (`HSL_RETIRED_RULES`, `hslRuleForKey`)
+holds each §7d branch's rule set as it stood for its last code-scored week.
+It is display-only: nothing passes it to `calcBonus`, and a test asserts every
+branch scores ₱0 from it. It exists because Employee KPI Results and Admin Penny
+explain a past week by looking its keys up in the live rules. Without it,
+Medical Records' `rfc_form` (a peso amount) read as a COUNT, and every rate
+disappeared. A live rule always wins the lookup, and Penny is told a retired
+key is no longer scored. Intake and Filing's pre-cutover keys get the same
+treatment; their Filing entry is the ORIGINAL 30/40/50 ladder, the one every
+saved row was scored with.
 
 **And the rule leaves the test suite.** It becomes a row in
 `bonus_catalog_bonuses` that no unit test can reach, so an accountant's edit
@@ -475,7 +546,9 @@ placement validation all pick it up with no further edits.
 Currently placement-only (two):
 
 - **Simple Texting**, scored under **Callback Team** (Successfully Transferred
-  Calls ₱50 · Sign ups from Transferred Calls ₱250). Seeded at **₱225.00 /
+  Calls ₱50 · Sign ups from Transferred Calls ₱250 — since 2026-09-28 that is
+  Callback's department-scoped "HSL - Callback" Library bonus, not code, §7d;
+  so the host must stay scoreable). Seeded at **₱225.00 /
   ₱337.50 OT PHP** on 2026-08-12 (Kane) — department scope, identical to the
   parent base. **8 people** sit in it as of 2026-08-13.
 - **Hearing Prep Team – Mail Sorting** (key `hearing_prep_mail_sorting`), added

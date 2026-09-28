@@ -18,6 +18,14 @@
  *
  *   npx tsx scripts/probe-hsl-hardcoded-columns.mts --dept intake_specialist
  *   npx tsx scripts/probe-hsl-hardcoded-columns.mts --dept filing_specialist
+ *   npx tsx scripts/probe-hsl-hardcoded-columns.mts --dept <medical_records | care_team |
+ *     callback_team | attestation | case_managers>        (cut over 2026-09-28)
+ *
+ * For the 2026-09-28 five, the question to re-ask RIGHT BEFORE the deploy is
+ * the live week's row: if a manager scored week 2026-09-20 on the OLD bundle,
+ * that week now carries code-rule pesos, and any row they touch after the
+ * deploy rescores with those keys at ₱0. A non-zero "P from code rules" on an
+ * editable week is the stop sign.
  *
  * The rule tables below are DECLARED, not imported from `schema.ts`, for two
  * reasons: the script has to keep working after the rules are deleted (that is
@@ -35,7 +43,8 @@ dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 type Tier = { min: number; max: number | null; rate: number };
-type Spec = { perUnit: Record<string, number>; tiered?: { key: string; tiers: Tier[] } };
+/** `manual` keys hold a typed PESO amount, added as-is (never multiplied). */
+type Spec = { perUnit: Record<string, number>; manual?: string[]; tiered?: { key: string; tiers: Tier[] } };
 
 /**
  * What each branch's code rules paid, as they stood when the saved rows were
@@ -59,6 +68,28 @@ const SPECS: Record<string, Spec> = {
         { min: 50, max: null, rate: 100 },
       ],
     },
+  },
+  // 2026-09-28 (Kane: "Delete the HARD CODED Formulas"). As they stood for the
+  // last code-scored week, 2026-09-13. Earlier weeks that pre-date a term
+  // (Attestation referral/SSA 2026-08-24, Case Managers SSA 2026-09-08) carry
+  // no key for it, which reads as 0 — so the current table measures them too.
+  medical_records: { perUnit: { portal_login: 100 }, manual: ['rfc_form'] },
+  care_team: { perUnit: { church_attendees: 50 } },
+  callback_team: { perUnit: { transferred_calls: 50, signups_from_transfers: 250 } },
+  attestation: {
+    perUnit: { referral_leads: 250, ssa_gov: 250 },
+    tiered: {
+      key: 'attested_cases',
+      tiers: [
+        { min: 0, max: 24, rate: 0 },
+        { min: 25, max: 34, rate: 50 },
+        { min: 35, max: 49, rate: 75 },
+        { min: 50, max: null, rate: 100 },
+      ],
+    },
+  },
+  case_managers: {
+    perUnit: { reviews: 250, rfc: 250, ppl: 100, dme: 250, task: 250, referral_leads: 250, ssa_gov: 250 },
   },
 };
 
@@ -101,10 +132,11 @@ type Entry = {
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 
-/** Mirrors `calcBonus` exactly: per_unit is n x rate, tiered is the WHOLE count x the landed rate. */
+/** Mirrors `calcBonus` exactly: per_unit is n x rate, manual is the typed amount, tiered is the WHOLE count x the landed rate. */
 function codeRulePesos(kpi: Record<string, unknown> | null): number {
   let total = 0;
   for (const [k, rate] of Object.entries(spec.perUnit)) total += num(kpi?.[k]) * rate;
+  for (const k of spec.manual ?? []) total += num(kpi?.[k]);
   if (spec.tiered) {
     const n = num(kpi?.[spec.tiered.key]);
     const band = spec.tiered.tiers.find((t) => n >= t.min && (t.max === null || n <= t.max));
@@ -112,7 +144,7 @@ function codeRulePesos(kpi: Record<string, unknown> | null): number {
   }
   return total;
 }
-const codeKeys = [...Object.keys(spec.perUnit), ...(spec.tiered ? [spec.tiered.key] : [])];
+const codeKeys = [...Object.keys(spec.perUnit), ...(spec.manual ?? []), ...(spec.tiered ? [spec.tiered.key] : [])];
 
 async function main() {
   const entries = await selectAllPaged<Entry>(

@@ -138,15 +138,19 @@ test('the two sub-team keyspaces stay disjoint — a placement-only team NEVER g
     assert.ok(HSL_DEPTS[under], `${under} must have a calculator config`);
   }
   // The host mapping is a decision, not a default — pin each one to the team
-  // that actually scores it. Simple Texting rides Callback Team, whose rules ARE
-  // the bonus Carla described (Successfully Transferred Calls ₱50 + Sign ups
-  // from Transferred Calls ₱250). Hearing Prep Team – Mail Sorting rides
+  // that actually scores it. Simple Texting rides Callback Team, whose bonus IS
+  // the one Carla described (Successfully Transferred Calls ₱50 + Sign ups from
+  // Transferred Calls ₱250). Hearing Prep Team – Mail Sorting rides
   // Pre-/Post-Hearing Prep — where all 3 live members were already scored when
   // it was added (2026-08-14).
   assert.equal(HSL_PLACEMENT_ONLY_SUB_TEAMS.simple_texting.scoredUnder, 'callback_team');
   assert.equal(HSL_PLACEMENT_ONLY_SUB_TEAMS.hearing_prep_mail_sorting.scoredUnder, 'post_hearing_prep');
-  const callbackRates = HSL_DEPTS.callback_team.rules.map((r) => ('rate' in r ? r.rate : null));
-  assert.deepEqual(callbackRates, [50, 250]);
+  // Since 2026-09-28 those two rates are the "HSL - Callback" Library formula
+  // (`=(Transfers*50)+(Signups*250)`, department-scoped, so it reaches the
+  // Simple Texting people on the card) — pinned in schema.test.ts. The host must
+  // stay SCOREABLE: a roster-only host would strand Simple Texting unpaid.
+  assert.equal(HSL_DEPTS.callback_team.rulesFromCatalog, true);
+  assert.equal(HSL_DEPTS.callback_team.noKpi, undefined);
 });
 
 test('intake_specialist is scored from the Bonus Library, not from code (Kane, 2026-09-22)', () => {

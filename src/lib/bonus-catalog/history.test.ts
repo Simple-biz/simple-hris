@@ -7,6 +7,7 @@ import {
   parseEffectiveDate,
   todayIso,
   bonusEffectiveFrom,
+  bonusProvenance,
 } from './history';
 import type { BonusAssignment, BonusDef } from './types';
 
@@ -129,4 +130,34 @@ test('bonusEffectiveFrom: stored date wins, else created_at day, else null', () 
   assert.equal(bonusEffectiveFrom({ effectiveFrom: null, createdAt: created }), '2026-06-16');
   assert.equal(bonusEffectiveFrom({ effectiveFrom: null, createdAt: null }), null);
   assert.equal(bonusEffectiveFrom({ effectiveFrom: null, createdAt: 'garbage' }), null);
+});
+
+test('bonusProvenance: last save wins over creation, version defaults to 1, blanks are absent', () => {
+  const p = bonusProvenance({
+    version: 3,
+    effectiveFrom: '2026-09-23',
+    createdAt: '2026-09-20T01:00:00Z',
+    createdBy: 'carla@simple.biz',
+    updatedAt: '2026-09-23T06:02:00Z',
+    updatedBy: 'aliviah@simple.biz',
+  });
+  assert.deepEqual(p, {
+    version: 3,
+    effectiveFrom: '2026-09-23',
+    savedAt: '2026-09-23T06:02:00Z',
+    savedBy: 'aliviah@simple.biz',
+    createdAt: '2026-09-20T01:00:00Z',
+    createdBy: 'carla@simple.biz',
+  });
+  // A row saved once: the save IS the creation.
+  const once = bonusProvenance({ createdAt: '2026-09-20T01:00:00Z', createdBy: 'carla@simple.biz', updatedAt: null, updatedBy: '  ' });
+  assert.equal(once.version, 1);
+  assert.equal(once.savedBy, 'carla@simple.biz');
+  assert.equal(once.savedAt, '2026-09-20T01:00:00Z');
+  // Nothing known is said as nothing — never a made-up author.
+  const bare = bonusProvenance({});
+  assert.equal(bare.savedBy, null);
+  assert.equal(bare.savedAt, null);
+  assert.equal(bare.effectiveFrom, null);
+  assert.equal(bonusProvenance({ version: 0 }).version, 1);
 });

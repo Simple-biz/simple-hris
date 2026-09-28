@@ -6,31 +6,42 @@ A batch of changes to the manager-facing **HSL KPI Calculator**
 "Managers Weekly" department, an "Add external member" flow on every department,
 and the removal of five stale departments.
 
-Built 2026-07-17. All HSL bonus rules remain hardcoded in `schema.ts` — the
-**except** that since 2026-09-22 a Bonus Library bonus assigned to a branch
-(`hsl:<key>`) is scored on that branch's card as an extra rule and folds into
-`calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`; see `bonus-catalog.md`
-§3.1). The KPI programme itself is still code; what changed is that an
-accountant can now attach an ad-hoc award to one sub-team without an
-engineering change. How that column reads — name + `flat`/`ƒ(x)` chip + the
+Built 2026-07-17 with every HSL bonus rule hardcoded in `schema.ts`. **That is
+no longer true of half the branches.** Since 2026-09-22 a Bonus Library bonus
+assigned to a branch (`hsl:<key>`) is scored on that branch's card and folds
+into `calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`; see
+`bonus-catalog.md` §3.1). **Seven branches have no code rules at all** and are
+scored entirely from their Library bonus (`rulesFromCatalog`,
+`hsl-subdepartments.md` §7d): Intake Specialist and Filing Specialist
+(2026-09-22), then Medical Records, Care Team, Callback Team, Attestation and
+Case Managers (Kane, 2026-09-28: *"Delete the HARD CODED Formulas in the KPI
+CALCULATOR"*). **Five are still code**: SSD Medical Records, Collections,
+Pre/Post-Hearing Prep, Healthcare Team Lead and Managers Weekly. Two of them
+wait on a money ruling, and three have nothing in the Library yet. The table
+below says which is which. Each Library bonus on the card states its **version,
+effective date, and who last saved it, and when** (2026-09-28), because an
+accountant's edit now reprices a whole team. How that column reads: name + `flat`/`ƒ(x)` chip + the
 accountant's own formula in the head, a `Bonus Library` legend strip above the
 grid, one **labelled** field per formula variable, and the bonus's own peso
 under them (amber at ₱0) — is the presentation contract in `bonus-catalog.md`
 §3.1, written after Kane found four unlabelled boxes on the Filing Specialist
-card on 2026-09-22. Everything below describes the code rules — the
-single source of truth the calculator, PayrollWizard HSL step, Bonus History,
-and employee KPI results all read.
+card on 2026-09-22. Where a row below names a rule for a `rulesFromCatalog`
+branch, that rule now lives in `bonus_catalog_bonuses`. `schema.ts` holds it
+for that branch only as a display label (`retired-rules.ts`), so past weeks
+still read correctly. **No unit test can reach the live row**; the tests pin the
+formula text as measured on the cutover day. The wizard pays the stored
+`calculated_bonus` either way.
 
 ## Department changes (`HSL_DEPTS` in `src/lib/hsl-bonus/schema.ts`)
 
 | Dept key | Name | Cadence | Rules |
 | --- | --- | --- | --- |
-| `callback_team` *(new)* | Callback Team | weekly | Medicare Sign Ups × ₱250 |
+| `callback_team` *(new)* | Callback Team | weekly | **LIBRARY since 2026-09-28 — code rules deleted (`hsl-subdepartments.md` §7d); what follows is what the Library formula pays.** (This cell always said Medicare Sign Ups; the code, and now the Library, pay Transferred Calls ×₱50 + Sign ups ×₱250.) Medicare Sign Ups × ₱250 |
 | `simple_texting` *(new)* | Simple Texting | weekly | Transferred Calls × ₱50 · Sign Ups × ₱250 |
-| `medical_records` *(new)* | Medical Records | weekly | Patient Portal Log Ins × **₱250 or ₱100 — UNRESOLVED** · RFC = a **manual peso amount, added as-is (no rate, never multiplied)** **⚠ TWO SEPARATE THINGS WERE WRONG IN THIS CELL. (1) RFC: corrected 2026-09-09. It is a `manual` rule — [schema.ts:197](../../src/lib/hsl-bonus/schema.ts#L197) `{ type: 'manual', key: 'rfc_form' }` — and memory [[medical-records-rfc-manual]] carries Kane's worked example (*4 portal + ₱3 RFC → 4×250 + 3 = ₱1,003*). Code and memory AGREE, so the old ‘RFC × ₱250’ was an unambiguous doc defect and is now fixed. (2) Patient Portal: still contradicted — [schema.ts:196](../../src/lib/hsl-bonus/schema.ts#L196) has `rate: 100`, while this doc AND that same memory’s worked example both say ₱250. The earlier note here guessed ‘likely doc typo’ without weighing the memory; with it, ₱100 being a live underpayment is at least as likely. Measured 2026-09-09: **1,546 units, 33 people, 8 weeks → ₱231,900 difference.** UNRESOLVED, Kane’s call; needs one worked example for a recent week. See `hsl-catalog-migration.md` §1.2. Affects `medical_records` ONLY — `filing_specialist` and `post_hearing_prep` also pay ₱100 and are NOT contradicted.** |
+| `medical_records` *(new)* | Medical Records | weekly | **LIBRARY since 2026-09-28 — code rules deleted (`hsl-subdepartments.md` §7d); what follows is what the Library formula pays.** Patient Portal Log Ins × **₱250 or ₱100 — UNRESOLVED** · RFC = a **manual peso amount, added as-is (no rate, never multiplied)** **⚠ TWO SEPARATE THINGS WERE WRONG IN THIS CELL. (1) RFC: corrected 2026-09-09. It is a `manual` rule — [schema.ts:197](../../src/lib/hsl-bonus/schema.ts#L197) `{ type: 'manual', key: 'rfc_form' }` — and memory [[medical-records-rfc-manual]] carries Kane's worked example (*4 portal + ₱3 RFC → 4×250 + 3 = ₱1,003*). Code and memory AGREE, so the old ‘RFC × ₱250’ was an unambiguous doc defect and is now fixed. (2) Patient Portal: still contradicted — [schema.ts:196](../../src/lib/hsl-bonus/schema.ts#L196) has `rate: 100`, while this doc AND that same memory’s worked example both say ₱250. The earlier note here guessed ‘likely doc typo’ without weighing the memory; with it, ₱100 being a live underpayment is at least as likely. Measured 2026-09-09: **1,546 units, 33 people, 8 weeks → ₱231,900 difference.** UNRESOLVED, Kane’s call; needs one worked example for a recent week. See `hsl-catalog-migration.md` §1.2. Affects `medical_records` ONLY — `filing_specialist` and `post_hearing_prep` also pay ₱100 and are NOT contradicted.** |
 | `hsl_managers` *(new; specs DATED 2026-09-08)* | Managers Weekly | weekly | bespoke per-manager components — checklists through 2026-08-23, banded weekly tiers for six managers + three new members from 2026-08-30 (see below) |
-| `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — since 2026-09-22 `attestation` is the ONLY dept scoring `attested_cases` in code; Filing Specialist's rules moved to the Bonus Library, see §Attested Cases below) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
-| `case_managers` *(new 2026-07-22; SSA.Gov added 2026-09-08)* | Case Managers | weekly | Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 **· SSA.Gov ×₱250** (Carla via Kane, 2026-09-08 — the same additive term Attestation gained 2026-08-24, which had NOT been applied here; not retroactive, rows without the key read 0; seven per-unit terms pinned in `schema.test.ts`) |
+| `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | **LIBRARY since 2026-09-28 — code rules deleted (`hsl-subdepartments.md` §7d); what follows is what the Library formula pays.** Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — since 2026-09-28 NO dept scores `attested_cases` in code — both ladders are Library rows, see §Attested Cases below) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
+| `case_managers` *(new 2026-07-22; SSA.Gov added 2026-09-08)* | Case Managers | weekly | **LIBRARY since 2026-09-28 — code rules deleted (`hsl-subdepartments.md` §7d); what follows is what the Library formula pays.** Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 **· SSA.Gov ×₱250** (Carla via Kane, 2026-09-08 — the same additive term Attestation gained 2026-08-24, which had NOT been applied here; not retroactive, rows without the key read 0; seven per-unit terms pinned in `schema.test.ts`) |
 | `post_hearing_prep` *(renamed; Monthly Bonus added 2026-09-08)* | Pre-Hearing / Post-Hearing Prep | weekly | Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap **+ Monthly Bonus ₱2,500 flat checkbox** — every member, final payroll week of the month only, paid ON TOP of the cap (see §Pre/Post-Hearing monthly bonus) |
 | `case_manager` *(removed 2026-07-17; superseded by `case_managers`)* | — | — | was 6 per-unit KPI rules, ~50 members |
 | `case_mgr_no_kpi` *(removed)* | — | — | was an empty roster-only placeholder |
@@ -50,8 +61,11 @@ Notes:
   `recomputeSsdEntries`. e.g. Orange team logs 13 RFCs across 10 agents →
   13 × ₱250 ÷ 10 = ₱325/agent, added on top of their accuracy-split share.
 - **Callback Team vs the sheet.** The pay-plan sheet attaches "Medicare Signups ×250"
-  to the Care/Healthcare team, and `care_team` in `schema.ts` is still modeled as
-  the older "Church Attendees × ₱50". That drift was left as-is by request — the
+  to the Care/Healthcare team, and `care_team` was modeled as the older
+  "Church Attendees × ₱50". Since 2026-09-28 that rule is Accounting's
+  "HSL - Care Team" Library bonus (`=(Church_Attendees*50)`, assigned per
+  person), not code, so reconciling it is now an Accounting edit, not an
+  engineering one. That drift was left as-is by request — the
   new `callback_team` dept was created as named. Revisit if Medicare signups
   should instead reconcile `care_team`.
 
@@ -113,10 +127,16 @@ entirely from its `hsl:filing_specialist` assignment —
     Filed_Cases * IF(Filed_Cases>=40,100,IF(Filed_Cases>=30,75,IF(Filed_Cases>=20,50,0)))
       + PPL*100 + (BBB + Referral_Leads)*250
 
-**`attestation` is now the only department that scores `attested_cases` in
-code, and a test pins that.** The divergence `hsl-catalog-migration.md` insisted
-be reproduced verbatim is preserved by Filing having left the code keyspace
-entirely — it must not be re-created by pointing Filing at attestation's ladder.
+**Superseded 2026-09-28: NO department scores `attested_cases` in code.**
+Attestation followed Filing into the Library (§7d). Its "HSL - Attestation"
+formula is the sheet expression above verbatim, and `schema.test.ts` runs that
+text through the real engine across 0–120 cases × referral/SSA counts. That
+was the same sweep that pinned the code rule, so the cutover moved no money.
+The divergence `hsl-catalog-migration.md` insisted be reproduced verbatim now
+lives as **two Library rows**, and the same file pins them apart: Filing pays
+₱1,000 at 20 cases where Attestation pays ₱0, and at 30 cases it is ₱2,250
+against ₱1,500. A test asserts **no** dept scores `attested_cases` in code, so
+neither ladder can come back into code beside its Library twin.
 
 **What this costs:** Filing's pay rule is now a row in `bonus_catalog_bonuses`.
 No unit test can reach it, and an accountant editing the formula reprices the

@@ -62,6 +62,7 @@ import {
 
 import { formatDeptLabel, hslSubDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BonusAssignment, BonusDef } from '@/lib/bonus-catalog/types';
+import { bonusProvenance } from '@/lib/bonus-catalog/history';
 import { useBuiltinSubs } from '@/lib/departments/use-builtin-subs';
 import { builtinSubsFor } from '@/lib/departments/builtin-subs';
 import { hslBranchConfigs, hslBranchKeys } from '@/lib/hsl-bonus/data-branch';
@@ -3018,6 +3019,24 @@ function CatalogVarFields({
  *  description in its tooltip. It sits and reads like the tiered-rate strip
  *  above it, because it is doing the same job for a different kind of rule.
  */
+/** "Sep 23, 2026, 2:02 PM" — local time, the way every other "saved" stamp in
+ *  the app reads. Null for a missing or unparseable timestamp; never "Invalid Date". */
+function fmtSavedAt(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? null
+    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+/** `aliviah@simple.biz` → `aliviah`: the chip has room for a handle, not an address.
+ *  The full address is in the `title`. */
+function whoShort(email: string | null): string | null {
+  if (!email) return null;
+  const at = email.indexOf('@');
+  return at > 0 ? email.slice(0, at) : email;
+}
+
 function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200/80 bg-sky-50/60 px-3 py-2 dark:border-sky-900/50 dark:bg-sky-950/20">
@@ -3026,6 +3045,13 @@ function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
       </span>
       {cols.map(({ bonus, scoreable, individual }) => {
         const vars = catalogBonusVariables(bonus);
+        // Kane, 2026-09-28: once a branch's pay lives in the Library, the card
+        // must say which version it is scoring with and who last saved it,
+        // because an accountant's edit reprices the team with nothing else
+        // on screen to show it happened.
+        const prov = bonusProvenance(bonus);
+        const savedAt = fmtSavedAt(prov.savedAt);
+        const createdAt = fmtSavedAt(prov.createdAt);
         return (
           <span
             key={bonus.id}
@@ -3036,6 +3062,9 @@ function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
               vars.length > 0 ? `Inputs: ${vars.join(', ')}` : null,
               individual ? 'Assigned to one person on this branch, not the whole team.' : null,
               scoreable ? null : `This card scores in pesos only, so a ${bonus.currency} bonus pays ₱0 here.`,
+              `Version ${prov.version}${prov.effectiveFrom ? `, effective from ${prov.effectiveFrom}` : ''}. This card scores the CURRENT version, whichever week is open.`,
+              savedAt ? `Last saved ${savedAt}${prov.savedBy ? ` by ${prov.savedBy}` : ''}` : prov.savedBy ? `Last saved by ${prov.savedBy}` : null,
+              createdAt && createdAt !== savedAt ? `Created ${createdAt}${prov.createdBy ? ` by ${prov.createdBy}` : ''}` : null,
             ]
               .filter(Boolean)
               .join('\n')}
@@ -3059,6 +3088,17 @@ function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
                 1 person
               </span>
             )}
+            <span className="inline-flex items-center gap-1 font-mono text-[9px] tabular-nums text-zinc-500 dark:text-zinc-400">
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-1.5 py-px font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                v{prov.version}
+              </span>
+              {prov.effectiveFrom && <span>from {prov.effectiveFrom}</span>}
+              {(savedAt || prov.savedBy) && (
+                <span>
+                  {`· saved${savedAt ? ` ${savedAt}` : ''}${prov.savedBy ? ` by ${whoShort(prov.savedBy)}` : ''}`}
+                </span>
+              )}
+            </span>
           </span>
         );
       })}

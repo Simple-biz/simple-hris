@@ -211,10 +211,21 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#06b6d4',
     headerBg: 'bg-cyan-950/40',
     badgeCls: 'bg-cyan-900/60 text-cyan-300',
-    rules: [
-      { type: 'per_unit', key: 'portal_login', label: 'Patient Portal Log Ins', rate: 100 },
-      { type: 'manual',   key: 'rfc_form',     label: 'RFC' },
-    ],
+    // Kane, 2026-09-28: *"Delete the HARD CODED Formulas in the KPI
+    // CALCULATOR"* — scored from the "HSL - Medical Records" Bonus Library
+    // assignment (`=(PPL*100)+(RFC)`, Alivia 2026-09-23), the same two terms
+    // these rules encoded: Patient Portal Log Ins ×₱100 and RFC as a typed peso
+    // amount. §7d, same shape as intake_specialist.
+    //
+    // ₱100 vs ₱250 (hsl-catalog-migration.md §1.2) is STILL UNRESOLVED. The
+    // Library row says ₱100 as the code did, so this moves no money — and it
+    // settles nothing either. The rate now lives in `bonus_catalog_bonuses`.
+    //
+    // Deleted rules keep their labels in `retired-rules.ts` so a past week's
+    // `portal_login` / `rfc_form` still read correctly (RFC as MONEY, not a
+    // count). Reopen exposure: audit item 246.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   care_team: {
@@ -224,9 +235,15 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#3b82f6',
     headerBg: 'bg-blue-950/40',
     badgeCls: 'bg-blue-900/60 text-blue-300',
-    rules: [
-      { type: 'per_unit', key: 'church_attendees', label: 'Church Attendees', rate: 50 },
-    ],
+    // Kane, 2026-09-28: code rules out. Scored from "HSL - Care Team"
+    // (`=(Church_Attendees*50)`), which Accounting assigned PER PERSON — to
+    // ruffag@ and jcp@, the only two people who have ever scored Church
+    // Attendees on this card (every row since 2026-08-02). The other members
+    // have never earned it, so nothing is lost today; but a NEW Care Team
+    // member earns nothing until Accounting assigns them too. That is the §7d
+    // trade: the Library decides who the bonus reaches, not the roster.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   callback_team: {
@@ -236,10 +253,12 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#0ea5e9',
     headerBg: 'bg-sky-950/40',
     badgeCls: 'bg-sky-900/60 text-sky-300',
-    rules: [
-      { type: 'per_unit', key: 'transferred_calls',      label: 'Successfully Transferred Calls',    rate: 50 },
-      { type: 'per_unit', key: 'signups_from_transfers', label: 'Sign ups from Transferred Calls',   rate: 250 },
-    ],
+    // Kane, 2026-09-28: code rules out. Scored from "HSL - Callback"
+    // (`=(Transfers*50)+(Signups*250)`, Carla 2026-09-23), a department-scoped
+    // assignment, so it also reaches the Simple Texting people scored on this
+    // card (HSL_PLACEMENT_ONLY_SUB_TEAMS.simple_texting.scoredUnder).
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   filing_specialist: {
@@ -370,29 +389,21 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#84cc16',
     headerBg: 'bg-lime-950/40',
     badgeCls: 'bg-lime-900/60 text-lime-300',
-    // Manager sheet formula (2026-08-24 — the two additive terms are NEW; the
-    // tiered bands are byte-identical to the 2026-07-27 correction):
-    //   =IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
-    //     + (Referral Leads * 250) + (SSA.Gov * 250)
-    // The tier lands on the CASE COUNT ONLY — referral leads and SSA.Gov never
-    // push a scorer into a higher band, and they pay in full even when cases
-    // fall below 25 and the tiered term is ₱0. Pinned by schema.test.ts.
-    rules: [
-      {
-        type: 'tiered',
-        key: 'attested_cases',
-        label: 'Attested Cases',
-        // =IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
-        tiers: [
-          { min: 0,  max: 24, rate: 0 },
-          { min: 25, max: 34, rate: 50 },
-          { min: 35, max: 49, rate: 75 },
-          { min: 50, max: null, rate: 100 },
-        ],
-      },
-      { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
-      { type: 'per_unit', key: 'ssa_gov',        label: 'SSA.Gov',        rate: 250 },
-    ],
+    // Kane, 2026-09-28: code rules out. Scored from "HSL - Attestation"
+    // (Alivia 2026-09-23), which is the manager sheet formula verbatim:
+    //   =IF(Attested_Cases>=50,Attested_Cases*100,IF(Attested_Cases>=35,
+    //     Attested_Cases*75,IF(Attested_Cases>=25,Attested_Cases*50,0)))
+    //     +(Referral_Leads*250) + (SSA_gov*250)
+    // The tier still lands on the case count ALONE. `schema.test.ts` sweeps
+    // that formula text against the sheet for 0–120 cases, which proves the
+    // cutover moved no money. It cannot stop a later edit of the Library row.
+    //
+    // The Attestation (25/35/50) and Filing (20/30/40) ladders are now two
+    // Library rows. No code dept scores `attested_cases` any more, and a test
+    // pins that, so neither ladder can come back into code next to its
+    // Library twin and pay twice.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   case_managers: {
@@ -402,18 +413,13 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#eab308',
     headerBg: 'bg-yellow-950/40',
     badgeCls: 'bg-yellow-900/60 text-yellow-300',
-    // =(Reviews*250)+(RFC*250)+(PPL*100)+(DME*250)+(Task*250)+(Referral Leads*250)
-    rules: [
-      { type: 'per_unit', key: 'reviews',        label: 'Reviews',        rate: 250 },
-      { type: 'per_unit', key: 'rfc',            label: 'RFC',            rate: 250 },
-      { type: 'per_unit', key: 'ppl',            label: 'PPL',            rate: 100 },
-      { type: 'per_unit', key: 'dme',            label: 'DME',            rate: 250 },
-      { type: 'per_unit', key: 'task',           label: 'Task',           rate: 250 },
-      { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
-      // 2026-09-08 (Carla via Kane: "SSA.GOV*250"): a seventh additive term, the same
-      // shape as Attestation's. Not retroactive — rows saved without the key read 0.
-      { type: 'per_unit', key: 'ssa_gov',        label: 'SSA.Gov',        rate: 250 },
-    ],
+    // Kane, 2026-09-28: code rules out. Scored from "HSL - Case Managers"
+    // (Alivia 2026-09-23) — the same seven terms at the same rates, including
+    // the SSA.Gov ×₱250 added 2026-09-08:
+    //   =(Five_Star_Reviews*250)+(RFC*250)+(PPL*100)+(DME*250)
+    //     +(Completed_Tasks*250)+(Referral_Leads*250)+(SSA_gov*250)
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   executive_guest_services: {

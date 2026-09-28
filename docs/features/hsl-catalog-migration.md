@@ -1,6 +1,11 @@
-# HSL KPI Calculator → Payment Catalog (scoping only — NOT BUILT)
+# HSL KPI Calculator → Payment Catalog (overlay NOT BUILT; 7 of 12 cut over by §7d)
 
-**Status: approved, scoped, and never built.** Kane approved an INERT migration on
+**Update 2026-09-28:** the GOAL of this doc (rule definitions Accounting can edit
+in the Payment Catalog) is live for **7 of the 12** authorable depts, through
+`hsl-subdepartments.md` §7d, not through the overlay below. See §5. The overlay
+itself is still unbuilt.
+
+**Status of the overlay: approved, scoped, and never built.** Kane approved an INERT migration on
 2026-08-29 ("Code wise lets migrate it but not implement it yet dont wire it up yet").
 `src/lib/hsl-bonus-catalog/` **does not exist on `main`** — verified 2026-08-31. Nothing in
 this doc is shipped behaviour.
@@ -223,9 +228,24 @@ this direction **nothing moves**, which is the strongest form of not losing it.
 
 - [x] ~~**Fix the red guard (§1.1).**~~ Done 2026-08-31, mutation-tested, suite 1627/1627.
 - [ ] **Resolve ₱100 vs ₱250 (§1.2).** Money path, still unanswered. Blocks nothing
-      structural — `medical_records` encodes `100` verbatim (what produced every stored
-      value) until Kane rules. **Do not normalise it to the doc's number.**
+      structural. Since 2026-09-28 the rate lives in `medical_records`' Library bonus,
+      "HSL - Medical Records" (`=(PPL*100)+(RFC)`, authored by Alivia 2026-09-23), not
+      in `schema.ts`, and it still says `100`. That is what produced every stored value.
+      Accounting writing ₱100 is a **fourth source**, and it does not settle the
+      question: Kane's own worked example still says ₱250. **Do not normalise either
+      number** — and note an Accounting edit to the formula would now change it
+      with no engineering step.
 - [ ] Build the definitions overlay (§4). `src/lib/hsl-bonus-catalog/` still does not exist.
+      **Overtaken for 7 of 12 depts (2026-09-22, 2026-09-28)** by a different route to
+      the same goal. Instead of an overlay whose empty state is byte-identical to
+      `HSL_DEPTS`, a branch whose Library formula is proven to pay what its code did
+      drops the code outright (`hsl-subdepartments.md` §7d). The definitions are
+      DB-backed and Accounting-editable, and the payout path is untouched: it is
+      still `hsl_bonus_entries` and its loader, as §4 ruled. What this route gives
+      up is §4's invariant. There is no seed or fallback: an empty or broken Library
+      row pays ₱0, and no unit test can reach it. Still in code: `ssd_medical_records`,
+      `collections`, `post_hearing_prep`, `healthcare_team_lead`, `hsl_managers`
+      (audit item 246).
 - [x] `filing_specialist` no longer carries Attested Cases bands **in code at all**
       (2026-09-22). Kane ruled twice the same day: first that the Library formula's
       20/30/40 should move into `schema.ts`, then — after Carla and Alivia saw the card

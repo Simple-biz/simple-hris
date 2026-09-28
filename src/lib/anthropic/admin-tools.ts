@@ -18,6 +18,7 @@ import { finalPaySnapshotKey } from '@/lib/payroll/paystub-fresh';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import { HSL_DEPTS, matchHslSubDeptKey, type BonusRule } from '@/lib/hsl-bonus/schema';
+import { hslRuleForKey } from '@/lib/hsl-bonus/retired-rules';
 import {
   assembleBonusBreakdown,
   resolveBonusWeek,
@@ -1197,8 +1198,16 @@ function describeHslRule(r: BonusRule): string {
 const labelHslRule: RuleLabeller = (department, key) => {
   const deptKey = matchHslSubDeptKey(department) ?? matchHslSubDeptKey(`hsl:${department}`);
   if (!deptKey) return null;
-  const rule = HSL_DEPTS[deptKey]?.rules.find((x) => x.key === key);
-  return rule ? { label: rule.label, how: describeHslRule(rule) } : null;
+  // A branch moved to the Bonus Library has no live rules, but its pre-cutover
+  // weeks still carry the old keys. Say what they paid, AND that they no
+  // longer score, so Penny never tells anyone a deleted rule still pays.
+  const found = hslRuleForKey(deptKey, key, HSL_DEPTS[deptKey]?.rules);
+  if (!found) return null;
+  const how = describeHslRule(found.rule);
+  return {
+    label: found.rule.label,
+    how: found.retired ? `${how} — RETIRED rule: past weeks only, no longer scored (branch is scored from the Bonus Library)` : how,
+  };
 };
 
 /** `YYYY-MM-DD` of a LOCAL-time Date (what `parseDateRangeFromFilename` builds). */

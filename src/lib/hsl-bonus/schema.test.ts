@@ -5,6 +5,8 @@ import {
   HSL_MANAGERS, HSL_MANAGER_SHEET_2026_08_30, calcManagerBonus, managerSpecFor, managerCohortFor,
   landedBand, bandValue, hslDeptAutoDispatches, type ManagerComponent, type KpiData,
 } from './schema';
+import { calcHslCatalogBonus, catalogOnKey, catalogVarKey } from './catalog-bonus';
+import type { BonusDef } from '../bonus-catalog/types';
 
 test('matchHslSubDeptKey resolves every branch display name, case/whitespace-tolerant', () => {
   for (const key of HSL_DEPT_KEYS) {
@@ -31,7 +33,67 @@ test('matchHslSubDeptKey returns null for generic HSL tags and unrelated strings
   assert.equal(matchHslSubDeptKey('   '), null);
 });
 
-// ── Attestation formula pin ──────────────────────────────────────────────────
+// ── 2026-09-28: five more branches scored from the Bonus Library ─────────────
+// Kane: *"Delete the HARD CODED Formulas in the KPI CALCULATOR"*. Medical
+// Records, Care Team, Callback Team, Attestation and Case Managers lost their
+// code rules and take §7d (`rulesFromCatalog`), scored from the Library bonus
+// Accounting assigned to each `hsl:<key>` on 2026-09-23.
+//
+// The literals below are those Library formulas AS MEASURED in production on
+// 2026-09-28 (read-only). Each is run through the REAL engine
+// (`calcHslCatalogBonus`) against the sheet the deleted code rule encoded. That
+// proves the cutover moved no money. It cannot protect the live row: an
+// accountant editing the formula reprices the team with nothing red here. That
+// is the §7d trade, and it is why these are named for the date.
+const LIBRARY_2026_09_28 = {
+  attestation: '=IF(Attested_Cases>=50,Attested_Cases*100,IF(Attested_Cases>=35,Attested_Cases*75,IF(Attested_Cases>=25,Attested_Cases*50,0))) +(Referral_Leads*250) + (SSA_gov*250)',
+  filing_specialist: 'Filed_Cases * IF(Filed_Cases >= 40, 100, IF(Filed_Cases >= 30, 75, IF(Filed_Cases >= 20, 50, 0))) + PPL* 100 + (BBB + Referral_Leads) * 250',
+  case_managers: '=(Five_Star_Reviews*250)+(RFC*250)+(PPL*100)+(DME*250)+(Completed_Tasks*250)+(Referral_Leads*250)+(SSA_gov*250)',
+  callback_team: '=(Transfers*50)+(Signups*250)',
+  medical_records: '=(PPL*100)+(RFC)',
+  care_team: '=(Church_Attendees*50)',
+} as const;
+
+const CUT_OVER_2026_09_28 = ['medical_records', 'care_team', 'callback_team', 'attestation', 'case_managers'] as const;
+
+/** Pesos the Library formula pays for one ticked person with these inputs. */
+function payLibrary(formula: string, vars: Record<string, number>): number {
+  const bonus: BonusDef = { id: 'b_measured', name: 'measured 2026-09-28', kind: 'formula', formula, currency: 'PHP' };
+  const kpi: KpiData = { [catalogOnKey(bonus.id)]: true };
+  for (const [v, n] of Object.entries(vars)) kpi[catalogVarKey(bonus.id, v)] = n;
+  return calcHslCatalogBonus(kpi, bonus);
+}
+
+test('2026-09-28: the five cut-over branches carry no code rules and are scored from the Library', () => {
+  for (const key of CUT_OVER_2026_09_28) {
+    const cfg = HSL_DEPTS[key];
+    assert.deepEqual(cfg.rules, [], `${key} still has code rules — the same work would be scored twice beside its Library bonus`);
+    assert.equal(cfg.rulesFromCatalog, true, key);
+    assert.equal(cfg.noKpi, undefined, `${key} is SCOREABLE — noKpi would hide the card and the Library column with it`);
+    assert.equal(cfg.monthlyMax, undefined, `${key} never had a cap; one now would bound nothing it scores`);
+    assert.equal(cfg.cadence, 'weekly', `${key} stays inside the wizard's weekly auto-pay pass`);
+  }
+});
+
+test('2026-09-28: pre-cutover keys now score ₱0 in code — the reopen exposure, asserted', () => {
+  // Rows saved through week 2026-09-13 carry these keys. `calcBonus` no longer
+  // reads them, so REOPENING one of those weeks reprices it downward. Every
+  // such week is `ready`, so it takes a deliberate Mark as Unready. Audit item
+  // 246. Nothing moves on its own: the wizard pays the stored calculated_bonus.
+  const legacy: Record<(typeof CUT_OVER_2026_09_28)[number], KpiData> = {
+    medical_records: { portal_login: 12, rfc_form: 350 },
+    care_team: { church_attendees: 65 },
+    callback_team: { transferred_calls: 40, signups_from_transfers: 9 },
+    attestation: { attested_cases: 44, referral_leads: 2, ssa_gov: 3 },
+    case_managers: { reviews: 2, rfc: 1, ppl: 3, dme: 1, task: 4, referral_leads: 1, ssa_gov: 2 },
+  };
+  for (const key of CUT_OVER_2026_09_28) {
+    assert.equal(calcBonus(legacy[key], HSL_DEPTS[key], false), 0, key);
+    assert.equal(calcBonus(legacy[key], HSL_DEPTS[key], true), 0, `${key} (manager)`);
+  }
+});
+
+// ── Attestation formula pin — now pinned against the Library text ────────────
 // The manager sheet (2026-08-24):
 //   =IF(Cases>=50,Cases*100,IF(Cases>=35,Cases*75,IF(Cases>=25,Cases*50,0)))
 //     + (Referral Leads * 250) + (SSA.Gov * 250)
@@ -42,15 +104,17 @@ const attestationSheet = (cases: number, referralLeads: number, ssaGov: number) 
   (cases >= 50 ? cases * 100 : cases >= 35 ? cases * 75 : cases >= 25 ? cases * 50 : 0) +
   referralLeads * 250 +
   ssaGov * 250;
+const payAttestation = (Attested_Cases: number, Referral_Leads: number, SSA_gov: number) =>
+  payLibrary(LIBRARY_2026_09_28.attestation, { Attested_Cases, Referral_Leads, SSA_gov });
 
-test('attestation calcBonus reproduces the sheet formula across every band boundary', () => {
+test('attestation: the Library formula reproduces the sheet across every band boundary', () => {
   for (let cases = 0; cases <= 120; cases++) {
-    for (const referral_leads of [0, 1, 7]) {
-      for (const ssa_gov of [0, 1, 4]) {
+    for (const referral of [0, 1, 7]) {
+      for (const ssa of [0, 1, 4]) {
         assert.equal(
-          calcBonus({ attested_cases: cases, referral_leads, ssa_gov }, HSL_DEPTS.attestation, false),
-          attestationSheet(cases, referral_leads, ssa_gov),
-          `cases=${cases} referral_leads=${referral_leads} ssa_gov=${ssa_gov}`,
+          payAttestation(cases, referral, ssa),
+          attestationSheet(cases, referral, ssa),
+          `cases=${cases} referral_leads=${referral} ssa_gov=${ssa}`,
         );
       }
     }
@@ -59,22 +123,35 @@ test('attestation calcBonus reproduces the sheet formula across every band bound
 
 test('attestation: referral leads and SSA.Gov never lift the case tier', () => {
   // 24 cases is below the first band; 100 referral leads must NOT buy the ₱50 rate.
-  assert.equal(
-    calcBonus({ attested_cases: 24, referral_leads: 100, ssa_gov: 0 }, HSL_DEPTS.attestation, false),
-    25_000,
-  );
+  assert.equal(payAttestation(24, 100, 0), 25_000);
   // 49 cases stays in the ₱75 band no matter how many extras ride along.
-  assert.equal(
-    calcBonus({ attested_cases: 49, referral_leads: 10, ssa_gov: 10 }, HSL_DEPTS.attestation, false),
-    49 * 75 + 5_000,
-  );
+  assert.equal(payAttestation(49, 10, 10), 49 * 75 + 5_000);
 });
 
 test('attestation: the additive terms pay even when the tiered term is zero', () => {
-  assert.equal(
-    calcBonus({ attested_cases: 0, referral_leads: 3, ssa_gov: 2 }, HSL_DEPTS.attestation, false),
-    1_250,
-  );
+  assert.equal(payAttestation(0, 3, 2), 1_250);
+});
+
+test('attestation: the 2026-07-27 bands are unchanged (whole count x landed rate)', () => {
+  assert.equal(payAttestation(24, 0, 0), 0);
+  assert.equal(payAttestation(25, 0, 0), 1_250);   // 25 x 50 — whole count, not marginal
+  assert.equal(payAttestation(34, 0, 0), 1_700);
+  assert.equal(payAttestation(35, 0, 0), 2_625);   // 35 x 75
+  assert.equal(payAttestation(49, 0, 0), 3_675);
+  assert.equal(payAttestation(50, 0, 0), 5_000);   // 50 x 100
+});
+
+test('Filing and Attestation ladders stay DIFFERENT — both in the Library now, never merged', () => {
+  // `hsl-catalog-migration.md`: reproduce the divergence verbatim, never
+  // normalise it. Filing pays from 20 cases at ₱50 and ₱75 from 30; Attestation
+  // pays nothing below 25 and ₱50 at 30. Each ladder is its own Library row now.
+  const filing = (n: number) => payLibrary(LIBRARY_2026_09_28.filing_specialist, { Filed_Cases: n });
+  assert.equal(filing(20), 1_000);
+  assert.equal(payAttestation(20, 0, 0), 0);
+  assert.equal(filing(30), 2_250);
+  assert.equal(payAttestation(30, 0, 0), 1_500);
+  assert.equal(filing(40), 4_000);
+  assert.equal(payAttestation(40, 0, 0), 3_000);
 });
 
 test('filing_specialist is scored from the Bonus Library, not from code (Kane, 2026-09-22)', () => {
@@ -112,52 +189,15 @@ test('filing_specialist: legacy portal_login / bbb_reviews / attested_cases / co
   );
 });
 
-test('attestation keeps its own ladder — no other dept scores attested_cases in code', () => {
-  // filing_specialist used to be the second `attested_cases` scorer and the two
-  // were deliberately DIFFERENT ladders (`hsl-catalog-migration.md`: reproduce
-  // the divergence verbatim, never normalise it). Filing's moved to the Library,
-  // so attestation is now the only one in code — and that must stay true, or the
-  // divergence has been normalised by the back door.
+test('no dept scores attested_cases in code — both case ladders live in the Library', () => {
+  // Filing (2026-09-22) and Attestation (2026-09-28) both left code. A code
+  // `attested_cases` rule reappearing on either branch would sit beside that
+  // branch's Library ladder and pay the same cases twice. On any other branch
+  // it would be a third ladder nobody ruled on.
   const scorers = HSL_DEPT_KEYS.filter((k) =>
     HSL_DEPTS[k].rules.some((r) => r.key === 'attested_cases'),
   );
-  assert.deepEqual(scorers, ['attestation']);
-});
-
-test('attestation: the 2026-07-27 bands are unchanged (whole count x landed rate)', () => {
-  const cases = (n: number) => calcBonus({ attested_cases: n }, HSL_DEPTS.attestation, false);
-  assert.equal(cases(24), 0);
-  assert.equal(cases(25), 1_250);   // 25 x 50 — whole count, not marginal
-  assert.equal(cases(34), 1_700);
-  assert.equal(cases(35), 2_625);   // 35 x 75
-  assert.equal(cases(49), 3_675);
-  assert.equal(cases(50), 5_000);   // 50 x 100
-});
-
-test('attestation: historical rows with no referral_leads/ssa_gov keys recompute unchanged', () => {
-  // Rows saved before 2026-08-24 carry only `attested_cases` in kpi_data. The new
-  // rules must read absent as 0 so no past week silently reprices.
-  for (const n of [0, 24, 25, 35, 50, 87]) {
-    assert.equal(
-      calcBonus({ attested_cases: n }, HSL_DEPTS.attestation, false),
-      attestationSheet(n, 0, 0),
-    );
-  }
-});
-
-test('attestation exposes exactly one scoring column per sheet term', () => {
-  assert.deepEqual(
-    HSL_DEPTS.attestation.rules.map((r) => [r.key, r.type]),
-    [
-      ['attested_cases', 'tiered'],
-      ['referral_leads', 'per_unit'],
-      ['ssa_gov', 'per_unit'],
-    ],
-  );
-  // No monthly cap — a cap would silently truncate the additive terms.
-  assert.equal(HSL_DEPTS.attestation.monthlyMax, undefined);
-  // Weekly cadence keeps it inside the wizard's unconditional auto-pay pass.
-  assert.equal(HSL_DEPTS.attestation.cadence, 'weekly');
+  assert.deepEqual(scorers, []);
 });
 
 // ── Managers Weekly: dated specs + banded tiers (the 2026-08-30 sheet) ────────
@@ -408,41 +448,46 @@ test('only post_hearing_prep carries a cap-exempt or monthly flat rule (a new on
 
 // ── Case Managers: SSA.Gov ×₱250 (2026-09-08, Carla via Kane) ─────────────────
 // Sheet: (Reviews*250)+(RFC*250)+(PPL*100)+(DME*250)+(Task*250)+(Referral Leads*250)+(SSA.Gov*250)
-const CM = HSL_DEPTS.case_managers;
+// Pinned against the Library formula since 2026-09-28 — see LIBRARY_2026_09_28.
 const cmSheet = (k: Record<string, number>) =>
   (k.reviews ?? 0) * 250 + (k.rfc ?? 0) * 250 + (k.ppl ?? 0) * 100 + (k.dme ?? 0) * 250 +
   (k.task ?? 0) * 250 + (k.referral_leads ?? 0) * 250 + (k.ssa_gov ?? 0) * 250;
+const payCm = (k: Record<string, number>) =>
+  payLibrary(LIBRARY_2026_09_28.case_managers, {
+    Five_Star_Reviews: k.reviews ?? 0, RFC: k.rfc ?? 0, PPL: k.ppl ?? 0, DME: k.dme ?? 0,
+    Completed_Tasks: k.task ?? 0, Referral_Leads: k.referral_leads ?? 0, SSA_gov: k.ssa_gov ?? 0,
+  });
 
-test('case_managers: exactly the seven sheet terms, all per-unit, no cap, weekly', () => {
-  assert.deepEqual(
-    CM.rules.map((r) => [r.type, r.key, r.type === 'per_unit' ? r.rate : null]),
-    [
-      ['per_unit', 'reviews', 250], ['per_unit', 'rfc', 250], ['per_unit', 'ppl', 100],
-      ['per_unit', 'dme', 250], ['per_unit', 'task', 250], ['per_unit', 'referral_leads', 250],
-      ['per_unit', 'ssa_gov', 250],
-    ],
-  );
-  assert.equal(CM.monthlyMax, undefined);
-  assert.equal(CM.cadence, 'weekly');
-});
-
-test('case_managers: calcBonus reproduces the sheet with SSA.Gov added on top', () => {
+test('case_managers: the Library formula reproduces the seven sheet terms, SSA.Gov on top', () => {
   for (const ssa_gov of [0, 1, 3, 12]) {
     const bases: Record<string, number>[] = [{}, { reviews: 2 }, { reviews: 1, rfc: 2, ppl: 3, dme: 1, task: 4, referral_leads: 1 }, { ppl: 9 }];
     for (const k of bases) {
       const kpi: Record<string, number> = { ...k, ssa_gov };
-      assert.equal(calcBonus(kpi, CM, false), cmSheet(kpi), JSON.stringify(kpi));
-      assert.equal(calcBonus(kpi, CM, true), cmSheet(kpi), `manager ${JSON.stringify(kpi)}`);
+      assert.equal(payCm(kpi), cmSheet(kpi), JSON.stringify(kpi));
     }
   }
-  assert.equal(calcBonus({ ssa_gov: 4 }, CM, false), 1000);
+  assert.equal(payCm({ ssa_gov: 4 }), 1000);
+  // Each term alone, so a swapped coefficient cannot hide inside a sum.
+  for (const [term, rate] of [['reviews', 250], ['rfc', 250], ['ppl', 100], ['dme', 250], ['task', 250], ['referral_leads', 250], ['ssa_gov', 250]] as const) {
+    assert.equal(payCm({ [term]: 1 }), rate, term);
+  }
 });
 
-test('case_managers: rows saved before the SSA.Gov term recompute unchanged (not retroactive)', () => {
-  const legacy: Record<string, number>[] = [{}, { reviews: 2, dme: 1 }, { reviews: 1, rfc: 2, ppl: 3, dme: 1, task: 4, referral_leads: 1 }];
-  for (const k of legacy) {
-    assert.equal(calcBonus(k, CM, false), cmSheet(k), JSON.stringify(k));
-  }
+test('callback_team / medical_records / care_team: the Library formula pays what the code rule did', () => {
+  // Callback: Successfully Transferred Calls ₱50 · Sign ups from Transferred Calls ₱250.
+  const cb = (Transfers: number, Signups: number) => payLibrary(LIBRARY_2026_09_28.callback_team, { Transfers, Signups });
+  assert.equal(cb(1, 0), 50);
+  assert.equal(cb(0, 1), 250);
+  assert.equal(cb(40, 9), 40 * 50 + 9 * 250);
+  // Medical Records: Portal Log Ins ₱100 (₱100 vs ₱250 is STILL UNRESOLVED —
+  // hsl-catalog-migration.md §1.2 — the Library says ₱100, as the code did) and
+  // RFC as a typed PESO amount, added as-is and never multiplied.
+  const mr = (PPL: number, RFC: number) => payLibrary(LIBRARY_2026_09_28.medical_records, { PPL, RFC });
+  assert.equal(mr(1, 0), 100);
+  assert.equal(mr(4, 3), 403);
+  assert.equal(mr(0, 1_250.5), 1_250.5);
+  // Care Team: Church Attendees ₱50.
+  assert.equal(payLibrary(LIBRARY_2026_09_28.care_team, { Church_Attendees: 65 }), 3_250);
 });
 
 // ── SSD Medical Records auto-dispatches in the week it is marked Ready (2026-09-08)

@@ -367,7 +367,24 @@ US Manager Bonus · USEE**.
     took it on 2026-09-22** — `rules: []` + `rulesFromCatalog: true`
     (`hsl-subdepartments.md` §7d): a real card, a real readiness row, every peso
     from the branch's `hsl:<key>` assignment, and an accountant can change the
-    rule without an engineer. The flag is what stops `rules: []` being read as
+    rule without an engineer. **Five more took it on 2026-09-28** — Medical
+    Records, Care Team, Callback Team, Attestation, Case Managers (Kane: *"Delete
+    the HARD CODED Formulas in the KPI CALCULATOR"*) — each only after its
+    Library formula was proven to pay exactly what the deleted rules did (the
+    measured formula text runs through the real engine in `schema.test.ts`).
+    Collections and Pre/Post-Hearing were **not** deleted: their Library bonuses
+    omit the ₱2,500 monthly flats and the ₱3,500 cap, which makes it a pay
+    decision (audit item 246).
+    - **The card states each Library bonus's version and last save**
+      *(2026-09-28, Kane: "add like a timestamp on who changed it and all that
+      even the version")*. The `Bonus Library` legend strip prints
+      `v<n> · from <effective date> · saved <when> by <handle>`, and its `title`
+      carries the full address, the creation stamp, and that **the card scores
+      the CURRENT version whichever week is open** (versions are display + audit
+      only, §8). `saved` is the row's last save, and a star toggle is a save, so
+      it can move without the version. Read the two together. Pure part:
+      `bonusProvenance` (`bonus-catalog/history.ts`, tested). No new route: the
+      catalog GET already returns every field. The flag is what stops `rules: []` being read as
     "roster-only"; `noKpi` would hide the card and the Library column with it.
     **Which way a duplication is resolved is a pay decision, and it can be ruled
     twice:** Filing was first resolved the OTHER way (`b3dc6a98` moved the

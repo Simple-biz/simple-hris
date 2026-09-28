@@ -48,6 +48,23 @@ export function catalogVarKey(bonusId: string, varName: string): string {
   return `${HSL_CATALOG_KPI_PREFIX}${bonusId}:${varName}`;
 }
 
+/**
+ * A readable label for a catalog key read back out of a saved `kpi_data`, the
+ * inverse of `catalogVarKey`: `catalog:<bonusId>:Five_Star_Reviews` → "Five Star
+ * Reviews". `null` for the bonus's on/off flag (`catalogOnKey`), which is not a
+ * metric. `undefined` for a key outside the catalog namespace. Anything that
+ * explains a saved row (Employee KPI Results) must use this rather than
+ * humanising the raw key, which printed the bonus id at the employee.
+ */
+export function catalogInputLabel(key: string): string | null | undefined {
+  if (!key.startsWith(HSL_CATALOG_KPI_PREFIX)) return undefined;
+  const rest = key.slice(HSL_CATALOG_KPI_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep < 0) return null;
+  const label = rest.slice(sep + 1).replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return label || null;
+}
+
 /** Variable names a formula references (empty for flat / invalid formulas). */
 export function catalogBonusVariables(bonus: BonusDef): string[] {
   if (bonus.kind !== 'formula') return [];

@@ -1,6 +1,8 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { HSL_DEPTS, landedBand, managerSpecFor, type HslDeptKey } from '@/lib/hsl-bonus/schema';
+import { HSL_RETIRED_RULES } from '@/lib/hsl-bonus/retired-rules';
+import { catalogInputLabel } from '@/lib/hsl-bonus/catalog-bonus';
 
 // Employee-facing KPI results.
 //
@@ -79,14 +81,19 @@ function humanizeKey(key: string): string {
 
 /** Build label + per-unit hint lookups for an HSL department's rules. The
  *  `manual` flag marks rules whose stored kpi_data value IS the peso amount
- *  (not a count), so the breakdown renders it as money rather than "× n". */
+ *  (not a count), so the breakdown renders it as money rather than "× n".
+ *
+ *  Includes the branch's RETIRED rules (`retired-rules.ts`), because a week
+ *  scored before a branch moved to the Bonus Library still carries their keys.
+ *  Without them Medical Records' RFC (a peso amount) read as a count. Live
+ *  rules are applied second, so a live rule with the same key always wins. */
 function hslRuleMeta(
   deptKey: string,
 ): Record<string, { label: string; detail: string | null; manual?: boolean; flatAmount?: number }> {
   const cfg = HSL_DEPTS[deptKey as HslDeptKey];
   const out: Record<string, { label: string; detail: string | null; manual?: boolean; flatAmount?: number }> = {};
   if (!cfg) return out;
-  for (const rule of cfg.rules) {
+  for (const rule of [...(HSL_RETIRED_RULES[deptKey as HslDeptKey] ?? []), ...cfg.rules]) {
     if (rule.type === 'per_unit') {
       const cur = rule.currency === 'USD' ? '$' : '₱';
       out[rule.key] = { label: rule.label, detail: `${cur}${rule.rate} each` };
@@ -275,6 +282,16 @@ export async function getEmployeeKpiResults(
 
     const meta = hslRuleMeta(r.department);
     for (const [k, raw] of Object.entries(data)) {
+      // Bonus Library inputs (`catalog:<bonusId>:<Var>`) — label by the
+      // variable's own name. Humanising the raw key printed the bonus id at
+      // the employee. The on/off flag is not a metric.
+      const catalogLabel = catalogInputLabel(k);
+      if (catalogLabel === null) continue;
+      if (catalogLabel !== undefined) {
+        const value = num(raw);
+        if (value !== 0) p.items.push({ label: catalogLabel, amount: null, value, detail: null });
+        continue;
+      }
       const m = meta[k];
       // A flat rule stores a TICK (true), which `num` reads as 0 — surface it as
       // its fixed peso amount rather than hiding it as an untouched metric.

@@ -179,6 +179,33 @@ export function parseEffectiveDate(
   return { ok: true, iso: `${m[1]}-${m[2]}-${m[3]}` };
 }
 
+/** Who last touched a bonus, when, and which version it is — what a surface
+ *  that SHOWS a bonus (the HSL KPI card's Bonus Library strip) prints beside it.
+ *
+ *  `saved*` is the row's last save, and a star toggle IS a save, so it can move
+ *  without the rule changing. `version` is what moves only when a TRACKED field
+ *  changed (`diffBonusFields`). Read the two together: same version and a newer
+ *  save means nothing that pays changed. Display + audit only, like everything
+ *  here — no calculator pays by version. */
+export function bonusProvenance(b: Pick<BonusDef, 'version' | 'effectiveFrom' | 'createdAt' | 'createdBy' | 'updatedAt' | 'updatedBy'>): {
+  version: number;
+  effectiveFrom: string | null;
+  savedAt: string | null;
+  savedBy: string | null;
+  createdAt: string | null;
+  createdBy: string | null;
+} {
+  const clean = (s: string | null | undefined) => (s && s.trim() ? s.trim() : null);
+  return {
+    version: typeof b.version === 'number' && b.version >= 1 ? b.version : 1,
+    effectiveFrom: bonusEffectiveFrom(b),
+    savedAt: clean(b.updatedAt) ?? clean(b.createdAt),
+    savedBy: clean(b.updatedBy) ?? clean(b.createdBy),
+    createdAt: clean(b.createdAt),
+    createdBy: clean(b.createdBy),
+  };
+}
+
 /** The effective date a bonus row reports: its stored `effective_from`, else the
  *  day it was created (rows that pre-date the migration have no stored date). */
 export function bonusEffectiveFrom(b: Pick<BonusDef, 'effectiveFrom' | 'createdAt'>): string | null {
