@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   matchHslSubDeptKey, calcBonus, HSL_DEPT_KEYS, HSL_DEPTS,
   HSL_MANAGERS, HSL_MANAGER_SHEET_2026_08_30, calcManagerBonus, managerSpecFor, managerCohortFor,
-  landedBand, bandValue, hslDeptAutoDispatches, type ManagerComponent, type KpiData,
+  landedBand, bandValue, hslDeptAutoDispatches, type ManagerComponent, type KpiData, type DeptConfig,
 } from './schema';
 import { calcHslCatalogBonus, catalogOnKey, catalogVarKey } from './catalog-bonus';
 import type { BonusDef } from '../bonus-catalog/types';
@@ -382,68 +382,104 @@ test('managers: unknown emails score ₱0 in every week', () => {
   assert.equal(managerSpecFor('nobody@simple.biz', NEW_WEEK), undefined);
 });
 
-// ── Pre-Hearing / Post-Hearing Prep: the ₱2,500 monthly checkbox (Carla, 2026-09-08)
-// "They have a monthly bonus of 2500 … a checkbox that applies 2500 when checked."
-// One tick per person per month, final payroll week only, OUTSIDE the ₱3,500
-// weekly KPI cap. Aug 30 – Sep 5 is August's final payroll week (next Sunday is
-// in September); Sep 6 – 12 is not.
-const PHP = HSL_DEPTS.post_hearing_prep;
+// ── Pre/Post-Hearing + Collections: code rules deleted (Kane, 2026-09-28, ruling (b))
+// "Both docs are stale!" — the Library replaces them even though it drops money
+// the code paid: Collections' ₱2,500 manager-only Monthly Flat, Pre/Post-Hearing's
+// ₱2,500 Monthly Bonus and its ₱3,500 weekly cap. These pins say what the Library
+// pays AS RULED, so the dropped amounts are documented behaviour, not a surprise.
+const RULED_B_2026_09_28 = {
+  post_hearing_prep: '=(PPL*100)+(Five_Star_Reviews*250)',
+  collections: '=(Referral_Leads*250) + (HSL_Testimonials*250)',
+} as const;
+
+test('2026-09-28 (b): Pre/Post-Hearing and Collections carry no code rules and no cap', () => {
+  for (const key of ['post_hearing_prep', 'collections'] as const) {
+    const cfg = HSL_DEPTS[key];
+    assert.deepEqual(cfg.rules, [], key);
+    assert.equal(cfg.rulesFromCatalog, true, key);
+    assert.equal(cfg.noKpi, undefined, `${key} is SCOREABLE`);
+    // A Library total sits OUTSIDE monthlyMax (catalog-bonus.ts), so a cap left
+    // on a rules-less branch would look live and bound nothing.
+    assert.equal(cfg.monthlyMax, undefined, `${key}: a cap here would bound nothing`);
+  }
+  assert.equal(HSL_DEPTS.post_hearing_prep.cadence, 'weekly');
+  // Collections stays monthly + auto-dispatched; only the rules moved.
+  assert.equal(HSL_DEPTS.collections.cadence, 'monthly');
+  assert.equal(HSL_DEPTS.collections.monthlyAutoPay, true);
+});
+
+test('2026-09-28 (b): the old ticks and counts score ₱0 in code — reopen exposure, asserted', () => {
+  // ₱64,450 (Pre/Post-Hearing) + ₱158,750 (Collections) across `ready` weeks
+  // reprice to ₱0 if reopened; ₱0 of it is editable today. Audit item 246.
+  assert.equal(calcBonus({ five_star_survey: 3, portal_login: 2, monthly_bonus: true }, HSL_DEPTS.post_hearing_prep, false, { periodStart: '2026-08-30' }), 0);
+  assert.equal(calcBonus({ monthly_flat: true, converted_referral: 2 }, HSL_DEPTS.collections, true), 0);
+});
+
+test("2026-09-28 (b): Pre/Post-Hearing's Library pays the two per-unit terms, UNCAPPED, with no monthly bonus", () => {
+  const pay = (PPL: number, Five_Star_Reviews: number) =>
+    payLibrary(RULED_B_2026_09_28.post_hearing_prep, { PPL, Five_Star_Reviews });
+  assert.equal(pay(1, 0), 100);
+  assert.equal(pay(0, 1), 250);
+  // 20 five-star = ₱5,000. The code capped this at ₱3,500; the ruling removed the cap.
+  assert.equal(pay(0, 20), 5_000);
+});
+
+test("2026-09-28 (b): Collections' Library pays referrals + testimonials, with no ₱2,500 flat", () => {
+  const pay = (Referral_Leads: number, HSL_Testimonials: number) =>
+    payLibrary(RULED_B_2026_09_28.collections, { Referral_Leads, HSL_Testimonials });
+  assert.equal(pay(1, 0), 250);  // what Converted Referral paid
+  assert.equal(pay(0, 1), 250);  // NEW — the code never paid testimonials
+  assert.equal(pay(0, 0), 0);    // no flat: the ₱2,500 is gone until Accounting adds it
+});
+
+// ── calcBonus flat / cap engine (the Pre/Post-Hearing shape, now a FIXTURE) ────
+// No HSL dept uses a monthly or cap-exempt flat since 2026-09-28, but calcBonus
+// still implements both, and a future code rule could use them again. So the
+// engine stays pinned on a synthetic config shaped like the 2026-09-08
+// Pre/Post-Hearing rule set. Aug 30 – Sep 5 is August's final payroll week;
+// Sep 6 – 12 is not.
+const FLAT_FIXTURE: DeptConfig = {
+  key: 'post_hearing_prep', name: 'fixture', cadence: 'weekly', color: '#000', headerBg: '', badgeCls: '',
+  monthlyMax: 3500,
+  rules: [
+    { type: 'per_unit', key: 'five_star_survey', label: '5-Star Survey', rate: 250 },
+    { type: 'per_unit', key: 'portal_login', label: 'Portal Login', rate: 100 },
+    { type: 'flat', key: 'monthly_bonus', label: 'Monthly Bonus', amount: 2500, cadence: 'monthly', exemptFromMonthlyMax: true },
+    { type: 'flat', key: 'mgr_flat', label: 'Manager flat', amount: 2500, managerOnly: true },
+  ],
+};
 const FINAL_WEEK = '2026-08-30';
 const MID_WEEK = '2026-09-06';
 
-test('post_hearing_prep: the monthly bonus is a ₱2,500 flat checkbox for every member', () => {
-  const r = PHP.rules.find((x) => x.key === 'monthly_bonus');
-  assert.ok(r && r.type === 'flat');
-  assert.equal(r.amount, 2500);
-  assert.equal(r.cadence, 'monthly');
-  assert.equal(r.exemptFromMonthlyMax, true);
-  assert.equal(r.managerOnly, undefined, 'Carla said "they" — every member, not managers only');
-  assert.equal(PHP.monthlyMax, 3500, 'the weekly KPI cap is untouched');
+test('calcBonus engine: a cap-exempt flat rides ON TOP of monthlyMax', () => {
+  assert.equal(calcBonus({ five_star_survey: 20 }, FLAT_FIXTURE, false, { periodStart: FINAL_WEEK }), 3500);
+  assert.equal(calcBonus({ five_star_survey: 20, monthly_bonus: true }, FLAT_FIXTURE, false, { periodStart: FINAL_WEEK }), 6000);
+  assert.equal(calcBonus({ five_star_survey: 4, monthly_bonus: true }, FLAT_FIXTURE, false, { periodStart: FINAL_WEEK }), 3500);
+  assert.equal(calcBonus({ monthly_bonus: true }, FLAT_FIXTURE, false, { periodStart: FINAL_WEEK }), 2500);
+  assert.equal(calcBonus({ monthly_bonus: false }, FLAT_FIXTURE, false, { periodStart: FINAL_WEEK }), 0);
 });
 
-test('post_hearing_prep: the monthly bonus rides ON TOP of the ₱3,500 weekly cap', () => {
-  // 14 five-star surveys = ₱3,500 exactly; 20 = ₱5,000 → capped to ₱3,500.
-  assert.equal(calcBonus({ five_star_survey: 20 }, PHP, false, { periodStart: FINAL_WEEK }), 3500);
-  assert.equal(calcBonus({ five_star_survey: 20, monthly_bonus: true }, PHP, false, { periodStart: FINAL_WEEK }), 6000);
-  assert.equal(calcBonus({ five_star_survey: 4, monthly_bonus: true }, PHP, false, { periodStart: FINAL_WEEK }), 3500);
-  assert.equal(calcBonus({ monthly_bonus: true }, PHP, false, { periodStart: FINAL_WEEK }), 2500);
-  assert.equal(calcBonus({ monthly_bonus: false }, PHP, false, { periodStart: FINAL_WEEK }), 0);
+test("calcBonus engine: a monthly flat pays nothing outside the month's final payroll week", () => {
+  assert.equal(calcBonus({ five_star_survey: 4, monthly_bonus: true }, FLAT_FIXTURE, false, { periodStart: MID_WEEK }), 1000);
+  assert.equal(calcBonus({ monthly_bonus: true }, FLAT_FIXTURE, false, { periodStart: MID_WEEK }), 0);
+  // Without a week to judge by, the saved tick is honoured.
+  assert.equal(calcBonus({ monthly_bonus: true }, FLAT_FIXTURE, false), 2500);
 });
 
-test('post_hearing_prep: a monthly tick pays nothing in a week that is not the month\'s final payroll week', () => {
-  assert.equal(calcBonus({ five_star_survey: 4, monthly_bonus: true }, PHP, false, { periodStart: MID_WEEK }), 1000);
-  assert.equal(calcBonus({ monthly_bonus: true }, PHP, false, { periodStart: MID_WEEK }), 0);
-  // Without a week to judge by, the saved tick is honoured (the wizard pays the
-  // stored calculated_bonus and never calls this for a per-unit dept).
-  assert.equal(calcBonus({ monthly_bonus: true }, PHP, false), 2500);
+test('calcBonus engine: a managerOnly flat pays managers only, inside the cap', () => {
+  assert.equal(calcBonus({ mgr_flat: true, portal_login: 2 }, FLAT_FIXTURE, true, { periodStart: MID_WEEK }), 2700);
+  assert.equal(calcBonus({ mgr_flat: true, portal_login: 2 }, FLAT_FIXTURE, false, { periodStart: MID_WEEK }), 200);
 });
 
-test('post_hearing_prep: rows saved before the checkbox existed recompute unchanged', () => {
-  const legacyRows: KpiData[] = [{}, { five_star_survey: 3 }, { portal_login: 7, five_star_survey: 2 }, { five_star_survey: 30 }];
-  for (const kpi of legacyRows) {
-    const before = Math.min(3500, Number(kpi.five_star_survey ?? 0) * 250 + Number(kpi.portal_login ?? 0) * 100);
-    assert.equal(calcBonus(kpi, PHP, false), before, JSON.stringify(kpi));
-    assert.equal(calcBonus(kpi, PHP, false, { periodStart: FINAL_WEEK }), before, JSON.stringify(kpi));
-  }
-});
-
-test('flat rules elsewhere are untouched: Collections\' manager-only monthly flat still sums inside the (absent) cap', () => {
-  const col = HSL_DEPTS.collections;
-  assert.equal(calcBonus({ monthly_flat: true, converted_referral: 2 }, col, true), 3000);
-  assert.equal(calcBonus({ monthly_flat: true, converted_referral: 2 }, col, false), 500);
-  // No cadence on that rule → no final-week gate, whatever week is passed.
-  assert.equal(calcBonus({ monthly_flat: true }, col, true, { periodStart: MID_WEEK }), 2500);
-});
-
-test('only post_hearing_prep carries a cap-exempt or monthly flat rule (a new one is a pay decision)', () => {
+test('no HSL dept carries a cap-exempt or monthly flat rule (a new one is a pay decision)', () => {
+  // The last one was Pre/Post-Hearing's ₱2,500 Monthly Bonus, deleted 2026-09-28.
+  const found: string[] = [];
   for (const k of HSL_DEPT_KEYS) {
     for (const r of HSL_DEPTS[k].rules) {
-      if (r.type !== 'flat') continue;
-      if (r.cadence === 'monthly' || r.exemptFromMonthlyMax) {
-        assert.equal(k, 'post_hearing_prep', `${k}.${r.key}`);
-      }
+      if (r.type === 'flat' && (r.cadence === 'monthly' || r.exemptFromMonthlyMax)) found.push(`${k}.${r.key}`);
     }
   }
+  assert.deepEqual(found, []);
 });
 
 // ── Case Managers: SSA.Gov ×₱250 (2026-09-08, Carla via Kane) ─────────────────
@@ -502,6 +538,7 @@ test('ssd_medical_records + collections: monthly, and the ONLY depts opted into 
   assert.equal(HSL_DEPTS.ssd_medical_records.cadence, 'monthly');
   assert.equal(HSL_DEPTS.ssd_medical_records.monthlyAutoPay, true);
   // Carla (2026-09-08): 30 Collections people ticked manager + monthly flat and
+  // (that flat was deleted 2026-09-28 — the dept stays monthly + auto-dispatched)
   // ₱77,000 never reached pay — same class as SSD, same ruling.
   assert.equal(HSL_DEPTS.collections.cadence, 'monthly');
   assert.equal(HSL_DEPTS.collections.monthlyAutoPay, true);

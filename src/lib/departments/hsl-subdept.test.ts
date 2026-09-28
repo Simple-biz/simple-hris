@@ -151,6 +151,9 @@ test('the two sub-team keyspaces stay disjoint — a placement-only team NEVER g
   // stay SCOREABLE: a roster-only host would strand Simple Texting unpaid.
   assert.equal(HSL_DEPTS.callback_team.rulesFromCatalog, true);
   assert.equal(HSL_DEPTS.callback_team.noKpi, undefined);
+  // Same for Mail Sorting's host, Library-scored since 2026-09-28 (ruling (b)).
+  assert.equal(HSL_DEPTS.post_hearing_prep.rulesFromCatalog, true);
+  assert.equal(HSL_DEPTS.post_hearing_prep.noKpi, undefined);
 });
 
 test('intake_specialist is scored from the Bonus Library, not from code (Kane, 2026-09-22)', () => {

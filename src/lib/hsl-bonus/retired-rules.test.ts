@@ -12,7 +12,7 @@ test('retired rules exist only for branches that moved to the Library', () => {
   // table is quietly describing rules that still pay.
   assert.deepEqual(
     [...retiredDepts].sort(),
-    ['attestation', 'callback_team', 'care_team', 'case_managers', 'filing_specialist', 'intake_specialist', 'medical_records'],
+    ['attestation', 'callback_team', 'care_team', 'case_managers', 'collections', 'filing_specialist', 'intake_specialist', 'medical_records', 'post_hearing_prep'],
   );
   for (const k of retiredDepts) {
     assert.equal(HSL_DEPTS[k].rulesFromCatalog, true, `${k} has retired rules but is not catalog-scored`);
@@ -58,6 +58,15 @@ test('the pre-cutover rates are recorded as they were paid', () => {
   // Filing's retired ladder is the ORIGINAL 30/40/50 — the one every saved row was scored with.
   const filing = hslRuleForKey('filing_specialist', 'attested_cases', [])?.rule;
   assert.equal(filing?.type === 'tiered' ? filing.tiers[1]!.min : null, 30);
+  // A past week's ₱2,500 tick still reads as the ₱2,500 it was paid.
+  const flat = (dept: HslDeptKey, key: string) => {
+    const r = hslRuleForKey(dept, key, HSL_DEPTS[dept].rules)?.rule;
+    return r && r.type === 'flat' ? r.amount : null;
+  };
+  assert.equal(flat('collections', 'monthly_flat'), 2500);
+  assert.equal(flat('post_hearing_prep', 'monthly_bonus'), 2500);
+  assert.equal(rate('collections', 'converted_referral'), 250);
+  assert.equal(rate('post_hearing_prep', 'five_star_survey'), 250);
   const att = hslRuleForKey('attestation', 'attested_cases', [])?.rule;
   assert.equal(att?.type === 'tiered' ? att.tiers[1]!.min : null, 25);
 });

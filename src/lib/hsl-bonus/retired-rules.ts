@@ -74,6 +74,19 @@ export const HSL_RETIRED_RULES: Partial<Record<HslDeptKey, readonly BonusRule[]>
     { type: 'per_unit', key: 'referral_leads', label: 'Referral Leads', rate: 250 },
     { type: 'per_unit', key: 'ssa_gov', label: 'SSA.Gov', rate: 250 },
   ],
+  // 2026-09-28, Kane ruling (b): the Library replaces these even though it drops
+  // the ₱2,500 flats and the ₱3,500 cap. Last code-scored weeks: Collections
+  // 2026-09-13, Pre/Post-Hearing 2026-09-06. A past week's tick still reads as
+  // its ₱2,500 here — the amount it was PAID, not a live rule.
+  collections: [
+    { type: 'flat', key: 'monthly_flat', label: 'Monthly Flat Bonus', amount: 2500, managerOnly: true },
+    { type: 'per_unit', key: 'converted_referral', label: 'Converted Referral', rate: 250 },
+  ],
+  post_hearing_prep: [
+    { type: 'per_unit', key: 'five_star_survey', label: '5-Star Survey', rate: 250 },
+    { type: 'per_unit', key: 'portal_login', label: 'Portal Login', rate: 100 },
+    { type: 'flat', key: 'monthly_bonus', label: 'Monthly Bonus', amount: 2500, cadence: 'monthly', exemptFromMonthlyMax: true },
+  ],
   case_managers: [
     { type: 'per_unit', key: 'reviews', label: 'Reviews', rate: 250 },
     { type: 'per_unit', key: 'rfc', label: 'RFC', rate: 250 },

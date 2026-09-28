@@ -372,9 +372,11 @@ US Manager Bonus · USEE**.
     the HARD CODED Formulas in the KPI CALCULATOR"*) — each only after its
     Library formula was proven to pay exactly what the deleted rules did (the
     measured formula text runs through the real engine in `schema.test.ts`).
-    Collections and Pre/Post-Hearing were **not** deleted: their Library bonuses
-    omit the ₱2,500 monthly flats and the ₱3,500 cap, which makes it a pay
-    decision (audit item 246).
+    **Collections and Pre/Post-Hearing followed the same day on a money ruling**
+    (Kane, ruling (b): *"Both docs are stale!"*). Their Library bonuses omit
+    the ₱2,500 monthly flats and the ₱3,500 cap, so those stop paying until
+    Accounting adds them to the Library. What each pays is pinned in
+    `schema.test.ts` (`RULED_B_2026_09_28`). Audit item 246.
     - **The card states each Library bonus's version and last save**
       *(2026-09-28, Kane: "add like a timestamp on who changed it and all that
       even the version")*. The `Bonus Library` legend strip prints

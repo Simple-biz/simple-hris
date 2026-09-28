@@ -1,7 +1,7 @@
-# HSL KPI Calculator → Payment Catalog (overlay NOT BUILT; 7 of 12 cut over by §7d)
+# HSL KPI Calculator → Payment Catalog (overlay NOT BUILT; 9 of 12 cut over by §7d)
 
 **Update 2026-09-28:** the GOAL of this doc (rule definitions Accounting can edit
-in the Payment Catalog) is live for **7 of the 12** authorable depts, through
+in the Payment Catalog) is live for **9 of the 12** authorable depts, through
 `hsl-subdepartments.md` §7d, not through the overlay below. See §5. The overlay
 itself is still unbuilt.
 
@@ -236,16 +236,17 @@ this direction **nothing moves**, which is the strongest form of not losing it.
       number** — and note an Accounting edit to the formula would now change it
       with no engineering step.
 - [ ] Build the definitions overlay (§4). `src/lib/hsl-bonus-catalog/` still does not exist.
-      **Overtaken for 7 of 12 depts (2026-09-22, 2026-09-28)** by a different route to
+      **Overtaken for 9 of 12 depts (2026-09-22, 2026-09-28)** by a different route to
       the same goal. Instead of an overlay whose empty state is byte-identical to
       `HSL_DEPTS`, a branch whose Library formula is proven to pay what its code did
       drops the code outright (`hsl-subdepartments.md` §7d). The definitions are
       DB-backed and Accounting-editable, and the payout path is untouched: it is
       still `hsl_bonus_entries` and its loader, as §4 ruled. What this route gives
       up is §4's invariant. There is no seed or fallback: an empty or broken Library
-      row pays ₱0, and no unit test can reach it. Still in code: `ssd_medical_records`,
-      `collections`, `post_hearing_prep`, `healthcare_team_lead`, `hsl_managers`
-      (audit item 246).
+      row pays ₱0, and no unit test can reach it. Two of the nine (`collections`,
+      `post_hearing_prep`) went on Kane's ruling (b) even though their Library bonus
+      pays LESS: no ₱2,500 monthly flats, no ₱3,500 cap. Still in code:
+      `ssd_medical_records`, `healthcare_team_lead`, `hsl_managers` (audit item 246).
 - [x] `filing_specialist` no longer carries Attested Cases bands **in code at all**
       (2026-09-22). Kane ruled twice the same day: first that the Library formula's
       20/30/40 should move into `schema.ts`, then — after Carla and Alivia saw the card

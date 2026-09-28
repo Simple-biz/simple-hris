@@ -19,7 +19,8 @@
  *   npx tsx scripts/probe-hsl-hardcoded-columns.mts --dept intake_specialist
  *   npx tsx scripts/probe-hsl-hardcoded-columns.mts --dept filing_specialist
  *   npx tsx scripts/probe-hsl-hardcoded-columns.mts --dept <medical_records | care_team |
- *     callback_team | attestation | case_managers>        (cut over 2026-09-28)
+ *     callback_team | attestation | case_managers | collections | post_hearing_prep>
+ *                                                         (cut over 2026-09-28)
  *
  * For the 2026-09-28 five, the question to re-ask RIGHT BEFORE the deploy is
  * the live week's row: if a manager scored week 2026-09-20 on the OLD bundle,
@@ -43,8 +44,17 @@ dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 type Tier = { min: number; max: number | null; rate: number };
-/** `manual` keys hold a typed PESO amount, added as-is (never multiplied). */
-type Spec = { perUnit: Record<string, number>; manual?: string[]; tiered?: { key: string; tiers: Tier[] } };
+/** `manual` keys hold a typed PESO amount, added as-is (never multiplied).
+ *  `flat` keys hold a TICK; `managerOnly` pays only on an is_manager row and
+ *  `capExempt` is summed after `cap` (calcBonus's `monthlyMax`). */
+type Flat = { amount: number; managerOnly?: boolean; capExempt?: boolean };
+type Spec = {
+  perUnit: Record<string, number>;
+  manual?: string[];
+  flat?: Record<string, Flat>;
+  cap?: number;
+  tiered?: { key: string; tiers: Tier[] };
+};
 
 /**
  * What each branch's code rules paid, as they stood when the saved rows were
@@ -91,6 +101,17 @@ const SPECS: Record<string, Spec> = {
   case_managers: {
     perUnit: { reviews: 250, rfc: 250, ppl: 100, dme: 250, task: 250, referral_leads: 250, ssa_gov: 250 },
   },
+  // Kane ruled (b) on both, 2026-09-28: the Library replaces these even though it
+  // drops the P2,500 flats and the P3,500 cap.
+  collections: {
+    perUnit: { converted_referral: 250 },
+    flat: { monthly_flat: { amount: 2500, managerOnly: true } },
+  },
+  post_hearing_prep: {
+    perUnit: { five_star_survey: 250, portal_login: 100 },
+    flat: { monthly_bonus: { amount: 2500, capExempt: true } },
+    cap: 3500,
+  },
 };
 
 const argIdx = process.argv.indexOf('--dept');
@@ -125,6 +146,7 @@ async function selectAllPaged<T>(table: string, columns: string, refine: (q: any
 
 type Entry = {
   employee_email: string;
+  is_manager: boolean | null;
   period_start: string;
   calculated_bonus: number | null;
   kpi_data: Record<string, unknown> | null;
@@ -133,7 +155,7 @@ type Entry = {
 const num = (v: unknown) => Number(v ?? 0) || 0;
 
 /** Mirrors `calcBonus` exactly: per_unit is n x rate, manual is the typed amount, tiered is the WHOLE count x the landed rate. */
-function codeRulePesos(kpi: Record<string, unknown> | null): number {
+function codeRulePesos(kpi: Record<string, unknown> | null, isManager = false): number {
   let total = 0;
   for (const [k, rate] of Object.entries(spec.perUnit)) total += num(kpi?.[k]) * rate;
   for (const k of spec.manual ?? []) total += num(kpi?.[k]);
@@ -142,14 +164,21 @@ function codeRulePesos(kpi: Record<string, unknown> | null): number {
     const band = spec.tiered.tiers.find((t) => n >= t.min && (t.max === null || n <= t.max));
     if (band) total += n * band.rate;
   }
-  return total;
+  let exempt = 0;
+  for (const [k, f] of Object.entries(spec.flat ?? {})) {
+    if (!kpi?.[k] || (f.managerOnly && !isManager)) continue;
+    if (f.capExempt) exempt += f.amount;
+    else total += f.amount;
+  }
+  if (spec.cap !== undefined) total = Math.min(total, spec.cap);
+  return total + exempt;
 }
-const codeKeys = [...Object.keys(spec.perUnit), ...(spec.manual ?? []), ...(spec.tiered ? [spec.tiered.key] : [])];
+const codeKeys = [...Object.keys(spec.perUnit), ...(spec.manual ?? []), ...Object.keys(spec.flat ?? {}), ...(spec.tiered ? [spec.tiered.key] : [])];
 
 async function main() {
   const entries = await selectAllPaged<Entry>(
     'hsl_bonus_entries',
-    'employee_email, period_start, calculated_bonus, kpi_data',
+    'employee_email, is_manager, period_start, calculated_bonus, kpi_data',
     (q) => q.eq('department', DEPT),
   );
   const statuses = await selectAllPaged<{ period_start: string; status: string | null }>(
@@ -170,14 +199,14 @@ async function main() {
   for (const w of weeks) {
     const rows = entries.filter((e) => e.period_start === w);
     const status = statusOf.get(w) ?? 'draft';
-    const code = rows.reduce((s, e) => s + codeRulePesos(e.kpi_data), 0);
+    const code = rows.reduce((s, e) => s + codeRulePesos(e.kpi_data, !!e.is_manager), 0);
     const stored = rows.reduce((s, e) => s + (e.calculated_bonus ?? 0), 0);
     const cat = rows.filter((e) => Object.keys(e.kpi_data ?? {}).some((k) => k.startsWith('catalog:'))).length;
     if (code > 0) {
       exposure += code;
       if (status !== 'ready' && status !== 'locked') exposureEditable += code;
       for (const e of rows) {
-        const loss = codeRulePesos(e.kpi_data);
+        const loss = codeRulePesos(e.kpi_data, !!e.is_manager);
         if (loss > 0) atRisk.push({ e, loss, status });
       }
     }

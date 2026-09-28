@@ -376,11 +376,12 @@ Attestation tier guess mispriced 11 rows). For that shape, take §7a but set
 #### 7d-catalog-scored: the programme exists, it just isn't in code (`rulesFromCatalog`)
 
 Added 2026-09-22 for **Intake Specialist**, then **Filing Specialist** hours
-later — *"Filing Specialist the Hard coded is still in there"*. **Taken by five
-more branches on 2026-09-28** (Medical Records, Care Team, Callback Team,
-Attestation, Case Managers). That leaves **seven of the fourteen** scored
-entirely from the Payment Catalog, and five still in code. See *The second
-cutover* below. Filing had been
+later — *"Filing Specialist the Hard coded is still in there"*. **Taken by seven
+more branches on 2026-09-28**: Medical Records, Care Team, Callback Team,
+Attestation and Case Managers, then Collections and Pre/Post-Hearing on Kane's
+ruling (b). That leaves **nine of the fourteen** scored entirely from the Payment
+Catalog, three still in code, and two roster-only. See *The second cutover*
+below. Filing had been
 ruled the OTHER way first (`b3dc6a98`: the Library formula's bands moved into
 `schema.ts`, assignment to be retired) and was reversed once Carla and Alivia
 saw the card still carrying both. The retirement script from that first ruling
@@ -459,20 +460,31 @@ open hole is the deploy gap.** Kane pushes, not the session. If a manager
 scores 2026-09-20 on the old bundle before the push, that week then carries
 code-rule pesos, and any row they touch after the deploy rescores at ₱0. Re-run
 `scripts/probe-hsl-hardcoded-columns.mts --dept <key>` for each of the five
-immediately before pushing. **Deploy note, PENDING:** a non-zero "P from code
-rules" on an editable week is the stop sign. Audit item 246.
+immediately before pushing (seven now, including `collections` and
+`post_hearing_prep`). **Deploy note, PENDING:** a non-zero "P from code rules" on
+an editable week is the stop sign. Audit item 246.
 
-**Not deleted, and why — each needs Kane or Accounting first:**
+**Deleted by Kane's ruling (b), even though the Library pays LESS** (Kane,
+2026-09-28, *"Both docs are stale!"*). Both were first hard-stopped as a money
+ruling, then ruled. What each Library bonus pays is pinned in `schema.test.ts`
+(`RULED_B_2026_09_28`), so the dropped amounts are documented behaviour:
 
-- `collections` — its Library bonus (`Referral_Leads*250 + HSL_Testimonials*250`,
-  weekly) **drops the ₱2,500 manager-only Monthly Flat** (₱77,000 to 30 people in
-  the 2026-08-30 period) and adds a term the code never paid. That is a money
-  ruling. Hard-stopped, audit item 246.
-- `post_hearing_prep` — its Library bonus (`PPL*100 + Five_Star_Reviews*250`)
-  **drops the ₱2,500 Monthly Bonus** checkbox (Carla, 2026-09-08; itself disputed
-  against ₱3,500, [[pre-post-hearing-2500-vs-3500]]), and a Library total sits
-  **outside** `monthlyMax`, so the ₱3,500/wk cap would bound nothing.
-  Hard-stopped, audit item 246.
+| branch | Library bonus (2026-09-23) | what stopped paying | reopen exposure |
+| --- | --- | --- | --- |
+| `collections` | "HSL - Collections" `=(Referral_Leads*250) + (HSL_Testimonials*250)`, weekly | the **₱2,500 manager-only Monthly Flat**: ₱72,500 (2026-07-26) and ₱77,000 (2026-08-30). **Adds** HSL Testimonials ×₱250, which the code never paid. Cadence `monthly` + `monthlyAutoPay` unchanged | ₱158,750 / 88 rows, **₱0 editable** |
+| `post_hearing_prep` | "HSL - Pre-Hearing/Post Hearing Prep" `=(PPL*100)+(Five_Star_Reviews*250)` | the **₱2,500 Monthly Bonus** checkbox (Carla, 2026-09-08; disputed against ₱3,500 the next day, [[pre-post-hearing-2500-vs-3500]]), **and the ₱3,500/wk cap**. A Library total sits outside `monthlyMax`, so `monthlyMax` was removed rather than left looking live. 20 five-star now pays ₱5,000, where the code capped it at ₱3,500 | ₱64,450 / 34 rows, **₱0 editable**. The live week, 2026-09-20, had 45 draft rows and ₱0 from code |
+
+**Money consequence to act on:** September's final payroll week (2026-09-27 –
+10-03) is where both ₱2,500s would next have paid. For Collections that is about
+₱75,000 (30 ticks in August), and for Pre/Post-Hearing up to ₱2,500 per member.
+**They pay ₱0 unless Accounting adds a monthly bonus to each branch in the
+Library before that week is scored.** The ₱2,500-vs-₱3,500 dispute is Accounting's
+number to set there now. It is no longer a code value. The calculator engine
+still implements monthly and cap-exempt flats (pinned on a fixture); no HSL dept
+uses one.
+
+**Still in code — nothing in the Library to replace them:**
+
 - `ssd_medical_records` · `healthcare_team_lead` · `hsl_managers` — **nothing
   is assigned in the Payment Catalog**, so deleting their rules would pay ₱0.
   SSD's `team_split` / `team_pool` shares depend on the whole team's inputs,

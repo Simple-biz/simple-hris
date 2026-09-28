@@ -341,16 +341,21 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#6366f1',
     headerBg: 'bg-indigo-950/40',
     badgeCls: 'bg-indigo-900/60 text-indigo-300',
-    monthlyMax: 3500,
-    rules: [
-      { type: 'per_unit', key: 'five_star_survey', label: '5-Star Survey', rate: 250 },
-      { type: 'per_unit', key: 'portal_login',     label: 'Portal Login',  rate: 100 },
-      // Carla (2026-09-08): "They have a monthly bonus of 2500 … a checkbox that
-      // applies 2500 when checked." One tick per person per month, in the final
-      // payroll week only, and OUTSIDE the ₱3,500 weekly KPI cap — a fixed ₱2,500
-      // under a ₱3,500 cap would otherwise leave ₱1,000 of KPI room that month.
-      { type: 'flat', key: 'monthly_bonus', label: 'Monthly Bonus', amount: 2500, cadence: 'monthly', exemptFromMonthlyMax: true },
-    ],
+    // Kane, 2026-09-28, ruling (b) — "Both docs are stale!": ALL three code
+    // rules AND the ₱3,500 weekly cap are deleted. The branch is scored from
+    // "HSL - Pre-Hearing/Post Hearing Prep" (`=(PPL*100)+(Five_Star_Reviews*250)`,
+    // Alivia 2026-09-23), which pays the two per-unit terms the code did but:
+    //   • has NO Monthly Bonus. Carla's ₱2,500 checkbox (2026-09-08, disputed vs
+    //     ₱3,500 the next day) stops paying until Accounting adds it to the
+    //     Library. That is now an Accounting edit, not an engineering one;
+    //   • has NO cap. A Library total sits outside `monthlyMax` by design
+    //     (catalog-bonus.ts), so keeping `monthlyMax` would bound nothing. It is
+    //     removed, not left as a cap that looks live.
+    // Individual Library bonuses (Apple/Franz) and the Mail Sorting team
+    // (scored here, §7b) ride the same card unchanged. Past weeks keep their
+    // labels in `retired-rules.ts`. Reopen exposure: audit item 246.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   collections: {
@@ -364,10 +369,18 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#f59e0b',
     headerBg: 'bg-amber-950/40',
     badgeCls: 'bg-amber-900/60 text-amber-300',
-    rules: [
-      { type: 'flat',     key: 'monthly_flat',      label: 'Monthly Flat Bonus',   amount: 2500, managerOnly: true },
-      { type: 'per_unit', key: 'converted_referral', label: 'Converted Referral',  rate: 250 },
-    ],
+    // Kane, 2026-09-28, ruling (b) — "Both docs are stale!": both code rules
+    // are deleted. The branch is scored from "HSL - Collections"
+    // (`=(Referral_Leads*250) + (HSL_Testimonials*250)`, weekly, Alivia
+    // 2026-09-23). That formula:
+    //   • has NO ₱2,500 manager-only Monthly Flat (₱72,500 in 2026-07-26,
+    //     ₱77,000 in 2026-08-30). It stops paying until Accounting adds it to
+    //     the Library;
+    //   • ADDS HSL Testimonials ×₱250, which the code never paid.
+    // Cadence and monthlyAutoPay are unchanged: the card still keys on the
+    // week, and a Ready period still auto-dispatches.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   healthcare_team_lead: {

@@ -10,15 +10,15 @@ Built 2026-07-17 with every HSL bonus rule hardcoded in `schema.ts`. **That is
 no longer true of half the branches.** Since 2026-09-22 a Bonus Library bonus
 assigned to a branch (`hsl:<key>`) is scored on that branch's card and folds
 into `calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`; see
-`bonus-catalog.md` §3.1). **Seven branches have no code rules at all** and are
+`bonus-catalog.md` §3.1). **Nine branches have no code rules at all** and are
 scored entirely from their Library bonus (`rulesFromCatalog`,
 `hsl-subdepartments.md` §7d): Intake Specialist and Filing Specialist
-(2026-09-22), then Medical Records, Care Team, Callback Team, Attestation and
-Case Managers (Kane, 2026-09-28: *"Delete the HARD CODED Formulas in the KPI
-CALCULATOR"*). **Five are still code**: SSD Medical Records, Collections,
-Pre/Post-Hearing Prep, Healthcare Team Lead and Managers Weekly. Two of them
-wait on a money ruling, and three have nothing in the Library yet. The table
-below says which is which. Each Library bonus on the card states its **version,
+(2026-09-22), then Medical Records, Care Team, Callback Team, Attestation, Case
+Managers, Collections and Pre/Post-Hearing Prep (Kane, 2026-09-28: *"Delete the
+HARD CODED Formulas in the KPI CALCULATOR"*, then *"Both docs are stale!"* for
+the last two, whose Library bonuses dropped the ₱2,500 monthly flats and the
+₱3,500 cap). **Three are still code**, because nothing is in the Library for
+them yet: SSD Medical Records, Healthcare Team Lead and Managers Weekly. Each Library bonus on the card states its **version,
 effective date, and who last saved it, and when** (2026-09-28), because an
 accountant's edit now reprices a whole team. How that column reads: name + `flat`/`ƒ(x)` chip + the
 accountant's own formula in the head, a `Bonus Library` legend strip above the
@@ -42,7 +42,7 @@ formula text as measured on the cutover day. The wizard pays the stored
 | `hsl_managers` *(new; specs DATED 2026-09-08)* | Managers Weekly | weekly | bespoke per-manager components — checklists through 2026-08-23, banded weekly tiers for six managers + three new members from 2026-08-30 (see below) |
 | `attestation` *(new 2026-07-21; rules extended 2026-08-24)* | Attestation | weekly | **LIBRARY since 2026-09-28 — code rules deleted (`hsl-subdepartments.md` §7d); what follows is what the Library formula pays.** Attested Cases tiered (25→₱50 · 35→₱75 · 50+→₱100 per case; thresholds corrected 2026-07-27 to match the sheet formula — since 2026-09-28 NO dept scores `attested_cases` in code — both ladders are Library rows, see §Attested Cases below) **+ Referral Leads ×₱250 · SSA.Gov ×₱250** (see §Attestation additive terms) |
 | `case_managers` *(new 2026-07-22; SSA.Gov added 2026-09-08)* | Case Managers | weekly | **LIBRARY since 2026-09-28 — code rules deleted (`hsl-subdepartments.md` §7d); what follows is what the Library formula pays.** Reviews ×₱250 · RFC ×₱250 · PPL ×₱100 · DME ×₱250 · Task ×₱250 · Referral Leads ×₱250 **· SSA.Gov ×₱250** (Carla via Kane, 2026-09-08 — the same additive term Attestation gained 2026-08-24, which had NOT been applied here; not retroactive, rows without the key read 0; seven per-unit terms pinned in `schema.test.ts`) |
-| `post_hearing_prep` *(renamed; Monthly Bonus added 2026-09-08)* | Pre-Hearing / Post-Hearing Prep | weekly | Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap **+ Monthly Bonus ₱2,500 flat checkbox** — every member, final payroll week of the month only, paid ON TOP of the cap (see §Pre/Post-Hearing monthly bonus) |
+| `post_hearing_prep` *(renamed; Monthly Bonus added 2026-09-08)* | Pre-Hearing / Post-Hearing Prep | weekly | **LIBRARY since 2026-09-28 (ruling (b)) — `=(PPL*100)+(Five_Star_Reviews*250)`, NO monthly bonus and NO cap; everything after this is the DELETED code rule set, kept for its history.** Portal Login ₱100 · 5-Star ₱250, ₱3,500/wk cap **+ Monthly Bonus ₱2,500 flat checkbox** — every member, final payroll week of the month only, paid ON TOP of the cap (see §Pre/Post-Hearing monthly bonus) |
 | `case_manager` *(removed 2026-07-17; superseded by `case_managers`)* | — | — | was 6 per-unit KPI rules, ~50 members |
 | `case_mgr_no_kpi` *(removed)* | — | — | was an empty roster-only placeholder |
 | `chelzy_asst` *(removed)* | — | — | was a flat $10/mo |
@@ -153,7 +153,18 @@ rescoring one of those 12 weeks now yields ₱0 for those keys, and **₱117,925
 it (2026-06-28, 2026-07-05) sits in weeks with no status row that are editable
 today**. Audit item 155.
 
-## Pre/Post-Hearing monthly bonus *(2026-09-08)*
+## Pre/Post-Hearing monthly bonus *(2026-09-08 — rule DELETED 2026-09-28)*
+
+> **Superseded by Kane, 2026-09-28 (ruling (b), "Both docs are stale!").** The
+> `monthly_bonus` rule, the other two code rules and the ₱3,500 cap are gone.
+> Pre/Post-Hearing is scored from its Library bonus, which has no monthly bonus
+> and no cap (`hsl-subdepartments.md` §7d). The ₱2,500 stops paying until
+> Accounting adds one to the Library. The ₱2,500-vs-₱3,500 dispute is now
+> Accounting's number to set there. The section below is kept as the record of
+> what was paid through 2026-09-06, and of why the engine's monthly and
+> cap-exempt flats work the way they do (still implemented, pinned on a test
+> fixture, used by no HSL dept). **Collections' ₱2,500 manager-only Monthly
+> Flat was deleted the same day, by the same ruling.**
 
 Carla T: *"They have a monthly bonus of 2500, not sure how to add this. Can we just
 get a checkbox that applies 2500 when checked."* `post_hearing_prep` gained a third

@@ -22,7 +22,7 @@ import {
   isScoreableOnHsl,
   withoutCatalogKeys,
 } from './catalog-bonus';
-import { HSL_DEPTS, HSL_DEPT_KEYS, calcBonus } from './schema';
+import { HSL_DEPTS, HSL_DEPT_KEYS, calcBonus, type DeptConfig } from './schema';
 import type { BonusAssignment, BonusDef } from '@/lib/bonus-catalog/types';
 
 const flat = (over: Partial<BonusDef> = {}): BonusDef =>
@@ -169,7 +169,15 @@ test('a NON-PHP bonus is never paid — the HSL card has no FX', () => {
 });
 
 test('the catalog total is ADDITIVE to calcBonus and outside monthlyMax', () => {
-  const dept = HSL_DEPTS.post_hearing_prep; // has monthlyMax 3500
+  // A CAPPED dept with code rules. post_hearing_prep was the live one until its
+  // rules and cap were deleted (Kane, 2026-09-28), so the shape is a fixture.
+  // What it proves still matters for any branch that keeps code rules.
+  const dept: DeptConfig = {
+    ...HSL_DEPTS.post_hearing_prep,
+    monthlyMax: 3500,
+    rules: [{ type: 'per_unit', key: 'five_star_survey', label: '5-Star Survey', rate: 250 }],
+    rulesFromCatalog: undefined,
+  };
   assert.notEqual(dept.monthlyMax, undefined);
   // Rules alone, capped.
   const kpiRules = { five_star_survey: 100 };
