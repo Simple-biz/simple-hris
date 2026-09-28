@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
   CalendarCheck,
+  ChevronLeft,
   ChevronRight,
   FileText,
   Loader2,
@@ -22,6 +23,7 @@ import { buildOrientationWeeks } from '@/lib/manager/orientation-weekly';
 import type { DeptRailGroup } from '@/lib/payment-catalog/dept-rail';
 import { useOrientationHistory } from '@/hooks/useOrientationHistory';
 import { downloadOrientationPdf } from '@/lib/manager/orientation-pdf';
+import { pageWindow, type PageWindow } from '@/lib/manager/page-window';
 import {
   attendanceRate,
   OFF_CHECKLIST_LABEL,
@@ -49,6 +51,11 @@ import {
  * (docs/features/manager-my-team.md); the route strips rates before they leave
  * the server and nothing here would render them.
  *
+ * **Paged at 10** (Kane, 2026-09-28): the week cards, and the people inside an
+ * opened week. Paging is DISPLAY ONLY — the KPI tiles, the per-week counts, the
+ * "Did not attend (N)" headings and the PDF all read the whole department, never
+ * the page on screen, and every pager says which slice it shows.
+ *
  * The motion here is decoration and nothing else: every animated wrapper renders
  * its children unconditionally (an `AnimatePresence` only guards a section that
  * is already conditional on `open`), and `useReducedMotion` collapses all of it
@@ -69,6 +76,9 @@ interface OrientationAttendancePanelProps {
     | { kind: 'department'; departments: string[] }
     | { kind: 'error'; message: string };
 }
+
+/** Weeks per page, and people per page inside an opened week. */
+const ORIENTATION_PAGE_SIZE = 10;
 
 /** A hire's orientation / no-show date in Manila (the company tz). */
 function fmtManilaDate(iso: string | null): string {
@@ -112,6 +122,71 @@ function KpiTile({
       <div className={cn('mt-0.5 text-xl font-bold tabular-nums', tone)}>{value}</div>
       {hint && <div className="text-[10px] text-zinc-500 dark:text-zinc-400">{hint}</div>}
     </div>
+  );
+}
+
+/**
+ * "Showing 11–20 of 23 weeks" with Prev / Next — the roster list's footer
+ * (ManagerApp's list view), so paging reads the same across My Team. Renders
+ * nothing for a single page.
+ */
+function Pager({
+  win,
+  noun,
+  onPage,
+  className,
+}: {
+  win: PageWindow<unknown>;
+  /** Plural, e.g. "weeks" / "people". */
+  noun: string;
+  onPage: (page: number) => void;
+  className?: string;
+}) {
+  if (win.totalPages <= 1) return null;
+  const btn =
+    'h-7 gap-1 border-blue-200 px-2 text-xs text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-blue-800 dark:text-blue-300 dark:hover:bg-blue-950/40';
+  return (
+    <nav
+      aria-label={`${noun} pages`}
+      className={cn('flex flex-col items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400 sm:flex-row', className)}
+    >
+      <span className="tabular-nums">
+        Showing{' '}
+        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+          {win.from}–{win.to}
+        </span>{' '}
+        of <span className="font-medium text-zinc-700 dark:text-zinc-300">{win.total}</span> {noun}
+      </span>
+      <div className="flex items-center gap-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={win.page <= 1}
+          onClick={() => onPage(win.page - 1)}
+          className={btn}
+          aria-label={`Previous page of ${noun}`}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Prev
+        </Button>
+        <span className="rounded-md border border-zinc-200 bg-white px-2 py-1 font-mono tabular-nums text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+          {win.page} / {win.totalPages}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={win.page >= win.totalPages}
+          onClick={() => onPage(win.page + 1)}
+          className={btn}
+          aria-label={`Next page of ${noun}`}
+        >
+          Next
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </nav>
   );
 }
 
@@ -181,6 +256,12 @@ export default function OrientationAttendancePanel({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /** Show every hire in an expanded week, or only the ones who missed. */
   const [showAll, setShowAll] = useState(false);
+  /** Page of week cards. Clamped by `pageWindow`, so a refresh can't strand it. The
+   *  panel is keyed per department, so a department switch starts on page 1. */
+  const [weekPage, setWeekPage] = useState(1);
+  /** Page of people inside each opened week, by week key; absent = page 1. */
+  const [hirePages, setHirePages] = useState<Record<string, number>>({});
+  const weekListRef = useRef<HTMLDivElement>(null);
 
   // Scope to the selected department by filtering the INPUT rows and re-running
   // the same model. `buildOrientationWeeks`, `hasAttended` and `attendanceRate`
@@ -222,6 +303,18 @@ export default function OrientationAttendancePanel({
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
+    });
+  }
+
+  function goToWeekPage(page: number) {
+    setWeekPage(page);
+    // Next / Prev sit under the list: bring the new page's first week back into
+    // view if it has scrolled off the top. Never scrolls when it is already visible.
+    requestAnimationFrame(() => {
+      const el = weekListRef.current;
+      if (el && el.getBoundingClientRect().top < 0) {
+        el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+      }
     });
   }
 
@@ -295,6 +388,8 @@ export default function OrientationAttendancePanel({
 
   const t = summary.totals;
   const overallRate = attendanceRate(t);
+  // Display only: the tiles above and the PDF read `summary`, never this page.
+  const weekWin = pageWindow(allWeeks, weekPage, ORIENTATION_PAGE_SIZE);
 
   return (
     <motion.div className="flex flex-col gap-3" {...rise}>
@@ -363,7 +458,11 @@ export default function OrientationAttendancePanel({
             type="checkbox"
             className="h-3.5 w-3.5 cursor-pointer accent-blue-600"
             checked={showAll}
-            onChange={(e) => setShowAll(e.target.checked)}
+            onChange={(e) => {
+              setShowAll(e.target.checked);
+              // The people list changes length, so every opened week restarts on page 1.
+              setHirePages({});
+            }}
           />
           Show everyone in an opened week
         </label>
@@ -395,14 +494,18 @@ export default function OrientationAttendancePanel({
         </div>
       </div>
 
-      {/* One card per week. Click a week to see the people behind its counts. */}
-      <div className="flex flex-col gap-1.5">
-        {allWeeks.map((w, i) => {
+      {/* One card per week, 10 to a page (newest first; the off-checklist buckets
+          follow the HR weeks, so they sit on the last page — never dropped). Click a
+          week to see the people behind its counts. Keyed on the page so a page turn
+          replays the entrance; which weeks are OPEN lives above, so it survives. */}
+      <div ref={weekListRef} key={`weeks-page-${weekWin.page}`} className="flex scroll-mt-4 flex-col gap-1.5">
+        {weekWin.items.map((w, i) => {
           const key = `${w.onChecklist ? 'hr' : 'off'}:${w.weekStart}`;
           const open = expanded.has(key);
           const pct = attendanceRate(w);
           const missed = w.hires.filter((h) => !h.orientation_attended_at);
           const shown = showAll ? w.hires : missed;
+          const hireWin = pageWindow(shown, hirePages[key] ?? 1, ORIENTATION_PAGE_SIZE);
 
           return (
             <motion.div
@@ -487,10 +590,17 @@ export default function OrientationAttendancePanel({
                       </p>
                     ) : (
                       <>
+                        {/* The heading counts the whole week; the pager says which ten are shown. */}
                         <p className="px-4 pt-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                           {showAll ? `All hires (${shown.length})` : `Did not attend (${shown.length})`}
                         </p>
-                        {shown.map((h) => <HireLine key={h.id} h={h} />)}
+                        {hireWin.items.map((h) => <HireLine key={h.id} h={h} />)}
+                        <Pager
+                          win={hireWin}
+                          noun="people"
+                          onPage={(page) => setHirePages((prev) => ({ ...prev, [key]: page }))}
+                          className="border-t border-zinc-100 px-4 py-2 dark:border-zinc-900"
+                        />
                       </>
                     )}
                   </motion.div>
@@ -502,6 +612,7 @@ export default function OrientationAttendancePanel({
           );
         })}
       </div>
+      <Pager win={weekWin} noun="weeks" onPage={goToWeekPage} className="px-1 pt-0.5" />
 
       {t.unmatched > 0 && (
         <p className="text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-400">

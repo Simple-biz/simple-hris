@@ -21,6 +21,7 @@ followed by *"the week should match from HR's New Hire Checklist"*.
 | Piece | File |
 | --- | --- |
 | The tab | [OrientationAttendancePanel.tsx](src/components/manager/OrientationAttendancePanel.tsx) |
+| Paging (10 per page, clamped) | [page-window.ts](src/lib/manager/page-window.ts) · `.test.ts` |
 | The shared read | [useOrientationHistory.ts](src/hooks/useOrientationHistory.ts) |
 | The model (pure, tested) | [orientation-weekly.ts](src/lib/manager/orientation-weekly.ts) |
 | Its test | [orientation-weekly.test.ts](src/lib/manager/orientation-weekly.test.ts) |
@@ -200,6 +201,31 @@ family — same navy/orange palette, masthead and footer.
 > Now that the No-shows section renders, those people also appear in the CSV and Excel
 > exports, which already build from `visibleActive + visibleNoShow`. That is the fix
 > landing, not a regression.
+
+## Pagination — 10 per page, display only
+
+Added 2026-09-28. Kane: *"for the Orientation tab per department make the line items paginated
+to 10 items per page"*. Both lists page at `ORIENTATION_PAGE_SIZE` = 10 through `pageWindow`
+([page-window.ts](src/lib/manager/page-window.ts), tested):
+
+- **The week cards**, newest first. The off-checklist buckets follow the HR weeks, so they land on
+  the **last** page. They are still never dropped, and the footnote and the totals count them.
+- **The people inside an opened week**: the *Did not attend* list, or everyone with *Show
+  everyone*. Each week keeps its own page.
+
+> **Paging is display only.** The KPI tiles, each week's attended / did-not counts, the *Did not
+> attend (N)* heading and the PDF all read the whole department, **never the page on screen**. The
+> PDF therefore still carries the whole history (§ *What each export carries*). Every pager says
+> which slice it shows (*Showing 11–20 of 24 weeks*), so a page never passes for the whole list.
+
+- **A requested page is clamped, never trusted.** A Refresh or the *Show everyone* toggle can
+  shrink a list under the current page. An out-of-range page would show an empty list under counts
+  that say otherwise. *Show everyone* also resets every opened week to page 1.
+- The panel is keyed per department (`orientation:${activeDept}` in `ManagerApp`), so a department
+  switch starts on page 1. Which weeks are **open** is held outside the page, so it survives a page turn.
+- A single page renders no pager. The pager copies the roster list's footer (*Showing X–Y of N ·
+  Prev · n / N · Next*) and is local to this panel.
+- Turning a week page brings the list's top back into view only when it has scrolled off.
 
 ## The motion is decoration, and Refresh keeps the numbers on screen
 
