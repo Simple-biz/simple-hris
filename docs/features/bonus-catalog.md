@@ -338,10 +338,16 @@ US Manager Bonus · USEE**.
     *"There are no name on the bonus I just assigned, it's confusing."* A
     tooltip is also unreachable by touch and by keyboard, so for those users the
     inputs had no names at all. The contract now:
-    - the head is **name + `flat`/`ƒ(x)` chip + the rule**, and for a formula
-      the rule is the accountant's expression itself, clipped, whole text in
-      `title`. The kind is stated in **text** — sky-on-zinc was previously the
-      only thing separating a Library column from a coded KPI column;
+    - the head is **name + `flat`/`ƒ(x)` chip**, with the whole rule in `title`.
+      **Changed 2026-09-28 by Kane.** It used to add a second line with the
+      clipped formula. Looking at Pre/Post-Hearing, Kane said *"what is this still
+      doing in here"*. That line had earned its place when Library columns sat
+      beside code columns that each named a ₱ rate. With nine branches now
+      Library-only, it only repeated the legend strip below, and on a wide head
+      it sat stranded on the far side of the cell. The rule is still stated: in
+      full in the legend strip and in `title`. **Never the bare word "formula"**
+      still holds. The kind is stated in **text** — sky-on-zinc was previously
+      the only thing separating a Library column from a coded KPI column;
     - a **`Bonus Library` legend strip** above the grid states each bonus once
       in full — name, rule, the inputs it asks for, its description in `title` —
       because a 9px column head scrolls away and cannot carry that;

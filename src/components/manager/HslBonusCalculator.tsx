@@ -2897,13 +2897,6 @@ function catalogRuleText(bonus: BonusDef, scoreable: boolean): string {
   return `${f || 'formula'}${monthly}`;
 }
 
-/** Clip a rule to what a 9px column head can carry. The whole string still ships
- *  in the `title` and in the legend above the grid, so nothing is lost — only
- *  deferred. */
-function clipRule(rule: string, max = 26): string {
-  return rule.length <= max ? rule : `${rule.slice(0, max - 1)}…`;
-}
-
 /** `flat` / `ƒ(x)` tag on a Library column.
  *
  *  Sky-on-zinc was the ONLY thing separating an accountant-assigned Library
@@ -3148,17 +3141,16 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
                       .filter(Boolean)
                       .join('\n')}
                   >
+                    {/* Name + kind only. The head used to add a second line with
+                        the clipped formula. Kane, 2026-09-28, on Pre/Post-Hearing:
+                        "what is this still doing in here". The Bonus Library strip
+                        above already states the whole formula, and the full text
+                        is in this `title`. With no code columns beside it, a wide
+                        head also left that line stranded on the far side of the
+                        cell. */}
                     <span className="flex items-center justify-end gap-1">
                       <CatalogKindChip kind={bonus.kind} />
                       <span className="max-w-[128px] truncate">{bonus.name}</span>
-                    </span>
-                    <span
-                      className={cn(
-                        'block max-w-[168px] truncate font-normal normal-case tracking-normal',
-                        scoreable ? 'text-zinc-500 dark:text-zinc-400' : 'text-amber-700 dark:text-amber-400',
-                      )}
-                    >
-                      {clipRule(rule)}
                     </span>
                   </th>
                 );

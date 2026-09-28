@@ -20,8 +20,8 @@ the last two, whose Library bonuses dropped the ₱2,500 monthly flats and the
 ₱3,500 cap). **Three are still code**, because nothing is in the Library for
 them yet: SSD Medical Records, Healthcare Team Lead and Managers Weekly. Each Library bonus on the card states its **version,
 effective date, and who last saved it, and when** (2026-09-28), because an
-accountant's edit now reprices a whole team. How that column reads: name + `flat`/`ƒ(x)` chip + the
-accountant's own formula in the head, a `Bonus Library` legend strip above the
+accountant's edit now reprices a whole team. How that column reads: name + `flat`/`ƒ(x)` chip in the head (the clipped formula line under it was
+removed 2026-09-28, Kane: *"what is this still doing in here"*), a `Bonus Library` legend strip above the
 grid, one **labelled** field per formula variable, and the bonus's own peso
 under them (amber at ₱0) — is the presentation contract in `bonus-catalog.md`
 §3.1, written after Kane found four unlabelled boxes on the Filing Specialist
