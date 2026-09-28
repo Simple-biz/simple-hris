@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { insertAuditLog } from './audit-log';
+import { selectAllPaged } from './select-all-paged';
 
 // Persistence for locked-in orphanage pay (see references/create_orphanage_pay.sql).
 // One row per (source_file, employee_email): the per-employee orphanage hours and
@@ -198,6 +199,28 @@ export async function listOrphanagePay(sourceFile: string): Promise<Record<strin
     .order('employee_name', { ascending: true });
   if (error || !data) return [];
   return data as Record<string, unknown>[];
+}
+
+/**
+ * Every record for one pay period, PAGED, and THROWING on error. `listOrphanagePay`
+ * above answers `[]` on a failed read, which is fine for a display but would make
+ * "Send to OMS" report a week's hours as absent. A reader whose output leaves the
+ * building must fail loud.
+ */
+export async function listOrphanagePayStrict(sourceFile: string): Promise<Record<string, unknown>[]> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) throw new Error('Supabase client unavailable');
+  if (!sourceFile) throw new Error('source_file required');
+  const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('employee_email, employee_name, pay_week, hours, reg_hours, ot_hours, regular_rate_php, ot_rate_php, amount_php')
+      .eq('source_file', sourceFile)
+      .order('employee_email', { ascending: true })
+      .range(from, to),
+  );
+  if (error) throw new Error(`orphanage_pay read failed: ${error}`);
+  return rows;
 }
 
 /** A locked-in orphanage row reduced to what PAB-coverage mapping needs. */

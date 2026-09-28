@@ -20,6 +20,9 @@
  *     the same blob-CAS-then-record write, the same audit, the same money.
  *   - What is overtime is decided here by the HRIS (40h stack on worked hours), never
  *     read from OMS.
+ *   - "Send to OMS" returns the period's LOCKED-IN figures (what pays + the reg/OT split)
+ *     to OMS's own table. LIVE only; the loading lives in its modal, never the button;
+ *     the server rebuilds every row — this panel contributes only OMS's own addresses.
  *
  * Display + fetch orchestration only. Matching/pricing = `resolveOrphanageHourRows`;
  * the write = the wizard's lock-in, passed in as `onLockIn`.
@@ -32,6 +35,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   CloudDownload,
+  CloudUpload,
   Database,
   FlaskConical,
   Loader2,
@@ -48,10 +52,13 @@ import { cn } from '@/lib/utils';
 import { formatPHP } from '@/lib/format-php';
 import type { OrphanageResolveResult } from '@/lib/payroll/orphanage-rows';
 import { diffOmsPulls } from '@/lib/oms/oms-diff';
+import { isReturnAliasEmail } from '@/lib/oms/oms-return';
 import { buildOmsSavePayload } from '@/lib/oms/oms-save';
 
 import OrphanageOmsLiveConfirmDialog from './OrphanageOmsLiveConfirmDialog';
+import OrphanageOmsReturnDialog from './OrphanageOmsReturnDialog';
 import type { OmsHoursState } from './use-oms-hours';
+import { useOmsReturn } from './use-oms-return';
 
 export interface OrphanageOmsPanelProps {
   /** ISO Sunday of the period being edited. Null = no parseable source file. */
@@ -153,6 +160,27 @@ export default function OrphanageOmsPanel({
     return set;
   }, [pullDiff]);
   const canLoad = !!weekStart && !pulling && status.kind !== 'unconfigured' && status.kind !== 'checking';
+
+  // ── Send to OMS ───────────────────────────────────────────────────────────
+  const omsReturn = useOmsReturn({ sourceFile, weekStart });
+  /** hrisEmail → the address OMS itself sent, from the current pull. Relabel only —
+   *  the server builds the rows and the money; a pair it would refuse is left out here. */
+  const returnAliases = useMemo(() => {
+    const out: Record<string, string> = {};
+    if (!pull || !resolved) return out;
+    const rawByLine = new Map(pull.rows.map((r) => [r.line, r.email]));
+    for (const r of resolved.ok) {
+      const omsEmail = rawByLine.get(r.line)?.trim();
+      const key = r.emailKey.trim().toLowerCase();
+      if (omsEmail && isReturnAliasEmail(omsEmail) && isReturnAliasEmail(key)) out[key] = omsEmail;
+    }
+    return out;
+  }, [pull, resolved]);
+  const sendBlockedReason =
+    isReplay ? 'Replaying a past period — nothing is sent from here'
+    : testMode ? 'Switch Test off to send — Test mode writes nothing, anywhere'
+    : !weekStart || !sourceFile ? 'No pay period is loaded'
+    : null;
 
   // ── the indicator ────────────────────────────────────────────────────────
   const indicator = (() => {
@@ -648,6 +676,8 @@ export default function OrphanageOmsPanel({
           )}
         </AnimatePresence>
       </CardContent>
+
+      <OrphanageOmsReturnDialog state={omsReturn} periodLabel={periodLabel} aliases={returnAliases} />
 
       <OrphanageOmsLiveConfirmDialog
         open={confirmOpen}

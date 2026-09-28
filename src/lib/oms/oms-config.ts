@@ -2,9 +2,12 @@
  * Orphanage Management System (OMS) — connection + schema configuration, from env.
  *
  * OMS is a SEPARATE Supabase project where the orphanage team prepares and approves
- * each week's hours. The HRIS reads it; it never writes to it. Everything here is
- * server-only: none of these names carries `NEXT_PUBLIC_`, and the route that uses
- * them returns rows, never this object.
+ * each week's hours. The HRIS READS their hours table, and since 2026-09-28 (Kane: "i
+ * mean to OMS") WRITES exactly one thing back: the "Send to OMS" rows, appended to ONE
+ * table OMS owns and names in `OMS_RETURN_TABLE` (readOmsReturnConfig). It never
+ * updates or deletes anything in OMS, and never writes the hours table. Everything
+ * here is server-only: none of these names carries `NEXT_PUBLIC_`, and the routes that
+ * use them return rows, never this object.
  *
  * Identifiers (table and column names) come from env so the OMS team can rename
  * without a deploy, but every one of them is regex-checked before it reaches a query
@@ -135,4 +138,47 @@ export function readOmsConfig(env: Env = process.env): OmsConfigResult {
       approvedValue: read(env, OMS_ENV.approvedValue) || DEFAULTS.approvedValue,
     },
   };
+}
+
+/** The one OMS table the HRIS may write — "Send to OMS". Column names are fixed
+ *  (OMS_RETURN_COLUMNS, pinned against the DDL in orphanage-oms-pull.md). */
+export const OMS_RETURN_TABLE_ENV = 'OMS_RETURN_TABLE';
+
+export interface OmsReturnConfig {
+  url: string;
+  key: string;
+  table: string;
+}
+
+export type OmsReturnConfigResult =
+  | { ok: true; config: OmsReturnConfig }
+  | { ok: false; reason: string; missing: string[] };
+
+/**
+ * Configuration for the write side. Same URL + key as the read side, plus the table
+ * name — which has NO default on purpose: a write to another system never goes to a
+ * guessed table. Unset ⇒ "Sending is not set up", naming the variable.
+ */
+export function readOmsReturnConfig(env: Env = process.env): OmsReturnConfigResult {
+  const base = readOmsConfig(env);
+  if (!base.ok) return base;
+  const table = read(env, OMS_RETURN_TABLE_ENV);
+  if (!table) {
+    return {
+      ok: false,
+      reason: `Sending to OMS is not set up — set ${OMS_RETURN_TABLE_ENV} to the table OMS created for it`,
+      missing: [OMS_RETURN_TABLE_ENV],
+    };
+  }
+  if (!isSafeOmsIdentifier(table)) {
+    return { ok: false, reason: `${OMS_RETURN_TABLE_ENV} is not a valid table name`, missing: [OMS_RETURN_TABLE_ENV] };
+  }
+  if (table === base.config.table) {
+    return {
+      ok: false,
+      reason: `${OMS_RETURN_TABLE_ENV} names OMS's hours table — the HRIS never writes that table`,
+      missing: [OMS_RETURN_TABLE_ENV],
+    };
+  }
+  return { ok: true, config: { url: base.config.url, key: base.config.key, table } };
 }

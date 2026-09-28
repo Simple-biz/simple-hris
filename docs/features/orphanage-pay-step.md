@@ -255,6 +255,10 @@ What closed, and what proves it:
   period on the Load button only (a manual Refresh button checks the count; nothing polls), TEST mode (default, session-only) writes nothing, LIVE
   rides the paste's lock-in after a confirm dialog — [orphanage-oms-pull.md](./orphanage-oms-pull.md).
   The locked-in list and the reconciliation panels sit OUTSIDE the swap.
+- **Send to OMS** (2026-09-28, LIVE only) returns this step's LOCKED-IN figures to OMS's own
+  table: the blob amount that pays, the record's reg/OT split, and the reconciliation verdict
+  per row. The server rebuilds the rows from the two carriers; the tab never sends money. It
+  reads both carriers and writes neither — [orphanage-oms-pull.md § Sending to OMS](./orphanage-oms-pull.md#sending-to-oms).
 - **Step heading is plain** (2026-09-16, Kane: *"delete this gradient AI Slop card"*): an
   `h2` + the pay-period line + the "No orphanage hours this week" button in one flat row.
   The rose gradient banner card, its eyebrow and its column-format prose are gone — the

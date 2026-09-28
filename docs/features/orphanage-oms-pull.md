@@ -10,6 +10,10 @@ matched, which hours are regular and which are overtime, and what they price to.
 The pay half of the step is still [orphanage-pay-step.md](./orphanage-pay-step.md) — this
 document adds one input surface and changes no rule about money.
 
+Since 2026-09-28 the tab also sends the other way: **Send to OMS** returns each person's
+regular and overtime hours and the amount the HRIS pays them to a table OMS owns, so the
+orphanage team can report it to accounting ([§ Sending to OMS](#sending-to-oms)).
+
 ## Key files
 
 | Piece | File |
@@ -27,6 +31,12 @@ document adds one input surface and changes no rule about money.
 | The tab | `src/components/payroll/OrphanageOmsPanel.tsx` |
 | LIVE confirm | `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` |
 | Section strip · lock-in wiring | `src/components/PayrollWizard.tsx` — `ORPHANAGE_SECTIONS`, `orphanageResolveCtx`, `lockInResolvedOrphanageRows`, `lockInOmsRows` |
+| Send to OMS — row builder (blob + records → rows, verdict, aliases, week) | `src/lib/oms/oms-return.ts` (+ `.test.ts`, which also pins the DDL below) |
+| Send to OMS — write config (`OMS_RETURN_TABLE`) | `src/lib/oms/oms-config.ts` `readOmsReturnConfig` |
+| Send to OMS — OMS write (probe · ONE insert · newest send) | `src/lib/oms/oms-return-write.ts` |
+| Send to OMS — strict paged records read | `src/lib/supabase/orphanage-pay-db.ts` `listOrphanagePayStrict` |
+| Send to OMS — route | `app/api/orphanage-pay/oms/return/route.ts` — `GET ?source_file=&week_start=` · `POST` |
+| Send to OMS — client state · modal | `src/components/payroll/use-oms-return.ts` · `OrphanageOmsReturnDialog.tsx` |
 
 ## One resolver, two doors
 
@@ -135,6 +145,45 @@ reason and is written in **no** mode. The fix is in OMS or the rates, then pull 
 `orphanage_pay` gains no `source` column for this: provenance lives in the audit row
 above. If "which weeks came from OMS" ever needs to be queryable, that is a migration.
 
+## Sending to OMS
+
+Kane, 2026-09-26: *"after they provide the hours we calculate it and send it back with the
+Emails, Hours that were Regular and OT and the amount as well so they can report it to
+accounting … I want the loading not to be in the button but in a small modal."* Until
+2026-09-28 this document said *"OMS itself is read only"*; Kane repealed that on the record
+(*"i mean to OMS"*, session `a3cfb82b`, audit item 235). The HRIS now writes to OMS in
+exactly **one** way, described here, and nowhere else.
+
+| Rule | Why |
+| --- | --- |
+| **One table, append only.** The HRIS INSERTs into the table named in `OMS_RETURN_TABLE` and nothing else — no UPDATE, no DELETE, never OMS's hours table (`readOmsReturnConfig` refuses that name). | We are a guest in their database. A re-send is a new `push_id`; OMS reads the newest per `week_start`. Nothing we sent can be rewritten by us afterwards. |
+| **`OMS_RETURN_TABLE` has no default.** Unset ⇒ the modal says "Sending to OMS is not set up" and names the variable. | A write to someone else's system never goes to a guessed table. |
+| **The server rebuilds every row** from the SAVED carriers — the additions blob (`orphanageAmounts`, what PAYS) and `orphanage_pay` (hours, reg/OT split, rates) — via `buildOmsReturnRows`. The tab sends only `source_file`, `week_start` and `aliases`. | A tab holding stale state is how the 2026-08-18 correction was reverted ([orphanage-pay-step.md § incident](./orphanage-pay-step.md)). It must not be able to send stale money into another company's accounting. |
+| **The amount is the blob's, never the record's `amount_php`.** Each row also carries `verdict` = `reconcileLockedOrphanageAmount` (`ok` / `amount_mismatch` / `ot_underpriced` / `unverifiable`). | The blob is what is paid; the verdict says whether it agrees with its own hours × rates, so OMS reports what was paid and can see where it is doubtful. Re-pricing stays a human action on the step. |
+| **A hand-typed amount goes with hours BLANK** (`hours`/`regular_hours`/`ot_hours` null, verdict `unverifiable`). | It has no record; inventing hours for it would be a fabricated figure. |
+| **Hours on record with NO amount on the column are not sent** — the modal counts them (red line). | They pay ₱0 today (the step's red panel). Sending hours with ₱0, or the record's amount, would report something nobody was paid. Fix on the step, then send. |
+| **A corrupt blob amount refuses the whole send** (422), and so do two blob keys that differ only in case. | A partial accounting report that silently omits a person is worse than none. |
+| **The week is derived** from the source file's parsed date range (`weekStartFromSourceFile`), and a tab naming a different week is refused (400). | A week's money must never land under another week's label ([[orphanage-source-file-drift-hides-a-week]]). |
+| **ONE insert per send — all rows or none.** Never chunked. | A half-landed send is a report missing people with nothing saying so. |
+| **`cycle_locked` rides on every row** = the dispatch lock (`payroll.dispatch_locked`, global) at send time. Sending is allowed before the lock. | Amounts can still move until the lock (Re-price, Restore, a hand edit). The flag tells OMS whether a figure is final instead of blocking a send. |
+| **`work_email` is OMS's own address when the tab's current pull carried it** (`aliases`, relabel only — they can neither add a row nor change a figure; a malformed pair is a 400, never a silent drop). `hris_email` always carries the address the HRIS pays under. | OMS matched on its address; the Additions row may key someone by an alternate one. Without a pull, `work_email = hris_email` (measured 2026-09-21: all 156 orphanage emails were the GML Work Email). |
+| **LIVE only.** The button is disabled in TEST ("Test mode writes nothing, anywhere") and in replay. The route cannot see the switch — the panel enforces it, exactly like the LIVE lock-in. | TEST's contract (§ TEST and LIVE) is that nothing is written anywhere; a rehearsal must not reach their accounting. |
+| **Audited once per send**: `wizard.orphanage_oms_returned` (push_id, OMS table, week, source file, count, total, cycle_locked, verdict counts, the unsent emails, and up to 300 rows as sent). | OMS holds the rows; the HRIS keeps its own proof of what it sent and who pressed the button. |
+
+**The modal carries the loading, and the motion may not lie.** Opening it runs the GET
+(the same builder as the send, so the preview IS what goes). While the POST is out, rows
+stream HRIS → OMS and the bar eases toward 90% on an estimate (`predictedProgress`, the
+[[payroll-wizard-step-load-progress]] rule: an estimate never fills the bar). Only OMS's
+ack takes the bar to 100% and ticks the rows — together, because the insert is one
+statement. A failure turns the bar rose and sends every row back to queued. A **timeout**
+is ambiguous (the insert may have landed), and the modal says so: reopen to read OMS's
+newest copy before sending again. The modal cannot be dismissed while sending. "OMS already
+holds a send for this week" is read back **from OMS**, not from our audit row.
+
+**What looks like a bug and is not:** the GET answers 200 even when sending is not set
+up — the preview is real either way and the modal names the missing piece. The probe
+needs SELECT on the table, so OMS must grant INSERT **and** SELECT.
+
 ## The strip
 
 `Paste data | Orphanage Management System` is a section strip in the step-4
@@ -158,7 +207,9 @@ node --import tsx scripts/apply-orphanage-oms-hours-migration.mts --apply   # co
 ```
 
 Until applied, the OMS tab's Save button reads "Saving is not ready" with that command.
-Everything else on the tab works without it. OMS itself is read only.
+Everything else on the tab works without it. OMS is read-only except for the one
+append-only table in [§ Sending to OMS](#sending-to-oms). That exception was ruled by Kane
+on 2026-09-28; until then this line said "OMS itself is read only".
 
 Env, server-only (`.env.example` carries the full block). **PENDING — Kane fills
 `.env.local`:**
@@ -166,7 +217,8 @@ Env, server-only (`.env.example` carries the full block). **PENDING — Kane fil
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `OMS_SUPABASE_URL` | yes | — | the OMS project URL |
-| `OMS_SUPABASE_KEY` | yes | — | a key with READ access to the hours table only |
+| `OMS_SUPABASE_KEY` | yes | — | a key with SELECT on the hours table, plus INSERT + SELECT on the return table (and nothing else) |
+| `OMS_RETURN_TABLE` | for Send to OMS | **none** | the table OMS created from the DDL below; unset ⇒ "Sending to OMS is not set up" |
 | `OMS_HOURS_TABLE` | no | `orphanage_hours` | |
 | `OMS_HOURS_COL_WEEK_START` | no | `week_start` | DATE — the week's Sunday |
 | `OMS_HOURS_COL_EMAIL` | no | `work_email` | |
@@ -181,3 +233,47 @@ variable name**, and no value is ever echoed. Without URL + key the route answer
 `configured:false` and the tab says "OMS is not configured". **Until the OMS schema is
 confirmed against these names, the week filter is an assumption** (a DATE column holding
 the Sunday); if OMS keys the week differently, the column env var changes, not the code.
+
+### Send to OMS — PENDING, three steps outside this repo
+
+1. **PENDING — the OMS team creates the table in THEIR project** (this file is the contract;
+   `oms-return.test.ts` fails if the column list below drifts from `OMS_RETURN_COLUMNS`):
+
+```sql
+create table public.hris_orphanage_returns (
+  push_id           uuid           not null,
+  pushed_at         timestamptz    not null,
+  pushed_by         text           not null,
+  source_file       text           not null,
+  week_start        date           not null,
+  pay_week          text,
+  work_email        text           not null,
+  hris_email        text           not null,
+  employee_name     text,
+  hours             numeric(12,4),
+  regular_hours     numeric(12,4),
+  ot_hours          numeric(12,4),
+  regular_rate_php  numeric(14,4),
+  ot_rate_php       numeric(14,4),
+  amount_php        numeric(14,2)  not null,
+  verdict           text           not null check (verdict in ('ok', 'amount_mismatch', 'ot_underpriced', 'unverifiable')),
+  cycle_locked      boolean        not null,
+  primary key (push_id, hris_email)
+);
+create index hris_orphanage_returns_week_idx on public.hris_orphanage_returns (week_start, pushed_at desc);
+-- The role behind OMS_SUPABASE_KEY needs exactly these two privileges here:
+grant select, insert on public.hris_orphanage_returns to <that role>;
+-- If RLS is on and the key is not service_role, add INSERT + SELECT policies for that role.
+```
+
+   OMS reads a week as: the rows of the newest `push_id` for that `week_start`. Older
+   pushes stay as history; the HRIS never deletes them.
+2. **PENDING — Kane sets `OMS_RETURN_TABLE`** (e.g. `hris_orphanage_returns`) in `.env.local`
+   **and Vercel production**. Unset ⇒ the modal says so and Send stays disabled.
+3. **PENDING — the "Send to OMS" button is NOT wired into the panel.** The modal, hook and
+   gating (`sendBlockedReason`, `returnAliases`, `omsReturn.open` in `OrphanageOmsPanel.tsx`)
+   are in place and the dialog is mounted, but the one edit that adds the button to the
+   Refresh / Load row was refused by the session's permission classifier on 2026-09-28 and
+   was not retried. Until someone adds it, nothing opens the modal. Audit item 235.
+
+No HRIS migration: what we sent is recorded in the audit row and held by OMS's own table.

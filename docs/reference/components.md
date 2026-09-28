@@ -265,6 +265,23 @@ icon-in-title, amber verb+object confirm, outline Cancel, undismissable while `b
 in words that the amounts reach Additions, Validation, Dispatch and the paystub. Display-only;
 the write is the wizard's lock-in.
 
+## `src/components/payroll/OrphanageOmsReturnDialog.tsx` · `use-oms-return.ts`
+
+**Send to OMS** (2026-09-28): the small modal that carries the loading for returning the
+period's locked-in figures to OMS. `useOmsReturn({ sourceFile, weekStart })` is a state
+machine (`closed → preparing → ready → sending → sent | error`). `open()` runs the GET (the
+server-built preview + OMS's newest copy), and `send(aliases)` runs the POST. The tab
+contributes only `aliases`, OMS's own address per person from the current pull; the server
+rebuilds every row and every peso. The dialog shows an HRIS → OMS strip with dots streaming
+only while the request is out, and a bar driven by `predictedProgress` from rAF that never
+fills on the estimate. It reaches 100% and ticks the rows only on OMS's ack, all together
+(one insert). A failure sends the rows back to queued. The dialog also shows People /
+Regular h / OT h / Amount tiles (`AnimatedNumber`) and notices for: not set up, not locked,
+verdicts, hours without an amount, and OMS's latest send. It can't be dismissed while
+sending; reduced motion gets crossfades only. Mounted by `OrphanageOmsPanel`; **the button
+that opens it is PENDING** (see the feature doc's Deploy notes). Doc:
+[orphanage-oms-pull.md § Sending to OMS](../features/orphanage-oms-pull.md#sending-to-oms).
+
 ---
 
 ## `src/components/payroll/OrphanageVisits.tsx`
@@ -2238,6 +2255,8 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/payroll/OrphanageClearConfirmDialog.tsx` | component | *this file* · [orphanage-pay-step](../features/orphanage-pay-step.md) |
 | `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
 | `src/components/payroll/OrphanageOmsPanel.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
+| `src/components/payroll/OrphanageOmsReturnDialog.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
+| `src/components/payroll/use-oms-return.ts` | hook | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
 | `src/components/payroll/OrphanageVisits.tsx` | component | *this file* |
 | `src/components/payroll/PabDecisionConfirmDialog.tsx` | component | [orphanage-pay-step](../features/orphanage-pay-step.md) |
 | `src/components/payroll/PabDisputeQueue.tsx` | component | *this file* · [bank-preferred-routing](../features/bank-preferred-routing.md) · [delete-authorization](../features/delete-authorization.md) |

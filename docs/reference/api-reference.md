@@ -2410,7 +2410,7 @@ Granular per-row checklist API (rows persist atomically as they're typed — no 
 
 ### Orphanage Management System (OMS) pull — Payroll Wizard Orphanage step
 
-Read-only against a SEPARATE Supabase project (env `OMS_*`, server-only; see
+Against a SEPARATE Supabase project (env `OMS_*`, server-only). Read-only EXCEPT `oms/return`, the one append-only write into OMS (2026-09-28). See
 [orphanage-oms-pull.md](../features/orphanage-oms-pull.md)). Gate:
 `requireFeatureAccess('accounting','payroll_wizard','view')`. Every branch answers JSON.
 
@@ -2420,6 +2420,8 @@ Read-only against a SEPARATE Supabase project (env `OMS_*`, server-only; see
 | `GET /api/orphanage-pay/oms/saves?week_start=YYYY-MM-DD` | The week's newest SAVE from `orphanage_oms_hours` (the HRIS's own append-only record of a pull + its resolution; NOT money), paged. `503 { tableReady:false, reason }` until the migration is applied. [saves/route.ts](app/api/orphanage-pay/oms/saves/route.ts) |
 | `POST /api/orphanage-pay/oms/saves` | `requireFeatureEdit`. Body = `buildOmsSavePayload` output (week_start, mode test\|live, rows[] raw + resolved). One append-only snapshot under a new `save_id`; validated against the table's shape (`400` otherwise). Audit `wizard.orphanage_oms_saved`. Never touches `orphanage_pay` or the additions blob. |
 | `GET /api/orphanage-pay/oms?mode=pull&week_start=YYYY-MM-DD` | The APPROVED rows for that Sunday's week, paged (`selectAllPaged`), capped at `OMS_MAX_ROWS` with a `truncated` flag. Fired ONLY by the Load Orphanage Hours button. `503 { configured:false, reason, missing }` when env is unset (names the variable, never a value); `502` when OMS is unreachable; `400` on a bad mode/week. |
+| `GET /api/orphanage-pay/oms/return?source_file=&week_start=YYYY-MM-DD` | Send to OMS preview. It uses the same builder as the POST: the period LOCKED-IN rows REBUILT from the saved additions blob (amount) + `orphanage_pay` (reg/OT split), each with its reconciliation verdict, plus totals, `recordsWithoutAmount`, `cycleLocked` and the newest send OMS holds (`latest`, read back FROM OMS). It answers **200 even when sending is not set up** (`configured`/`tableReady` false + `reason`), because the preview is real either way. `400` when `week_start` is not the source file’s parsed week; `422` on a corrupt blob amount. Gate `view`. |
+| `POST /api/orphanage-pay/oms/return` | `requireFeatureEdit`. Body `{ source_file, week_start, aliases? }`. `aliases` = hrisEmail → OMS’s own address, relabel only; a malformed pair is a 400. It rebuilds the rows server-side, then ONE append-only insert into `OMS_RETURN_TABLE` (all rows or none) + audit `wizard.orphanage_oms_returned`. It returns `{ pushId, pushedAt, sent, totalPhp, cycleLocked }`. Errors: `503` when not set up or the table/grant is missing (reason names it) · `409` nothing locked in · `502` OMS refused/unreachable. TEST mode is enforced by the panel. |
 
 ### 3rd-Party Vendors (Orphanage)
 
@@ -3248,6 +3250,7 @@ feature doc and in no hand-written section here.**
 | `/api/orphanage-pay` | GET, POST, DELETE | `requireFeatureAccess` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · [orphanage-pab-coverage](../features/orphanage-pab-coverage.md) · *this file* |
 | `/api/orphanage-pay/oms` | GET | `requireFeatureAccess` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · *this file* |
 | `/api/orphanage-pay/oms/saves` | GET, POST | `requireFeatureAccess` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · *this file* |
+| `/api/orphanage-pay/oms/return` | GET, POST | `requireFeatureAccess` · `requireFeatureEdit` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · *this file* |
 | `/api/orphanage-vendor-invoices` | GET, POST | `requireFeatureAccess` | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
 | `/api/orphanage-vendor-invoices/[id]` | PATCH, DELETE | — **none found** | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
 | `/api/orphanage-vendors` | GET, POST | `requireFeatureAccess` | [third-party-vendors](../features/third-party-vendors.md) · *this file* |

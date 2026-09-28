@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
-import { OMS_ENV, isSafeOmsIdentifier, readOmsConfig } from './oms-config';
+import { OMS_ENV, OMS_RETURN_TABLE_ENV, isSafeOmsIdentifier, readOmsConfig, readOmsReturnConfig } from './oms-config';
 
 const base = {
   OMS_SUPABASE_URL: 'https://oms-ref.supabase.co',
@@ -65,4 +65,38 @@ test('a trailing slash on the URL is trimmed and a non-URL is refused', () => {
   if (r.ok) assert.equal(r.config.url, 'https://oms-ref.supabase.co');
   const bad = readOmsConfig({ ...base, OMS_SUPABASE_URL: 'not a url' });
   assert.equal(bad.ok, false);
+});
+
+test('Send to OMS: no table name ⇒ NOT set up, naming the variable — a write never goes to a guessed table', () => {
+  const r = readOmsReturnConfig(base);
+  assert.equal(r.ok, false);
+  if (!r.ok) {
+    assert.deepEqual(r.missing, [OMS_RETURN_TABLE_ENV]);
+    assert.match(r.reason, /OMS_RETURN_TABLE/);
+  }
+  const blank = readOmsReturnConfig({ ...base, OMS_RETURN_TABLE: '   ' });
+  assert.equal(blank.ok, false);
+});
+
+test('Send to OMS: the read side must be configured first; the key is never echoed', () => {
+  const r = readOmsReturnConfig({ OMS_RETURN_TABLE: 'hris_orphanage_returns' });
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.deepEqual(r.missing, [OMS_ENV.url, OMS_ENV.key]);
+});
+
+test('Send to OMS: a malformed table name is refused by name; the hours table is refused outright', () => {
+  const bad = readOmsReturnConfig({ ...base, OMS_RETURN_TABLE: 'x; drop table y' });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.reason.includes('drop table'), false);
+  const hours = readOmsReturnConfig({ ...base, OMS_RETURN_TABLE: 'orphanage_hours' });
+  assert.equal(hours.ok, false);
+  if (!hours.ok) assert.match(hours.reason, /never writes that table/);
+  const custom = readOmsReturnConfig({ ...base, OMS_HOURS_TABLE: 'weekly_hours', OMS_RETURN_TABLE: 'weekly_hours' });
+  assert.equal(custom.ok, false);
+});
+
+test('Send to OMS: set ⇒ the shared URL + key and the named table', () => {
+  const r = readOmsReturnConfig({ ...base, OMS_RETURN_TABLE: 'hris_orphanage_returns' });
+  assert.equal(r.ok, true);
+  if (r.ok) assert.deepEqual(r.config, { url: 'https://oms-ref.supabase.co', key: 'eyJ.fake', table: 'hris_orphanage_returns' });
 });
