@@ -31,7 +31,6 @@ import {
 import { resolveLiveOverlayWindowForToday } from "@/lib/hubstaff/live-window-server";
 import { normEmail } from "@/lib/email/norm-email";
 import { seedMissingDisbursementRecords } from "@/lib/payroll/disbursement-reports";
-import { getSessionActor } from "@/lib/auth/session-actor";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { rejectWhilePayrollProcessing } from "@/lib/payroll/processing-guard";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
@@ -430,7 +429,7 @@ export async function DELETE(req: NextRequest) {
       console.warn("[DELETE /api/hubstaff-hours] payroll.available cleanup failed:", notifyErr);
     }
 
-    const actor = await getSessionActor();
+    const actor = { user_name: authz.sessionEmail, user_role: authz.roles[0] ?? 'user' };
     void insertAuditLog({
       user_name:   actor.user_name,
       user_role:   actor.user_role,
@@ -507,7 +506,7 @@ export async function PATCH(req: NextRequest) {
       }
       const result = await setHubstaffUploadCurrentBySourceFile(sourceFile);
 
-      const actor = await getSessionActor();
+      const actor = { user_name: authz.sessionEmail, user_role: authz.roles[0] ?? 'user' };
       void insertAuditLog({
         user_name:   actor.user_name,
         user_role:   actor.user_role,
@@ -538,7 +537,7 @@ export async function PATCH(req: NextRequest) {
 
     const result = await renameHubstaffSourceFile(from, to);
 
-    const actor = await getSessionActor();
+    const actor = { user_name: authz.sessionEmail, user_role: authz.roles[0] ?? 'user' };
     void insertAuditLog({
       user_name:   actor.user_name,
       user_role:   actor.user_role,
@@ -590,19 +589,30 @@ export async function POST(req: NextRequest) {
 
     const text = await (file as Blob).text();
     const fileName = (file as File).name || form.get("fileName")?.toString() || undefined;
-    const uploadedBy = form.get("uploaded_by")?.toString().trim() || null;
+    // The uploader is the verified session, never the form's `uploaded_by` —
+    // a client-supplied identity is a forged one (audit-log.md §3). Both the
+    // archive row's `uploaded_by` and the `csv.upload` actor used to take the
+    // form value first; a differing form value is now kept only as a claim.
+    const uploadedByClaim = form.get("uploaded_by")?.toString().trim() || null;
+    const uploadedBy = authz.sessionEmail;
     // `mode` is retained in the form payload for back-compat but ignored: every upload
     // is archived and promoted to current. Latest always wins in the Payroll Wizard.
     const { rowCount, uploadId } = await replaceHubstaffHoursFromCsvText(text, fileName, uploadedBy);
 
-    const actor = await getSessionActor();
     void insertAuditLog({
-      user_name:   uploadedBy ?? actor.user_name,
-      user_role:   actor.user_role,
+      user_name:   uploadedBy,
+      user_role:   authz.roles[0] ?? 'user',
       action:      'csv.upload',
       resource:    'hubstaff_hours',
       resource_id: fileName ?? null,
-      details:     { file: fileName ?? 'unknown', rows: rowCount, upload_id: uploadId },
+      details:     {
+        file: fileName ?? 'unknown',
+        rows: rowCount,
+        upload_id: uploadId,
+        ...(uploadedByClaim && uploadedByClaim.toLowerCase() !== uploadedBy.toLowerCase()
+          ? { uploaded_by_claim: uploadedByClaim }
+          : {}),
+      },
       ip_address:  clientIp(req),
     });
 

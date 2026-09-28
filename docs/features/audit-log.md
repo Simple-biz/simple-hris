@@ -342,6 +342,7 @@ ones, session log item 240) found these silent or mis-attributed:
 | `POST /api/orphanage-pay` — the orphanage record upsert on Lock-in / Re-price / OMS lock-in | nothing | `orphanage_pay.records_saved`, the rows as stored |
 | `POST /api/pab-disputes` — Forgive a day from the wizard's PAB calendar | `pab_dispute.submitted` credited to the **employee** | the session; a body `created_by` that differs is kept as `created_by_claim` |
 | `POST /api/cron/sync-master-from-sheet`, `sync-hsl-from-sheet` — the Sync buttons | every run "GSheets Sync" / "System" | a manual click names the session (`trigger: "manual"`); only the scheduled run is the system (`trigger: "cron"`) |
+| `POST /api/hubstaff-hours` — the weekly Hubstaff upload | `csv.upload` actor and the archive row's `uploaded_by` taken from the upload FORM's `uploaded_by` field (a client claim) | the session; a differing form value is kept as `details.uploaded_by_claim`. `csv.delete` / `csv.rename` / `csv.set_current` use the gate's identity instead of the fail-open `getSessionActor()`. Pinned by `actor-from-gate.test.ts` |
 | Wizard FX save, orphanage **Remove all** (client rows) | sent **before** the save, so a failed save left a row for a change that never landed | sent after the save succeeds |
 
 Already audited and unchanged: Hubstaff upload / delete / rename / set current
