@@ -119,6 +119,12 @@
         ],
         "createdAt": "2026-09-28T16:44:01.521Z",
         "reason": "Claude: gray text is only the disabled: state, which also swaps the bg to zinc-200/zinc-800 — never gray on the rose fill"
+      },
+      {
+        "rule": "bounce-easing",
+        "value": "jam-wobble",
+        "createdAt": "2026-09-28T21:03:09.696Z",
+        "reason": "Claude, session 9a92b2cd: jam-wobble is ease-in-out with no overshoot (translateY -1.5px + scaleY 0.92), a literal jellyfish bell-contraction pulse on the playing icon; the detector matched the keyframe name, not bounce/elastic easing"
       }
     ]
   }
