@@ -2302,7 +2302,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/hooks/useNotificationChime.ts` | hook | [hubstaff-zero-hours-gap](../features/hubstaff-zero-hours-gap.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) |
 | `src/hooks/useNotificationCountsByView.ts` | hook | — **no doc** |
 | `src/hooks/useOrientationHistory.ts` | hook | *this file* · [hr-orientation-attendance](../features/hr-orientation-attendance.md) · [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
-| `src/hooks/usePabPeriodSettings.ts` | hook | — **no doc** |
+| `src/hooks/usePabPeriodSettings.ts` | hook | [business-logic §PAB period configuration](./business-logic.md#pab-period-configuration-payrollwizard--additions) (`{ live: true }` = employee Overview only) |
 | `src/hooks/usePagesVisibility.ts` | hook | *this file* |
 | `src/hooks/usePaymentsLive.ts` | hook | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `src/hooks/usePayrollLivePresence.ts` | hook | — **no doc** |

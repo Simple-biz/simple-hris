@@ -11,6 +11,8 @@ import { isWizardAdditionsKey } from '@/lib/payroll/wizard-additions';
 import { isComparePasteKey } from '@/lib/qc/compare-paste';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
+import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { PAB_PERIOD_LIVE_EVENT, PAB_PERIOD_LIVE_TOPIC, isPabPeriodLiveKey } from '@/lib/pab-period-live';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -196,6 +198,17 @@ export async function POST(request: Request) {
 
     const { error } = await upsertAppSetting(body.key, body.value);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    // The PAB period moved: tell every open employee Overview to re-read it.
+    // After the write succeeded, never before; the payload names the key only
+    // (listeners always re-fetch the stored value). Fire-and-forget — a lost
+    // message costs the listener's poll/focus floor, never the save.
+    if (isPabPeriodLiveKey(body.key)) {
+      void broadcastFromServer(PAB_PERIOD_LIVE_TOPIC, PAB_PERIOD_LIVE_EVENT, {
+        key: body.key.trim(),
+        ts: Date.now(),
+      });
+    }
 
     // Leave a trail for the two families that can move money or re-open
     // sessions. The dedicated lock route already audits its own writes; this

@@ -185,6 +185,31 @@ Storage keys in `app_settings`:
 
 Resolution in `usePabPeriodSettings`: the hook exposes `activeMonthResolved`, `activeRange` ( = override for active month if present, else `getPabMonthRange(year, month)`), and legacy `validManualRange`.
 
+#### Live refresh — the employee Overview follows a wizard save *(2026-09-28)*
+
+A PAB Period saved in the wizard (date inputs, Auto-calc, Reset override, month pick) repaints
+every open employee Overview PAB calendar without a reload. `POST /api/app-settings` broadcasts
+`pab-period-sync` / `changed` from the server after a successful write of any
+`PAB_PERIOD_LIVE_KEYS` key (`src/lib/pab-period-live.ts`); `usePabPeriodSettings({ live: true })`
+re-reads on that message, on a channel **re-subscribe** (a drop can swallow a save), on tab
+focus, and every 5 minutes while visible. **Broadcast, never `postgres_changes`** — `app_settings`
+is RLS "Admins only", so a row event never reaches the anon browser. Rules the hook enforces:
+
+- **The message is a re-read signal, never the value.** The payload is `{ key, ts }`; the
+  listener always fetches the stored settings.
+- **Newest read wins** — a slow read landing after a newer one is dropped.
+- **A degraded re-read never repaints a healthy screen.** `fetchPabPeriodSettings` degrades a
+  failed key to `null`, which resolves to the code-default Mon→Fri window — usually not the one
+  Accounting saved. `fetchPabPeriodSettingsWithHealth` reports `failedKeys`, and
+  `pabSettingsReadVerdict` keeps what is on screen. A failed **first** load still paints the
+  defaults (unchanged; nothing better exists yet).
+- **An unchanged re-read keeps the same object** (`samePabPeriodSettings`), so focus and poll
+  reads do not refetch disputes or rebuild the calendar.
+- **Only the employee Overview is live.** The wizard is the writer and re-reads after its own
+  saves; its PAB tab gate relies on `loading` moving only when it asks. The shared hook's
+  foreground/background split keeps live re-reads off `loading`. My Hours' PAB grid
+  (`EmployeeMyHours`) still reads the period on load / month switch only.
+
 #### Override-window containment — custom month is "sticky" everywhere
 
 A custom override **claims every date inside its window** for its month key. Example: the May override runs Jun 1 – Jul 3. A CSV / date in mid-June then belongs to the **May** PAB month, *not* June — because the canonical Monday rule (`getCurrentPabMonth`) would otherwise bucket it as June and miss the override. Three shared helpers in `pab-period-settings.ts` enforce this so every surface resolves the same month:
@@ -239,7 +264,7 @@ Displayed as a card beside the Daily Hours Breakdown:
 
 The PAB period shown on the calendar adapts to what the employee is viewing:
 
-- **"All Time" / default**: period is derived from the **latest parseable date** across merged CSV uploads via `getLatestPabMonthFromColumns()`. When a new week's CSV is uploaded and its dates roll into a new PAB month, the calendar automatically advances. Falls back to today's period (`getCurrentPabMonth()`) if no parseable dates are present.
+- **"All Time" / default**: the **exact period the Payroll Wizard is evaluating** — `usePabPeriodSettings().activeMonthResolved` (`pab_period_active_month`, else today's PAB month) and that month's `activeRange` (the saved override, else `getPabMonthRange`). The calendar must match Accounting, not a locally re-derived month. *(This bullet previously said the default was derived from the latest parseable CSV date via `getLatestPabMonthFromColumns()`; the code stopped doing that when it began mirroring the wizard — corrected 2026-09-28.)* Since 2026-09-28 the hook runs `live`, so a wizard save repaints the calendar without a reload — see *Live refresh* under PAB period configuration.
 - **Specific CSV selected**: period is derived from the **latest parseable date in that file's columns**. When columns are canonical (`monday`, `tuesday`…) they are resolved to ISO via `resolveCanonicalColumnsToIso(row, filename)` so the date math works. Falls back to `inferPabMonthFromColumns()` then `getCurrentPabMonth()`.
 - **Hours always come from merged data**, regardless of the active CSV — so every week in the derived period is populated from every uploaded CSV, not just the slice in the selected file.
 

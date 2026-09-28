@@ -590,7 +590,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   const [allTimeRegularSec, setAllTimeRegularSec] = useState(0);
   const [allTimeOtSec, setAllTimeOtSec] = useState(0);
 
-  const pabPeriodSettings = usePabPeriodSettings();
+  // Live: a PAB Period saved in the Payroll Wizard repaints this calendar
+  // without a reload (server Broadcast + focus/poll floor, pab-period-live.ts).
+  const pabPeriodSettings = usePabPeriodSettings({ live: true });
   /** Per-month Tech Bonus payout-week picks (wizard System Bonus modal); empty = 3rd-week rule. */
   const techWeekOverrides = useMemo(
     () => parseTechBonusWeekOverrides(pabPeriodSettings.techWeekOverridesValue),

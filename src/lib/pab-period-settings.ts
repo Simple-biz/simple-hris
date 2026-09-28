@@ -226,6 +226,20 @@ export function resolvePabRangeForMonth(
 }
 
 export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
+  return (await fetchPabPeriodSettingsWithHealth()).result;
+}
+
+/**
+ * {@link fetchPabPeriodSettings}, plus which keys could NOT be read. A key that
+ * is simply absent reads as `null` and is healthy; a non-OK response or a
+ * network error is `failedKeys`. The distinction is what lets a RE-read keep
+ * the window already on screen: degraded, the result carries the code-default
+ * Mon→Fri window, which is usually not the one Accounting saved.
+ */
+export async function fetchPabPeriodSettingsWithHealth(): Promise<{
+  result: PabPeriodFetchResult;
+  failedKeys: string[];
+}> {
   const keys = [
     PAB_PERIOD_MANUAL_KEY,
     PAB_PERIOD_START_KEY,
@@ -242,13 +256,19 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
   // settings instead of an unhandled rejection that pops the Next dev overlay and
   // blocks navigation. Callers get sensible defaults; real values return once the
   // API is reachable again.
-  const [mj, sj, ej, ov, am, ex, tw] = await Promise.all(
+  const reads = await Promise.all(
     keys.map((key) =>
       fetch(`/api/app-settings?key=${encodeURIComponent(key)}`, { cache: 'no-store' })
-        .then((res) => (res.ok ? (res.json() as Promise<{ value: string | null }>) : { value: null }))
-        .catch(() => ({ value: null as string | null })),
+        .then(async (res) =>
+          res.ok
+            ? { value: ((await res.json()) as { value: string | null }).value ?? null, ok: true }
+            : { value: null as string | null, ok: false },
+        )
+        .catch(() => ({ value: null as string | null, ok: false })),
     ),
   );
+  const failedKeys = keys.filter((_, i) => !reads[i].ok);
+  const [mj, sj, ej, ov, am, ex, tw] = reads;
 
   const overrides = parsePabPeriodOverrides(ov.value);
   const exclusions = parsePabPeriodExclusions(ex.value);
@@ -266,7 +286,7 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     }
   }
 
-  return {
+  const result: PabPeriodFetchResult = {
     manual: mj.value === 'true',
     start: parseLocalDateFromIso(sj.value),
     end: parseLocalDateFromIso(ej.value),
@@ -275,4 +295,55 @@ export async function fetchPabPeriodSettings(): Promise<PabPeriodFetchResult> {
     activeMonth: parseYearMonthKey(am.value),
     techWeekOverridesValue: tw.value,
   };
+  return { result, failedKeys };
+}
+
+/**
+ * What a settings read that just landed may do to the screen.
+ *  - `stale`: a newer read was issued while this one was in flight — drop it.
+ *  - `keep`: this read failed on some key but what is on screen came from a
+ *    read where every key answered — keep it. A degraded read carries the
+ *    code-default Mon→Fri window, usually NOT the one Accounting saved, so
+ *    painting it would move the employee's PAB window on a network blip.
+ *  - `apply`: paint it (healthy, or nothing better is on screen).
+ */
+export function pabSettingsReadVerdict(input: {
+  seq: number;
+  latestSeq: number;
+  degraded: boolean;
+  screenHealthy: boolean;
+}): 'apply' | 'stale' | 'keep' {
+  if (input.seq !== input.latestSeq) return 'stale';
+  if (input.degraded && input.screenHealthy) return 'keep';
+  return 'apply';
+}
+
+function sameDay(a: Date | null, b: Date | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.getTime() === b.getTime();
+}
+
+/**
+ * True when two reads describe the same settings. A re-read that changed
+ * nothing must keep the SAME object on screen: every PAB memo on the employee
+ * Overview keys off these Maps' identity, and a fresh-but-equal copy would
+ * refetch disputes and rebuild the calendar on every focus and poll.
+ */
+export function samePabPeriodSettings(a: PabPeriodFetchResult, b: PabPeriodFetchResult): boolean {
+  if (a.manual !== b.manual || !sameDay(a.start, b.start) || !sameDay(a.end, b.end)) return false;
+  if (a.techWeekOverridesValue !== b.techWeekOverridesValue) return false;
+  if ((a.activeMonth?.year ?? null) !== (b.activeMonth?.year ?? null)) return false;
+  if ((a.activeMonth?.month ?? null) !== (b.activeMonth?.month ?? null)) return false;
+  if (a.overrides.size !== b.overrides.size) return false;
+  for (const [k, v] of a.overrides) {
+    const w = b.overrides.get(k);
+    if (!w || !sameDay(v.start, w.start) || !sameDay(v.end, w.end)) return false;
+  }
+  if (a.exclusions.size !== b.exclusions.size) return false;
+  for (const [k, v] of a.exclusions) {
+    const w = b.exclusions.get(k);
+    if (!w || w.size !== v.size) return false;
+    for (const e of v) if (!w.has(e)) return false;
+  }
+  return true;
 }

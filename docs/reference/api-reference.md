@@ -851,6 +851,13 @@ Creates or updates an application setting.
 **Tables**: Upserts to `app_settings`
 **Service Role**: Not required (uses utility function)
 
+**Side effect — PAB period broadcast** *(2026-09-28)*: after a **successful** write of a PAB
+period key (`pab_period_overrides`, `pab_period_active_month`, legacy `pab_period_manual` /
+`_start` / `_end` — `PAB_PERIOD_LIVE_KEYS` in `src/lib/pab-period-live.ts`), the route sends
+Realtime Broadcast `pab-period-sync` / `changed` with `{ key, ts }` via `broadcastFromServer`,
+fire-and-forget. The payload names the key only — listeners (the employee Overview) always
+re-fetch the stored value. A failed write never announces.
+
 ---
 
 ## 8. Import Daily Report
