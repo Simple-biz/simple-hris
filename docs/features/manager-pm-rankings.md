@@ -123,7 +123,12 @@ order, and a footer counts it.
    (18 rows on 2026-09-27).
 2. **Not a shared-team split** (`bonus_catalog_assignments.shared_team`). HR's
    `New_Hires*1000/HR_Team_Members`, QC's and Accounting's Dancing Queen pay every member the same
-   share, so ranking them says nothing about who performed.
+   share, so ranking them says nothing about who performed. **The figures are the team's too**
+   (measured read-only 2026-09-28): every member's variables are identical in every week (HR 0 of
+   20 weeks differ, QC 0 of 23, Accounting 0 of 22). Ranked anyway, the last 4 weeks tie everyone
+   at #1 (HR 8, QC 9, Accounting 18), and a longer window orders people only by which weeks they
+   were on the team. QC's per-officer `qc_score_assignments` is a seeded-random even deal, not
+   performance. Kane asked for HR and QC boards on 2026-09-28; hard-stopped (Open items 247).
 3. **Not an employee-scoped bonus.** One person's own bonus (Scott's, Lead Receptionist, Jackie) is
    not the team's KPI.
 
