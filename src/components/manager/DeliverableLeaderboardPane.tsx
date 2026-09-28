@@ -30,10 +30,12 @@ import {
   kpiVariableLabel,
   metricShowsValues,
   projectDeliverableWeeks,
+  weekRankLookup,
   type DeliverableMetricInfo,
   type DeliverableWeek,
   type MoneyOrder,
 } from '@/lib/manager/deliverable-rankings';
+import type { WeekRankSource } from '@/lib/manager/ranking-history';
 
 export interface DeliverableLeaderboardView extends LeaderboardView {
   /** `all`, or a KPI variable from the payload's `metrics`. */
@@ -96,6 +98,14 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       applyMoneyOrder(rows, ctx.basis === 'daily' ? dailyOrder : order, ctx.window, metric),
     [order, dailyOrder, metric],
   );
+  // The View modal's weekly ranks: the server's bonus order for each week, positions
+  // only. A payload cached before it existed has no `weeks`, so the lookup is null and
+  // the modal says the order is loading until the revalidation lands. The counts are
+  // never ranked here: that would contradict the board's bonus order.
+  const weekRankFor = useCallback(
+    (member: M): WeekRankSource => ({ kind: 'server', lookup: weekRankLookup(order, member, metric) }),
+    [order, metric],
+  );
   const showValues = metricShowsValues(metric, metrics);
   const unitLabel = single ? kpiVariableLabel(single.key) : metric === ALL_METRIC ? null : (labels[metric] ?? metric);
   const pickedLabel = !single && metric !== ALL_METRIC ? (labels[metric] ?? metric) : null;
@@ -121,6 +131,8 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       partLabels={!single && metric === ALL_METRIC && showValues ? shownLabels : undefined}
       animationKey={metric}
       reorder={reorder}
+      weekRankFor={weekRankFor}
+      weekRankedBy={`Each week is ranked by the ${pickedLabel ? `${pickedLabel} ` : ''}bonus earned that week; the amounts are never shown.`}
       showValues={showValues}
       rankNote={
         pickedLabel ? `Ranked by ${pickedLabel} bonus earned · amounts hidden` : 'Ranked by bonus earned · amounts hidden'

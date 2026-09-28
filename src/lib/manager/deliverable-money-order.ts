@@ -29,6 +29,7 @@ import { normEmail } from '@/lib/email/norm-email';
 import { weekEndFromStart } from '@/lib/payroll/manila-week';
 import {
   computeLeaderboard,
+  countedWindowWeeks,
   type AverageWindow,
   type DaysWorkedRow,
 } from '@/lib/manager/appointment-averages';
@@ -41,8 +42,10 @@ import {
   type ApptRosterMember,
   type ApptStatusRow,
   type LockSettingRow,
+  type RosterPerson,
 } from '@/lib/manager/appointment-rankings';
 import { isSpRankingRow } from '@/lib/manager/sp-ranking-row';
+import { rankWeek } from '@/lib/manager/ranking-history';
 import {
   ALL_METRIC,
   kpiItemFromVars,
@@ -50,6 +53,7 @@ import {
   type DeliverableRankingsPayload,
   type DeliverableWeek,
   type MoneyOrder,
+  type WeekPositions,
 } from '@/lib/manager/deliverable-rankings';
 
 /** An applied row as the server reads it — WITH the pesos. Never serialized. */
@@ -295,7 +299,9 @@ function projectMoney(weeks: readonly MoneyWeek[], metric: string): AppointmentW
  * Rank the roster on bonus pesos for every window × metric, and return positions only.
  *
  * `basis` is `weekly` (which also orders Monthly) or `daily` (pesos ÷ Hubstaff days;
- * needs `days`). The roster is the department's, resolved on the server the same way
+ * needs `days`). The weekly order also carries each settled week's OWN order
+ * (`weeks`, {@link buildWeekOrder}) for the Rankings View modal — positions only, like
+ * the rest. The roster is the department's, resolved on the server the same way
  * My Team's roster route does, and people are matched by the shared
  * `indexRosterPeople`, so these positions line up with the pane's rows.
  */
@@ -345,7 +351,49 @@ export function buildMoneyOrder<M extends ApptRosterMember>(input: {
     positions[window] = {};
     for (const metric of metricKeys) positions[window][metric] = keep.map((i) => raw[window][metric]![i]!);
   }
-  return { people: keep.map((i) => [...emails[i]!].sort()), positions };
+  const order: MoneyOrder = { people: keep.map((i) => [...emails[i]!].sort()), positions };
+  if (input.basis === 'weekly') {
+    order.weeks = buildWeekOrder({
+      moneyWeeks: input.moneyWeeks,
+      metricKeys,
+      personByEmail,
+      keptPeople: keep.map((i) => people[i]!),
+    });
+  }
+  return order;
+}
+
+/**
+ * Each settled week's own bonus order, for the Rankings View modal's "Ranking
+ * performance" line (`docs/features/manager-rankings-history.md`) — positions only.
+ *
+ * Per metric, the SAME money projection the board ranks (`projectMoney`) and the SAME
+ * settled weeks (`countedWindowWeeks`, all time), each ranked on its pesos by the
+ * client-safe `rankWeek`: roster people with an entry that week, every email summed,
+ * ties sharing. The client never ranks a KPI week from the counts, because the order
+ * is the bonus and the counts would contradict the board.
+ */
+function buildWeekOrder<M extends ApptRosterMember>(input: {
+  moneyWeeks: readonly MoneyWeek[];
+  metricKeys: readonly string[];
+  personByEmail: ReadonlyMap<string, RosterPerson<M>>;
+  /** Aligned with `MoneyOrder.people`. */
+  keptPeople: readonly RosterPerson<M>[];
+}): WeekPositions[] {
+  const byWeek = new Map<string, WeekPositions>();
+  for (const metric of input.metricKeys) {
+    const { windowWeeks } = countedWindowWeeks(projectMoney(input.moneyWeeks, metric), 'all');
+    for (const w of windowWeeks) {
+      const { ranked, positions } = rankWeek(w, input.personByEmail);
+      if (ranked === 0) continue;
+      const entry = byWeek.get(w.periodStart) ?? { periodStart: w.periodStart, ranked: {}, positions: {} };
+      entry.ranked[metric] = ranked;
+      const mine = input.keptPeople.map((p) => positions.get(p) ?? null);
+      if (mine.some((p) => p !== null)) entry.positions[metric] = mine;
+      byWeek.set(w.periodStart, entry);
+    }
+  }
+  return [...byWeek.values()].sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
 }
 
 /**

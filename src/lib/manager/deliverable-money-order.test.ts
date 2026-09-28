@@ -13,7 +13,13 @@ import {
   type BonusAssignmentRow,
   type BonusDefRow,
 } from './deliverable-money-order';
-import { ALL_METRIC, applyMoneyOrder, metricShowsValues, projectDeliverableWeeks } from './deliverable-rankings';
+import {
+  ALL_METRIC,
+  applyMoneyOrder,
+  metricShowsValues,
+  projectDeliverableWeeks,
+  weekRankLookup,
+} from './deliverable-rankings';
 import { computeLeaderboard } from './appointment-averages';
 import type { ApptRosterMember } from './appointment-rankings';
 
@@ -305,6 +311,57 @@ describe('buildMoneyOrder — ranked on pesos, returned as positions', () => {
   });
 });
 
+describe("buildMoneyOrder — each settled week's own order, for the Rankings View modal", () => {
+  const order = buildMoneyOrder({
+    moneyWeeks: data.moneyWeeks,
+    metrics: data.metrics,
+    members: [ann, bea],
+    days: null,
+    basis: 'weekly',
+    todayIso: '2026-09-26',
+  });
+  const payload = toClientPayload(data, order, '2026-09-13');
+  const rankOf = (m: ApptRosterMember, metric: string, week: string) => weekRankLookup(payload.order, m, metric)?.(week);
+
+  it('ranks each week on its PESOS, not its counts (09-13: Ann 4 items ₱2,000, Bea 2 items ₱5,000)', () => {
+    assert.deepEqual(rankOf(bea, ALL_METRIC, '2026-09-13'), { position: 1, ranked: 2 });
+    assert.deepEqual(rankOf(ann, ALL_METRIC, '2026-09-13'), { position: 2, ranked: 2 });
+  });
+
+  it('a single KPI week ranks only the people who have it; others have no position', () => {
+    assert.deepEqual(rankOf(ann, 'SmartCustomer', '2026-09-06'), { position: 1, ranked: 1 });
+    assert.deepEqual(rankOf(bea, 'SmartCustomer', '2026-09-06'), { position: null, ranked: 1 });
+    assert.deepEqual(
+      rankOf(bea, 'TrustPilot', '2026-09-06'),
+      { position: 1, ranked: 1 },
+      'one week of TrustPilot still has a weekly place, though not a board place',
+    );
+  });
+
+  it("Scott's skipped manager rows are in no week's order", () => {
+    assert.ok(order.people.every((emails) => !emails.includes('scottcam000@gmail.com')));
+    for (const w of order.weeks!) assert.equal(w.ranked[ALL_METRIC], 2);
+  });
+
+  it('is newest first, weekly basis only; the daily order carries none', () => {
+    assert.deepEqual(order.weeks!.map((w) => w.periodStart), ['2026-09-13', '2026-09-06']);
+    const daily = buildMoneyOrder({
+      moneyWeeks: data.moneyWeeks,
+      metrics: data.metrics,
+      members: [ann, bea],
+      days: [],
+      basis: 'daily',
+      todayIso: '2026-09-26',
+    });
+    assert.equal(daily.weeks, undefined);
+  });
+
+  it('a payload without it (cached before it existed) gives no lookup, so the modal waits', () => {
+    const { weeks: _dropped, ...old } = order;
+    assert.equal(weekRankLookup(old, ann, ALL_METRIC), null);
+  });
+});
+
 describe('toClientPayload — no peso ever leaves the server', () => {
   const order = buildMoneyOrder({
     moneyWeeks: data.moneyWeeks,
@@ -315,6 +372,10 @@ describe('toClientPayload — no peso ever leaves the server', () => {
     todayIso: '2026-09-26',
   });
   const json = JSON.stringify(toClientPayload(data, order, '2026-09-13'));
+
+  it("serializes the weekly order too, so the sentinel checks below cover it", () => {
+    assert.match(json, /"weeks":\[\{"periodStart":"2026-09-13","ranked"/);
+  });
 
   it('carries no amount, no money field, no formula, and none of the sentinel pesos', () => {
     assert.doesNotMatch(json, /amount|money|formula/i);

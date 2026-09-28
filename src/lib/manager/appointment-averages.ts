@@ -187,6 +187,28 @@ function round(n: number, decimals: number): number {
 }
 
 /**
+ * The weeks a window covers: the newest N COUNTED weeks (4 · 13 · all), newest first,
+ * plus the drafts / couldn't-check weeks inside that span that were left out.
+ *
+ * The one place the window rule lives. The leaderboard and the Rankings View modal
+ * (`ranking-history.ts`) both call it, so the two can never cover different weeks.
+ */
+export function countedWindowWeeks(
+  weeks: readonly AppointmentWeek[],
+  window: AverageWindow,
+): { windowWeeks: AppointmentWeek[]; leftOut: AppointmentWeek[] } {
+  const newestFirst = [...weeks].sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
+  const counted = newestFirst.filter((w) => COUNTED_BADGES.has(w.badge) && w.rows.length > 0);
+  const limit = WINDOW_WEEKS[window];
+  const windowWeeks = limit === null ? counted : counted.slice(0, limit);
+  const oldest = windowWeeks[windowWeeks.length - 1]?.periodStart ?? null;
+  const leftOut = newestFirst.filter(
+    (w) => w.rows.length > 0 && !COUNTED_BADGES.has(w.badge) && oldest !== null && w.periodStart >= oldest,
+  );
+  return { windowWeeks, leftOut };
+}
+
+/**
  * Rank the roster by average appointments over the window.
  *
  * - Window = the newest N COUNTED weeks (4 · 13 · all), so "Last 4 weeks" always
@@ -208,14 +230,7 @@ export function computeLeaderboard<M extends ApptRosterMember>(input: {
   basis: AverageBasis;
   todayIso: string;
 }): Leaderboard<M> {
-  const newestFirst = [...input.weeks].sort((a, b) => (a.periodStart < b.periodStart ? 1 : -1));
-  const counted = newestFirst.filter((w) => COUNTED_BADGES.has(w.badge) && w.rows.length > 0);
-  const limit = WINDOW_WEEKS[input.window];
-  const windowWeeks = limit === null ? counted : counted.slice(0, limit);
-  const oldest = windowWeeks[windowWeeks.length - 1]?.periodStart ?? null;
-  const leftOut = newestFirst.filter(
-    (w) => w.rows.length > 0 && !COUNTED_BADGES.has(w.badge) && oldest !== null && w.periodStart >= oldest,
-  );
+  const { windowWeeks, leftOut } = countedWindowWeeks(input.weeks, input.window);
 
   const daysByKey = new Map<string, number>();
   for (const d of input.days ?? []) daysByKey.set(`${d.email}|${d.weekStart}`, d.days);

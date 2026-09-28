@@ -247,6 +247,11 @@ places for a peso column to appear.
   roster through `workEmailIndex`, and the personal address is only a key. **Filtering never re-ranks**:
   rows keep their real position, and the podium steps aside while a query is active (its gold slot would
   otherwise hold #7). The SP search persists across week navigation; a department switch starts fresh.
+- **Both leaderboards have a View action after Tenure** (Kane, 2026-09-28). It opens one person's KPI
+  performance (their count each settled week against the team average) and ranking performance (their
+  position each week). A KPI board's weekly rank is the server's bonus order, and the modal shows no
+  money. See [manager-rankings-history.md](./manager-rankings-history.md). AI/API's SP board has no
+  Tenure column and no View.
 
 **The People view opens as the LIST** (Kane, 2026-09-14), switchable to cards. The
 list is the denser of the two — it pages at 20 against the cards' 8 — so a department

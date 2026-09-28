@@ -41,6 +41,12 @@ defaults to this view's behaviour:
 
 Never let a PM Team change alter this view's defaults. Lead Gen's order is still the shown average.
 
+**View** (2026-09-28) is an Actions column after Tenure on both callers. It opens one person's KPI and
+ranking history, week by week ([manager-rankings-history.md](./manager-rankings-history.md)). Its weeks
+come from `countedWindowWeeks`, the window rule lifted out of `computeLeaderboard` unchanged, so the
+modal and the board cover the same weeks. Its weekly rank defaults to the counts, which is Lead Gen's
+order. Only PM Team's wrapper passes `weekRankFor`, the server's bonus order.
+
 **Search** (2026-09-27) is built into the pane for both callers: names + WORK emails
 (`rankings-search.ts`), never a personal email. It filters and never re-ranks, and it hides the podium
 while a query is active ([manager-my-team.md](./manager-my-team.md) § *Rankings*).

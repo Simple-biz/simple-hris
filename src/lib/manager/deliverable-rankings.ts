@@ -80,6 +80,29 @@ export interface MoneyOrder {
   /** Every email each ranked roster person owns, lower-cased. */
   people: string[][];
   positions: Record<AverageWindow, Record<string, (number | null)[]>>;
+  /**
+   * Each settled week's own bonus order, newest first — the Rankings View modal's
+   * "Ranking performance" line (`docs/features/manager-rankings-history.md`). Weekly
+   * payload only. Absent on the daily payload, and on a payload cached before it
+   * existed: the modal then waits for the revalidation and never ranks counts itself.
+   */
+  weeks?: WeekPositions[];
+}
+
+/**
+ * One settled week's bonus order, as positions only.
+ *
+ * - `ranked[metric]`: roster people with an entry for that metric that week (the "of N").
+ *   A metric nobody on the roster scored that week is absent.
+ * - `positions[metric][i]`: `people[i]`'s competition rank that week on that metric's
+ *   pesos (ties share), or null when they have no entry. Absent when none of `people`
+ *   has one (only unranked people scored).
+ */
+export interface WeekPositions {
+  /** Sunday, YYYY-MM-DD. */
+  periodStart: string;
+  ranked: Record<string, number>;
+  positions: Record<string, (number | null)[]>;
 }
 
 export interface DeliverableRankingsPayload {
@@ -189,6 +212,59 @@ export function projectDeliverableWeeks(
  * did not place (the two rosters disagree, or the order is missing) goes LAST and is
  * counted in `unplaced`, which the pane states — never silently ranked by counts.
  */
+/** email → index into `order.people`. The first person to claim an email keeps it. */
+function peopleIndex(order: MoneyOrder | null): Map<string, number> {
+  const indexOf = new Map<string, number>();
+  order?.people.forEach((emails, i) => {
+    for (const e of emails) if (!indexOf.has(e)) indexOf.set(e, i);
+  });
+  return indexOf;
+}
+
+/**
+ * A roster row's best (lowest) position in `positions`, across every email it carries
+ * — the one matching rule both the board's order and the View modal's weekly order use.
+ */
+function bestPositionOf(
+  m: ApptRosterMember,
+  indexOf: ReadonlyMap<string, number>,
+  positions: readonly (number | null)[],
+): number | null {
+  let best: number | null = null;
+  for (const raw of [m.personal_email, m.work_email, m.alternate_work_email, m.alternate_work_email_2]) {
+    const e = normEmail(raw ?? null);
+    const i = e ? indexOf.get(e) : undefined;
+    const p = i === undefined ? null : (positions[i] ?? null);
+    if (p !== null && (best === null || p < best)) best = p;
+  }
+  return best;
+}
+
+/**
+ * The View modal's weekly rank for one person on one metric, read from the server's
+ * bonus order (`MoneyOrder.weeks`). Null while that order has not arrived: the modal
+ * then says the order is loading, and never ranks the counts itself.
+ */
+export function weekRankLookup(
+  order: MoneyOrder | null,
+  member: ApptRosterMember,
+  metric: string,
+): ((periodStart: string) => { position: number | null; ranked: number } | null) | null {
+  const weeks = order?.weeks;
+  if (!weeks) return null;
+  const indexOf = peopleIndex(order);
+  const byWeek = new Map(weeks.map((w) => [w.periodStart, w]));
+  return (periodStart) => {
+    const w = byWeek.get(periodStart);
+    if (!w) return null;
+    const positions = w.positions[metric];
+    return {
+      position: positions ? bestPositionOf(member, indexOf, positions) : null,
+      ranked: w.ranked[metric] ?? 0,
+    };
+  };
+}
+
 export function applyMoneyOrder<M extends ApptRosterMember>(
   rows: readonly LeaderboardRow<M>[],
   order: MoneyOrder | null,
@@ -196,21 +272,8 @@ export function applyMoneyOrder<M extends ApptRosterMember>(
   metric: string,
 ): { rows: LeaderboardRow<M>[]; unplaced: number } {
   const positions = order?.positions[window]?.[metric] ?? null;
-  const indexOf = new Map<string, number>();
-  order?.people.forEach((emails, i) => {
-    for (const e of emails) if (!indexOf.has(e)) indexOf.set(e, i);
-  });
-  const positionOf = (m: M): number | null => {
-    if (!positions) return null;
-    let best: number | null = null;
-    for (const raw of [m.personal_email, m.work_email, m.alternate_work_email, m.alternate_work_email_2]) {
-      const e = normEmail(raw ?? null);
-      const i = e ? indexOf.get(e) : undefined;
-      const p = i === undefined ? null : (positions[i] ?? null);
-      if (p !== null && (best === null || p < best)) best = p;
-    }
-    return best;
-  };
+  const indexOf = peopleIndex(order);
+  const positionOf = (m: M): number | null => (positions ? bestPositionOf(m, indexOf, positions) : null);
 
   const placed: LeaderboardRow<M>[] = [];
   const unplaced: LeaderboardRow<M>[] = [];

@@ -31,6 +31,7 @@ renders **the same pane** and runs **the same `computeLeaderboard`**. Not pushed
 | The leaderboard math (shared, unchanged rules) | `computeLeaderboard` in `src/lib/manager/appointment-averages.ts` |
 | The pane (wrapper: KPI picker, projection, order) | `src/components/manager/DeliverableLeaderboardPane.tsx` → `AppointmentLeaderboardPane.tsx` |
 | The fetches and the view state | `src/components/manager/ManagerApp.tsx` (`deliv`, `delivDaily`, `delivView`) |
+| Each settled week's own bonus order, for the row's **View** modal (`order.weeks`) | `buildWeekOrder` in `deliverable-money-order.ts` · `weekRankLookup` in `deliverable-rankings.ts` — [manager-rankings-history.md](./manager-rankings-history.md) |
 
 ## The order is the bonus; the pesos never leave the server
 
@@ -58,6 +59,10 @@ from), averaged on the chosen basis. What is **shown** is KPI item counts. Both 
   count order would give. #5 Rivera (4.5 items/wk) is above #6 Superta (5.0/wk). The header says
   *"Ranked by bonus earned · amounts hidden"*. Never "fix" the order to match the numbers.
 - On a single KPI with one flat rate the two orders agree. TrustPilot: 0 of 43 moved.
+- **The weekly order carries each settled week's OWN order too** (`order.weeks`, 2026-09-28), for the
+  row's **View** modal's *Ranking performance* line. It is positions and a per-week "of N" only, and the
+  sentinel test asserts the field is in the JSON it scans. The client never ranks a KPI week from
+  counts ([manager-rankings-history.md](./manager-rankings-history.md)).
 
 ## Adaptable: the KPIs come from the data
 
@@ -210,7 +215,7 @@ grant holders. `hasSpRankings` now needs **`SP` and `Ranking`** (the AI Team Bon
   background. The cached payload is counts + positions, so the cache carries no peso either.
 - The weekly payload (counts + weekly/monthly order) is fetched when the department is selected.
   It takes **~6.5s cold** for PM Team (measured 2026-09-27; 7,121 applied rows plus the roster) and
-  weighs ~140 KB.
+  weighs ~140 KB (**169 KB since 2026-09-28**, with the per-week order for View: +24 KB, measured).
 - `?basis=daily` returns the Hubstaff days (the shown per-day figures) **and** the per-day order in
   one call, because both need the slow days read. It loads in the background the first time the view
   is opened, the same pattern as Lead Gen's days. A failed daily read disables Daily; Weekly and

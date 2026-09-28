@@ -17,13 +17,20 @@
  *   component with its own `unit`, a KPI picker in `controls` and a per-KPI
  *   breakdown via `partLabels` — extracted, not copied, so "no money values" is
  *   enforced in one place. Every such prop defaults to the appointment wording.
+ * - **View** (Kane, 2026-09-28) after Tenure opens `RankingHistoryModal`: the person's
+ *   count and position each settled week, from these same weeks. PM Team's weekly
+ *   positions come from the server (`weekRankFor`); Lead Gen's are its counts.
+ *   Doc: `docs/features/manager-rankings-history.md`.
  */
 import { useMemo, useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { ChevronDown, Crown, Info, Medal, UserMinus, WifiOff } from 'lucide-react';
+import { ChartLine, ChevronDown, Crown, Info, Medal, UserMinus, WifiOff } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
 import { RankingsNoMatch, RankingsSearch } from '@/components/team/RankingsSearch';
+import { RankingHistoryModal } from '@/components/manager/RankingHistoryModal';
+import { Segmented, addDaysIso, dateLabel, fmtCount } from '@/components/manager/leaderboard-ui';
 import { normalizeRankingQuery, rankingRowMatches, workEmailsOf } from '@/lib/manager/rankings-search';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
@@ -38,6 +45,7 @@ import {
   type LeaderboardRow,
 } from '@/lib/manager/appointment-averages';
 import type { ApptRosterMember, AppointmentWeek } from '@/lib/manager/appointment-rankings';
+import type { WeekRankSource } from '@/lib/manager/ranking-history';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const PAGE = 25;
@@ -66,11 +74,6 @@ function fmt(n: number | null, basis: AverageBasis): string {
   return n === null ? '—' : n.toFixed(BASIS_DECIMALS[basis]);
 }
 
-/** A total count: whole numbers as they are, half credits (PM Team's Units) to one decimal. */
-function fmtCount(n: number): string {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1);
-}
-
 /** What the counted thing is called, in the header, podium, tooltips and footnote. */
 export interface LeaderboardUnit {
   one: string;
@@ -79,61 +82,8 @@ export interface LeaderboardUnit {
 
 const APPOINTMENTS: LeaderboardUnit = { one: 'appointment', many: 'appointments' };
 
-function dateLabel(iso: string, withYear: boolean): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  if (!y || !m || !d) return iso;
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(withYear ? { year: 'numeric' } : {}),
-  });
-}
-
-function addDaysIso(iso: string, n: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(Date.UTC(y!, m! - 1, d! + n));
-  return dt.toISOString().slice(0, 10);
-}
-
-function Segmented<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly { value: T; label: string; disabled?: boolean; title?: string }[];
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div
-      role="tablist"
-      aria-label={label}
-      className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900"
-    >
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          role="tab"
-          aria-selected={value === o.value}
-          disabled={o.disabled}
-          title={o.title}
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'rounded-[5px] px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40',
-            value === o.value
-              ? 'bg-white text-blue-700 shadow-sm dark:bg-zinc-950 dark:text-blue-300'
-              : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+/** Every leaderboard row's rank history is ranked on its values unless a caller says otherwise. */
+const RANK_BY_VALUES: WeekRankSource = { kind: 'values' };
 
 export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   weeks,
@@ -154,6 +104,8 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
   reorder,
   rankNote,
   showValues = true,
+  weekRankFor,
+  weekRankedBy,
 }: {
   weeks: AppointmentWeek[];
   weeksLoading: boolean;
@@ -193,8 +145,32 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
    * the pesos (Client VA's `=Appt_Bonus`), where every "count" would be pay.
    */
   showValues?: boolean;
+  /**
+   * Where the View modal's weekly ranks come from, per person. Default: rank each week
+   * on its values (Lead Gen: the appointments ARE the order). PM Team passes the
+   * server's weekly BONUS order, because ranking its counts would contradict the board.
+   * Must be referentially stable.
+   */
+  weekRankFor?: (member: M) => WeekRankSource;
+  /** The View modal's sentence for what each week is ranked by. */
+  weekRankedBy?: string;
 }) {
   const reduce = useReducedMotion() ?? false;
+  // The View modal (Kane, 2026-09-28). The row is KEPT after close so the exit
+  // animation plays on the person's data rather than on an empty popup; only
+  // `historyOpen` flips. The modal's window starts from the board's, each time.
+  const [historyRow, setHistoryRow] = useState<LeaderboardRow<M> | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyWindow, setHistoryWindow] = useState<AverageWindow>(view.window);
+  const historyRankBy = useMemo<WeekRankSource>(
+    () => (historyRow && weekRankFor ? weekRankFor(historyRow.member) : RANK_BY_VALUES),
+    [historyRow, weekRankFor],
+  );
+  const openHistory = (r: LeaderboardRow<M>) => {
+    setHistoryRow(r);
+    setHistoryWindow(view.window);
+    setHistoryOpen(true);
+  };
   // Search (Kane, 2026-09-27): names + WORK emails only; it hides rows, never re-ranks.
   // Local on purpose — a department switch remounts the pane and starts a fresh search.
   const [query, setQuery] = useState('');
@@ -337,10 +313,27 @@ export function AppointmentLeaderboardPane<M extends ApptRosterMember>({
             partLabels={partLabels}
             daysLoading={daysPending}
             onOpenMember={onOpenMember}
+            onView={openHistory}
           />
           )}
         </motion.div>
       )}
+
+      <RankingHistoryModal
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        row={historyRow}
+        weeks={weeks}
+        members={members}
+        window={historyWindow}
+        onWindowChange={setHistoryWindow}
+        rankBy={historyRankBy}
+        unit={unit}
+        showValues={showValues}
+        partLabels={partLabels}
+        board={{ basis, window: view.window }}
+        rankedBy={weekRankedBy ?? `Each week is ranked by ${unit.many} that week, among the roster with an entry.`}
+      />
 
       <div className="space-y-1 px-1 text-[11.5px] text-zinc-500 dark:text-zinc-400">
         {board.leftOut.length > 0 && (
@@ -504,6 +497,7 @@ function LeaderTable<M extends ApptRosterMember>({
   partLabels,
   daysLoading,
   onOpenMember,
+  onView,
 }: {
   rows: LeaderboardRow<M>[];
   basis: AverageBasis;
@@ -512,6 +506,8 @@ function LeaderTable<M extends ApptRosterMember>({
   partLabels?: Readonly<Record<string, string>>;
   daysLoading: boolean;
   onOpenMember?: (member: M) => void;
+  /** Opens the person's KPI and ranking history (the action after Tenure). */
+  onView: (row: LeaderboardRow<M>) => void;
 }) {
   const [shown, setShown] = useState(PAGE);
   const col = (b: AverageBasis) =>
@@ -520,7 +516,7 @@ function LeaderTable<M extends ApptRosterMember>({
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200/80 bg-white shadow-sm dark:border-blue-950/60 dark:bg-[#0d1117]">
       <div className="overflow-x-auto">
-        <table className={cn('w-full text-left text-[13px]', showValues ? 'min-w-[640px]' : 'min-w-[360px]')}>
+        <table className={cn('w-full text-left text-[13px]', showValues ? 'min-w-[720px]' : 'min-w-[440px]')}>
           <thead className="border-b border-zinc-100 bg-zinc-50/70 text-[10px] uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
             <tr>
               <th scope="col" className="w-12 px-3 py-2 font-semibold">#</th>
@@ -539,6 +535,7 @@ function LeaderTable<M extends ApptRosterMember>({
               {showValues && <th scope="col" className="px-3 py-2 text-right font-semibold">Days</th>}
               <th scope="col" className="px-3 py-2 text-right font-semibold">Weeks</th>
               <th scope="col" className="px-3 py-2 text-right font-semibold">Tenure</th>
+              <th scope="col" className="px-3 py-2 text-right font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/70">
@@ -597,6 +594,24 @@ function LeaderTable<M extends ApptRosterMember>({
                     title={r.startDate ? `Started ${r.startDate}` : 'No readable Start Date on the roster'}
                   >
                     {r.tenure}
+                  </td>
+                  <td data-label="Actions" className="px-3 py-1.5 text-right">
+                    {/* The row itself opens the profile; this opens the performance
+                        history, so the click must not reach the row as well. */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onView(r);
+                      }}
+                      className="h-7 gap-1 border-blue-200 bg-blue-50/60 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/60"
+                      title={`View ${r.name}'s KPI and ranking performance`}
+                    >
+                      <ChartLine className="h-3 w-3" aria-hidden />
+                      View
+                    </Button>
                   </td>
                 </tr>
               );
