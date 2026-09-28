@@ -988,6 +988,7 @@ export default function ManagerApp() {
                         calculatorSwitch={calculatorSwitch}
                         dispatchLock={payrollProcessing}
                         initialOpenDept={kpiFocus?.kind === 'catalog' ? kpiFocus.key : null}
+                        showInsights
                       />
                     )}
                   </div>

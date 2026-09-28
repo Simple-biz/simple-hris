@@ -448,4 +448,17 @@ export const KPI_CACHE_KEYS = {
    * `weekPending`, still waits on the live fetch before scoring is possible.
    */
   catalog: 'catalog',
+
+  /**
+   * `GET /api/manager/kpi-insights` — the three read-only insight cards above
+   * the department grid (`docs/features/kpi-calculator-insights.md`), for one
+   * picked week and one department set. The set is part of the key because it
+   * selects a different dataset for the same viewer: an assignment change must
+   * never paint the old departments' figures.
+   *
+   * **Paint only**, like every key here: the cards always refetch, and nothing
+   * reads this to decide anything.
+   */
+  insights: (surface: KpiCacheSurface, week: string, depts: readonly string[]): string =>
+    `${surface}:insights:${week}:${[...depts].sort().join(',')}`,
 } as const;

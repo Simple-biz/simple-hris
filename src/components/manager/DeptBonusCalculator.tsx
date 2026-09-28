@@ -116,6 +116,8 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
+import KpiInsightCards from './KpiInsightCards';
+import { isSundayIso } from '@/lib/manager/kpi-insights';
 import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
 import {
   KPI_CACHE_KEYS,
@@ -340,6 +342,14 @@ interface DeptBonusCalculatorProps {
    * Wizard's Readiness modal); there the calculator falls back to its own hook.
    */
   dispatchLock?: PayrollDispatchLockState;
+  /**
+   * Show the three read-only insight cards above the department grid — the
+   * department spotlight, the week's top earner and the weekly total sent to
+   * Accounting (`docs/features/kpi-calculator-insights.md`). Only the manager's
+   * own KPI tab passes it: the QC officer view scores a staging table, and the
+   * Payroll Readiness modal is a fix-it surface, so neither shows them.
+   */
+  showInsights?: boolean;
 }
 
 // -- Per-department colour identity (hex; inline-styled to dodge Tailwind purge) --
@@ -829,6 +839,7 @@ export default function DeptBonusCalculator({
   submissionSource,
   calculatorSwitch,
   dispatchLock: dispatchLockFromShell,
+  showInsights = false,
 }: DeptBonusCalculatorProps) {
   // Bind the tab cache to this viewer BEFORE any seeding below reads it. Two
   // people on one machine must never paint each other's departments, and the
@@ -5429,6 +5440,20 @@ export default function DeptBonusCalculator({
         detail="Accounting is dispatching from these figures — locked for everyone except admins; your changes still save."
         dismissible={false}
       />
+
+      {/* Insight cards — read-only, above the grid. Held until the week is a real
+          Sunday: the local-clock seed is Monday-anchored and no row is filed
+          under it (see `weekResolved`). `liveKey` moves when a figure on the grid
+          does, and the cards refetch once the burst settles. */}
+      {showInsights && !isQc && isSundayIso(weekStart) && (
+        <KpiInsightCards
+          depts={visibleDeptKeys}
+          week={weekStart}
+          labelFor={(k) => DEPARTMENTS.find((d) => d.key === k)?.name ?? deptLabelByKey[k] ?? humanizeDeptKey(k)}
+          liveKey={`${readyCount}:${Math.round(grandTotal.php)}`}
+          refreshing={refreshing}
+        />
+      )}
 
       {/* Department cards */}
       <motion.div
