@@ -110,6 +110,7 @@ export async function POST(request: Request) {
       reason,
       explanation: body.explanation,
       created_by: body.created_by,
+      actor: authz.sessionEmail,
     });
 
     if (error) return NextResponse.json({ error }, { status: error.includes('already exists') ? 409 : 500 });

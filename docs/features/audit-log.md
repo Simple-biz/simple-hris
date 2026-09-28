@@ -152,6 +152,60 @@ paths the audit write is awaited and **the delete is abandoned if it fails**:
 not block the delete on the audit write — a single entry, and the period wipe
 above is the destructive case.
 
+### Settings are audited by KEY, on the server
+
+`POST /api/app-settings` writes an **`app_settings.changed`** row for every
+write that changes a value, **whoever the caller is** — Payroll Wizard, System
+Settings, Admin. The decision is by key (`isAppSettingChangeAudited`,
+`src/lib/audit/app-settings-change.ts`), so **a key added tomorrow is audited by
+default**; the only keys left out are the derived snapshots in
+`APP_SETTING_AUDIT_EXEMPT` (§6), pinned exactly by
+`app-settings-change.test.ts`, and that test also lists every key the wizard
+writes and asserts each one is audited.
+
+- `resource_id` = the key; `details` = `key`, `before`, `after`, `created`.
+  The old value is read immediately before the upsert — a plain read, not a
+  compare-and-swap, so a write racing it can make `before` a revision stale.
+- A value over **4,000 characters** is summarised: `before_length`,
+  `after_length`, and the top-level JSON keys that moved (`changed_keys`, first
+  100, with `changed_keys_total`).
+- A failed pre-read never blocks the save and never reads as "unchanged" or
+  "created": the row carries `before_unavailable: true` and no `before`.
+- Re-posting the same value writes nothing — the `/api/pab-exclusions` rule.
+- Per-cycle keys (`payroll.wizard.<x>.<file>.csv`) carry `details.cycle.source_file`,
+  so they also appear in that week's Step 9 audit trail.
+- The policed families (payroll lock, sensitive, `secret.`) keep their own
+  branch and redaction; this branch never sees them.
+- Written **after** the upsert succeeds and **awaited** (a `void` insert can be
+  cut off with the response).
+
+Why: until 2026-09-28 the route audited only the policed families, so the PAB
+Period, the Tech Bonus payout week, the US holiday list, the Step-7 "Do not pay"
+set and the cycle FX record moved with no trail. "Who changed the PAB Period?"
+could only be answered by inference from `wizard.opened`, and the previous window
+was gone (session log item 239).
+
+The wizard's own `wizard.fx_rate_changed`, `wizard.config.dept_pay` and
+`settings.ot.department` client rows stay — they carry the cycle context and the
+operator's intent — so those three saves now leave **two** rows. The server row
+is the one that cannot be skipped.
+
+### The additions save is diffed on the server
+
+`POST /api/payroll-wizard/additions` — the blob that PAYS — writes
+**`wizard.additions_saved`** after its compare-and-swap succeeds: every changed
+leaf by path (`bonusOverrides/<email>/adjustment`, `deptMetrics/lead_gen/appointmentsSet`,
+`techBonusManualRevokes` as added/removed members), the people it touched, and
+`before_exact` (false when another save landed between the route's read and its
+write). `pabStatusSnapshot` is derived, so it is counted, not itemised. Lists are
+capped (200 changes, 100 people) with uncapped totals. `describeAdditionsSave`,
+`src/lib/payroll/wizard-additions-audit.ts`.
+
+The client's per-edit `logAudit` calls cover five updaters. Every KPI metric
+modal, the Adj. note text, the Tech revoke/restore chips and the Notes-board
+auto pre-fill changed pay with no row at all; the server diff records whatever
+landed, whichever path produced it. A refused (409) save writes nothing.
+
 ### Money and secrets in `details`
 
 The audit log has a wider readership than the surface an event came from.
@@ -244,6 +298,9 @@ Silence has to be a decision, or the next reader treats a gap as a bug.
 | `POST /api/hr/work-email/suggest` | Pure computation; mutates nothing. |
 | `POST /api/presence/heartbeat` | Per-minute liveness. Never relabel it as a sign-in record (memory/last-signed-in-not-recorded.md). |
 | Notification reads / `clear-all` | Per-viewer UI state. |
+| `app_settings` `payroll.wizard.final_pay.<file>` | The wizard republishes it **automatically** 1.5 s after any change, and it is whole-payroll sized. It is computed from audited inputs (`wizard.additions_saved`, `app_settings.changed`, `csv.*`), and staging it for dispatch is audited as `paystubs.staged`. Exempt in `APP_SETTING_AUDIT_EXEMPT`, 2026-09-28. |
+| `app_settings` `hubstaff_daily_breakdown` | A by-product of the Hubstaff ingest, which is audited as `csv.upload`. Exempt in `APP_SETTING_AUDIT_EXEMPT`, 2026-09-28. |
+| `GET /api/payroll-wizard/notes` seeding / trimming blank rows | Housekeeping of EMPTY rows on read; a row with content is audited when it is written (`accounting.payroll_wizard_notes.*`). |
 
 ---
 
@@ -272,6 +329,26 @@ housekeeping — that is why an unaudited PATCH there mattered.
 
 ---
 
+## 7b. Payroll Wizard coverage added 2026-09-28
+
+Kane: *"Please make sure all actionable items in Payroll Wizard is logged."* An
+inventory of every write the wizard can make (56 user actions + the automatic
+ones, session log item 240) found these silent or mis-attributed:
+
+| Path | Before | Now |
+|---|---|---|
+| `POST /api/app-settings` — PAB Period (dates, Auto-calc, Reset, month), Tech Bonus week, US holidays (switch, add, seed, toggle, remove), Step-7 Do not pay, cycle FX record | nothing | `app_settings.changed`, key + before/after (§3) |
+| `POST /api/payroll-wizard/additions` — Lock in, Notes pre-fill, every KPI modal, Adj. notes, Tech chips | nothing | `wizard.additions_saved`, server diff (§3) |
+| `POST /api/orphanage-pay` — the orphanage record upsert on Lock-in / Re-price / OMS lock-in | nothing | `orphanage_pay.records_saved`, the rows as stored |
+| `POST /api/pab-disputes` — Forgive a day from the wizard's PAB calendar | `pab_dispute.submitted` credited to the **employee** | the session; a body `created_by` that differs is kept as `created_by_claim` |
+| `POST /api/cron/sync-master-from-sheet`, `sync-hsl-from-sheet` — the Sync buttons | every run "GSheets Sync" / "System" | a manual click names the session (`trigger: "manual"`); only the scheduled run is the system (`trigger: "cron"`) |
+| Wizard FX save, orphanage **Remove all** (client rows) | sent **before** the save, so a failed save left a row for a change that never landed | sent after the save succeeds |
+
+Already audited and unchanged: Hubstaff upload / delete / rename / set current
+(`csv.*`), Start/Stop processing, Configuration switches, OMS saves, PAB Forgive
+month / Ignore / exclusions, dispute decide / revoke, time adjustments,
+contractor decisions, manual validation, dispatch lock, Send to Payment Dispatch.
+
 ## 8. Open
 
 - **`POST /api/import-daily-report` is a dead endpoint.** No component fetches
@@ -285,6 +362,14 @@ housekeeping — that is why an unaudited PATCH there mattered.
 - **`src/lib/mesa/receipts.ts` and `notify-failure-audit.ts`** take an `actor`
   parameter with a fallback (`params.actor?.user_name ?? …`). Server-supplied,
   not body-supplied, so not a forgery — but not an `AuthzOk` either.
+- **Payroll Wizard's Notes pane — the embedded manager calculators** (Readiness →
+  score it) write `/api/bonus-catalog-applied`, `/api/qc/submissions` and
+  `POST /api/hsl-bonus/entries` with no row. The HSL entry save is the standing
+  score-save ruling (§6); the other two were **not decided** in the 2026-09-28
+  pass, which stopped at the wizard itself (session log item 240).
+- **Most audit writes are still fire-and-forget** (`void insertAuditLog`, and the
+  client's `logAudit` swallows errors), so a row can be lost with only a console
+  line. The 2026-09-28 server writes are awaited; the older ones were not touched.
 - The Admin panel's dashboard chips carry **no counts**. A count over the loaded
   window dressed up as a total is what the old panel showed; a real per-surface
   total needs a server-side aggregate that does not exist yet.
@@ -295,7 +380,8 @@ housekeeping — that is why an unaudited PATCH there mattered.
 
 ```bash
 npm run lint                                            # tsc --noEmit
-node --import tsx --test src/lib/audit/registry.test.ts # 9 checks
+node --import tsx --test src/lib/audit/registry.test.ts # 10 checks
+node --import tsx --test src/lib/audit/app-settings-change.test.ts src/lib/payroll/wizard-additions-audit.test.ts src/lib/audit/sync-actor.test.ts
 npm test                                                # full suite
 ```
 
@@ -319,6 +405,9 @@ with `surface: "Orphanage"` on each row.
 | `src/lib/audit/registry.ts` | families → dashboards; `familyForAction`, `describeAuditFamilies` |
 | `src/lib/audit/registry.test.ts` | the source scan that keeps the registry honest |
 | `src/lib/audit/context.ts` | `auditFrom` / `auditActor` / `clientIp` (server-only) |
+| `src/lib/audit/app-settings-change.ts` | which `app_settings` keys are audited (all but `APP_SETTING_AUDIT_EXEMPT`) + the `app_settings.changed` details |
+| `src/lib/payroll/wizard-additions-audit.ts` | the server diff behind `wizard.additions_saved` |
+| `src/lib/audit/sync-actor.ts` | clicker vs system for the sheet syncs |
 | `src/lib/audit/orphanage-registry.ts` | masked snapshot + diff for the orphanage row |
 | `src/lib/supabase/audit-log.ts` | `insertAuditLog(s)`, `fetchAuditLog`, `purgeAuditLogBefore`, `countAuditLogBefore` |
 | `app/api/audit-log/route.ts` | filtered read, client write, retention purge |

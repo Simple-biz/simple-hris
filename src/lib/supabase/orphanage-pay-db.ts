@@ -9,6 +9,17 @@ import { insertAuditLog } from './audit-log';
 
 const TABLE = 'orphanage_pay';
 
+/** One stored row's pay figures, as written — what `orphanage_pay.records_saved` records. */
+export type OrphanagePayWrittenRow = {
+  employee_email: string;
+  hours: number;
+  reg_hours: number;
+  ot_hours: number;
+  regular_rate_php: number | null;
+  ot_rate_php: number | null;
+  amount_php: number;
+};
+
 /** A single locked-in orphanage-pay row as exchanged with the client (camelCase). */
 export interface OrphanagePayRow {
   /** The wizard row's email key — lower-cased on write for consistent lookups. */
@@ -37,10 +48,10 @@ export async function saveOrphanagePay(params: {
   sourceFile: string;
   rows: OrphanagePayRow[];
   actor: string | null;
-}): Promise<{ saved: number; error: string | null }> {
+}): Promise<{ saved: number; written: OrphanagePayWrittenRow[]; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { saved: 0, error: 'Supabase client unavailable' };
-  if (params.rows.length === 0) return { saved: 0, error: null };
+  if (!supabase) return { saved: 0, written: [], error: 'Supabase client unavailable' };
+  if (params.rows.length === 0) return { saved: 0, written: [], error: null };
 
   const lockedAt = new Date().toISOString();
   const payload = params.rows.map((r) => ({
@@ -61,8 +72,19 @@ export async function saveOrphanagePay(params: {
   const { error } = await supabase
     .from(TABLE)
     .upsert(payload, { onConflict: 'source_file,employee_email' });
-  if (error) return { saved: 0, error: error.message };
-  return { saved: payload.length, error: null };
+  if (error) return { saved: 0, written: [], error: error.message };
+  // The values exactly as stored (normalised above), for the route's
+  // `orphanage_pay.records_saved` audit row.
+  const written = payload.map((r) => ({
+    employee_email: r.employee_email,
+    hours: r.hours,
+    reg_hours: r.reg_hours,
+    ot_hours: r.ot_hours,
+    regular_rate_php: r.regular_rate_php,
+    ot_rate_php: r.ot_rate_php,
+    amount_php: r.amount_php,
+  }));
+  return { saved: payload.length, written, error: null };
 }
 
 /** Who is doing a destructive delete, for the audit snapshot. */

@@ -12,6 +12,8 @@ import { isComparePasteKey } from '@/lib/qc/compare-paste';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
+import { auditFrom } from '@/lib/audit/context';
+import { describeAppSettingChange, isAppSettingChangeAudited } from '@/lib/audit/app-settings-change';
 import { PAB_PERIOD_LIVE_EVENT, PAB_PERIOD_LIVE_TOPIC, isPabPeriodLiveKey } from '@/lib/pab-period-live';
 
 export const dynamic = 'force-dynamic';
@@ -196,8 +198,40 @@ export async function POST(request: Request) {
       }
     }
 
+    // Every other key is audited by KEY as `app_settings.changed` (below), so
+    // the value it replaces is read first. A failed read never blocks the save
+    // and never reads as "unchanged" — the event says the old value is unknown.
+    const policed = isPayrollLockKey(body.key) || isSensitiveKey(body.key) || isAdminOnlyKey(body.key);
+    const auditChange = !policed && isAppSettingChangeAudited(body.key);
+    let before: string | null = null;
+    let beforeUnavailable = false;
+    if (auditChange) {
+      try {
+        before = await getAppSettingStrict(body.key);
+      } catch {
+        beforeUnavailable = true;
+      }
+    }
+
     const { error } = await upsertAppSetting(body.key, body.value);
     if (error) return NextResponse.json({ error }, { status: 500 });
+
+    // Who changed it, from what, to what (session log item 239: the PAB Period
+    // moved with no trail). After the write succeeded, never before; awaited so
+    // the row is not cut off with the response. `insertAuditLog` shouts on a
+    // lost event.
+    if (auditChange) {
+      const change = describeAppSettingChange(body.key, before, body.value, { beforeUnavailable });
+      if (change) {
+        await insertAuditLog({
+          ...auditFrom(request, authz),
+          action: 'app_settings.changed',
+          resource: 'app_settings',
+          resource_id: body.key.trim(),
+          details: change,
+        }).catch(() => undefined);
+      }
+    }
 
     // The PAB period moved: tell every open employee Overview to re-read it.
     // After the write succeeded, never before; the payload names the key only
@@ -212,7 +246,9 @@ export async function POST(request: Request) {
 
     // Leave a trail for the two families that can move money or re-open
     // sessions. The dedicated lock route already audits its own writes; this
-    // covers the generic path so a lock toggle can never be silent.
+    // covers the generic path so a lock toggle can never be silent. (Every
+    // other key is `app_settings.changed`, above — no key written here is silent
+    // except the derived snapshots in APP_SETTING_AUDIT_EXEMPT.)
     if (isPayrollLockKey(body.key) || isSensitiveKey(body.key) || isAdminOnlyKey(body.key)) {
       const actor = await getSessionActor().catch(() => ({ user_name: authz.sessionEmail, user_role: 'unknown' }));
       await insertAuditLog({

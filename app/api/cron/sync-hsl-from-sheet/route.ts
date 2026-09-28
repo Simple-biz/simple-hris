@@ -3,7 +3,8 @@ import { fetchHslSheetRows } from '@/lib/google-sheets/fetch-hsl-sheet';
 import { listHslUploads, replaceHslAgentsFromRows } from '@/lib/supabase/hsl-upload-db';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { invalidateRateProfilesCache } from '@/lib/supabase/employee-rate-profiles';
-import { cronSessionElevated } from '@/lib/auth/cron-auth';
+import { cronSessionAuthz } from '@/lib/auth/cron-auth';
+import { syncRunActor } from '@/lib/audit/sync-actor';
 
 const SYSTEM_USER = { name: 'GSheets Sync', role: 'System' } as const;
 
@@ -28,9 +29,13 @@ function isAuthorized(req: NextRequest): boolean {
 }
 
 async function runSync(req: NextRequest): Promise<NextResponse> {
-  if (!isAuthorized(req) && !(await cronSessionElevated())) {
+  const bearer = isAuthorized(req);
+  const session = bearer ? null : await cronSessionAuthz();
+  if (!bearer && !session) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
   }
+  // A manual click records the clicker; the scheduled run records the system.
+  const { trigger, ...runActor } = syncRunActor(session, SYSTEM_USER);
 
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) {
     return NextResponse.json(
@@ -72,12 +77,12 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
     });
 
     void insertAuditLog({
-      user_name: SYSTEM_USER.name,
-      user_role: SYSTEM_USER.role,
+      ...runActor,
       action: 'csv.hsl.sync',
       resource: 'hsl_team_members',
       resource_id: sheetId,
       details: {
+        trigger,
         source: 'google-sheet',
         sheet_id: sheetId,
         tab: tabName,
@@ -113,12 +118,11 @@ async function runSync(req: NextRequest): Promise<NextResponse> {
     console.error('[POST /api/cron/sync-hsl-from-sheet]', msg);
 
     void insertAuditLog({
-      user_name: SYSTEM_USER.name,
-      user_role: SYSTEM_USER.role,
+      ...runActor,
       action: 'csv.hsl.sync.error',
       resource: 'hsl_team_members',
       resource_id: process.env.GOOGLE_SHEETS_HSL_SHEET_ID ?? null,
-      details: { error: msg },
+      details: { trigger, error: msg },
       ip_address: clientIp(req),
     });
 

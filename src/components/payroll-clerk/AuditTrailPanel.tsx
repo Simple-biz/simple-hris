@@ -58,6 +58,9 @@ const ACTION_PRESENTATION: Record<string, { label: string; tone: string }> = {
   'wizard.bonus_edited':      { label: 'Bonus edited',       tone: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/30' },
   'wizard.addition_edited':   { label: 'Addition edited',    tone: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/30' },
   'wizard.fx_rate_changed':   { label: 'FX rate changed',    tone: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30' },
+  'wizard.additions_saved':   { label: 'Additions saved',    tone: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/30' },
+  'app_settings.changed':     { label: 'Setting changed',    tone: 'bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-500/10 dark:text-slate-300 dark:border-slate-500/30' },
+  'orphanage_pay.records_saved': { label: 'Orphanage records saved', tone: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-300 dark:border-teal-500/30' },
   'contractor.decided':       { label: 'Contractor decision',tone: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-300 dark:border-fuchsia-500/30' },
   'orphanage.budget_decided': { label: 'Orphanage decision', tone: 'bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-300 dark:border-teal-500/30' },
   'orphanage_budget.approved':{ label: 'Orphanage approved', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/30' },
@@ -116,6 +119,13 @@ function describeEventTarget(ev: AuditEvent): string {
 
 function describeEventValue(ev: AuditEvent): string {
   const d = ev.details ?? {};
+  // Server-diffed saves: say how much moved; the itemised changes are in Details.
+  if (ev.action === 'wizard.additions_saved' && typeof d.changes_total === 'number') {
+    return `${d.changes_total} change${d.changes_total === 1 ? '' : 's'} · ${Number(d.people_total ?? 0)} people`;
+  }
+  if (ev.action === 'orphanage_pay.records_saved' && typeof d.saved === 'number') {
+    return `${d.saved} record${d.saved === 1 ? '' : 's'}`;
+  }
   const prev = d.previous_status ?? d.previous_value ?? d.old_value;
   const next = d.new_status ?? d.new_value ?? d.status;
   if (prev != null && next != null && String(prev) !== String(next)) {

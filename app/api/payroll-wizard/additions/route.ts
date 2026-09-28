@@ -2,8 +2,11 @@ import { NextResponse } from 'next/server';
 
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
-import { casUpdateAppSetting } from '@/lib/supabase/app-settings';
+import { casUpdateAppSetting, getAppSettingWithMetaStrict } from '@/lib/supabase/app-settings';
 import { additionsSettingKey, parseAdditionsSaveBody } from '@/lib/payroll/wizard-additions';
+import { describeAdditionsSave } from '@/lib/payroll/wizard-additions-audit';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { auditFrom } from '@/lib/audit/context';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -49,11 +52,20 @@ export async function POST(req: Request) {
   const body = parseAdditionsSaveBody(raw);
   if (!body.ok) return NextResponse.json({ error: body.reason }, { status: 400 });
 
-  const write = await casUpdateAppSetting(
-    additionsSettingKey(body.sourceFile),
-    body.value,
-    body.expectedUpdatedAt,
-  );
+  const key = additionsSettingKey(body.sourceFile);
+
+  // What is on file now, so a successful save can record exactly what it
+  // changed (`wizard.additions_saved`). A failed read never blocks the save —
+  // the event then says the old value is unknown.
+  let prior: { value: string; updatedAt: string | null } | null = null;
+  let priorUnavailable = false;
+  try {
+    prior = await getAppSettingWithMetaStrict(key);
+  } catch {
+    priorUnavailable = true;
+  }
+
+  const write = await casUpdateAppSetting(key, body.value, body.expectedUpdatedAt);
   if (write.error) return NextResponse.json({ error: write.error }, { status: 500 });
   if (write.conflict) {
     return NextResponse.json(
@@ -64,6 +76,30 @@ export async function POST(req: Request) {
       },
       { status: 409 },
     );
+  }
+
+  // Every save that lands is on the record, whichever path produced it: the
+  // Lock-in button, the Notes-board pre-fill, a KPI metric modal. The client's
+  // per-edit `logAudit` calls cover only five updaters; this diff is what was
+  // actually written. The CAS proved the row carried `expectedUpdatedAt`, so the
+  // prior read is exact when it carried that same revision — otherwise another
+  // save landed between the read and the write and `before_exact` says so.
+  const audit = describeAdditionsSave(prior?.value ?? null, body.value, { beforeUnavailable: priorUnavailable });
+  if (audit) {
+    const sameRevision = (a: string | null, b: string | null) =>
+      a === null || b === null ? a === b : Date.parse(a) === Date.parse(b);
+    const beforeExact = !priorUnavailable && sameRevision(prior?.updatedAt ?? null, body.expectedUpdatedAt);
+    await insertAuditLog({
+      ...auditFrom(req, authz),
+      action: 'wizard.additions_saved',
+      resource: 'app_settings',
+      resource_id: key,
+      details: {
+        ...audit,
+        before_exact: beforeExact,
+        cycle: { source_file: body.sourceFile },
+      },
+    }).catch(() => undefined);
   }
 
   // The row's new revision: the client chains its next save off this, so its

@@ -100,9 +100,13 @@ client-supplied timestamp would let them backdate their own vouching — and tha
 the entire value of the record.
 
 Every write also inserts an `audit_log` row
-(`accounting.payroll_wizard.manual_validation.set` / `.cleared`). Writes through the generic
-app-settings route are **not** audited (it audits only admin-only, sensitive and dispatch-lock
-keys), so an accountability record stored that way would leave no trace of who set it.
+(`accounting.payroll_wizard.manual_validation.set` / `.cleared`). When this route was built the
+generic app-settings route audited only admin-only, sensitive and dispatch-lock keys, so an
+accountability record stored that way would have left no trace of who set it. Since 2026-09-28 it
+writes `app_settings.changed` for every other key (`audit-log.md` §3) — but that row records a
+**whole-blob** before/after under a last-write-wins upsert. It cannot say *which person was vouched
+for, by whom* as an event of its own, and the blob would still lose a concurrent vouch. This route
+stays the only door for the MV store.
 
 Gates mirror the sibling wizard routes exactly: `requireFeatureAccess('accounting',
 'payroll_wizard', 'view')` to read, `requireFeatureEdit('accounting', 'payroll_wizard')` to

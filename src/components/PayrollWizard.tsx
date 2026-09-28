@@ -10818,6 +10818,10 @@ export default function PayrollWizard({
         additionsEditGenRef.current += 1;
         const ctx = auditCtxRef.current;
         setOrphanageAmounts({});
+        const saved = await saveAdditionsProgress({ orphanageAmounts: {} });
+        if (!saved) return; // CAS refused — re-hydration restores the map; records untouched
+        // Only after the clear landed: a refused save used to leave a row
+        // claiming a wipe that never happened.
         void logAudit({
           user_name: ctx.sessionEmail ?? 'anonymous',
           user_role: sessionRole ?? 'user',
@@ -10831,8 +10835,6 @@ export default function PayrollWizard({
             cleared_amounts: removed,
           },
         });
-        const saved = await saveAdditionsProgress({ orphanageAmounts: {} });
-        if (!saved) return; // CAS refused — re-hydration restores the map; records untouched
         void publishFinalPaySnapshot();
       }
       if (calcSourceFile) {
@@ -14295,14 +14297,6 @@ export default function PayrollWizard({
                           const prevRate = usdToPhpRate;
                           setUsdToPhpRate(parsed);
                           setUsdToPhpSaving(true);
-                          void logAudit({
-                            user_name: sessionEmail ?? 'anonymous',
-                            user_role: sessionRole ?? 'user',
-                            action: 'wizard.fx_rate_changed',
-                            resource: 'usd_to_php_rate',
-                            cycle: auditCycle,
-                            details: { previous_value: prevRate, new_value: parsed },
-                          });
                           fetch('/api/app-settings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -14311,6 +14305,15 @@ export default function PayrollWizard({
                             .then(async (res) => {
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                              // Only after the save landed — a row sent first claimed rates that never saved.
+                              void logAudit({
+                                user_name: sessionEmail ?? 'anonymous',
+                                user_role: sessionRole ?? 'user',
+                                action: 'wizard.fx_rate_changed',
+                                resource: 'usd_to_php_rate',
+                                cycle: auditCycle,
+                                details: { previous_value: prevRate, new_value: parsed },
+                              });
                               toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
                               saveCycleFxRecord('php', parsed);
                               cursorOverlayRef.current?.broadcastSave();
@@ -14356,14 +14359,6 @@ export default function PayrollWizard({
                       const prevRate = usdToPhpRate;
                       setUsdToPhpRate(parsed);
                       setUsdToPhpSaving(true);
-                      void logAudit({
-                        user_name: sessionEmail ?? 'anonymous',
-                        user_role: sessionRole ?? 'user',
-                        action: 'wizard.fx_rate_changed',
-                        resource: 'usd_to_php_rate',
-                        cycle: auditCycle,
-                        details: { previous_value: prevRate, new_value: parsed },
-                      });
                       fetch('/api/app-settings', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -14372,6 +14367,15 @@ export default function PayrollWizard({
                         .then(async (res) => {
                           const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                          // Only after the save landed — a row sent first claimed rates that never saved.
+                          void logAudit({
+                            user_name: sessionEmail ?? 'anonymous',
+                            user_role: sessionRole ?? 'user',
+                            action: 'wizard.fx_rate_changed',
+                            resource: 'usd_to_php_rate',
+                            cycle: auditCycle,
+                            details: { previous_value: prevRate, new_value: parsed },
+                          });
                           toast.success(`Rate saved: ₱${parsed.toFixed(2)} / USD`);
                           saveCycleFxRecord('php', parsed);
                           setUsdToPhpEditing(false);
@@ -14461,14 +14465,6 @@ export default function PayrollWizard({
                           const prevRate = usdToCopRate;
                           setUsdToCopRate(parsed);
                           setUsdToCopSaving(true);
-                          void logAudit({
-                            user_name: sessionEmail ?? 'anonymous',
-                            user_role: sessionRole ?? 'user',
-                            action: 'wizard.fx_rate_changed',
-                            resource: 'usd_to_cop_rate',
-                            cycle: auditCycle,
-                            details: { previous_value: prevRate, new_value: parsed },
-                          });
                           fetch('/api/app-settings', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -14477,6 +14473,15 @@ export default function PayrollWizard({
                             .then(async (res) => {
                               const json = (await res.json()) as { error: string | null };
                               if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                              // Only after the save landed — a row sent first claimed rates that never saved.
+                              void logAudit({
+                                user_name: sessionEmail ?? 'anonymous',
+                                user_role: sessionRole ?? 'user',
+                                action: 'wizard.fx_rate_changed',
+                                resource: 'usd_to_cop_rate',
+                                cycle: auditCycle,
+                                details: { previous_value: prevRate, new_value: parsed },
+                              });
                               toast.success(`Rate saved: $COP${parsed.toLocaleString('es-CO')} / USD`);
                               saveCycleFxRecord('cop', parsed);
                               cursorOverlayRef.current?.broadcastSave();
@@ -14522,14 +14527,6 @@ export default function PayrollWizard({
                       const prevRate = usdToCopRate;
                       setUsdToCopRate(parsed);
                       setUsdToCopSaving(true);
-                      void logAudit({
-                        user_name: sessionEmail ?? 'anonymous',
-                        user_role: sessionRole ?? 'user',
-                        action: 'wizard.fx_rate_changed',
-                        resource: 'usd_to_cop_rate',
-                        cycle: auditCycle,
-                        details: { previous_value: prevRate, new_value: parsed },
-                      });
                       fetch('/api/app-settings', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -14538,6 +14535,15 @@ export default function PayrollWizard({
                         .then(async (res) => {
                           const json = (await res.json()) as { error: string | null };
                           if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
+                          // Only after the save landed — a row sent first claimed rates that never saved.
+                          void logAudit({
+                            user_name: sessionEmail ?? 'anonymous',
+                            user_role: sessionRole ?? 'user',
+                            action: 'wizard.fx_rate_changed',
+                            resource: 'usd_to_cop_rate',
+                            cycle: auditCycle,
+                            details: { previous_value: prevRate, new_value: parsed },
+                          });
                           toast.success(`Rate saved: $COP${parsed.toLocaleString('es-CO')} / USD`);
                           saveCycleFxRecord('cop', parsed);
                           setUsdToCopEditing(false);

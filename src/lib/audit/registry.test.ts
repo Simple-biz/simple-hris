@@ -191,6 +191,19 @@ test('a narrow family beats a broad one regardless of order', () => {
   assert.equal(familyForAction('paystubs.staged')?.match, 'paystub');
 });
 
+test('Payroll Wizard saves are visible where Accounting looks (2026-09-28, item 240)', () => {
+  // A setting change is a payroll event first — the PAB Period, Tech week,
+  // holidays, Do-not-pay — so it must not hide under Admin's "sensitive" bucket.
+  assert.equal(familyForAction('app_settings.changed')?.match, 'app_settings.changed');
+  assert.ok(isOnSurface('app_settings.changed', 'payroll'));
+  assert.ok(isOnSurface('app_settings.changed', 'accounting'));
+  // the sensitive family stays admin-only
+  assert.equal(familyForAction('app_settings.sensitive_write')?.match, 'app_settings.');
+  assert.deepEqual(surfacesForAction('app_settings.sensitive_write'), ['admin']);
+  assert.equal(familyForAction('wizard.additions_saved')?.match, 'wizard.');
+  assert.equal(familyForAction('orphanage_pay.records_saved')?.match, 'orphanage_pay.');
+});
+
 test('an unknown action resolves to nothing rather than a default bucket', () => {
   assert.equal(familyForAction('totally.made.up'), null);
   assert.deepEqual(surfacesForAction('totally.made.up'), []);

@@ -157,6 +157,12 @@ strictly to the active `source_file`:
 | **✕ on a red-panel row** (hours on record, no amount) | the record alone — no blob change exists to make | `orphanage_pay.record_deleted` |
 | **Remove all…** (card header, confirm dialog) | every blob amount **and** every record for the period | ONE client `wizard.orphanage_period_cleared` carrying all cleared amounts + ONE route `orphanage_pay.period_cleared` carrying the full row snapshot |
 
+Every one of these also changes the additions blob, so each leaves a server `wizard.additions_saved` row
+(the diff of what landed) on top of the rows above; `wizard.orphanage_period_cleared` is sent only after
+the blob clear succeeds (2026-09-28 — it used to be sent first, so a refused save left a row for a wipe
+that never happened). The **Lock-in** and **Re-price** record upserts write `orphanage_pay.records_saved`
+(the rows as stored). `docs/features/audit-log.md` §7b.
+
 Invariants these paths keep:
 
 - **Blob first, records second, CAS throughout.** Remove-all clears the column via

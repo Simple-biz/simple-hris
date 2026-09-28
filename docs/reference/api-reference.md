@@ -183,7 +183,7 @@ Manual-button-only Google Sheet sync for the master list. Reads the configured G
 }
 ```
 
-Emits `[fetch-master-sheet]` and `[sync-master-from-sheet] result` console diagnostics for debugging row drops. Audit log entry `csv.master.sync` (or `csv.master.sync.error` on failure).
+Emits `[fetch-master-sheet]` and `[sync-master-from-sheet] result` console diagnostics for debugging row drops. Audit log entry `csv.master.sync` (or `csv.master.sync.error` on failure). *(2026-09-28)* The actor is the **clicking session** on a manual run (`details.trigger: "manual"`) and "GSheets Sync" / "System" only for the Bearer-secret cron run (`trigger: "cron"`); `/api/cron/sync-hsl-from-sheet` (`csv.hsl.sync`) follows the same rule.
 
 See [csv-imports.md](../features/csv-imports.md) for the full feature doc.
 
@@ -858,6 +858,15 @@ Realtime Broadcast `pab-period-sync` / `changed` with `{ key, ts }` via `broadca
 fire-and-forget. The payload names the key only — listeners (the employee Overview) always
 re-fetch the stored value. A failed write never announces.
 
+**Side effect — audit** *(2026-09-28)*: every write that **changes** a value writes
+`app_settings.changed` (actor = the session, `resource_id` = the key, `details` = `key`, `before`,
+`after`, `created`; values over 4,000 chars summarised as lengths + moved top-level keys; a failed
+pre-read → `before_unavailable`). Decided by key, so every caller is covered; the only exempt keys
+are `payroll.wizard.final_pay.*` and `hubstaff_daily_breakdown` (`APP_SETTING_AUDIT_EXEMPT`,
+`src/lib/audit/app-settings-change.ts`). The payroll-lock / sensitive / `secret.` keys keep their
+existing rows (`payroll.dispatch.lock_changed`, `app_settings.sensitive_write`). Awaited after the
+upsert; an identical re-post writes no row. See [audit-log.md](../features/audit-log.md) §3.
+
 ---
 
 ## 8. Import Daily Report
@@ -1002,6 +1011,7 @@ Employee-facing: submit a new dispute against a failing day.
 - `reason` is validated against the current `pab_dispute_reason_codes` list in `app_settings` when any codes are configured.
 - **`orphanage_visit` and `ceo_visitation` are blocked** with a 403 — those reasons are manager-submitted only. Use `POST /api/pab-disputes/orphanage-manager-submit` instead.
 - Initial `status`: `pending`.
+- **Audit actor** *(2026-09-28)*: `pab_dispute.submitted` is written as the **session**. It used to be `created_by` from the body, then the employee — so Accounting forgiving a day from the Payroll Wizard (which sends no `created_by`) was logged as the employee. A body `created_by` that differs from the session is recorded as `details.created_by_claim`; the row's `created_by` column is unchanged.
 
 **Response** `200`:
 ```json
@@ -2606,6 +2616,18 @@ gone — it was the one action that could not record itself.
 [pre-release-security-readiness.md](../features/pre-release-security-readiness.md) §2.
 
 ---
+
+### Payroll Wizard write coverage *(added 2026-09-28)*
+
+| Route | Audit row | Notes |
+|---|---|---|
+| `POST /api/app-settings` | `app_settings.changed` | Every value change by key — see §7 |
+| `POST /api/payroll-wizard/additions` | `wizard.additions_saved` | After the compare-and-swap succeeds: the server diff of the paying blob (`changes[]` by path, `changes_total`, `people`, `people_total`, `before_exact`, `cycle.source_file`). A 409 writes nothing; an identical re-save writes nothing. `describeAdditionsSave`, `src/lib/payroll/wizard-additions-audit.ts` |
+| `POST /api/orphanage-pay` | `orphanage_pay.records_saved` | The rows as stored (email, hours, reg/OT hours, rates, amount), first 300 + `saved` count, `cycle.source_file` |
+| `POST /api/pab-disputes` | `pab_dispute.submitted` | Actor = the session — see §*PAB disputes* |
+| `POST /api/cron/sync-master-from-sheet`, `sync-hsl-from-sheet` | `csv.master.sync`, `csv.hsl.sync` | Manual click = the session (`trigger: "manual"`) |
+
+Governing doc: [audit-log.md](../features/audit-log.md) §3 and §7b.
 
 ## 17. Penny AI (assistants) *(added 2026-09-12)*
 

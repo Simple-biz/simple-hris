@@ -185,6 +185,14 @@ Storage keys in `app_settings`:
 
 Resolution in `usePabPeriodSettings`: the hook exposes `activeMonthResolved`, `activeRange` ( = override for active month if present, else `getPabMonthRange(year, month)`), and legacy `validManualRange`.
 
+**Every save is audited** *(2026-09-28)*: `POST /api/app-settings` writes `app_settings.changed`
+with the session actor, `resource_id` = the key, and the stored value **before and after** — so a
+date change, Auto-calc, Reset override or month pick names who moved the window and what it was.
+Until then nothing recorded it: "who changed the PAB Period?" was answerable only by inference
+from `wizard.opened`, and the old window was gone (session log item 239). The Tech Bonus payout
+week (`tech_bonus_week_overrides`) and the US holiday keys in the same modal are audited the same
+way. Rules: `docs/features/audit-log.md` §3.
+
 #### Live refresh — the employee Overview follows a wizard save *(2026-09-28)*
 
 A PAB Period saved in the wizard (date inputs, Auto-calc, Reset override, month pick) repaints

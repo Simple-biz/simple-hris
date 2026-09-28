@@ -34,10 +34,10 @@ export const runtime = 'nodejs';
  *     `at` is stamped here. A client-supplied validator or timestamp would let
  *     someone vouch in another person's name, or backdate their own vouching —
  *     which is the entire value of the record.
- *  3. **An audit trail.** `payroll.wizard.*` writes through the generic route
- *     are not audited (`app/api/app-settings/route.ts` audits only admin-only,
- *     sensitive and dispatch-lock keys). An accountability record that leaves no
- *     trace of who set it is not much of a record.
+ *  3. **An audit trail per vouch.** The generic route (since 2026-09-28) logs a
+ *     whole-blob before/after as `app_settings.changed`, which cannot say which
+ *     person was vouched for, by whom, as an event of its own. This route writes
+ *     one `…manual_validation.set` / `.cleared` row per vouch.
  */
 
 /** How many times to re-read-and-merge before giving up. Contention is two or

@@ -107,7 +107,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'wizard.',
     surfaces: ['payroll', 'accounting'],
     label: 'Payroll Wizard',
-    note: 'opened, cycle_selected, bonus_edited, addition_edited, config.dept_pay, fx_rate_changed, orphanage_period_cleared, orphanage_oms_locked_in, orphanage_oms_saved',
+    note: 'opened, cycle_selected, additions_saved (server diff of the paying additions blob — every edit that landed, by path, with the people it touched), bonus_edited, addition_edited, config.dept_pay, fx_rate_changed, orphanage_period_cleared, orphanage_none_confirmed, orphanage_oms_locked_in, orphanage_oms_saved',
   },
   {
     match: 'payroll.',
@@ -278,7 +278,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'orphanage_pay.',
     surfaces: ['orphanage', 'payroll'],
     label: 'Orphanage pay records',
-    note: 'period_cleared, record_deleted',
+    note: 'records_saved (the Lock-in upsert, rows as stored), period_cleared, record_deleted',
   },
 
   // ── HR ─────────────────────────────────────────────────────────────────────
@@ -492,6 +492,12 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     surfaces: ['admin'],
     label: 'System settings',
     note: 'rule.toggle, ot.global, ot.department, holidays.toggle, collab.toggle',
+  },
+  {
+    match: 'app_settings.changed',
+    surfaces: ['payroll', 'accounting', 'admin'],
+    label: 'Setting changed',
+    note: 'changed — any value change through /api/app-settings: key, before, after (PAB Period, Tech Bonus week, US holidays, Do-not-pay, cycle FX, OT, System Settings); resource_id = the key',
   },
   {
     match: 'app_settings.',

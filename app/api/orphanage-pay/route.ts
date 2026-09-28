@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { saveOrphanagePay, listOrphanagePay, listAllOrphanagePayHours, deleteOrphanagePay, deleteAllOrphanagePay, type OrphanagePayRow } from '@/lib/supabase/orphanage-pay-db';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit, requireFeatureAccess } from '@/lib/auth/authorize-feature';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
+import { auditFrom } from '@/lib/audit/context';
+
+/** Most rows copied into one `orphanage_pay.records_saved` event; `saved` is the full count. */
+const RECORDS_SAVED_AUDIT_MAX_ROWS = 300;
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -62,12 +67,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'source_file and rows required' }, { status: 400 });
   }
 
-  const { saved, error } = await saveOrphanagePay({
+  const { saved, written, error } = await saveOrphanagePay({
     sourceFile: body.source_file,
     rows: body.rows,
     actor: authz.sessionEmail,
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  // The record upsert was the one orphanage write with no trail (its deletes
+  // already audit, in orphanage-pay-db.ts). After the write; awaited so the row
+  // is not cut off with the response.
+  if (saved > 0) {
+    await insertAuditLog({
+      ...auditFrom(request, authz),
+      action: 'orphanage_pay.records_saved',
+      resource: 'orphanage_pay',
+      resource_id: body.source_file,
+      details: {
+        source_file: body.source_file,
+        saved,
+        rows: written.slice(0, RECORDS_SAVED_AUDIT_MAX_ROWS),
+        rows_truncated: written.length > RECORDS_SAVED_AUDIT_MAX_ROWS,
+        cycle: { source_file: body.source_file },
+      },
+    }).catch(() => undefined);
+  }
   return NextResponse.json({ saved, error: null });
 }
 

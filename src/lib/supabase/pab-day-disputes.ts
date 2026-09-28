@@ -208,6 +208,13 @@ export async function createDispute(params: {
   reason: string;
   explanation?: string | null;
   created_by?: string | null;
+  /**
+   * The verified session that made the request — the audit actor. Without it
+   * the actor fell back to `created_by` (a body claim) and then to the
+   * EMPLOYEE, so Accounting forgiving a day from the Payroll Wizard was logged
+   * as the employee filing it (2026-09-28 inventory, session log item 240).
+   */
+  actor?: string | null;
 }): Promise<{ id: string | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { id: null, error: 'Supabase not configured' };
@@ -243,7 +250,8 @@ export async function createDispute(params: {
 
   const id = (data as { id: string } | null)?.id ?? null;
 
-  const submitter = params.created_by?.trim() || email;
+  const createdByClaim = params.created_by?.trim() || null;
+  const submitter = params.actor?.trim() || createdByClaim || email;
   void (async () => {
     const role = await resolveUserRole(submitter, 'Employee');
     await insertAuditLog({
@@ -256,6 +264,11 @@ export async function createDispute(params: {
         employee: email,
         dispute_date: params.dispute_date,
         reason: params.reason,
+        // A body-supplied author is a CLAIM (audit-log.md §3) — kept beside the
+        // verified actor when they differ, never used in its place.
+        ...(createdByClaim && createdByClaim.toLowerCase() !== submitter.toLowerCase()
+          ? { created_by_claim: createdByClaim }
+          : {}),
       },
     });
   })();
