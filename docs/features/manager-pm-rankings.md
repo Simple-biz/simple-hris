@@ -107,7 +107,7 @@ rows 2026-09-28, through the real read:
 | QC | **team**, **order only**, 9 ranked, all tied #1 in every window | `shared_team`; `units*IF(headcount < 6, 125, 150) / headcount` pays no flat rate, so it fails closed |
 | Accounting | **team**, **order only**, 18 ranked, all tied #1 over 4 weeks | `shared_team` Dancing Queen: the five day counts summed as one item; tiered, so order only |
 | US Manager Bonus | none | one person's **employee-scoped** bonus |
-| HSL (20 sub-teams) | **not built** | scores in `hsl_bonus_entries`, not the Payment Catalog. See *Not built* |
+| HSL sub-teams | **own board since 2026-09-28** | scores in `hsl_bonus_entries`, not the Payment Catalog → [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md) (same route, pane and gate; ranked on the stored `calculated_bonus`, All bonuses only) |
 
 - **A department with its own view is left to it, never stacked with a second pane.** A
   money-ranked AI/API pane behind My Team's gate would widen who reads AI/API's ranking, and the SP
@@ -262,13 +262,16 @@ grant holders. `hasSpRankings` now needs **`SP` and `Ranking`** (the AI Team Bon
 - Basis, window and KPI live in `ManagerApp` (`delivView`). My Team panes unmount on every view
   switch.
 
-## Not built
+## HSL is its own read (built 2026-09-28)
 
-- **HSL** (20 sub-teams, 591 people). Its KPIs are in `hsl_bonus_entries` (`kpi_data` +
-  `calculated_bonus`), not `bonus_catalog_applied`. Its rail keys are `hsl:<sub>`, and card,
-  roster and payout are three separate gates there (memory `hsl-data-branch-not-paid-by-wizard`;
-  INDEX *HSL KPI Calculator → Payment Catalog migration*). It needs its own read and its own brief.
-  Open items 238.
+- **HSL** keeps its KPIs in `hsl_bonus_entries` (`kpi_data` + `calculated_bonus`), not
+  `bonus_catalog_applied`, so it got its own read and its own brief:
+  [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md). It rides this route
+  (`department=hsl:<key>`, the rail key), this payload and this pane. Two things differ, both on
+  purpose. It is ranked on ONE stored amount per row, so **All bonuses only** (`allOnly`, no KPI
+  picker). And it ranks the whole HSL family's roster. The shared code gained `MoneyWeekRow.total`
+  (the All order reads it when set; the catalog rows never set it) and `allOnly` (sent only when
+  true). Open items 249 (was 238).
 
 ## Deploy notes
 

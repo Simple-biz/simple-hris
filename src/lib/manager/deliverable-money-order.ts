@@ -69,12 +69,19 @@ export type AppliedMoneyRow = {
   amount: number | string | null;
 };
 
-interface MoneyWeekRow {
+export interface MoneyWeekRow {
   email: string;
   /** EVERY KPI's value, shown or not — server-only until `toClientPayload` splits it. */
   counts: Record<string, number>;
   /** Pesos per KPI. Server-only. */
   money: Record<string, number>;
+  /**
+   * The row's whole bonus in pesos, when it is stored as ONE amount rather than per KPI
+   * (HSL: `hsl_bonus_entries.calculated_bonus`, `hsl-kpi-money-order.ts`). The "All"
+   * order reads it instead of summing `money`. Server-only. The Payment Catalog rows
+   * never set it.
+   */
+  total?: number;
 }
 
 /** A catalog bonus definition, as the classifier needs it. Server-only: `formula` holds the rates. */
@@ -112,6 +119,12 @@ export interface KpiData {
   moneyWeeks: MoneyWeek[];
   metrics: DeliverableMetricInfo[];
   skippedRows: number;
+  /**
+   * "All bonuses" is the only order (HSL: one stored amount per row, so a single KPI
+   * has no pesos of its own to rank on). Then `metrics` label the breakdown only, and
+   * {@link buildMoneyOrder} must be given no metrics.
+   */
+  allOnly?: boolean;
 }
 
 const WINDOWS: readonly AverageWindow[] = ['last4w', 'last3m', 'all'];
@@ -329,6 +342,7 @@ function projectMoney(weeks: readonly MoneyWeek[], metric: string): AppointmentW
     badge: w.badge,
     rows: w.rows.flatMap((r) => {
       if (metric === ALL_METRIC) {
+        if (r.total !== undefined) return [{ email: r.email, appointments: r.total }];
         let total = 0;
         for (const v of Object.values(r.money)) total += v;
         return [{ email: r.email, appointments: total }];
@@ -448,7 +462,7 @@ export function toClientPayload(
   order: MoneyOrder | null,
   currentWeekStart: string,
 ): DeliverableRankingsPayload {
-  return {
+  const payload: DeliverableRankingsPayload = {
     available: data.available,
     currentWeekStart,
     weeks: data.weeks.map((w) => ({
@@ -466,4 +480,6 @@ export function toClientPayload(
     order,
     error: null,
   };
+  if (data.allOnly) payload.allOnly = true;
+  return payload;
 }

@@ -129,9 +129,27 @@ export interface DeliverableRankingsPayload {
   metrics: DeliverableMetricInfo[];
   /** Rows that are not counted: one named person's own bonus, or several KPIs in one row. */
   skippedRows: number;
+  /**
+   * True when "All bonuses" is the only order (HSL, `docs/features/manager-hsl-kpi-rankings.md`):
+   * a row stores ONE amount for all its KPIs, so no single KPI can be ranked by its bonus.
+   * `metrics` then label the breakdown only, and the board shows no KPI picker.
+   */
+  allOnly?: boolean;
   /** The weekly/monthly bonus order. Null only alongside an error. */
   order: MoneyOrder | null;
   error: string | null;
+}
+
+/**
+ * `hsl:<key>` → `<key>`, for a My Team rail key naming one HSL sub-team; null for
+ * anything else. My Team labels a sub-team "HSL — Intake Specialist", which normalizes
+ * to NO department, so the HSL KPI read is addressed by its rail key instead
+ * (`docs/features/manager-hsl-kpi-rankings.md`). The parent (`hogan_smith_law`) is not
+ * a branch: its sub-teams pay on different scales.
+ */
+export function hslBranchFromRailKey(department: string): string | null {
+  const m = /^hsl:([a-z0-9_]+)$/.exec(department.trim().toLowerCase());
+  return m ? m[1]! : null;
 }
 
 /** `?basis=daily`: the days worked (for the shown averages) and the per-day bonus order. */

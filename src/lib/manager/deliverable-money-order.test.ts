@@ -540,4 +540,11 @@ describe('the money module is server-only', () => {
     );
     assert.deepEqual(offenders, []);
   });
+
+  it("nor the HSL money module (it reads calculated_bonus, the card's whole pay)", () => {
+    const offenders = [...walk(path.join(ROOT, 'src', 'components')), ...walk(path.join(ROOT, 'app'))].filter((f) =>
+      readFileSync(f, 'utf8').includes('hsl-kpi-money-order'),
+    );
+    assert.deepEqual(offenders, []);
+  });
 });

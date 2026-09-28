@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeManagedDepartment } from '@/lib/manager/managed-department-gate';
 import { getDeliverableDailyRankings, getDeliverableRankings } from '@/lib/supabase/deliverable-rankings';
+import { getHslKpiDailyRankings, getHslKpiRankings } from '@/lib/supabase/hsl-kpi-rankings';
+import { hslBranchFromRailKey } from '@/lib/manager/deliverable-rankings';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { manilaTodayIso, sundayOf } from '@/lib/payroll/manila-week';
@@ -32,6 +34,13 @@ export const runtime = 'nodejs';
  * leaderboard simply does not appear — the same as a department with no KPI item.
  * The route takes no email parameter; the roster it ranks is resolved server-side from
  * the department just authorized.
+ *
+ * ## HSL sub-teams (2026-09-28)
+ *
+ * `department=hsl:<key>` (the RAIL key — the display label "HSL — …" normalizes to no
+ * department) reads that branch's KPI Calculator scores instead
+ * (`src/lib/supabase/hsl-kpi-rankings.ts`, `docs/features/manager-hsl-kpi-rankings.md`),
+ * behind the SAME gate, ranked on the stored `calculated_bonus`, All bonuses only.
  */
 export async function GET(req: NextRequest) {
   const department = req.nextUrl.searchParams.get('department')?.trim() ?? '';
@@ -54,6 +63,14 @@ export async function GET(req: NextRequest) {
   }
   if (gate.kind === 'error') return NextResponse.json({ ...empty, error: gate.error }, { status: 500 });
   if (gate.kind === 'out_of_scope') return NextResponse.json({ ...empty, error: null });
+
+  const hslBranch = hslBranchFromRailKey(department);
+  if (hslBranch) {
+    const hsl = daily
+      ? await getHslKpiDailyRankings(department, hslBranch)
+      : await getHslKpiRankings(department, hslBranch);
+    return NextResponse.json(hsl, { status: hsl.error ? 500 : 200 });
+  }
 
   // Built-in payroll key first ("PM Team" -> "pm_team"); otherwise the slug an in-app
   // registry department is stored under — the same two steps every My Team ranking uses.

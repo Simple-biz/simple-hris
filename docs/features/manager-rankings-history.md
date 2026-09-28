@@ -2,7 +2,8 @@
 
 Manager → My Team → any department whose **Rankings** board has a **Tenure** column (Lead Gen and
 Callback's appointment leaderboard; PM Team, Edit, Site Building, Sales Assistant, Discovery,
-Client VA, and since 2026-09-28 the team splits HR, QC and Accounting on the KPI leaderboard) →
+Client VA, and since 2026-09-28 the team splits HR, QC and Accounting on the KPI leaderboard, and
+every scored HSL sub-team — [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)) →
 **Actions → View**. It opens a modal holding two line charts that
 share one week axis. **KPI performance** plots the person's count each settled week against the
 team's weekly average. **Ranking performance** plots their position each week, with #1 at the top.
@@ -144,7 +145,9 @@ the same reason:
   behind its own two-door gate ([manager-my-team.md](./manager-my-team.md) § *Rankings*), so it has
   no View. Adding one would read `/api/team-rankings`, never this module.
 - **The Appointments pill** (per-week totals, [manager-appointment-rankings.md](./manager-appointment-rankings.md)).
-- **HSL** has no KPI leaderboard yet (Open items 238), so it has no View either.
+- **HSL** got its KPI leaderboard on 2026-09-28, and View works on it unchanged. It is "All bonuses" only, so the
+  modal's rank line is the server's per-week order on the stored `calculated_bonus`
+  ([manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)).
 
 ## Deploy notes
 

@@ -33,6 +33,15 @@ const ROUTES = {
     code: strip(readFileSync(path.join(ROOT, 'app', 'api', 'manager', 'deliverable-rankings', 'route.ts'), 'utf8')),
     read: 'getDeliverableDailyRankings(',
   },
+  // HSL sub-teams' KPI boards (2026-09-28) ride the same route and the same gate.
+  'hsl kpi': {
+    code: strip(readFileSync(path.join(ROOT, 'app', 'api', 'manager', 'deliverable-rankings', 'route.ts'), 'utf8')),
+    read: 'getHslKpiRankings(',
+  },
+  'hsl kpi daily': {
+    code: strip(readFileSync(path.join(ROOT, 'app', 'api', 'manager', 'deliverable-rankings', 'route.ts'), 'utf8')),
+    read: 'getHslKpiDailyRankings(',
+  },
 };
 
 describe('managed-department gate — My Team scope, not the SP Rankings doors', () => {

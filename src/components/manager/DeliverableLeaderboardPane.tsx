@@ -54,6 +54,7 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
   daysError,
   members,
   deptName,
+  allOnly = false,
   view,
   onViewChange,
   onOpenMember,
@@ -72,20 +73,27 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
   daysError: string | null;
   members: readonly M[];
   deptName: string;
+  /**
+   * "All bonuses" is the only order (HSL: a row stores ONE amount for all its KPIs,
+   * `manager-hsl-kpi-rankings.md`). No KPI picker; the KPIs label the breakdown only.
+   */
+  allOnly?: boolean;
   view: DeliverableLeaderboardView;
   onViewChange: (next: DeliverableLeaderboardView) => void;
   onOpenMember?: (member: M) => void;
 }) {
   // One KPI → no picker, and the board speaks that KPI's own words ("Tickets completed")
   // rather than its bonus name, which is often just the department's ("Edit").
-  const single = metrics.length === 1 ? metrics[0]! : null;
+  const single = !allOnly && metrics.length === 1 ? metrics[0]! : null;
   // A KPI the data no longer carries (a retired bonus, another department) falls back
   // to All rather than rendering an empty board under a stale label.
-  const metric = single
-    ? single.key
-    : view.metric === ALL_METRIC || metrics.some((m) => m.key === view.metric)
-      ? view.metric
-      : ALL_METRIC;
+  const metric = allOnly
+    ? ALL_METRIC
+    : single
+      ? single.key
+      : view.metric === ALL_METRIC || metrics.some((m) => m.key === view.metric)
+        ? view.metric
+        : ALL_METRIC;
   const projected = useMemo(() => projectDeliverableWeeks(weeks, metric), [weeks, metric]);
   const labels = useMemo(() => Object.fromEntries(metrics.map((m) => [m.key, m.label])), [metrics]);
   // The breakdown under each name lists SHOWN KPIs only — an order-only KPI has no count.
@@ -118,8 +126,15 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
   const inView = picked ? [picked] : metrics;
   const teamInView = inView.filter((m) => m.team);
   const hiddenAreTeam = inView.length > 0 && inView.every((m) => m.team);
-  const historyNote =
-    teamInView.length > 0 && teamInView.length === inView.length
+  // An HSL KPI is hidden when its rule or formula does not read as items × a rate —
+  // sometimes because its value IS pesos (Medical Records' RFC), sometimes only because
+  // the count check cannot read the shape (Filing's `(BBB + Referral_Leads) * 250`). One
+  // sentence true of both; never "entered as an amount", which is false for the second.
+  const historyNote = allOnly
+    ? showValues
+      ? undefined
+      : 'These KPIs are scored in ways that don’t read as items × a rate, so only the ranking is shown — never how much.'
+    : teamInView.length > 0 && teamInView.length === inView.length
       ? showValues
         ? `${names(teamInView)} ${teamInView.length === 1 ? 'is a team bonus' : 'are team bonuses'}: every member carries the team's figure, so this line sits on the team average and everyone who scored a week ties.`
         : `${names(teamInView)} ${teamInView.length === 1 ? 'is a team bonus that doesn’t' : 'are team bonuses that don’t'} pay one flat rate per item, so only the ranking is shown — and everyone who scored a week ties.`
@@ -153,7 +168,7 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
         pickedLabel ? `Ranked by ${pickedLabel} bonus earned · amounts hidden` : 'Ranked by bonus earned · amounts hidden'
       }
       controls={
-        metrics.length > 1 ? (
+        metrics.length > 1 && !allOnly ? (
           // The house dropdown, compact and blue so it reads as one set with the
           // Average / Window toggles beside it. Left-aligned so a long bonus name
           // opens toward the toggles, never off the left edge on a phone.
@@ -173,8 +188,19 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
       }
       notes={
         <>
+          {allOnly && (
+            <p className="text-[11.5px]">
+              Each HSL score is one bonus for all of its KPIs, so the board ranks the whole bonus; the items
+              under each name are its breakdown.
+            </p>
+          )}
           {!showValues &&
-            (hiddenAreTeam ? (
+            (allOnly ? (
+              <p className="text-[11.5px]">
+                These KPIs are scored in ways that don&rsquo;t read as items &times; a rate, so this board shows the
+                order alone &mdash; never a figure.
+              </p>
+            ) : hiddenAreTeam ? (
               <p className="text-[11.5px]">
                 {single || pickedLabel ? `${pickedLabel ?? single!.label} doesn’t` : 'These bonuses don’t'} pay one
                 flat rate per item, so this board shows the order alone &mdash; never a figure.
@@ -188,7 +214,11 @@ export function DeliverableLeaderboardPane<M extends ApptRosterMember>({
           {orderOnlyAmongAll.filter((m) => !m.team).length > 0 && (
             <OrderOnlyAmongAll
               ms={orderOnlyAmongAll.filter((m) => !m.team)}
-              why={['entered as an amount', 'entered as an amount']}
+              why={
+                allOnly
+                  ? ['scored in a way that doesn’t read as items × a rate', 'scored in ways that don’t read as items × a rate']
+                  : ['entered as an amount', 'entered as an amount']
+              }
             />
           )}
           {orderOnlyAmongAll.filter((m) => m.team).length > 0 && (

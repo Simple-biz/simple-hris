@@ -62,6 +62,7 @@ import {
 } from '@/components/manager/DeliverableLeaderboardPane';
 import {
   ALL_METRIC,
+  hslBranchFromRailKey,
   type DeliverableDailyPayload,
   type DeliverableRankingsPayload,
 } from '@/lib/manager/deliverable-rankings';
@@ -128,7 +129,7 @@ import {
   membersForRailKey,
   flattenRail,
 } from '@/lib/manager/team-dept-rail';
-import type { DeptRailEntry } from '@/lib/payment-catalog/dept-rail';
+import { HSL_PARENT_KEY, type DeptRailEntry } from '@/lib/payment-catalog/dept-rail';
 
 /** How `/api/manager/department-members` scoped the roster for this session (server-driven). */
 type ManagerTeamGate =
@@ -2978,9 +2979,14 @@ function TeamPanelInner({
   const [delivError, setDelivError] = useState<string | null>(null);
   const [delivFor, setDelivFor] = useState('');
   useEffect(() => {
+  // An HSL sub-team's KPI board (2026-09-28) is read by its RAIL key, `hsl:<key>`: the
+  // display label "HSL — Intake Specialist" normalizes to no department at all
+  // (`manager-hsl-kpi-rankings.md`). Every other department sends its raw label.
+  const hslBranch = hslBranchFromRailKey(activeDept);
+  const delivDept = hslBranch ? activeDept : activeDeptLabel;
     if (!activeDeptLabel) return;
     let cancelled = false;
-    fetch(`/api/manager/deliverable-rankings?department=${encodeURIComponent(activeDeptLabel)}`, {
+    fetch(`/api/manager/deliverable-rankings?department=${encodeURIComponent(delivDept)}`, {
       cache: 'no-store',
     })
       .then((r) => r.json())
@@ -2999,6 +3005,7 @@ function TeamPanelInner({
             order: j.order ?? null,
             error: null,
           });
+            ...(j.allOnly === true ? { allOnly: true } : {}),
           setDelivError(null);
         }
         setDelivFor(activeDeptLabel);
@@ -3012,7 +3019,14 @@ function TeamPanelInner({
     return () => {
       cancelled = true;
     };
-  }, [activeDeptLabel, setDeliv]);
+  }, [activeDeptLabel, delivDept, setDeliv]);
+  // An HSL board ranks the whole HSL family, never just the sub-team's placement: a
+  // branch's scorers sit on many sub-teams (Medical Records: 47 of 64 placed in SSD,
+  // measured 2026-09-28). The server ranks the same family roster.
+  const delivMembers = useMemo(
+    () => (hslBranch ? membersForRailKey(HSL_PARENT_KEY, rail, membersByDept) : apptMembers),
+    [hslBranch, rail, membersByDept, apptMembers],
+  );
   const delivAnswered = delivFor === activeDeptLabel;
   const delivReady = deliv !== null || delivAnswered;
   const deliverablesAvailable = !!deliv?.available;
@@ -3052,7 +3066,7 @@ function TeamPanelInner({
     if (!wantDelivDaily || !activeDeptLabel || delivDailyFor === activeDeptLabel) return;
     let cancelled = false;
     fetch(
-      `/api/manager/deliverable-rankings?department=${encodeURIComponent(activeDeptLabel)}&basis=daily`,
+      `/api/manager/deliverable-rankings?department=${encodeURIComponent(delivDept)}&basis=daily`,
       { cache: 'no-store' },
     )
       .then((r) => r.json())
@@ -3076,7 +3090,7 @@ function TeamPanelInner({
     return () => {
       cancelled = true;
     };
-  }, [wantDelivDaily, activeDeptLabel, delivDailyFor, setDelivDaily]);
+  }, [wantDelivDaily, activeDeptLabel, delivDept, delivDailyFor, setDelivDaily]);
   const delivDailyErrorNow = delivDailyFor === activeDeptLabel ? delivDailyError : null;
 
   // Lead Gen's days worked, same pattern.
@@ -3820,8 +3834,9 @@ function TeamPanelInner({
                 days={delivDailyErrorNow ? null : (delivDaily?.days ?? null)}
                 dailyOrder={delivDaily?.order ?? null}
                 daysError={delivDailyErrorNow}
-                members={apptMembers}
-                deptName={activeEntry?.name ?? 'department'}
+                members={delivMembers}
+                deptName={hslBranch ? 'HSL' : (activeEntry?.name ?? 'department')}
+                allOnly={!!deliv.allOnly}
                 view={delivView}
                 onViewChange={setDelivView}
                 onOpenMember={(m) => setSelectedMember(m)}
