@@ -2075,6 +2075,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/collab/CobrowseChatWindow.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
 | `src/components/collab/CobrowseSurface.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
 | `src/components/collab/CollabLayer.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
+| `src/components/common/CarlaJamBubble.tsx` | component | [carla-jellyfish-bubble](../features/carla-jellyfish-bubble.md) |
 | `src/components/common/CarlaSongToast.tsx` | component | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [login-carla-song](../features/login-carla-song.md) |
 | `src/components/common/CollapsibleSidebarShell.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |
 | `src/components/common/ConstructionBanner.tsx` | component | *this file* |

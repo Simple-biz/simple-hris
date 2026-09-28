@@ -10,6 +10,9 @@ fades out and the toast slides away.
 
 Anyone else signing in gets nothing — the gate is a literal email match, not a role.
 
+Sibling: [carla-jellyfish-bubble.md](./carla-jellyfish-bubble.md), a Jellyfish Jam play bubble
+every 5 active minutes, same gate, same root-layout mount. It never offers while this song plays.
+
 ---
 
 ## How the 30 seconds are guaranteed

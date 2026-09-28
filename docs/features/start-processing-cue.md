@@ -117,6 +117,10 @@ To swap the song: replace `public/sounds/jellyfish-jam.mp3` (within the tested
 budget), or change `STAGE_PREPPED_SRC`. It plays for its own length between
 `STAGE_PREPPED_MIN_SECONDS` and `STAGE_PREPPED_MAX_SECONDS`. Check that
 invariant 5 still reads true and that the ceiling does not cut the new song.
+**Since 2026-09-28 the file is shared:** Carla's Jellyfish Jam bubble
+([carla-jellyfish-bubble.md](./carla-jellyfish-bubble.md)) plays the same
+`jellyfish-jam.mp3`. Replacing the file changes both. To swap only this cue,
+point `STAGE_PREPPED_SRC` at a new file and leave `jellyfish-jam.mp3` alone.
 The retired synth V12 survives only as a reference card in
 `references/sound-tester/sound-tester.html`;
 `public/sounds/truckstart.mp3` is retired but left on disk.

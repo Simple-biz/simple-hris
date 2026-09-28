@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import NextAuthProvider from "@/components/auth/NextAuthProvider";
+import CarlaJamBubble from "@/components/common/CarlaJamBubble";
 import CarlaSongToast from "@/components/common/CarlaSongToast";
 import DispatchPaidToastsGlobal from "@/components/common/DispatchPaidToastsGlobal";
 import { getServerSession } from "next-auth/next";
@@ -53,6 +54,10 @@ export default async function RootLayout({
                 switches (client-side navs never remount this layout). Renders
                 null for everyone else / when nothing is playing. */}
             <CarlaSongToast />
+            {/* Carla's Jellyfish Jam bubble — every 5 active minutes, right edge.
+                Root layout for the same reason as the pill above. Arms nothing
+                and renders null for everyone else. */}
+            <CarlaJamBubble />
             {/* Lower-left "X paid Y $Z" cards while payroll is processing — root
                 layout so EVERY dashboard shows them; the server decides who is
                 authorized (Accounting → Payment Dispatch view access). */}
