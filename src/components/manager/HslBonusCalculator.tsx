@@ -1752,25 +1752,6 @@ function HslBonusCalculatorForWeek({
                 return { ...prev, [key]: { ...d, entries: finalEntries, dirty: true } };
               });
             }}
-            onToggleManager={(email) => {
-              setDeptState((prev) => {
-                const d = prev[key]!;
-                const next = d.entries.map((e) => {
-                  if (e.employee_email !== email) return e;
-                  const newIsManager = !e.is_manager;
-                  return {
-                    ...e,
-                    is_manager: newIsManager,
-                    calculated_bonus: scoreEntry(key, email, e.kpi_data, newIsManager),
-                  };
-                });
-                // Re-share for SSD — toggling someone's manager flag doesn't
-                // change the team_split share but we re-run the recompute so
-                // calculated_bonus stays canonical (it was reset by calcBonus=0).
-                const finalEntries = recomputeSsdEntries(key, next, d.subTeams);
-                return { ...prev, [key]: { ...d, entries: finalEntries, dirty: true } };
-              });
-            }}
             rosterEmails={deptState[key]!.rosterEmails}
             offboardedEmails={offboardedEmails}
             onAddMember={() => setAddingMemberDept(key)}
@@ -2402,7 +2383,6 @@ interface DeptBlockProps {
   /** Branch config resolver — code teams AND data sub-teams. */
   cfgOf: (key: string) => DeptConfig;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
-  onToggleManager: (email: string) => void;
   /** Epoch ms of the last successful autosave for this dept, for the inline
    *  "Saved HH:MM" status. Absent until the first write of the session. */
   savedAtMs?: number;
@@ -2451,7 +2431,7 @@ function DeptBlock({
   cfgOf,
   deptKey, state, loading, searchSeed, sectionClassName,
   chromeless, onOpen, periodStartStr,
-  onKpiChange, onToggleManager,
+  onKpiChange,
   savedAtMs, autosaveError, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
   payrollLocked, weekPending, markUnreadySubmitting,
   rosterEmails, offboardedEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
@@ -2721,7 +2701,6 @@ function DeptBlock({
             periodStart={periodStartStr}
             catalogFor={catalogFor}
             onKpiChange={onKpiChange}
-            onToggleManager={onToggleManager}
             rosterEmails={rosterEmails}
             offboardedEmails={offboardedEmails}
             onRemoveMember={onRemoveMember}
@@ -2878,7 +2857,6 @@ interface KpiTableProps {
    *  is only tickable in the final payroll week of its month. */
   periodStart: string;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
-  onToggleManager: (email: string) => void;
   rosterEmails?: Set<string>;
   offboardedEmails?: Set<string>;
   onRemoveMember?: (email: string) => void;
@@ -3106,7 +3084,7 @@ function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
   );
 }
 
-export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catalogFor, onKpiChange, onToggleManager, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
+export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catalogFor, onKpiChange, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
   // The catalog columns are the UNION across everyone on the page: a bonus
   // assigned per-employee reaches one person, and the column still has to exist
@@ -3133,7 +3111,12 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
           <thead>
             <tr className="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900/60">
               <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Employee</th>
-              <th className="px-2 py-2 text-center font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">Mgr</th>
+              {/* No "Mgr" column (Kane, 2026-09-28: "remove it"). Its only pay
+                  effect was unlocking `managerOnly` rules, and the last one
+                  (Collections' ₱2,500 flat) was deleted that day. A stored
+                  `is_manager` is still loaded and saved as-is. schema.test.ts
+                  fails if a managerOnly rule comes back with no toggle to
+                  unlock it. */}
               {rules.map((r) => (
                 <th key={r.key} className="px-2 py-2 text-right font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-500">
                   {r.label}
@@ -3186,7 +3169,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
           <tbody>
             {entries.length === 0 && (
               <tr>
-                <td colSpan={rules.length + catalogCols.length + 3} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
+                <td colSpan={rules.length + catalogCols.length + 2} className="px-3 py-6 text-center font-mono text-[10px] text-zinc-500">
                   No employees on this page.
                 </td>
               </tr>
@@ -3216,15 +3199,6 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
                       </button>
                     )}
                   </div>
-                </td>
-                <td className="px-2 py-2 text-center">
-                  <input
-                    type="checkbox"
-                    className="accent-blue-600"
-                    checked={e.is_manager}
-                    disabled={isLocked}
-                    onChange={() => onToggleManager(e.employee_email)}
-                  />
                 </td>
                 {rules.map((r) => (
                   <td key={r.key} className="px-2 py-2 text-right">
@@ -3360,7 +3334,7 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
               );
             })}
             <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
-              <td colSpan={rules.length + catalogCols.length + 2} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
+              <td colSpan={rules.length + catalogCols.length + 1} className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500">
                 Subtotal
               </td>
               <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900 dark:text-zinc-100">

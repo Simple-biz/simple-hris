@@ -900,6 +900,15 @@ in Collections and `managerOnly` is mis-modeled, or it is not and 30 rows are wr
 that is a pay-rule question for Carla, left as it is here; `is_manager` on
 `hsl_bonus_entries` gates nothing else in this dept.
 
+**Moot since 2026-09-28, and the Mgr column is GONE.** The flat was deleted by
+Kane's ruling (b) (`hsl-subdepartments.md` §7d). With it went the last
+`managerOnly` rule on any HSL branch. Library bonuses have no manager concept,
+and Managers Weekly never read the flag. So the **Mgr** tickbox changed no one's
+pay anywhere, and Kane had it removed from `KpiTable` (*"remove it"*). A stored
+`is_manager` is still loaded and saved as-is, and the Ready preview still shows
+its badge. `schema.test.ts` fails if a `managerOnly` rule is added, because
+nothing on the card could tick it. Bring the column back in the same change.
+
 ## First-load reveal *(2026-08-24 — the skeleton was terminal)*
 
 One tab renders two calculators and each had grown its own first-load gate:

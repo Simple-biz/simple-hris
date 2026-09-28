@@ -179,22 +179,6 @@ export default function HslBonusEditModal({
     setDirty(true);
   };
 
-  const handleToggleManager = (email: string) => {
-    setEntries((prev) => {
-      const next = prev.map((e) => {
-        if (e.employee_email !== email) return e;
-        const newIsManager = !e.is_manager;
-        return {
-          ...e,
-          is_manager: newIsManager,
-          calculated_bonus: calcBonus(e.kpi_data, dept, newIsManager, { periodStart }),
-        };
-      });
-      return recomputeSsdEntries(deptKey, next, subTeams);
-    });
-    setDirty(true);
-  };
-
   const handleSubTeamChange = (
     subTeam: SubTeamName,
     field: 'pct' | 'records' | 'rfc',
@@ -442,7 +426,6 @@ export default function HslBonusEditModal({
                   isLocked={isLocked}
                   periodStart={periodStart}
                   onKpiChange={handleKpiChange}
-                  onToggleManager={handleToggleManager}
                 />
               )}
 

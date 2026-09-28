@@ -471,6 +471,21 @@ test('calcBonus engine: a managerOnly flat pays managers only, inside the cap', 
   assert.equal(calcBonus({ mgr_flat: true, portal_login: 2 }, FLAT_FIXTURE, false, { periodStart: MID_WEEK }), 200);
 });
 
+test('no HSL dept rule is managerOnly — the KPI card has no Mgr toggle to unlock one', () => {
+  // The Mgr column was removed from KpiTable on 2026-09-28 (Kane: "remove it").
+  // Its only pay effect was unlocking managerOnly rules, and the last one was
+  // Collections' ₱2,500 flat, deleted that day. A managerOnly rule added
+  // now would render n/a for everyone and pay nobody, with no way to tick it.
+  // Bring the column back in the same change as the rule.
+  const found: string[] = [];
+  for (const k of HSL_DEPT_KEYS) {
+    for (const r of HSL_DEPTS[k].rules) {
+      if ('managerOnly' in r && r.managerOnly) found.push(`${k}.${r.key}`);
+    }
+  }
+  assert.deepEqual(found, []);
+});
+
 test('no HSL dept carries a cap-exempt or monthly flat rule (a new one is a pay decision)', () => {
   // The last one was Pre/Post-Hearing's ₱2,500 Monthly Bonus, deleted 2026-09-28.
   const found: string[] = [];
