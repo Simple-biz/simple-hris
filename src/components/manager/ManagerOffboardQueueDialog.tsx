@@ -189,20 +189,20 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
         className="grid max-h-[88vh] grid-rows-[auto_1fr_auto] gap-0 p-0 sm:max-w-[560px]"
       >
         {/* ── Header ── */}
-        <div className="relative overflow-hidden rounded-t-xl bg-[#1a0a0a] px-5 pb-4 pt-5">
+        <div className="relative overflow-hidden rounded-t-xl border-b border-rose-100 bg-rose-50 px-5 pb-4 pt-5 dark:border-b-0 dark:bg-[#1a0a0a]">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-rose-700 via-rose-400 to-rose-700" />
           <div className="relative flex items-start gap-3.5">
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/60 text-rose-200 ring-1 ring-rose-700/50">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-900/60 dark:text-rose-200 dark:ring-rose-700/50">
               <Users className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500/80">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-500/80">
                 Queue for offboarding
               </p>
-              <p className="mt-0.5 text-[15px] font-semibold leading-snug text-zinc-100">
+              <p className="mt-0.5 text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
                 {orderedPeople.length} {orderedPeople.length === 1 ? 'person' : 'people'} → HR
               </p>
-              <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+              <p className="mt-1 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-500">
                 HR reviews and handles the actual offboarding. Set a reason for everyone below,
                 then tweak individuals if they differ.
               </p>
@@ -211,15 +211,15 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
         </div>
 
         {/* ── Body ── */}
-        <div className="min-h-0 space-y-4 overflow-y-auto bg-zinc-950/60 p-5">
+        <div className="min-h-0 space-y-4 overflow-y-auto bg-zinc-50/80 p-5 dark:bg-zinc-950/60">
           {/* Shared defaults */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3.5">
+          <div className="rounded-xl border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-900/50">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
               Default for everyone
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-zinc-400">Reason</label>
+                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Reason</label>
                 <SmoothSelect
                   aria-label="Default reason"
                   value={defaultReason}
@@ -230,12 +230,12 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-medium text-zinc-400">Note (optional)</label>
+                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400">Note (optional)</label>
                 <input
                   value={defaultNote}
                   onChange={(e) => applyDefaultNote(e.target.value)}
                   placeholder="Applies to all un-edited rows"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600 dark:focus:border-zinc-600"
                 />
               </div>
             </div>
@@ -259,16 +259,16 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                     exit={{ opacity: 0, y: -6 }}
                     transition={{ duration: 0.2, delay: Math.min(idx * 0.02, 0.16), ease: [0.22, 1, 0.36, 1] }}
                     className={cn(
-                      'rounded-xl border bg-zinc-900/40 p-3',
-                      rowInvalid ? 'border-rose-900/60' : 'border-zinc-800',
+                      'rounded-xl border bg-white p-3 dark:bg-zinc-900/40',
+                      rowInvalid ? 'border-rose-200 dark:border-rose-900/60' : 'border-zinc-200 dark:border-zinc-800',
                     )}
                   >
                     <div className="flex items-center gap-2.5">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-[11px] font-bold text-zinc-300">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-[11px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                         {initials(p.name, p.work_email ?? p.personal_email)}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-zinc-100">
+                        <p className="truncate text-sm font-medium text-zinc-900 dark:text-zinc-100">
                           {p.name ?? p.work_email ?? p.personal_email}
                         </p>
                         <p className="truncate font-mono text-[10.5px] text-zinc-500">
@@ -280,12 +280,12 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                           type="button"
                           onClick={() => resetRow(k)}
                           title="Reset to the default reason/note"
-                          className="inline-flex items-center gap-1 rounded-md border border-amber-700/50 bg-amber-950/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-300 hover:bg-amber-900/30"
+                          className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-900/30"
                         >
                           <RotateCcw className="h-3 w-3" /> Custom
                         </button>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-zinc-600">
+                        <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 dark:text-zinc-600">
                           <Pencil className="h-3 w-3" /> Default
                         </span>
                       )}
@@ -304,10 +304,10 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
                         onChange={(e) => setRowNote(k, e.target.value)}
                         placeholder={noteRequired ? 'Note required' : 'Note (optional)'}
                         className={cn(
-                          'w-full rounded-lg border bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none',
+                          'w-full rounded-lg border bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600',
                           noteRequired && !rs.note.trim()
-                            ? 'border-rose-800/70 focus:border-rose-600'
-                            : 'border-zinc-800 focus:border-zinc-600',
+                            ? 'border-rose-300 focus:border-rose-500 dark:border-rose-800/70 dark:focus:border-rose-600'
+                            : 'border-zinc-200 focus:border-zinc-400 dark:border-zinc-800 dark:focus:border-zinc-600',
                         )}
                       />
                     </div>
@@ -319,9 +319,9 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
         </div>
 
         {/* ── Footer ── */}
-        <div className="flex items-center gap-2 rounded-b-xl border-t border-zinc-800 bg-zinc-950/80 p-4">
+        <div className="flex items-center gap-2 rounded-b-xl border-t border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950/80">
           {invalid.length > 0 && (
-            <span className="mr-auto inline-flex items-center gap-1.5 text-[11px] text-amber-400">
+            <span className="mr-auto inline-flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400">
               <AlertTriangle className="h-3.5 w-3.5" />
               {invalid.length} {invalid.length === 1 ? 'person needs' : 'people need'} a reason
             </span>
@@ -332,7 +332,7 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
             onClick={() => onOpenChange(false)}
             disabled={submitting}
             className={cn(
-              'border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200',
+              'border-zinc-200 bg-transparent text-zinc-600 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200',
               invalid.length === 0 && 'ml-auto',
             )}
           >
@@ -342,7 +342,7 @@ export default function ManagerOffboardQueueDialog({ open, people, onOpenChange,
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+            className="gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-200 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
           >
             {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserMinus className="h-3.5 w-3.5" />}
             {submitting ? 'Sending…' : `Send ${orderedPeople.length} to HR`}

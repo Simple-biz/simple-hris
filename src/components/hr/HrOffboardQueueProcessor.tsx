@@ -369,14 +369,14 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
     <Dialog open={open} onOpenChange={(o) => !o && !busy && handleClose()}>
       <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-[480px]">
         {/* Header + progress */}
-        <div className="relative overflow-hidden bg-[#1a0a0a] px-5 pb-4 pt-5">
+        <div className="relative overflow-hidden border-b border-rose-100 bg-rose-50 px-5 pb-4 pt-5 dark:border-b-0 dark:bg-[#1a0a0a]">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-rose-700 via-rose-400 to-rose-700" />
           <div className="relative flex items-center justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500/80">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-500/80">
                 Process offboarding queue
               </p>
-              <p className="mt-0.5 text-[15px] font-semibold text-zinc-100">
+              <p className="mt-0.5 text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">
                 {showDone ? 'All done' : `Person ${Math.min(idx + 1, total)} of ${total}`}
               </p>
             </div>
@@ -384,7 +384,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
               type="button"
               onClick={() => !busy && handleClose()}
               disabled={!!busy}
-              className="rounded-md p-1 text-zinc-600 transition-colors hover:bg-zinc-800/60 hover:text-zinc-300 disabled:opacity-40"
+              className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-rose-100 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-600 dark:hover:bg-zinc-800/60 dark:hover:text-zinc-300"
               aria-label="Close"
             >
               <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -393,7 +393,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
             </button>
           </div>
           {/* progress track */}
-          <div className="relative mt-3 h-1 overflow-hidden rounded-full bg-zinc-800">
+          <div className="relative mt-3 h-1 overflow-hidden rounded-full bg-rose-100 dark:bg-zinc-800">
             <motion.div
               className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-rose-600 to-rose-400"
               initial={false}
@@ -404,15 +404,15 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
         </div>
 
         {/* Body */}
-        <div className="bg-zinc-950/60 p-5">
+        <div className="bg-zinc-50/80 p-5 dark:bg-zinc-950/60">
           {/* Batch action — off-board everyone who's ready in one webhook round-trip. */}
           {!showDone && !actionMode && batchEligible.length >= 2 && (
-            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-rose-900/50 bg-rose-950/25 px-3 py-2.5">
+            <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 dark:border-rose-900/50 dark:bg-rose-950/25">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold text-rose-200">
+                <p className="text-[11px] font-semibold text-rose-800 dark:text-rose-200">
                   {batchEligible.length} ready to off-board together
                 </p>
-                <p className="truncate text-[10px] text-rose-300/70">
+                <p className="truncate text-[10px] text-rose-700/80 dark:text-rose-300/70">
                   Uses each person&apos;s reason above · fires one batched teardown
                 </p>
               </div>
@@ -422,7 +422,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                 onClick={handleOffboardAll}
                 disabled={!!busy}
                 title="Off-board every ready person in a single batched request"
-                className="shrink-0 gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+                className="shrink-0 gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-200 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
               >
                 {busy === 'offboard-all' ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -443,17 +443,17 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                 transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
                 className="flex flex-col items-center gap-3 py-4 text-center"
               >
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-900/40 text-emerald-300 ring-1 ring-emerald-700/40">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-700/40">
                   <CheckCircle2 className="h-6 w-6" />
                 </div>
-                <p className="text-sm font-semibold text-zinc-100">Queue processed</p>
-                <p className="text-xs text-zinc-400">
+                <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Queue processed</p>
+                <p className="text-xs text-zinc-600 dark:text-zinc-400">
                   {completedCount} offboarded · {dismissedCount} dismissed · {returnedCount} returned · {skippedCount} left pending
                 </p>
                 <Button
                   type="button"
                   onClick={handleClose}
-                  className="mt-1 gap-1.5 border-0 bg-zinc-100 text-zinc-900 hover:bg-white"
+                  className="mt-1 gap-1.5 border-0 bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
                 >
                   Done
                 </Button>
@@ -469,11 +469,11 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
               >
                 {/* Who */}
                 <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/60 text-sm font-bold text-rose-200 ring-1 ring-rose-700/50">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-sm font-bold text-rose-700 ring-1 ring-rose-200 dark:bg-rose-900/60 dark:text-rose-200 dark:ring-rose-700/50">
                     {initials(current.employee_name, current.employee_work_email ?? current.employee_personal_email)}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-semibold text-zinc-100">
+                    <p className="truncate text-[15px] font-semibold text-zinc-900 dark:text-zinc-100">
                       {current.employee_name ?? current.employee_work_email ?? current.employee_email}
                     </p>
                     <p className="truncate font-mono text-[11px] text-zinc-500">
@@ -481,7 +481,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                     </p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                       {current.department && (
-                        <span className="rounded-full bg-zinc-800/80 px-2 py-0.5 text-[10px] font-medium text-zinc-400 ring-1 ring-zinc-700/50" title={current.department ?? undefined}>
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 ring-1 ring-zinc-200 dark:bg-zinc-800/80 dark:text-zinc-400 dark:ring-zinc-700/50" title={current.department ?? undefined}>
                           {formatDeptLabel(current.department)}
                         </span>
                       )}
@@ -493,7 +493,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                 </div>
 
                 {!current.employee_work_email && (
-                  <p className="flex items-start gap-1.5 rounded-lg border border-amber-800/50 bg-amber-950/30 px-3 py-2 text-[11px] text-amber-300">
+                  <p className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-300">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     No work email on file — this person can’t be auto-offboarded. Dismiss and handle manually.
                   </p>
@@ -505,18 +505,18 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
                         Reason <span className="text-rose-500">*</span>
-                        <span className="ml-1.5 font-normal normal-case tracking-normal text-zinc-600">from manager — editable</span>
+                        <span className="ml-1.5 font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-600">from manager — editable</span>
                       </label>
                       <Select
                         value={reasonById[current.id] || ''}
                         onValueChange={(v) => v && setReasonById((p) => ({ ...p, [current.id]: v as OffboardReason }))}
                       >
-                        <SelectTrigger className="w-full border-zinc-800 bg-zinc-900/80 text-sm text-zinc-200 data-[size=default]:h-9 hover:border-zinc-700">
+                        <SelectTrigger className="w-full border-zinc-200 bg-white text-sm text-zinc-900 data-[size=default]:h-9 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:hover:border-zinc-700">
                           <SelectValue placeholder="Select a reason" />
                         </SelectTrigger>
-                        <SelectContent side="bottom" alignItemWithTrigger={false} className="border-zinc-800 bg-zinc-900">
+                        <SelectContent side="bottom" alignItemWithTrigger={false} className="border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
                           {QUEUE_REASON_OPTIONS.map((r) => (
-                            <SelectItem key={r.value} value={r.value} className="text-zinc-300 focus:bg-zinc-800 focus:text-zinc-100">
+                            <SelectItem key={r.value} value={r.value} className="text-zinc-700 focus:bg-zinc-100 focus:text-zinc-900 dark:text-zinc-300 dark:focus:bg-zinc-800 dark:focus:text-zinc-100">
                               {r.label}
                             </SelectItem>
                           ))}
@@ -534,7 +534,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                         onChange={(e) => setNoteById((p) => ({ ...p, [current.id]: e.target.value }))}
                         rows={2}
                         placeholder="Anything HR should record"
-                        className="w-full resize-none rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+                        className="w-full resize-none rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600 dark:focus:border-zinc-600"
                       />
                     </div>
                   </>
@@ -555,10 +555,10 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                           : 'What should the manager fix or reconsider? (sent back to them)'
                       }
                       className={cn(
-                        'w-full resize-none rounded-lg bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none',
+                        'w-full resize-none rounded-lg bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600',
                         actionMode === 'dismiss'
-                          ? 'border border-rose-900/50 focus:border-rose-700'
-                          : 'border border-amber-900/50 focus:border-amber-600',
+                          ? 'border border-rose-200 focus:border-rose-500 dark:border-rose-900/50 dark:focus:border-rose-700'
+                          : 'border border-amber-200 focus:border-amber-500 dark:border-amber-900/50 dark:focus:border-amber-600',
                       )}
                     />
                   </div>
@@ -570,7 +570,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
 
         {/* Footer actions */}
         {!showDone && current && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-800 bg-zinc-950/80 p-4">
+          <div className="flex flex-wrap items-center gap-2 border-t border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950/80">
             {!actionMode ? (
               <>
                 <Button
@@ -578,7 +578,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   variant="outline"
                   onClick={() => setActionMode('dismiss')}
                   disabled={!!busy}
-                  className="gap-1.5 border-zinc-800 bg-transparent text-zinc-400 hover:border-rose-800/60 hover:bg-rose-950/20 hover:text-rose-300"
+                  className="gap-1.5 border-zinc-200 bg-transparent text-zinc-600 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-rose-800/60 dark:hover:bg-rose-950/20 dark:hover:text-rose-300"
                 >
                   <Ban className="h-3.5 w-3.5" /> Dismiss
                 </Button>
@@ -588,7 +588,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   onClick={() => setActionMode('return')}
                   disabled={!!busy}
                   title="Send this request back to the manager for revision"
-                  className="gap-1.5 border-zinc-800 bg-transparent text-zinc-400 hover:border-amber-800/60 hover:bg-amber-950/20 hover:text-amber-300"
+                  className="gap-1.5 border-zinc-200 bg-transparent text-zinc-600 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-amber-800/60 dark:hover:bg-amber-950/20 dark:hover:text-amber-300"
                 >
                   <Undo2 className="h-3.5 w-3.5" /> Return
                 </Button>
@@ -597,7 +597,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   variant="outline"
                   onClick={handleSkip}
                   disabled={!!busy}
-                  className="ml-auto gap-1.5 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+                  className="ml-auto gap-1.5 border-zinc-200 bg-transparent text-zinc-600 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
                 >
                   <SkipForward className="h-3.5 w-3.5" /> Skip
                 </Button>
@@ -606,7 +606,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   onClick={handleOffboard}
                   disabled={!!busy || !current.employee_work_email}
                   title="Off-boards the person and triggers the account-teardown automation"
-                  className="gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+                  className="gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-200 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
                 >
                   {busy === 'offboard' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserMinus className="h-3.5 w-3.5" />}
                   Offboard
@@ -620,7 +620,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   variant="outline"
                   onClick={() => { setActionMode(null); setActionReason(''); }}
                   disabled={!!busy}
-                  className="border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+                  className="border-zinc-200 bg-transparent text-zinc-600 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
                 >
                   Back
                 </Button>
@@ -629,7 +629,7 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
                   onClick={() => void handleReasonedDecision(actionMode)}
                   disabled={!!busy || !actionReason.trim()}
                   className={cn(
-                    'ml-auto gap-1.5 border-0 text-white disabled:bg-zinc-800 disabled:text-zinc-600',
+                    'ml-auto gap-1.5 border-0 text-white disabled:bg-zinc-200 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600',
                     actionMode === 'dismiss' ? 'bg-rose-700 hover:bg-rose-600' : 'bg-amber-600 hover:bg-amber-500',
                   )}
                 >

@@ -1042,34 +1042,34 @@ function OffboardReturnDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !submitting && onClose()}>
       <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-[440px]">
-        <div className="relative overflow-hidden bg-[#1a1206] px-5 pb-4 pt-5">
+        <div className="relative overflow-hidden border-b border-amber-100 bg-amber-50 px-5 pb-4 pt-5 dark:border-b-0 dark:bg-[#1a1206]">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-amber-700 via-amber-400 to-amber-700" />
           <div className="relative flex items-start gap-3.5">
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-900/50 text-amber-200 ring-1 ring-amber-700/50">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/50 dark:text-amber-200 dark:ring-amber-700/50">
               <Undo2 className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-500/80">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-500/80">
                 Return to manager
               </p>
-              <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-100">
+              <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
                 {target?.employee_name ?? target?.employee_work_email ?? target?.employee_email ?? '—'}
               </p>
-              <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+              <p className="mt-0.5 truncate text-[11px] text-zinc-600 dark:text-zinc-500">
                 back to {target?.requested_by_name ?? target?.requested_by}
               </p>
             </div>
           </div>
-          <p className="relative mt-3 text-[11px] leading-relaxed text-zinc-500">
+          <p className="relative mt-3 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-500">
             The request is sent back for revision (not offboarded). The manager is notified with your
             note and can adjust the reason and re-queue.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-3.5 bg-zinc-950/60 p-5">
+        <form onSubmit={handleSubmit} className="space-y-3.5 bg-zinc-50/80 p-5 dark:bg-zinc-950/60">
           <div className="space-y-1.5">
             <label className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-zinc-500">
-              Reason for returning<span className="text-amber-500">*</span>
+              Reason for returning<span className="text-amber-600 dark:text-amber-500">*</span>
             </label>
             <textarea
               value={reason}
@@ -1077,7 +1077,7 @@ function OffboardReturnDialog({
               rows={3}
               autoFocus
               placeholder="What should the manager fix or reconsider?"
-              className="w-full resize-none rounded-lg border border-amber-900/50 bg-zinc-900/80 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 transition-colors focus:border-amber-600 focus:outline-none"
+              className="w-full resize-none rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-amber-500 focus:outline-none dark:border-amber-900/50 dark:bg-zinc-900/80 dark:text-zinc-200 dark:placeholder:text-zinc-600 dark:focus:border-amber-600"
             />
           </div>
           <div className="flex gap-2 pt-0.5">
@@ -1086,14 +1086,14 @@ function OffboardReturnDialog({
               variant="outline"
               onClick={onClose}
               disabled={submitting}
-              className="flex-1 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+              className="flex-1 border-zinc-200 bg-transparent text-zinc-600 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
             >
               Cancel
             </Button>
             <Button
               type="submit"
               disabled={!reason.trim() || submitting}
-              className="flex-1 gap-1.5 border-0 bg-amber-600 text-white hover:bg-amber-500 disabled:bg-zinc-800 disabled:text-zinc-600"
+              className="flex-1 gap-1.5 border-0 bg-amber-600 text-white hover:bg-amber-500 disabled:bg-zinc-200 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
             >
               {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
               {submitting ? 'Sending…' : 'Send back'}
@@ -1140,25 +1140,25 @@ function OffboardQueueDeleteDialog({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !submitting && onClose()}>
       <DialogContent showCloseButton={false} className="overflow-hidden p-0 sm:max-w-[440px]">
-        <div className="relative overflow-hidden bg-[#1a0a0a] px-5 pb-4 pt-5">
+        <div className="relative overflow-hidden border-b border-rose-100 bg-rose-50 px-5 pb-4 pt-5 dark:border-b-0 dark:bg-[#1a0a0a]">
           <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-rose-700 via-rose-400 to-rose-700" />
           <div className="relative flex items-start gap-3.5">
-            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-900/50 text-rose-200 ring-1 ring-rose-700/50">
+            <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-100 text-rose-700 ring-1 ring-rose-200 dark:bg-rose-900/50 dark:text-rose-200 dark:ring-rose-700/50">
               <Trash2 className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500/80">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-700 dark:text-rose-500/80">
                 Delete request
               </p>
-              <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-100">
+              <p className="mt-0.5 truncate text-[15px] font-semibold leading-snug text-zinc-900 dark:text-zinc-100">
                 {target?.employee_name ?? target?.employee_work_email ?? target?.employee_email ?? '—'}
               </p>
-              <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+              <p className="mt-0.5 truncate text-[11px] text-zinc-600 dark:text-zinc-500">
                 requested by {target?.requested_by_name ?? target?.requested_by}
               </p>
             </div>
           </div>
-          <p className="relative mt-3 text-[11px] leading-relaxed text-zinc-500">
+          <p className="relative mt-3 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-500">
             This permanently removes the request from the queue and cannot be undone. It does
             not off-board anyone
             {isPending
@@ -1167,13 +1167,13 @@ function OffboardQueueDeleteDialog({
           </p>
         </div>
 
-        <div className="flex gap-2 bg-zinc-950/60 p-5">
+        <div className="flex gap-2 bg-zinc-50/80 p-5 dark:bg-zinc-950/60">
           <Button
             type="button"
             variant="outline"
             onClick={onClose}
             disabled={submitting}
-            className="flex-1 border-zinc-800 bg-transparent text-zinc-400 hover:border-zinc-700 hover:bg-zinc-800/50 hover:text-zinc-200"
+            className="flex-1 border-zinc-200 bg-transparent text-zinc-600 hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 dark:border-zinc-800 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:bg-zinc-800/50 dark:hover:text-zinc-200"
           >
             Cancel
           </Button>
@@ -1181,7 +1181,7 @@ function OffboardQueueDeleteDialog({
             type="button"
             onClick={() => void handleDelete()}
             disabled={submitting}
-            className="flex-1 gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-800 disabled:text-zinc-600"
+            className="flex-1 gap-1.5 border-0 bg-rose-700 text-white hover:bg-rose-600 disabled:bg-zinc-200 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-600"
           >
             {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             {submitting ? 'Deleting…' : 'Delete request'}

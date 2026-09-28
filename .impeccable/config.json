@@ -110,6 +110,15 @@
         ],
         "createdAt": "2026-09-27T05:12:40.729Z",
         "reason": "Claude (session fdd8a4bd) false-positive triage: the week chevrons are text-zinc-500 on a white bar at rest; hover sets bg-orange-50 AND text-orange-600 together; disabled hover resets bg to transparent — no state renders gray text on a colored fill"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/manager/ManagerOffboardQueueDialog.tsx"
+        ],
+        "createdAt": "2026-09-28T16:44:01.521Z",
+        "reason": "Claude: gray text is only the disabled: state, which also swaps the bg to zinc-200/zinc-800 — never gray on the rose fill"
       }
     ]
   }
