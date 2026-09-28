@@ -1,5 +1,6 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { selectAllPaged } from './select-all-paged';
+import { inFilterLists } from './in-list-chunks';
 
 // Persistence for APPLIED catalog bonuses (see references/create_bonus_catalog_applied.sql).
 // One row per (period_start, department, employee_email, bonus_id): a catalog
@@ -115,18 +116,35 @@ export async function saveDeptPeriodApplied(params: {
     if (error) return { saved: 0, error: error.message };
   }
 
-  // Delete rows for this dept+period that are not in the new keep-set.
-  const keepIds = payload.map((p) => p.id);
-  let del = supabase
-    .from(TABLE)
-    .delete()
-    .eq('department', params.department)
-    .eq('period_start', params.periodStart);
-  if (keepIds.length > 0) {
-    del = del.not('id', 'in', `(${keepIds.map((id) => `"${id}"`).join(',')})`);
+  // Delete rows for this dept+period that are not in the new keep-set — an empty
+  // keep-set clears the dept-week. The stale set is computed HERE and deleted in
+  // URL-sized batches; it is never sent as a `not.in` list of the keep-set,
+  // because that list grows with the department and the gateway refuses it
+  // (Lead Gen, 478 ids, `Bad Request` on every save — see in-list-chunks.ts).
+  const keep = new Set(payload.map((p) => p.id));
+  const { rows: existing, error: readError } = await selectAllPaged<{ id: string }>((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('id')
+      .eq('department', params.department)
+      .eq('period_start', params.periodStart)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (readError) return { saved: payload.length, error: readError };
+  const stale = existing.map((r) => r.id).filter((id) => !keep.has(id));
+  for (const list of inFilterLists(stale)) {
+    // The dept-week filters stay on every batch, so an id can only ever match
+    // inside the dept-week being replaced. `inFilterLists`, never `.in()`: an
+    // id built from a name-keyed email carries quotes `.in()` does not escape.
+    const { error: delError } = await supabase
+      .from(TABLE)
+      .delete()
+      .eq('department', params.department)
+      .eq('period_start', params.periodStart)
+      .filter('id', 'in', list);
+    if (delError) return { saved: payload.length, error: delError.message };
   }
-  const { error: delError } = await del;
-  if (delError) return { saved: payload.length, error: delError.message };
 
   return { saved: payload.length, error: null };
 }

@@ -609,11 +609,40 @@ matters most on the department side:
   update here.
 - `bonus_catalog_applied` (`saveDeptPeriodApplied`) is a **replace-set**: it
   upserts the payload then deletes every row for that dept-week that is not in
-  the keep-set — **unfiltered when the keep-set is empty**. So a manager who
-  unticks the last bonus in a department autosaves an empty set and clears the
-  dept-week. That is the same thing the Save button did with nothing ticked, and
-  the 1s debounce means an untick→retick never fires the empty write in between.
-  Worth knowing before "optimising" the debounce away.
+  the keep-set — **the whole dept-week when the keep-set is empty**. So a manager
+  who unticks the last bonus in a department autosaves an empty set and clears
+  the dept-week. That is the same thing the Save button did with nothing ticked,
+  and the 1s debounce means an untick→retick never fires the empty write in
+  between. Worth knowing before "optimising" the debounce away.
+- **The stale set is computed on the server and deleted in URL-sized lists —
+  never sent as a `not.in` of the keep-set** (2026-09-28). The old delete put
+  every kept id in the URL. The Cloudflare front of Supabase refuses a query
+  string past **~16 KB** (measured: ~14.4 KB answered, ~16.3–25 KB
+  `fetch failed` / `UND_ERR_HEADERS_OVERFLOW`, ~28 KB+ `400 Bad Request`), and
+  Lead Gen 09-20 had **478 rows ≈ 43 KB**, so **every** Lead Gen autosave and every
+  Lock answered `Bad Request` — *after* the upsert had already landed. PM Team
+  (~361 rows ≈ 32 KB) was over the line too. Now: page the dept-week's ids
+  (`selectAllPaged`), subtract the keep-set in process, and delete the rest
+  through `inFilterLists` (`src/lib/supabase/in-list-chunks.ts`, tested), with
+  the dept + week filters on every list. `inFilterLists` quotes **and escapes**
+  every id, because postgrest-js's `.in()` does not escape an embedded quote: a
+  name-keyed Lead Gen row (`arriola, mark anthony  "mark"`) matched nothing
+  through `.in()`, so a delete built on it would have skipped that row with no
+  error. A failed id read is an error, never "nothing to delete". The QC
+  officer save (`saveQcSubmissions`) got the same treatment. **Residual:** a row
+  another scorer inserts between this save's id read and its delete now
+  survives, where the old single statement would have removed it. Two people
+  saving the same dept-week in the same instant was already last-writer-wins
+  only roughly.
+- **Lock says why the write failed.** When the pre-lock write fails, the Lock
+  modal shows the server's reason (`saveBeforeLockFailedMsg`). "Check your
+  connection" appears only when there is no reason to show. It used to appear
+  every time, and a server refusal read as a network problem.
+- When checking whether a failed save left an un-ticked bonus behind: the
+  `bonus_catalog_applied_touch` trigger bumps `updated_at` on every upsert, so a
+  row whose `updated_at` is older than the dept-week's latest save was not in the
+  last keep-set. Measured 2026-09-28: **0 of 18,967 rows** across 252
+  dept-weeks, so the failed deletes stranded nothing and nothing extra was paid.
 
 **Out of scope, deliberately:** the **QC officer** variant (`variant="qc"`) keeps
 its explicit Save + "Lock & send to manager" — different role, different table

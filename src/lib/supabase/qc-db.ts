@@ -17,6 +17,8 @@ import { sanitizeOffboardDay } from '@/lib/roster/offboard-date-sanity';
 import { fetchDepartmentTransferRows } from '@/lib/payroll/hsl-transfer-effective';
 import { loadQcDepartedEmails } from '@/lib/qc/departed-members';
 import type { AppliedBonusRow } from './bonus-catalog-applied-db';
+import { selectAllPaged } from './select-all-paged';
+import { inFilterLists } from './in-list-chunks';
 
 /** A candidate plus the start date the caller gates on (the pure module
  *  deliberately does not know about employment start). */
@@ -712,20 +714,33 @@ export async function saveQcSubmissions(params: {
 
   // Remove this officer's leftover rows for the dept-week (bonuses they
   // un-applied) without touching another officer's members. Fetch the officer's
-  // existing ids and delete the ones not in the keep-set via a parameterized
-  // .in() — no string-built NOT IN, so no injection surface from row ids.
+  // existing ids and delete the ones not in the keep-set — never a NOT IN of the
+  // keep-set. The read pages and the delete goes in URL-sized lists: clearing a
+  // large officer's week is one long id list, and the gateway refuses a long URL.
+  // `inFilterLists` quotes and escapes every id (`.in()` does not escape an
+  // embedded quote, so a name-keyed id would match nothing, and an unescaped
+  // one could add list items) — see in-list-chunks.ts. A failed read is an
+  // error, never "nothing to delete".
   const keep = new Set(payload.map((p) => p.id));
-  const { data: existing } = await sb
-    .from(SUBMISSIONS)
-    .select('id')
-    .eq('department', params.department)
-    .eq('period_start', params.periodStart)
-    .ilike('scored_by', scoredBy);
-  const toDelete = ((existing ?? []) as Array<{ id: string }>)
-    .map((r) => r.id)
-    .filter((id) => !keep.has(id));
-  if (toDelete.length > 0) {
-    const { error: delErr } = await sb.from(SUBMISSIONS).delete().in('id', toDelete);
+  const { rows: existing, error: readErr } = await selectAllPaged<{ id: string }>((from, to) =>
+    sb
+      .from(SUBMISSIONS)
+      .select('id')
+      .eq('department', params.department)
+      .eq('period_start', params.periodStart)
+      .ilike('scored_by', scoredBy)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (readErr) return { saved: payload.length, error: readErr };
+  const toDelete = existing.map((r) => r.id).filter((id) => !keep.has(id));
+  for (const list of inFilterLists(toDelete)) {
+    const { error: delErr } = await sb
+      .from(SUBMISSIONS)
+      .delete()
+      .eq('department', params.department)
+      .eq('period_start', params.periodStart)
+      .filter('id', 'in', list);
     if (delErr) return { saved: payload.length, error: delErr.message };
   }
 

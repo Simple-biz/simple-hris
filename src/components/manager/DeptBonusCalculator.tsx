@@ -1738,6 +1738,10 @@ export default function DeptBonusCalculator({
    *  would otherwise re-arm the debounce forever. Any edit replaces the objects,
    *  so `!==` means "changed since the failure" and the write is retried. */
   const autosaveFailedRef = useRef<Record<string, { members: MemberState[]; shared: Record<string, AppliedState> }>>({});
+  /** Why the last save of each dept failed, read synchronously by Lock so its
+   *  modal can say so. "Check your connection" alone sent a server refusal
+   *  (Lead Gen's `Bad Request`, 2026-09-28) down the wrong path. */
+  const lastSaveErrorRef = useRef<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<Record<string, number>>({});
   const [autosaveError, setAutosaveError] = useState<Record<string, string>>({});
 
@@ -3122,6 +3126,7 @@ export default function DeptBonusCalculator({
     // applied rows saved under the local-clock week are invisible to every other
     // account and to payroll.
     if (!weekResolved) {
+      lastSaveErrorRef.current[key] = 'the payroll week is not confirmed (reload the page)';
       toast.error('Payroll week not confirmed', {
         description: 'Reload the page before saving — bonuses applied now would not be visible to anyone else.',
       });
@@ -3191,6 +3196,7 @@ export default function DeptBonusCalculator({
         !!latest && (latest.members !== attempted.members || latest.shared !== attempted.shared);
       patchDept(key, { seeded: false, ...(superseded ? {} : { dirty: false }) });
       delete autosaveFailedRef.current[key];
+      delete lastSaveErrorRef.current[key];
       setAutosaveError((prev) => {
         if (!prev[key]) return prev;
         const next = { ...prev };
@@ -3215,6 +3221,7 @@ export default function DeptBonusCalculator({
       // Hold this exact state back from the debounce so a failure can't become a
       // retry storm; any further edit replaces the token and re-arms it.
       autosaveFailedRef.current[key] = attempted;
+      lastSaveErrorRef.current[key] = msg;
       setAutosaveError((prev) => ({ ...prev, [key]: msg }));
       toast.error(
         `${DEPARTMENTS.find((x) => x.key === key)?.name ?? humanizeDeptKey(key)} — not saved`,
@@ -3363,6 +3370,15 @@ export default function DeptBonusCalculator({
     }
   }
 
+  /** The Lock modal's text when the pre-lock write fails: the server's reason
+   *  when there is one, the connection hint only when there is not. */
+  function saveBeforeLockFailedMsg(key: string): string {
+    const why = lastSaveErrorRef.current[key];
+    return why
+      ? `Could not save before locking — ${why}. Nothing was locked; your entries are still here.`
+      : 'Could not save before locking. Check your connection and try again.';
+  }
+
   /** Lock a department's values (saving any pending edits first). Locking
    *  freezes the inputs and is required before Submit-to-Payroll is enabled.
    *  Drives the centered loading modal (locking -> locked). */
@@ -3378,7 +3394,7 @@ export default function DeptBonusCalculator({
       const ok = await saveDept(key, { silent: true });
       if (!ok) {
         // Save failed -- stay editable so nothing is lost.
-        setSubmit({ kind: 'lock', key, phase: 'error', msg: 'Could not save before locking. Check your connection and try again.' });
+        setSubmit({ kind: 'lock', key, phase: 'error', msg: saveBeforeLockFailedMsg(key) });
         return;
       }
     }
@@ -3428,7 +3444,7 @@ export default function DeptBonusCalculator({
       if (state[k]?.dirty) {
         const saved = await saveDept(k);
         if (!saved) {
-          setSubmit({ kind: 'submit', key: firstKey, phase: 'error', msg: 'Could not save before locking. Check your connection and try again.' });
+          setSubmit({ kind: 'submit', key: firstKey, phase: 'error', msg: saveBeforeLockFailedMsg(k) });
           return;
         }
       }
