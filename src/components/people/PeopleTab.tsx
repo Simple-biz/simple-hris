@@ -1,13 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, Sparkles, RefreshCw, CalendarDays, ChevronRight, ChevronDown, Landmark, Bell, Check, Pencil, X, Download, FileText, FileSpreadsheet, Table2,
-  User, IdCard, Building2, Hash, Mail, AtSign, Phone, MapPin, Copy, Contact as ContactIcon, Hourglass,
+  Search, Send, Eye, EyeOff, Clock, AlertTriangle, Users, Banknote, Loader2, RefreshCw, CalendarDays, ChevronRight, ChevronDown, Landmark, Bell, Check, Pencil, X, Download, FileText, FileSpreadsheet, Table2,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,8 +14,6 @@ import {
 import { TeamAvatar } from '@/components/team/team-ui';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Skeleton } from '@/components/ui/skeleton';
-import EmployeePabCalendar from '@/components/employee/EmployeePabCalendar';
-import PabCalendarLoader from '@/components/employee/PabCalendarLoader';
 import { DatePicker, DateRangePicker, type DateRange } from '@/components/ui/date-picker';
 import PeopleBankChanges from './PeopleBankChanges';
 import PeopleOffboarded, { ActiveHolderWarning, type OffboardedPayPerson } from './PeopleOffboarded';
@@ -45,10 +40,21 @@ import {
   type Banking,
 } from './payout-record';
 import PeopleBankSearch from './PeopleBankSearch';
+import {
+  PERSON_TABS,
+  PayrollHistoryList,
+  PersonPabPanel,
+  ProfileReadView,
+  ProfileSnapshotCards,
+  usePersonPayWeeks,
+  type PersonTab,
+} from './person-record-panels';
 import { isMissingBankInfo } from '@/lib/people/bank-search';
 import { cn } from '@/lib/utils';
 
-type Currency = 'PHP' | 'USD' | 'COP';
+import {
+  fmtHours, fmtMoney, formatDay, formatHireDate, formatPeriodRange, parseIsoLocal, type Currency,
+} from './people-format';
 
 interface Rate {
   regular: number | null;
@@ -113,21 +119,6 @@ interface MasterProfileFields {
   province: string | null;
   postal_code: string | null;
   full_address: string | null;
-}
-interface HistoryRow {
-  source_file: string | null;
-  kind: 'cycle' | 'special';
-  note: string | null;
-  period_start: string | null;
-  period_end: string | null;
-  total_hours: number | null;
-  regular_hours: number | null;
-  ot_hours: number | null;
-  amount_php: number | null;
-  amount_usd: number | null;
-  status: string | null;
-  paid_amount_usd: number | null;
-  paid_at: string | null;
 }
 interface Summary {
   otEmployees: number;
@@ -375,86 +366,10 @@ function byName(a: RosterRow, b: RosterRow): number {
   return (a.name ?? '').trim().localeCompare((b.name ?? '').trim(), undefined, { sensitivity: 'base' });
 }
 
-function fmtMoney(amount: number | null | undefined, currency: Currency = 'PHP'): string {
-  if (amount == null) return '—';
-  const opts = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
-  if (currency === 'USD') return `$${amount.toLocaleString('en-US', opts)}`;
-  if (currency === 'COP') return `COP ${amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-  return `₱${amount.toLocaleString('en-PH', opts)}`;
-}
-
-function fmtHours(h: number | null | undefined): string {
-  if (h == null) return '—';
-  return `${h.toLocaleString('en-US', { maximumFractionDigits: 1 })}h`;
-}
-
 function todayIso(): string {
   const d = new Date();
   const p = (x: number) => String(x).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-/** Parse a "YYYY-MM-DD" string as a LOCAL calendar date (no UTC/TZ shift). */
-function parseIsoLocal(iso: string | null | undefined): Date | null {
-  if (!iso) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  if (!m) return null;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-}
-
-/** "2026-06-22" → "June 22, 2026". Falls back to the raw string if unparseable. */
-function formatDay(iso: string | null | undefined): string {
-  const d = parseIsoLocal(iso);
-  if (!d) return iso ?? '';
-  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-}
-
-/** Hire date → "Jun 22, 2026". null when absent; raw string if unparseable.
- *  Lenient (`new Date`) so any master-list format renders — start dates arrive in
- *  whatever shape was typed into the sheet, not guaranteed ISO. Matches fmtDate on
- *  the Global Master List. */
-function formatHireDate(raw: string | null | undefined): string | null {
-  if (!raw?.trim()) return null;
-  const d = new Date(raw.trim());
-  if (Number.isNaN(d.getTime())) return raw.trim();
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
-
-/** Tenure = start date compared to the current date → "2y 3m" / "5mo" / "12d" /
- *  "New". null when there's no start date or it can't be parsed. Mirrors the
- *  Global Master List's tenure() exactly (lenient `new Date` parsing, same
- *  bucketing) so both surfaces agree for the same person. Client-only (runs inside
- *  the profile dialog after a click), so the `new Date()` never hits SSR hydration. */
-function tenureFrom(raw: string | null | undefined): string | null {
-  if (!raw?.trim()) return null;
-  const start = new Date(raw.trim());
-  if (Number.isNaN(start.getTime())) return null;
-  const now = new Date();
-  let years = now.getFullYear() - start.getFullYear();
-  let months = now.getMonth() - start.getMonth();
-  if (months < 0) { years -= 1; months += 12; }
-  if (years < 0) return null;
-  if (years > 0 && months > 0) return `${years}y ${months}m`;
-  if (years > 0) return `${years}y`;
-  if (months > 0) return `${months}mo`;
-  const days = Math.floor((now.getTime() - start.getTime()) / 86400000);
-  return days <= 0 ? 'New' : `${days}d`;
-}
-
-/**
- * Friendly pay-period range:
- *   same month  → "April 5 - 10, 2026"
- *   cross month → "June 29 - July 5, 2026"
- *   cross year  → "Dec 30, 2025 - Jan 5, 2026"
- */
-function formatPeriodRange(startIso: string | null | undefined, endIso: string | null | undefined): string {
-  const s = parseIsoLocal(startIso);
-  const e = parseIsoLocal(endIso);
-  if (!s || !e) return [startIso, endIso].filter(Boolean).join(' - ');
-  const mLong = (d: Date) => d.toLocaleDateString('en-US', { month: 'long' });
-  if (s.getFullYear() !== e.getFullYear()) return `${formatDay(startIso)} - ${formatDay(endIso)}`;
-  if (s.getMonth() === e.getMonth()) return `${mLong(s)} ${s.getDate()} - ${e.getDate()}, ${s.getFullYear()}`;
-  return `${mLong(s)} ${s.getDate()} - ${mLong(e)} ${e.getDate()}, ${s.getFullYear()}`;
 }
 
 /** A Hubstaff upload filename → friendly week label for the period selector. */
@@ -523,8 +438,9 @@ export default function PeopleTab({
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RosterRow | null>(null);
   // Which tab the popup opens on. Only the Search Bar's "Open full profile" asks
-  // for Banking; closing the popup resets it, so every other open lands on Profile.
-  const [selectedTab, setSelectedTab] = useState<'profile' | 'banking'>('profile');
+  // for another (the tab its page is on); closing the popup resets it, so every
+  // other open lands on Profile.
+  const [selectedTab, setSelectedTab] = useState<PersonTab>('profile');
   // The person a one-off payment is being filed for (Pay dialog open when set).
   // Minimal shape on purpose: roster rows satisfy it structurally, and the
   // Offboarded tab files people who have no roster row at all.
@@ -974,7 +890,7 @@ export default function PeopleTab({
             loading={loading}
             error={error}
             accent={accent}
-            onOpenProfile={(r) => { setSelectedTab('banking'); setSelected(r); }}
+            onOpenProfile={(r, tab) => { setSelectedTab(tab); setSelected(r); }}
           />
         ) : mode === 'offboarded' ? (
           <PeopleOffboarded
@@ -2740,8 +2656,6 @@ function HoursCell({ hours }: { hours: Hours }) {
 
 /* ── Person detail (banking + payroll history) ──────────────────────────── */
 
-type PersonTab = 'profile' | 'banking' | 'payroll' | 'pab';
-
 /** "Don't show again soon" for the sensitive-edit warning is a TEMPORARY snooze,
  *  not a permanent opt-out — the warning re-arms after this window so it can't be
  *  silenced forever. Stored as an expiry timestamp in localStorage. */
@@ -2929,8 +2843,9 @@ function PersonDetailDialog({
   onClose: () => void;
   onRowUpdated: (master: MasterProfileFields) => void;
   /** Which tab the popup opens on. The Search Bar's "Open full profile" lands on
-   *  Banking; every other caller passes nothing and opens on Profile as before. */
-  initialTab?: 'profile' | 'banking';
+   *  the tab its page is showing; every other caller passes nothing and opens on
+   *  Profile as before. */
+  initialTab?: PersonTab;
 }) {
   const [tab, setTab] = useState<PersonTab>(initialTab);
   // The scroll viewport for the tab panels — reset to the top on every switch so
@@ -2938,13 +2853,11 @@ function PersonDetailDialog({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Mount the PAB calendar on first visit, then keep it mounted (hidden when
   // inactive) so switching tabs never re-fetches its data.
-  const [pabVisited, setPabVisited] = useState(false);
-  const [pabLoading, setPabLoading] = useState(true);
-  const [pabProgress, setPabProgress] = useState(0);
-  const [showPabLoader, setShowPabLoader] = useState(true);
-  const handlePabLoaderDone = useCallback(() => setShowPabLoader(false), []);
+  const [pabVisited, setPabVisited] = useState(initialTab === 'pab');
+  // The pay weeks are read on the Payroll tab's first visit and then held here,
+  // so a tab switch never re-reads them (`person-record-panels.tsx`).
+  const [payrollVisited, setPayrollVisited] = useState(initialTab === 'payroll');
   const [banking, setBanking] = useState<Banking | null>(null);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
   const [bankHistory, setBankHistory] = useState<BankChangeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [revealing, setRevealing] = useState(false);
@@ -2955,8 +2868,8 @@ function PersonDetailDialog({
   const [showRouting, setShowRouting] = useState(false);
   const [showBankHist, setShowBankHist] = useState(false);
   const isHsl = isHslFamilyLabel(row.department);
+  // The Payroll list's page. Held here, not in the list, so it survives a tab switch.
   const [histPage, setHistPage] = useState(1);
-  const histDirRef = useRef<1 | -1>(1);
   const [bankHistPage, setBankHistPage] = useState(1);
   const [bankHistDetail, setBankHistDetail] = useState<BankChangeEntry | null>(null);
   const reduceMotion = useReducedMotion();
@@ -2965,6 +2878,7 @@ function PersonDetailDialog({
   // the stable master id, so editing the work email must NOT re-fire the banking/
   // payroll/PAB fetches (which would flash skeletons and silently re-mask a reveal).
   const [email] = useState(() => row.work_email ?? '');
+  const payWeeks = usePersonPayWeeks(email, payrollVisited);
 
   // Tech-neon easter egg: one person's profile gets a running neon rim + glowing
   // tab bar (see `.neon-profile-modal` in index.css). Matched on the frozen work
@@ -2984,8 +2898,6 @@ function PersonDetailDialog({
   const updPart = (k: keyof NameParts, v: string) => setNameParts((p) => ({ ...p, [k]: v }));
   const beginEdit = () => { setForm(initialForm(row)); setNameParts(parseNameParts(row.name)); setEditing(true); };
   const cancelEdit = () => { setForm(initialForm(row)); setNameParts(parseNameParts(row.name)); setEditing(false); };
-  // Read-only breakdown shown when not editing (derived from the stored name).
-  const viewParts = useMemo(() => parseNameParts(row.name), [row.name]);
 
   // Banking editor — writes the canonical employee_ids payout row (the source
   // of truth every dashboard reads). The form is only ever seeded from the
@@ -3128,6 +3040,7 @@ function PersonDetailDialog({
     if (next === tab) return;
     setTab(next);
     if (next === 'pab') setPabVisited(true);
+    if (next === 'payroll') setPayrollVisited(true);
     // Land the incoming panel at the top of the scroll viewport.
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   };
@@ -3137,12 +3050,10 @@ function PersonDetailDialog({
     setLoading(true);
     fetch(`/api/people/${encodeURIComponent(email)}`, { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { banking?: Banking | null; history?: HistoryRow[]; bankHistory?: BankChangeEntry[] }) => {
+      .then((j: { banking?: Banking | null; bankHistory?: BankChangeEntry[] }) => {
         if (!alive) return;
         setBanking(j.banking ?? null);
-        setHistory(j.history ?? []);
         setBankHistory(j.bankHistory ?? []);
-        setHistPage(1);
         setBankHistPage(1);
       })
       .catch(() => { if (alive) setBanking(null); })
@@ -3156,18 +3067,6 @@ function PersonDetailDialog({
   const bankHistSafePage = Math.min(bankHistPage, bankHistTotalPages);
   const bankHistStart = (bankHistSafePage - 1) * HIST_PAGE_SIZE;
   const pagedBankHistory = bankHistory.slice(bankHistStart, bankHistStart + HIST_PAGE_SIZE);
-
-  // Paginate the history list — 6 newest-first per page. safePage clamps if the
-  // set shrinks (e.g. after a reveal/refresh) so we never land out of range.
-  const histTotalPages = Math.max(1, Math.ceil(history.length / HIST_PAGE_SIZE));
-  const histSafePage = Math.min(histPage, histTotalPages);
-  const histStart = (histSafePage - 1) * HIST_PAGE_SIZE;
-  const pagedHistory = history.slice(histStart, histStart + HIST_PAGE_SIZE);
-
-  const goPage = (dir: 1 | -1) => {
-    histDirRef.current = dir;
-    setHistPage((p) => Math.min(histTotalPages, Math.max(1, p + dir)));
-  };
 
   // The editor's field visibility follows the same processor rules as the
   // read view, but driven by the FORM's processor so switching the payment
@@ -3298,7 +3197,7 @@ function PersonDetailDialog({
               : 'border-zinc-200 dark:border-zinc-800',
           )}
         >
-          {([['profile', 'Profile'], ['banking', 'Banking'], ['payroll', 'Payroll'], ['pab', 'PAB Calendar']] as const).map(([id, label]) => (
+          {PERSON_TABS.map(([id, label]) => (
             <button
               key={id}
               type="button"
@@ -3356,23 +3255,7 @@ function PersonDetailDialog({
           {tab === 'profile' && (
           <>
           {/* Snapshot cards */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <StatCard label="Hours this week" value={fmtHours(row.hours.thisWeek)} sub={row.hours.ot > 0 ? `+${fmtHours(row.hours.ot)} OT` : 'no OT'} />
-            <StatCard
-              label="On track for"
-              value={row.hours.inProgress && row.hours.projectedHours != null ? fmtHours(row.hours.projectedHours) : '—'}
-              sub={
-                row.hours.inProgress && (row.hours.projectedOt ?? 0) > 0
-                  ? `${fmtHours(row.hours.projectedOt)} projected OT`
-                  : row.hours.inProgress ? 'within 40h' : 'week complete'
-              }
-            />
-            <StatCard
-              label="Pay rate"
-              value={row.rate.regular != null ? `${fmtMoney(row.rate.regular, row.rate.currency)}/hr` : 'not set'}
-              sub={row.rate.ot != null ? `OT ${fmtMoney(row.rate.ot, row.rate.currency)}` : (row.rate.source ?? '')}
-            />
-          </div>
+          <ProfileSnapshotCards row={row} />
 
           {/* Identity & contact — master-list "cabinet" fields, editable in place
               (canEdit + a resolved master id). Read-only values come from the
@@ -3440,65 +3323,7 @@ function PersonDetailDialog({
                 </div>
               </div>
             ) : (
-              <div className="space-y-2.5">
-                {/* Name banner — the composed display name reads at a glance,
-                    with the go-by nickname called out as an accent pill. */}
-                <div className={cn('flex items-center gap-2.5 rounded-lg border border-zinc-200/80 px-3 py-2 dark:border-zinc-800', accent.chipBg)}>
-                  <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold', accent.chipText, 'bg-white/70 dark:bg-zinc-950/40')}>
-                    {(viewParts.first?.[0] ?? row.name?.[0] ?? '?').toUpperCase()}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-[14px] font-semibold text-zinc-900 dark:text-zinc-50">
-                        {[viewParts.first, viewParts.middle, viewParts.last, viewParts.extension].filter(Boolean).join(' ') || row.name || '—'}
-                      </p>
-                      {viewParts.nickname && (
-                        <span className={cn('shrink-0 rounded-full bg-white/70 px-2 py-0.5 text-[10.5px] font-medium dark:bg-zinc-950/40', accent.chipText)}>
-                          “{viewParts.nickname}”
-                        </span>
-                      )}
-                    </div>
-                    <p className="truncate text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                      {formatDeptLabel(row.department) || 'No department'}
-                      {row.employee_id && <span className="font-mono"> · {row.employee_id}</span>}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Two grouped cards: who they are, and how to reach them. */}
-                <div className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2">
-                  <InfoCard icon={User} title="Identity" accent={accent}>
-                    <InfoRow icon={User} label="First name" value={viewParts.first || null} />
-                    <InfoRow icon={User} label="Last name" value={viewParts.last || null} />
-                    {viewParts.middle && <InfoRow icon={User} label="Middle name" value={viewParts.middle} />}
-                    {viewParts.extension && <InfoRow icon={User} label="Extension" value={viewParts.extension} />}
-                    {viewParts.nickname && <InfoRow icon={User} label="Nickname" value={viewParts.nickname} />}
-                    <InfoRow icon={IdCard} label="Employee ID" value={row.employee_id} mono copyable />
-                    <InfoRow icon={Building2} label="Department" value={row.department} />
-                    <InfoRow icon={CalendarDays} label="Start date" value={formatHireDate(row.start_date)} />
-                    <InfoRow icon={Hourglass} label="Tenure" value={tenureFrom(row.start_date)} />
-                  </InfoCard>
-
-                  <InfoCard icon={ContactIcon} title="Contact" accent={accent}>
-                    <InfoRow icon={Mail} label="Work email" value={row.work_email} copyable />
-                    <InfoRow icon={AtSign} label="Personal email" value={row.personal_email} copyable />
-                    {(row.alternate_work_emails ?? []).length > 0 && (
-                      <InfoRow icon={Mail} label="Alternate work emails" value={(row.alternate_work_emails ?? []).join(', ')} />
-                    )}
-                    <InfoRow icon={Phone} label="Phone number" value={row.phone_number} copyable />
-                    <InfoRow
-                      icon={MapPin}
-                      label="Home address"
-                      value={
-                        row.full_address?.trim() ||
-                        [row.city, row.province].map((x) => (x ?? '').trim()).filter(Boolean).join(', ') ||
-                        row.location ||
-                        null
-                      }
-                    />
-                  </InfoCard>
-                </div>
-              </div>
+              <ProfileReadView row={row} accent={accent} />
             )}
           </div>
           </>
@@ -3832,117 +3657,17 @@ function PersonDetailDialog({
 
           {tab === 'payroll' && (
           <>
-          {/* Payroll history */}
+          {/* Payroll history — every week headlined by what it paid, bonuses
+              itemised (people-payroll-history.md). Shared with the Search Bar page. */}
           <div className="mt-5">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Payroll history</h3>
-            {loading ? (
-              <ul className="space-y-1.5">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <li key={i} className="flex items-center justify-between rounded-lg border border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-                    <div className="space-y-1.5">
-                      <Skeleton className="h-3.5 w-44" />
-                      <Skeleton className="h-2.5 w-24" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Skeleton className="ml-auto h-3.5 w-20" />
-                      <Skeleton className="ml-auto h-2.5 w-12" />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : history.length === 0 ? (
-              <p className="py-3 text-xs text-zinc-400">No payroll records yet.</p>
-            ) : (
-              <>
-              <AnimatePresence mode="wait" custom={histDirRef.current} initial={false}>
-              <motion.ul
-                key={histSafePage}
-                custom={histDirRef.current}
-                variants={{
-                  enter: (d: number) => (reduceMotion ? { opacity: 0 } : { opacity: 0, x: d * 18 }),
-                  center: { opacity: 1, x: 0 },
-                  exit: (d: number) => (reduceMotion ? { opacity: 0 } : { opacity: 0, x: d * -18 }),
-                }}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-                className="space-y-1.5"
-              >
-                {pagedHistory.map((h, i) => (
-                  <li
-                    key={`${h.source_file}-${histStart + i}`}
-                    className={cn(
-                      'flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-[13px]',
-                      h.kind === 'special'
-                        ? 'border-violet-200 bg-violet-50/60 dark:border-violet-900/40 dark:bg-violet-950/20'
-                        : 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950',
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        {h.kind === 'special' && (
-                          <span className="inline-flex items-center gap-1 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-200">
-                            <Sparkles className="h-2.5 w-2.5" /> Special
-                          </span>
-                        )}
-                        <span className="truncate font-medium text-zinc-800 dark:text-zinc-100">
-                          {h.kind === 'special' ? (h.note || 'Special transfer') : formatPeriodRange(h.period_start, h.period_end)}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 text-[11px] text-zinc-400">
-                        {h.kind === 'special'
-                          ? formatDay(h.paid_at ?? h.period_start)
-                          : `${fmtHours(h.total_hours)} · ${(h.status ?? 'pending')}`}
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <div className="font-semibold text-zinc-900 dark:text-zinc-100">{fmtMoney(h.amount_php, 'PHP')}</div>
-                      <div className={cn(
-                        'text-[10.5px] font-medium',
-                        h.status === 'paid' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400',
-                      )}>
-                        {h.status ?? 'pending'}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </motion.ul>
-              </AnimatePresence>
-              {histTotalPages > 1 && (
-                <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
-                  <span>
-                    Showing {histStart + 1}–{Math.min(histStart + HIST_PAGE_SIZE, history.length)} of {history.length}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[12px]"
-                      disabled={histSafePage <= 1}
-                      onClick={() => goPage(-1)}
-                    >
-                      Prev
-                    </Button>
-                    <span className="tabular-nums text-zinc-600 dark:text-zinc-300">
-                      {histSafePage} / {histTotalPages}
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[12px]"
-                      disabled={histSafePage >= histTotalPages}
-                      onClick={() => goPage(1)}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
-              </>
-            )}
+            <PayrollHistoryList
+              email={email}
+              state={payWeeks}
+              page={histPage}
+              onPage={setHistPage}
+              reduceMotion={!!reduceMotion}
+            />
           </div>
           </>
           )}
@@ -3951,20 +3676,8 @@ function PersonDetailDialog({
           </AnimatePresence>
 
           {pabVisited && (
-            <div className={cn('relative', tab === 'pab' ? '' : 'hidden')}>
-              {/* Progress bar sits INSIDE the calendar box, centered over the
-                  skeleton (which stays visible around it) — they load together,
-                  and the bar only completes once the data actually lands. */}
-              {showPabLoader && (
-                <PabCalendarLoader progress={pabProgress} done={!pabLoading} barClassName={accent.bar} onDone={handlePabLoaderDone} />
-              )}
-              <EmployeePabCalendar
-                employeeEmail={email}
-                isHsl={isHsl}
-                trimToElapsedWeeks={false}
-                onLoadingChange={setPabLoading}
-                onProgress={setPabProgress}
-              />
+            <div className={cn(tab === 'pab' ? '' : 'hidden')}>
+              <PersonPabPanel email={email} isHsl={isHsl} accent={accent} />
             </div>
           )}
         </div>
@@ -4018,99 +3731,6 @@ function PersonDetailDialog({
       </DialogContent>
     </Dialog>
     </>
-  );
-}
-
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="text-[10.5px] uppercase tracking-wide text-zinc-400">{label}</div>
-      <div className="mt-0.5 text-base font-semibold text-zinc-900 dark:text-zinc-100">{value}</div>
-      {sub && <div className="text-[11px] text-zinc-400">{sub}</div>}
-    </div>
-  );
-}
-
-/* ── Beautified read-only profile primitives ──────────────────────────────
-   InfoCard groups related fields under an icon-badged header; InfoRow renders
-   one label→value pair with a leading icon, a monospace/copyable option, and a
-   consistent empty-state. Used by the Identity & contact read view so the
-   fields read as a structured record rather than a flat label list. */
-function InfoCard({
-  icon: Icon,
-  title,
-  accent,
-  children,
-}: {
-  icon: LucideIcon;
-  title: string;
-  accent: Accent;
-  children: ReactNode;
-}) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center gap-2 border-b border-zinc-100 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800/70 dark:bg-zinc-900/40">
-        <span className={cn('flex h-6 w-6 items-center justify-center rounded-md', accent.chipBg, accent.chipText)}>
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{title}</h4>
-      </div>
-      <dl className="divide-y divide-zinc-100 dark:divide-zinc-800/70">{children}</dl>
-    </div>
-  );
-}
-
-function InfoRow({
-  icon: Icon,
-  label,
-  value,
-  mono,
-  copyable,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string | null;
-  mono?: boolean;
-  copyable?: boolean;
-}) {
-  const empty = !value;
-  const [copied, setCopied] = useState(false);
-  const canCopy = copyable && !empty;
-  const doCopy = () => {
-    if (!canCopy || typeof navigator === 'undefined' || !navigator.clipboard) return;
-    navigator.clipboard.writeText(value as string).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    }).catch(() => {});
-  };
-  return (
-    <div className="group flex items-start gap-2.5 px-3 py-1.5">
-      <Icon className="mt-[2px] h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
-      <div className="min-w-0 flex-1">
-        <dt className="text-[10px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</dt>
-        <dd
-          className={cn(
-            'mt-0.5 break-words text-[12.5px] leading-snug',
-            empty
-              ? 'italic text-zinc-400 dark:text-zinc-600'
-              : cn('font-medium text-zinc-800 dark:text-zinc-100', mono && 'font-mono text-[12px]'),
-          )}
-        >
-          {empty ? 'Not filled' : value}
-        </dd>
-      </div>
-      {canCopy && (
-        <button
-          type="button"
-          onClick={doCopy}
-          className="mt-[2px] shrink-0 rounded p-0.5 text-zinc-300 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-600 focus-visible:opacity-100 group-hover:opacity-100 dark:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-          aria-label={`Copy ${label}`}
-          title={copied ? 'Copied' : `Copy ${label}`}
-        >
-          {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-        </button>
-      )}
-    </div>
   );
 }
 

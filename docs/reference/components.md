@@ -2259,6 +2259,8 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/people/PeopleTab.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) · [people-bank-search](../features/people-bank-search.md) |
 | `src/components/people/bank-change-detail.tsx` | component | — **no doc** |
 | `src/components/people/payout-record.tsx` | component | [people-bank-card](../features/people-bank-card.md) · [people-bank-search](../features/people-bank-search.md) |
+| `src/components/people/person-record-panels.tsx` | component | [people-bank-search](../features/people-bank-search.md) · [people-payroll-history](../features/people-payroll-history.md) |
+| `src/components/people/people-format.ts` | util | [people-bank-search](../features/people-bank-search.md) |
 | `src/components/people/rail-mix-band.tsx` | component | [bank-preferred-routing](../features/bank-preferred-routing.md) |
 | `src/components/presence/CobrowseChatProvider.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
 | `src/components/presence/CobrowseProvider.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |

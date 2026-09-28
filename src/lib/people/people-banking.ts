@@ -10,6 +10,18 @@ import {
 } from '@/lib/employee/payout-completeness';
 import { isProcessorId, processorIdFromBankPreferredText } from '@/lib/employee-payment-processors';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
+import { listPaystubPayloadsForEmployee } from '@/lib/supabase/paystub-dispatch-queue';
+import { listPaymentDispatches } from '@/lib/supabase/payment-dispatches';
+import { getAppSettingsWithMeta } from '@/lib/supabase/app-settings';
+import { finalPaySnapshotKey, getCatalogRateClaimsByEmail } from '@/lib/payroll/paystub-fresh';
+import {
+  SHOW_UNPAID_STAGED_PAYSTUBS,
+  copDecoratorForEmails,
+  freshStagedViewWith,
+  paidAtByFileFrom,
+} from '@/lib/payroll/employee-paystubs';
+import { dedupeOneRowPerWeek } from '@/lib/payroll/paystub-week-dedupe';
+import { buildPayrollHistory, type PayrollHistoryWeek } from '@/lib/people/payroll-history';
 
 /** Which precedence tier resolved the effective (Payment Dispatch) rail. */
 export type EffectiveProcessorSource = 'bank_preferred' | 'disbursement' | 'rates_sheet';
@@ -311,4 +323,112 @@ export async function getPeoplePayrollHistory(
   }));
 
   return { rows, error: null };
+}
+
+/**
+ * The People → Payroll tab: one person's weeks WITH the bonuses
+ * (`docs/features/people-payroll-history.md`). The weekly records above carry
+ * only regular + OT pay, so each week is completed from the statement the worker
+ * was sent, or failing that from the paid dispatch rows. `buildPayrollHistory`
+ * owns the precedence. This function only reads.
+ *
+ * The statement is chosen by the rule every statement viewer follows
+ * (paystub-dispatch.md § Paystub freshness): a PAID week renders its staged
+ * payload untouched (frozen as-paid at mark-paid), and an UNPAID week has any
+ * newer wizard-snapshot figures merged over it. Statements are matched by the
+ * WORK email only, because personal addresses are shared and recycled.
+ *
+ * Every read fails closed. A failed statement or dispatch read is an error, not
+ * a list of hourly-only weeks: printing hourly pay as though that were
+ * everything is the defect this exists to fix.
+ */
+export async function getPeoplePayWeeks(
+  workEmail: string,
+  limit = 30,
+): Promise<{ weeks: PayrollHistoryWeek[]; error: string | null }> {
+  const email = normEmail(workEmail);
+  if (!email || !isSafeEmail(email)) return { weeks: [], error: 'Missing or invalid work email.' };
+
+  const [records, staged, dispatchRes, copDecorate] = await Promise.all([
+    getPeoplePayrollHistory(email, limit),
+    listPaystubPayloadsForEmployee(email),
+    listPaymentDispatches({ recipientEmail: email }),
+    copDecoratorForEmails([email]),
+  ]);
+  if (records.error) return { weeks: [], error: `Payroll records could not be read: ${records.error}` };
+  if (staged.error) return { weeks: [], error: `Pay statements could not be read: ${staged.error}` };
+  if (dispatchRes.error) return { weeks: [], error: `The dispatch log could not be read: ${dispatchRes.error}` };
+
+  const dispatches = dispatchRes.rows;
+  const paidAtByFile = paidAtByFileFrom(dispatches);
+  const stagedRows = staged.rows.filter(
+    (p) => p.payload && (SHOW_UNPAID_STAGED_PAYSTUBS || paidAtByFile.has(p.cycle_source_file)),
+  );
+  const unpaid = stagedRows.filter((p) => !paidAtByFile.has(p.cycle_source_file));
+  // The snapshot merge (and the catalog claims that gate it) only matter for an
+  // unpaid week; a paid one is rendered as-paid. Most people have none unpaid.
+  let unpaidSnaps: Awaited<ReturnType<typeof getAppSettingsWithMeta>> = {};
+  let catalogClaims: Awaited<ReturnType<typeof getCatalogRateClaimsByEmail>> = new Map();
+  if (unpaid.length > 0) {
+    [unpaidSnaps, catalogClaims] = await Promise.all([
+      getAppSettingsWithMeta(unpaid.map((p) => finalPaySnapshotKey(p.cycle_source_file))),
+      getCatalogRateClaimsByEmail(),
+    ]);
+  }
+  const freshStagedView = freshStagedViewWith(catalogClaims);
+
+  // One statement per week, as every statement list does. Among staged rows for
+  // the same week the paid one wins, then the latest lock.
+  const statements = dedupeOneRowPerWeek(
+    stagedRows
+      .map((p) => {
+        const paidAt = paidAtByFile.get(p.cycle_source_file) ?? null;
+        const isPaid = paidAtByFile.has(p.cycle_source_file);
+        return {
+          sourceFile: p.cycle_source_file,
+          paidAt,
+          isPaid,
+          lockedAt: p.locked_at ?? '',
+          view: copDecorate(freshStagedView(p, isPaid, unpaidSnaps)),
+        };
+      })
+      .sort((a, b) => (b.lockedAt > a.lockedAt ? 1 : b.lockedAt < a.lockedAt ? -1 : 0)),
+    (s) => ({ weekStart: s.view.weekStart, weekEnd: s.view.weekEnd, paid: s.isPaid, paidAt: s.paidAt, staged: true }),
+  );
+
+  const num = (v: number | string | null | undefined): number | null => {
+    if (v == null) return null;
+    const n = typeof v === 'number' ? v : parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const weeks = buildPayrollHistory({
+    records: records.rows.map((r) => ({
+      source_file: r.source_file,
+      kind: r.kind,
+      note: r.note,
+      period_start: r.period_start,
+      period_end: r.period_end,
+      total_hours: r.total_hours,
+      amount_php: r.amount_php,
+      status: r.status,
+      paid_at: r.paid_at,
+    })),
+    statements: statements.map((s) => ({ sourceFile: s.sourceFile, paidAt: s.paidAt, view: s.view })),
+    dispatches: dispatches
+      .filter((d) => d.status === 'paid')
+      .map((d) => ({
+        period_start: d.cycle_period_start,
+        period_end: d.cycle_period_end,
+        recipient_name: d.recipient_name,
+        paid_usd: num(d.amount_usd),
+        paid_php: num(d.amount_php),
+        bonus_php: num(d.system_bonus_php),
+        bonus_label: d.system_bonus_label,
+        at: d.sent_date || d.created_at,
+        payee_type: d.payee_type,
+      })),
+  });
+
+  return { weeks, error: null };
 }

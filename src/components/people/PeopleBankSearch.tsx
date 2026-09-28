@@ -7,7 +7,10 @@
  * catalog"*). Modelled on Payment Catalog → Search (`BonusCatalog.tsx`
  * `SearchTab`): the Simple logo over a centred bar that moves up once you
  * type, and View replaces the search with that person's page, which has a Back
- * button.
+ * button. Since 2026-09-28 that page carries the popup's four tabs, Profile ·
+ * Banking · Payroll · PAB Calendar (Kane: *"should have the profile, payroll,
+ * PAB Calendar not just banking"*), each the popup's own panel
+ * (`person-record-panels.tsx`).
  *
  * Rules this file keeps (docs/features/people-bank-search.md):
  * - It searches the roster PeopleTab already holds (active master list), no
@@ -34,7 +37,18 @@ import { PROCESSOR_OPTIONS } from '@/lib/employee-payment-processors';
 import { payoutRailFromStored, payoutRailView } from '@/lib/banking/payout-rail-view';
 import { isMissingBankInfo, searchPeopleByNameOrEmail } from '@/lib/people/bank-search';
 import { cn } from '@/lib/utils';
+import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { PayoutRecordBody, PayoutRevealSkeletonContent, type Banking } from './payout-record';
+import {
+  PERSON_TABS,
+  PayrollHistoryList,
+  PersonPabPanel,
+  ProfileReadView,
+  ProfileSnapshotCards,
+  usePersonPayWeeks,
+  type PersonProfileRow,
+  type PersonTab,
+} from './person-record-panels';
 import type { Accent } from './PeopleTab';
 
 /** The roster fields this tab reads. PeopleTab's `RosterRow` satisfies it structurally. */
@@ -71,7 +85,7 @@ function personKey(p: BankSearchPerson): string {
   return p.id ?? `${(p.work_email ?? '').toLowerCase()}|${p.name ?? ''}`;
 }
 
-export default function PeopleBankSearch<T extends BankSearchPerson>({
+export default function PeopleBankSearch<T extends BankSearchPerson & PersonProfileRow>({
   rows,
   loading,
   error,
@@ -83,8 +97,8 @@ export default function PeopleBankSearch<T extends BankSearchPerson>({
   loading: boolean;
   error: string | null;
   accent: Accent;
-  /** Open the full People popup for this person, on its Banking tab. */
-  onOpenProfile: (row: T) => void;
+  /** Open the full People popup for this person, on the tab the page is showing. */
+  onOpenProfile: (row: T, tab: PersonTab) => void;
 }) {
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -140,11 +154,12 @@ export default function PeopleBankSearch<T extends BankSearchPerson>({
             animate={{ opacity: 1, y: 0, transition: viewEnter }}
             exit={{ opacity: 0, transition: viewExit }}
           >
-            <PersonBankPage
+            <PersonPage
               person={selected}
+              accent={accent}
               reduceMotion={reduceMotion}
               onBack={() => setSelectedKey(null)}
-              onOpenProfile={() => onOpenProfile(selected)}
+              onOpenProfile={(tab) => onOpenProfile(selected, tab)}
             />
             <OnMount
               run={() => {
@@ -235,7 +250,7 @@ export default function PeopleBankSearch<T extends BankSearchPerson>({
                     >
                       {loading && rows.length === 0
                         ? 'Loading the roster…'
-                        : `${rows.length.toLocaleString()} people on the roster · view anyone's bank details`}
+                        : `${rows.length.toLocaleString()} people on the roster · view anyone's profile, pay and bank details`}
                       <br />
                       Someone who has left? Search them on the Offboarded tab.
                     </motion.p>
@@ -426,7 +441,7 @@ function ResultRow({ person, onView }: { person: BankSearchPerson; onView: () =>
         variant="outline"
         onClick={onView}
         disabled={!person.work_email}
-        title={person.work_email ? 'View bank details' : 'No work email on file, so the payout record cannot be looked up'}
+        title={person.work_email ? 'View profile, pay and bank details' : 'No work email on file, so the record cannot be looked up'}
         className="shrink-0 gap-1"
       >
         <Eye className="h-3.5 w-3.5" /> View
@@ -440,20 +455,38 @@ type RecordState =
   | { status: 'failed'; error: string }
   | { status: 'ready'; banking: Banking | null };
 
-function PersonBankPage({
+type PagePerson = BankSearchPerson & PersonProfileRow;
+
+/**
+ * One person's page: the popup's four tabs (Profile · Banking · Payroll · PAB
+ * Calendar), read-only. Kane, 2026-09-28: *"should have the profile, payroll,
+ * PAB Calendar not just banking"*. Every panel is the popup's own component
+ * (`person-record-panels.tsx`, `payout-record.tsx`); this page only hosts them.
+ * Editing and the bank change history stay in the popup, via Open full profile.
+ */
+function PersonPage({
   person,
+  accent,
   reduceMotion,
   onBack,
   onOpenProfile,
 }: {
-  person: BankSearchPerson;
+  person: PagePerson;
+  accent: Accent;
   reduceMotion: boolean;
   onBack: () => void;
-  onOpenProfile: () => void;
+  onOpenProfile: (tab: PersonTab) => void;
 }) {
   // Frozen for the page's lifetime, as the popup does: an email edited from the
-  // full profile must not re-fire the read and silently re-mask a reveal.
+  // full profile must not re-fire the reads and silently re-mask a reveal.
   const [email] = useState(() => person.work_email ?? '');
+  const [tab, setTab] = useState<PersonTab>('profile');
+  // Payroll is read on its first visit, PAB mounts on its first visit, and both
+  // are then kept, so switching tabs never re-reads either.
+  const [payrollVisited, setPayrollVisited] = useState(false);
+  const [pabVisited, setPabVisited] = useState(false);
+  const [histPage, setHistPage] = useState(1);
+  const payWeeks = usePersonPayWeeks(email, payrollVisited);
   const [record, setRecord] = useState<RecordState>({ status: 'loading' });
   const [revealing, setRevealing] = useState(false);
   const [shown, setShown] = useState(false);
@@ -519,8 +552,16 @@ function PersonBankPage({
     setShown(true);
   };
 
+  const changeTab = (next: PersonTab) => {
+    if (next === tab) return;
+    setTab(next);
+    if (next === 'payroll') setPayrollVisited(true);
+    if (next === 'pab') setPabVisited(true);
+  };
+
   // Opacity only, so it stays under reduced motion: it is what says the reveal landed.
   const fade = { duration: 0.14 };
+  const isHsl = isHslFamilyLabel(person.department);
 
   return (
     <div>
@@ -548,102 +589,178 @@ function PersonBankPage({
             size="sm"
             variant="outline"
             className="h-8 shrink-0 gap-1.5 px-2.5 text-[12px]"
-            onClick={onOpenProfile}
-            title="Edit payout details and see the bank change history"
+            onClick={() => onOpenProfile(tab)}
+            title="Edit this person's details and payout record, and see the bank change history"
           >
             <UserRound className="h-3.5 w-3.5" /> Open full profile
           </Button>
         </div>
 
-        <div className="px-4 py-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-              <Landmark className="h-3.5 w-3.5 text-emerald-500" /> Banking &amp; payout
-            </h3>
-            {record.status === 'ready' && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 px-2 text-[12px]"
-                onClick={toggle}
-                disabled={revealing}
-              >
-                {revealing ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
-                ) : shown ? (
-                  <EyeOff className="h-3.5 w-3.5" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5" />
-                )}
-                {shown ? 'Hide' : 'Reveal'}
-              </Button>
-            )}
-          </div>
-
-          {record.status === 'loading' ? (
-            <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="space-y-1.5">
-                    <Skeleton className="h-2.5 w-16" />
-                    <Skeleton className="h-3.5 w-32" />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : record.status === 'failed' ? (
-            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
-              The payout record could not be loaded, so nothing is shown rather than a blank record: {record.error}
-            </p>
-          ) : (
-            <AnimatePresence mode="wait" initial={false}>
-              {revealing ? (
-                <motion.div
-                  key="revealing"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={fade}
-                  className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
-                  aria-live="polite"
-                  aria-busy
-                >
-                  <PayoutRevealSkeletonContent />
-                </motion.div>
-              ) : !shown ? (
-                <motion.button
-                  key="hidden"
-                  type="button"
-                  onClick={toggle}
-                  disabled={revealing}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={fade}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50/60 px-3 py-4 text-[12px] text-zinc-500 transition-colors hover:border-zinc-400 hover:text-zinc-700 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-200"
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                  Payout details hidden. Click to reveal (recorded in the audit log).
-                </motion.button>
-              ) : (
-                <motion.div
-                  key="shown"
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                  animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.3, ease: EASE }}
-                  className="overflow-hidden"
-                >
-                  <PayoutRecordBody
-                    banking={record.banking}
-                    reduceMotion={reduceMotion}
-                    routingOpen={routingOpen}
-                    onToggleRouting={() => setRoutingOpen((v) => !v)}
-                  />
-                </motion.div>
+        {/* The popup's tabs, in the popup's order. */}
+        <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-zinc-200 px-3 dark:border-zinc-800">
+          {PERSON_TABS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              onClick={() => changeTab(id)}
+              className={cn(
+                'relative shrink-0 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors',
+                tab === id
+                  ? 'text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200',
               )}
-            </AnimatePresence>
+            >
+              {label}
+              {tab === id && (
+                <motion.span
+                  // Its own id: the popup can open over this page, and a shared
+                  // layoutId would fly the popup's underline across the screen.
+                  layoutId="search-person-tab-underline"
+                  className={cn('absolute inset-x-2 -bottom-px h-0.5 rounded-full', accent.bar)}
+                  transition={reduceMotion ? { duration: 0 } : { duration: 0.25, ease: EASE }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-4 py-4">
+          <AnimatePresence mode="wait" initial={false}>
+            {tab !== 'pab' && (
+              <motion.div
+                key={tab}
+                initial={{ opacity: 0, y: reduceMotion ? 0 : 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: reduceMotion ? 0 : -4 }}
+                transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: EASE }}
+              >
+                {tab === 'profile' && (
+                  <div className="space-y-5">
+                    <ProfileSnapshotCards row={person} />
+                    <div>
+                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Identity &amp; contact</h3>
+                      <ProfileReadView row={person} accent={accent} />
+                    </div>
+                  </div>
+                )}
+
+                {tab === 'banking' && (
+                  <>
+                    <div className="mb-2 flex items-center justify-between">
+                      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                        <Landmark className="h-3.5 w-3.5 text-emerald-500" /> Banking &amp; payout
+                      </h3>
+                      {record.status === 'ready' && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1.5 px-2 text-[12px]"
+                          onClick={toggle}
+                          disabled={revealing}
+                        >
+                          {revealing ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                          ) : shown ? (
+                            <EyeOff className="h-3.5 w-3.5" />
+                          ) : (
+                            <Eye className="h-3.5 w-3.5" />
+                          )}
+                          {shown ? 'Hide' : 'Reveal'}
+                        </Button>
+                      )}
+                    </div>
+
+                    {record.status === 'loading' ? (
+                      <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+                        <div className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                          {Array.from({ length: 4 }).map((_, i) => (
+                            <div key={i} className="space-y-1.5">
+                              <Skeleton className="h-2.5 w-16" />
+                              <Skeleton className="h-3.5 w-32" />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : record.status === 'failed' ? (
+                      <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
+                        The payout record could not be loaded, so nothing is shown rather than a blank record: {record.error}
+                      </p>
+                    ) : (
+                      <AnimatePresence mode="wait" initial={false}>
+                        {revealing ? (
+                          <motion.div
+                            key="revealing"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={fade}
+                            className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40"
+                            aria-live="polite"
+                            aria-busy
+                          >
+                            <PayoutRevealSkeletonContent />
+                          </motion.div>
+                        ) : !shown ? (
+                          <motion.button
+                            key="hidden"
+                            type="button"
+                            onClick={toggle}
+                            disabled={revealing}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={fade}
+                            className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-zinc-300 bg-zinc-50/60 px-3 py-4 text-[12px] text-zinc-500 transition-colors hover:border-zinc-400 hover:text-zinc-700 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-zinc-600 dark:hover:text-zinc-200"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Payout details hidden. Click to reveal (recorded in the audit log).
+                          </motion.button>
+                        ) : (
+                          <motion.div
+                            key="shown"
+                            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+                            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                            transition={{ duration: reduceMotion ? 0 : 0.3, ease: EASE }}
+                            className="overflow-hidden"
+                          >
+                            <PayoutRecordBody
+                              banking={record.banking}
+                              reduceMotion={reduceMotion}
+                              routingOpen={routingOpen}
+                              onToggleRouting={() => setRoutingOpen((v) => !v)}
+                            />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    )}
+                  </>
+                )}
+
+                {tab === 'payroll' && (
+                  <>
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Payroll history</h3>
+                    <PayrollHistoryList
+                      email={email}
+                      state={payWeeks}
+                      page={histPage}
+                      onPage={setHistPage}
+                      reduceMotion={reduceMotion}
+                    />
+                  </>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Mounted on first visit, then kept (hidden) so a tab switch never re-reads it. */}
+          {pabVisited && (
+            <div className={cn(tab === 'pab' ? '' : 'hidden')}>
+              <PersonPabPanel email={email} isHsl={isHsl} accent={accent} />
+            </div>
           )}
         </div>
       </div>

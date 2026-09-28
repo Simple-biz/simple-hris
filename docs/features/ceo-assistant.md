@@ -169,6 +169,12 @@ itemised from `app_settings["payroll.wizard.final_pay.<sourceFile>"].finals[emai
 `cycle_source_file` (falling back to `disbursement_records.source_file`). Where the label still
 understates the total the result carries `bonus_label_note` telling the model to ignore it.
 
+> **Measured 2026-09-28 (Open items 253, not yet fixed):** the dispatch-file half of that is dead
+> code. `getEmployeePay` reads `d.cycle_source_file`, but its `payment_dispatches` select never
+> requests the column, so every snapshot is reached through `disbursement_records.source_file`. A
+> paid week whose record is not seeded is therefore never itemised. The fix is that one column in
+> the select.
+
 That snapshot is also the authority on **Regular + OT**: `adrianm@`'s 2026-09-06 week reads
 ₱9,616.00 in `disbursement_records.amount_php` but ₱9,615.03 in the snapshot, and only the
 snapshot closes the identity. A week with no snapshot is marked `breakdown_unavailable` with

@@ -1,13 +1,15 @@
-# People → Search Bar — find a person by name or work email, then view their bank details inline
+# People → Search Bar — find a person by name or work email, then view their record inline
 
 The **first** tab on Accounting's People surface (**Search Bar** · Roster · Statistics · Bank changes ·
 Offboarded), also on the CEO's People tab. Kane moved it to the front on 2026-09-25 (*"put the search
 bar at the first part"*). **Roster is still the tab People opens on**: only the position changed. It is styled on Payment Catalog → Search: the
 Simple logo over a centred bar that moves up once you type. Results are active-roster people, and
-**View** replaces the search with that person's bank page, which has a Back button. Built for
+**View** replaces the search with that person's page, which has a Back button. Built for
 Kane, 2026-09-25: *"lets add a new Tab called 'Search Bar' similar to the payment catalog where we
 can search people but this part is bank"*, then *"name and work email then we can see their bank
-details when we view it similar from payment catalog"*.
+details when we view it similar from payment catalog"*. Widened by Kane on 2026-09-28: *"Search Bar
+— should have the profile, payroll, PAB Calendar not just banking"*. The page now carries the
+popup's four tabs, **Profile · Banking · Payroll · PAB Calendar** (§4).
 
 Shipped 2026-09-25 (commit in `git log -- src/components/people/PeopleBankSearch.tsx`). Plan:
 `docs/superpowers/plans/2026-09-25-people-bank-search.md`.
@@ -19,6 +21,8 @@ Shipped 2026-09-25 (commit in `git log -- src/components/people/PeopleBankSearch
 | Ranked matcher + the ONE Missing-bank-info rule (pure) | `src/lib/people/bank-search.ts` (+ `.test.ts`) |
 | The tab: search landing, result rows, inline person page | `src/components/people/PeopleBankSearch.tsx` |
 | The read-only payout body (card · wallet fields · Routing), shared with the popup | `src/components/people/payout-record.tsx` |
+| The Profile read view, the Payroll list and the PAB wiring, shared with the popup | `src/components/people/person-record-panels.tsx` (+ `people-format.ts`) |
+| The Payroll tab's read (with the bonuses) | `app/api/people/[email]/payroll/route.ts` → `people-payroll-history.md` |
 | Host: `mode === 'search'`, the tab button, `initialTab` on the popup | `src/components/people/PeopleTab.tsx` |
 | The per-person read + the audited reveal (unchanged) | `app/api/people/[email]/route.ts` · `app/api/people/[email]/reveal-banking/route.ts` |
 | The precedent it copies | `src/components/accounting/BonusCatalog.tsx` → `SearchTab` |
@@ -81,10 +85,17 @@ cannot disagree.
 Kane chose the inline page (Q2), like the catalog's person card. The page shows:
 
 - a header with avatar, name, department · work email and the same chips;
-- **Banking & payout**, hidden until **Reveal**;
-- **Open full profile**, which opens the existing People popup **directly on its Banking tab**
-  (`PersonDetailDialog`'s `initialTab`). Editing payout details and the **Bank change history** stay
-  there. This page has no write path.
+- the popup's four tabs in the popup's order, opening on **Profile** as the popup does:
+  - **Profile**: the snapshot cards (hours this week · on track for · pay rate) and Identity &
+    contact, read-only (§4.5);
+  - **Banking**: Banking & payout, hidden until **Reveal** (§4.1–4.4);
+  - **Payroll**: every week headlined by what it paid, with the bonuses (§4.5,
+    `people-payroll-history.md`);
+  - **PAB Calendar**: the popup's calendar (§4.5);
+- **Open full profile**, which opens the existing People popup **on the tab the page is showing**
+  (`PersonDetailDialog`'s `initialTab`, a `PersonTab` since 2026-09-28; it was Banking only before).
+  Editing the profile and the payout details, and the **Bank change history**, stay there. This
+  page has no write path.
 
 ### 4.1 The reveal is the popup's reveal: click, audited, never automatic
 
@@ -120,7 +131,25 @@ profile** must not re-fire the read and silently re-mask a reveal. The person ob
 looked up live by key, so a name or department edit merged into the roster shows immediately. A
 person who drops off the roster on a refresh returns the page to the search.
 
-## 5. One read-only body, three places (the popup, the employee's Profile card, this page)
+### 4.5 Profile, Payroll and PAB Calendar are the popup's own panels
+
+Added 2026-09-28. None of the three is a copy. The popup's Profile read view (snapshot cards, name
+banner, Identity and Contact cards), its Payroll list and its PAB loader-plus-calendar were
+**moved** into `person-record-panels.tsx`, and both hosts render them (§5). On this page:
+
+- **Profile is read-only.** The popup's editor and its sensitive-edit warning stay in the popup.
+  The page shows the read view the popup shows when it is not editing.
+- **Payroll is read on the tab's first visit** (`GET /api/people/[email]/payroll`), not with the
+  banking read, and then held by the page with its page index, so switching tabs never re-reads it. A
+  failed read is an error box, never *"No payroll records yet."*. The same rule as §4.3, for the
+  same reason.
+- **PAB Calendar mounts on its first visit and is then kept, hidden**, exactly as in the popup, so
+  it never re-fetches.
+- All three read the page's **frozen** work email (§4.4).
+- The tab underline has its own `layoutId` (`search-person-tab-underline`). The popup can open over
+  this page, and a shared id would fly the popup's underline across the screen.
+
+## 5. One read-only record, shared (the popup, the employee's Profile card, this page)
 
 The popup's read-only payout body was **moved, not rewritten**, into
 `src/components/people/payout-record.tsx` (`PayoutRecordBody`, with `Banking`, `Field`,
@@ -138,6 +167,15 @@ it survives a tab switch or an edit round trip exactly as before the move, and t
 own. Making it internal to the body would have silently reset the popup's fold on every remount.
 **Never fork a copy of the body back into either host**: two copies of the paid-slot rule are the
 drift `people-bank-card.md` §2 exists to prevent.
+
+The same holds for the other three tabs since 2026-09-28. `person-record-panels.tsx` took the
+Profile read view (`ProfileSnapshotCards`, `ProfileReadView`, with `StatCard` / `InfoCard` /
+`InfoRow`), the Payroll list (`PayrollHistoryList`, `usePersonPayWeeks`) and the PAB pair
+(`PersonPabPanel`). The display formatters moved verbatim into `people-format.ts`, and `PERSON_TABS` is
+the one list of tabs both strips draw. The Profile read view and the formatters were moved unchanged. The Payroll
+list was rebuilt on the new read in the same commit (`people-payroll-history.md`). **The fetch
+and the page index belong to the host**, for the reason the Routing fold does: the popup unmounts
+a tab's panel on every switch.
 
 ## 6. Who sees it
 
@@ -169,6 +207,8 @@ animation frame sampled.
   gets a 180 ms crossfade (keyed by page), so Prev/Next visibly did something.
 - **Leaving elements pop out of the flow** (`AnimatePresence mode="popLayout"` on the hint and the
   results), so the bar never waits for an exit animation to finish.
+- **Tabs on the person page crossfade like the popup's**: 220 ms with a 6 px rise (none under
+  reduced motion), PAB kept mounted outside the crossfade so it never re-fetches.
 - **Search ↔ person page is a quick crossfade**: 120 ms out, then 280 ms in with an 8 px rise. The
   old version ran a full 200 ms exit and then a 200 ms entrance, both moving 10 px, with a blank
   beat between them. The page **opens at its top**, **Back returns to the scroll position** the
@@ -182,5 +222,6 @@ animation frame sampled.
 
 ## Deploy notes
 
-**No migration.** No env vars, no new endpoint, no new payload field, no n8n import. Nothing for
-Kane to run by hand.
+**No migration.** No env vars, no n8n import. Nothing for Kane to run by hand. The 2026-09-28
+widening added one read route, `GET /api/people/[email]/payroll` (`people-payroll-history.md`),
+under the same gate. `GET /api/people/[email]` stopped returning `history`.
