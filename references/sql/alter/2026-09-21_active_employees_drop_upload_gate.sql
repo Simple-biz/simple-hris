@@ -79,12 +79,20 @@ SELECT *
 FROM public.global_master_list
 WHERE off_boarded_at IS NULL;
 
--- Ownership/privilege semantics are UNCHANGED. The view stays SECURITY DEFINER
--- (security_invoker = false), restored deliberately on 2026-08-03 after
--- security_invoker = true made it return zero rows under the anon key and the
--- Payroll Wizard re-labelled 422 people "Unassigned".
--- See references/sql/alter/2026-08-03_restore_active_employees_definer.sql.
-ALTER VIEW public.active_employees SET (security_invoker = false);
+-- Privilege semantics: security_invoker = TRUE. Changed 2026-09-29 by Kane's (b)
+-- (2026-09-29_active_employees_security_invoker.sql).
+--
+-- When this ran on 2026-09-21 it kept the view SECURITY DEFINER
+-- (security_invoker = false). Definer had been restored deliberately on
+-- 2026-08-03, after security_invoker = true made the GATED view return zero rows
+-- to the anon key and the Payroll Wizard re-labelled 422 people "Unassigned"
+-- (2026-08-03_restore_active_employees_definer.sql). That failure needed the
+-- master_list_uploads sub-select, and this very file removes it. With one table,
+-- invoker shows every role exactly what global_master_list shows it (measured
+-- 1,270 = 1,270 for anon, authenticated and service_role on 2026-09-29).
+-- A re-run of this file now keeps invoker. The revert file sets definer back,
+-- because it re-adds the second table.
+ALTER VIEW public.active_employees SET (security_invoker = true);
 
 -- ── Verify ─────────────────────────────────────────────────────────────────
 -- Expect: equal counts. They are now the same query.

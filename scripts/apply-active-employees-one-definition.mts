@@ -83,10 +83,15 @@ if (!connectionString) {
 const CHECKS: Array<[string, string]> = [
   ['active_employees still exists', `SELECT to_regclass('public.active_employees') IS NOT NULL AS ok`],
   [
-    'the view is NOT security_invoker (definer semantics preserved)',
-    `SELECT COALESCE((SELECT NOT (c.reloptions::text LIKE '%security_invoker=true%')
+    // Inverted 2026-09-29 (Kane's (b)). Definer was right only while the view
+    // sub-selected master_list_uploads. This definition reads one table, so it
+    // runs as the caller, and the Advisor's "Security Definer View" stays closed.
+    // The --revert path is exempt: the gate brings the second table back, and
+    // restore_upload_gate.sql sets definer with it.
+    'the view is security_invoker (it reads only global_master_list)',
+    `SELECT COALESCE((SELECT c.reloptions::text LIKE '%security_invoker=true%'
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'public' AND c.relname = 'active_employees'), true) AS ok`,
+        WHERE n.nspname = 'public' AND c.relname = 'active_employees'), false) AS ok`,
   ],
   [
     // NOT a search for `last_seen_upload_id`: the view is `SELECT *`, so that

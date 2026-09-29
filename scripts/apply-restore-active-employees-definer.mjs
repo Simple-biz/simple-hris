@@ -20,10 +20,29 @@
  * caller of the view. Confirm with scripts/verify-active-employees-roster.mjs.
  *
  * The SQL is idempotent and touches no row data, so a re-run is a no-op.
+ *
+ * SUPERSEDED 2026-09-29 (Kane's (b)): the view is security_invoker again, on a
+ * definition that reads only global_master_list. This script refuses to run,
+ * both --apply and --verify, because its verify asserts definer. The live
+ * checks are scripts/apply-active-employees-invoker.mts --verify and
+ * scripts/verify-active-employees-roster.mjs.
  */
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 import dotenv from "dotenv";
+
+console.error(
+  [
+    "REFUSING: superseded 2026-09-29. active_employees is security_invoker = true by design",
+    "(references/sql/alter/2026-09-29_active_employees_security_invoker.sql). Re-applying definer",
+    "would only re-open the Supabase Advisor's Security Definer View error.",
+    "",
+    "Check the live view with:",
+    "  node --import tsx scripts/apply-active-employees-invoker.mts --verify",
+    "  node scripts/verify-active-employees-roster.mjs",
+  ].join("\n"),
+);
+process.exit(1);
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();

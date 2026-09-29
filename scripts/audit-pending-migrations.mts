@@ -200,9 +200,15 @@ console.log('\n#10 MESA opt-in request cleanup (one-time DELETE)');
   else record('delete_mesa_optin_requests', "mesa_requests request_type='opt_in'", 'NOT APPLIED', `${rows} legacy opt_in row(s) still present`);
 }
 
-console.log('\n#11 active_employees definer restore (anon-key visibility)');
+// Was the probe for `restore_active_employees_definer`. Since 2026-09-29 the view
+// is security_invoker by design (2026-09-29_active_employees_security_invoker.sql),
+// so "anon reads rows" no longer means "definer is applied". What stays true for
+// either mode is the symptom: anon at zero while the service role reads a roster
+// is the 2026-08-03 silent empty. The record now names the live migration and
+// says only what it can measure, which is visibility, not the flag.
+console.log('\n#11 active_employees anon-key visibility (the silent-empty symptom)');
 if (!anon) {
-  record('restore_active_employees_definer', 'active_employees (anon)', 'INCONCLUSIVE', 'no anon key in env');
+  record('active_employees_security_invoker', 'active_employees (anon)', 'INCONCLUSIVE', 'no anon key in env');
 } else {
   const [{ count: anonCount, error: anonErr }, { count: svcCount }] = await Promise.all([
     anon.from('active_employees').select('*', { head: true, count: 'exact' }),
@@ -210,14 +216,14 @@ if (!anon) {
   ]);
   const anonRows = readCount(anonErr, anonCount);
   const svcRows = readCount(null, svcCount);
-  if (anonErr) record('restore_active_employees_definer', 'active_employees (anon)', 'INCONCLUSIVE', `${anonErr.code}: ${anonErr.message.slice(0, 60)}`);
+  if (anonErr) record('active_employees_security_invoker', 'active_employees (anon)', 'INCONCLUSIVE', `${anonErr.code}: ${anonErr.message.slice(0, 60)}`);
   // Only a REAL zero is the security_invoker symptom. A null count is the shape of an unreadable
   // object, and calling it 0 would blame the view definition for a probe that never resolved.
   else if (anonRows === null || svcRows === null) {
-    record('restore_active_employees_definer', 'active_employees (anon)', 'INCONCLUSIVE', `count null with no error (anon=${anonCount}, service=${svcCount}) — unreadable, NOT a zero`);
+    record('active_employees_security_invoker', 'active_employees (anon)', 'INCONCLUSIVE', `count null with no error (anon=${anonCount}, service=${svcCount}) — unreadable, NOT a zero`);
   } else if (anonRows === 0 && svcRows > 0) {
-    record('restore_active_employees_definer', 'active_employees (anon)', 'NOT APPLIED', `anon sees 0, service-role sees ${svcRows} — still security_invoker`);
-  } else record('restore_active_employees_definer', 'active_employees (anon)', 'APPLIED', `anon sees ${anonRows}, service-role ${svcRows}`);
+    record('active_employees_security_invoker', 'active_employees (anon)', 'NOT APPLIED', `anon sees 0, service-role sees ${svcRows} — SILENT EMPTY: the view reads a table anon cannot see`);
+  } else record('active_employees_security_invoker', 'active_employees (anon)', 'APPLIED', `anon sees ${anonRows}, service-role ${svcRows} (visibility only; the flag is checked by apply-active-employees-invoker.mts --verify)`);
 }
 
 console.log('\nOther claimed-pending objects');

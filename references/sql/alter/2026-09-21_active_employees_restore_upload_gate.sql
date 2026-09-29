@@ -35,6 +35,13 @@ WHERE last_seen_upload_id = (
   )
   AND off_boarded_at IS NULL;
 
+-- DEFINER, and it MUST be. This definition sub-selects master_list_uploads,
+-- which anon is RLS-blocked on. Under security_invoker the sub-select runs as the
+-- caller, matches nothing, and the view goes SILENTLY EMPTY for anon (the
+-- 2026-08-03 incident). Reverting the gate therefore brings back the Advisor's
+-- "Security Definer View" error, by necessity. Since 2026-09-29 the live view is
+-- invoker (2026-09-29_active_employees_security_invoker.sql), and that file's
+-- pre-flight refuses to flip a gated view.
 ALTER VIEW public.active_employees SET (security_invoker = false);
 
 -- Verify: the two should now DIFFER again by the un-synced residue.

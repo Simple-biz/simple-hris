@@ -50,6 +50,9 @@
 
 -- SUPERSEDED for this view — see 2026-08-03_restore_active_employees_definer.sql.
 -- Left in place (not deleted) so the history of the change is legible.
+-- 2026-09-29: active_employees IS security_invoker again, on a definition that
+-- reads only global_master_list (2026-09-29_active_employees_security_invoker.sql).
+-- Do not uncomment this line. That file carries the pre-flight this one lacked.
 -- ALTER VIEW public.active_employees             SET (security_invoker = true);
 ALTER VIEW public.employee_hourly_rates_current    SET (security_invoker = true);
 ALTER VIEW public.active_hsl_agents                SET (security_invoker = true);

@@ -11434,7 +11434,8 @@ export default function PayrollWizard({
    *
    * 2026-08-03: `active_employees` began returning an empty set (HTTP 200, no
    * error) to the anon key after Supabase Advisor set `security_invoker = true`
-   * on it — the view sub-selects `master_list_uploads`, which anon cannot read.
+   * on it — the view then sub-selected `master_list_uploads`, which anon cannot
+   * read. (Since 2026-09-29 it is invoker again, safely: it reads one table.)
    * The roster silently became nobody, tier 1 resolved to null for all 1045
    * rows, and tiers 2/3 back-filled 623 of them off the stale rates sheet and
    * the Hubstaff "Job type" cell while 422 landed in the Unassigned pile. Those

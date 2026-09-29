@@ -1,5 +1,14 @@
 -- Fix: restore public.active_employees to OWNER-privilege (definer) semantics
 -- ---------------------------------------------------------------------------
+-- !! SUPERSEDED 2026-09-29 (Kane's (b)). DO NOT RE-RUN. !!
+-- The live view is security_invoker = true
+-- (2026-09-29_active_employees_security_invoker.sql). Definer was right for the
+-- view this file describes, which sub-selected master_list_uploads. The
+-- 2026-09-21 migration removed that sub-select, so the reason below no longer
+-- applies. Re-running this file would only bring the Advisor error back.
+-- scripts/apply-restore-active-employees-definer.mjs refuses to run.
+-- Everything below is kept as the record of 2026-08-03.
+--
 -- Reverses ONE of the three changes made by
 -- references/sql/alter/2026-08-03_fix_security_definer_views.sql. The other two
 -- were correct and MUST stay as they are — see the bottom of this file.

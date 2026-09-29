@@ -14,6 +14,9 @@
  *      roster — so the app survives even without the service key.
  *   3. The two views that were a REAL anon leak stay closed to anon. Their base
  *      tables are locked to anon, so an anon-visible view is a privilege bypass.
+ *   4. active_employees (security_invoker since 2026-09-29) shows the anon key
+ *      and the service key exactly what global_master_list shows each of them,
+ *      so a re-broken view (silent empty) and a re-leaked one (bypass) both fail.
  *
  *   node scripts/verify-active-employees-roster.mjs
  *
@@ -136,6 +139,38 @@ for (const [view, base] of [
     );
   } else {
     ok(`${view}: anon sees ${viewErr ? "error (blocked)" : (viewCount ?? 0)} — no bypass of ${base}`);
+  }
+}
+
+console.log("\n4. active_employees shows each key exactly what global_master_list shows it");
+// Since 2026-09-29 the view is security_invoker (Kane's (b); the Advisor's
+// "Security Definer View" error). Under invoker the view must equal the base
+// set for every reader: FEWER rows is the 2026-08-03 silent empty (the view
+// reads a table this key cannot see), MORE rows is a definer bypass (the view
+// shows what the base table's policies would hide). Either way the roster
+// that key's callers see is not the roster.
+for (const [label, client] of [
+  ["anon", anon],
+  ["service", svc],
+]) {
+  if (!client) {
+    console.log(`  ! ${label} key absent — skipped`);
+    continue;
+  }
+  const v = await client.from("active_employees").select("*", { count: "exact", head: true });
+  const b = await client
+    .from("global_master_list")
+    .select("*", { count: "exact", head: true })
+    .is("off_boarded_at", null);
+  // A null count is not a zero (memory postgrest-head-true-hides-missing-table).
+  if (v.error || b.error || v.count == null || b.count == null) {
+    bad(`${label}: counts did not resolve (${v.error?.code ?? b.error?.code ?? "null count"})`);
+  } else if (v.count < b.count) {
+    bad(`${label}: active_employees ${v.count} < global_master_list ${b.count} — SILENT EMPTY: the view reads a table this key cannot see`);
+  } else if (v.count > b.count) {
+    bad(`${label}: active_employees ${v.count} > global_master_list ${b.count} — BYPASS: the view shows more than this key may read`);
+  } else {
+    ok(`${label}: active_employees ${v.count} = global_master_list ${b.count}`);
   }
 }
 

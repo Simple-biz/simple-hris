@@ -423,10 +423,12 @@ async function fetchActiveEmployees(
   }
 
   // ── Impossible-state guard: an empty view over a non-empty master list ──
-  // `active_employees` can return zero rows with HTTP 200 and NO error when the
-  // caller cannot see `master_list_uploads` (the view's upload filter sub-selects
-  // it). That happened for real on 2026-08-03 when the view was switched to
-  // `security_invoker = true` — see the note on getEmployees(). An empty roster is
+  // `active_employees` can return zero rows with HTTP 200 and NO error when it is
+  // `security_invoker` and reads a table the caller cannot see. That happened for
+  // real on 2026-08-03, when the view still sub-selected `master_list_uploads` —
+  // see the note on getEmployees(). Since 2026-09-29 the view IS invoker again,
+  // safely, because it reads only `global_master_list`. This guard stays as the
+  // net for anyone who re-adds a second table. An empty roster is
   // indistinguishable from a working one at the call site, so it propagated
   // silently into payroll: the Payroll Wizard re-labelled 422 people
   // "Unassigned" because its department source of truth had vanished.
@@ -442,8 +444,8 @@ async function fetchActiveEmployees(
       rawSource = healed;
       viewWarning =
         `active_employees returned 0 rows but global_master_list holds ${healed.length} ` +
-        `active people — the view is not readable by this client (it sub-selects ` +
-        `master_list_uploads; check security_invoker/grants). Served from ` +
+        `active people — the view is not readable by this client (it is ` +
+        `security_invoker: check every table it reads, and this client's access to each). Served from ` +
         `global_master_list instead. Departments and pay cohorts derived from this ` +
         `roster should be re-verified.`;
       console.error(`[employees] ${viewWarning}`);
@@ -622,6 +624,12 @@ export async function getEmployeeMasterRecord(
  * weaker rates-sheet / Hubstaff "Job type" tiers — i.e. pay-affecting cohorts
  * (dept pay-pause, OT toggles, HSL grouping) were being decided off a phantom
  * roster. A roster read this important must not depend on anon grants.
+ *
+ * 2026-09-29: the view is `security_invoker = true` again, by design
+ * (references/sql/alter/2026-09-29_active_employees_security_invoker.sql). Since
+ * 2026-09-21 it reads only `global_master_list`, so the trap above cannot fire
+ * unless someone re-adds a second table. Service-role-first stays: when item 221
+ * narrows the base table's anon policy, an anon read of this view narrows with it.
  */
 export async function getEmployees(): Promise<RosterResult> {
   const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
