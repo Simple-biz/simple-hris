@@ -547,9 +547,13 @@ Toggle-based (no metric input):
 - Case Resolution Bonus: ₱3,000
 - Compliance & Accuracy Bonus: ₱2,500
 
-**Step 4 — Additions, HSL tab** (merged 2026-08-28; separate calculation path):
+> ⚠ **Superseded in code, not on the record (2026-09-29):** neither toggle exists in the code. Commit `109da807` (2026-05-09, "KPI Calculator Update - Manager Dashboard") deleted `{ id: 'hsl_case', label: 'Case Resolution Bonus', amount: 3000 }` and `{ id: 'hsl_compliance', label: 'Compliance Achievement Award', amount: 2500 }` from `PayrollWizard.tsx`, and no file under `src/` names either bonus today. When and by whom the policy changed is not recorded — Kane to confirm (found 2026-09-29 by the reference-doc pass; not yet an Open item).
+
+**Step 5 — Additions, HSL tab** (merged 2026-08-28; separate calculation path). *This said Step 4 until 2026-09-29; PAB moved before Additions on 2026-09-01 (`1f7a631d`), so the rail is 1 Initialize · 2 Initial Calculation · 3 Orphanage · 4 PAB · 5 Additions · 6 Contractors · 7 Validation · 8 Dispatch · 9 Reports (`PayrollWizard.tsx:2042-2080`).*
 
 HSL employees have their own payroll step that shows Initial Pay + KPI Bonus (from manager submissions via the HSL Bonus Calculator) + **PAB** + **Tech Bonus**, with an override column and a Total Pay column.
+
+**Where the KPI Bonus comes from** *(2026-09-28)*: managers score each HSL branch in the KPI Calculator, and the wizard pays the stored `calculated_bonus`. **9 of the 14 branches have no code rules** (`rules: []` + `rulesFromCatalog: true`, `src/lib/hsl-bonus/schema.ts`) and are scored only from the Payment Catalog Library bonuses assigned to their `hsl:<sub>` branch: `intake_specialist` and `filing_specialist` (2026-09-22), then `medical_records`, `care_team`, `callback_team`, `attestation`, `case_managers`, `collections` and `post_hearing_prep` (2026-09-28). `ssd_medical_records` and `healthcare_team_lead` keep code rules, `hsl_managers` keeps its per-manager sets (`HSL_MANAGERS`, see [managers-logic.md](./managers-logic.md)), and `executive_guest_services` / `executive_assistants` are `noKpi`. On **Kane's ruling (b), 2026-09-28**, Collections' **₱2,500 manager-only Monthly Flat** and Pre/Post-Hearing's **₱2,500 Monthly Bonus and ₱3,500 weekly cap** were deleted, not migrated: both ₱2,500s pay ₱0 from 2026-09-27 unless Accounting adds them to the Library, and no cap bounds a Library total (`monthlyMax` was removed, not left in place). No stored money moved; reopening a week reprices it (Collections ₱158,750 / 88 rows, Post-Hearing ₱64,450 / 34 rows). The deleted rules survive only as display-only labels (`HSL_RETIRED_RULES`, `src/lib/hsl-bonus/retired-rules.ts`) and are never scored. The KPI card no longer has a **Mgr** column, because no `managerOnly` rule remains. Governing: `hsl-subdepartments.md` §7d, `hsl-catalog-migration.md`.
 
 PAB and Tech Bonus rules for HSL:
 - **PAB (₱5,000)**: HSL uses Mon–Sun weeks. Eligibility requires ≥5 of 7 days at ≥7 h (`checkHslPabEligibility()`). Displayed as a tri-state pill (✓ Eligible / ✗ Ineligible / ⏳ In Progress); clicking opens the PAB Calendar modal with week-based rows. Added to Total Pay when `eligible`.
@@ -560,9 +564,17 @@ PAB and Tech Bonus rules for HSL:
 
 **No bonus.** Lead Gen employees are explicitly excluded from the bonus system per company policy. The tab exists to receive auto-assigned Lead Gen employees but offers no bonus options.
 
+> ⚠ **Superseded in code, not on the record (2026-09-29):** the code pays Lead Gen a per-appointment bonus. `calcLeadGenBonus` (`src/lib/payroll/department-bonus.ts:71-74`) pays 1–9 appointments × ₱250 and 10+ × ₱500; the Payroll Wizard (`PayrollWizard.tsx:22202`) and the KPI Calculator engine (`department-bonus.ts:425`, `:490`) both call it, and managers score Lead Gen in the KPI Calculator. `bonus_catalog_applied` held **478** Lead Gen rows for the week of 2026-09-20 alone, one of them ₱750 (Sep 25 log item 244 (a), (e)). When and by whom the policy changed is not recorded — Kane to confirm, and to confirm the ₱250 / ₱500 rates (Sep 29 log item 272).
+
 ### Social Media, PM Team, Client VA, Site Building
 
 Toggle UI is present but no specific bonus formulas are defined. These departments will receive bonuses in a future update.
+
+> ⚠ **Superseded in code, not on the record (2026-09-29):** PM Team, Site Building and Client VA are already scored, from Payment Catalog Library bonuses in the KPI Calculator. Measured read-only 2026-09-27 on My Team's KPI Rankings: PM Team **43** people ranked, Site Building **7**, Client VA **72** (Client VA's formula `=Appt_Bonus` makes its variable the pesos, so its board is order-only) — Sep 25 log item 238 (the 09-27 row). The code-side list still carries `bonuses: []` for all four (`DEPARTMENTS`, `src/lib/payroll/department-bonus.ts:22-64`); the pay comes from the Library. Social Media was not measured. When and by whom the policy changed is not recorded — Kane to confirm (Sep 29 log item 272).
+
+### Team-split bonuses rank as ties *(2026-09-28)*
+
+HR, QC and Accounting are department-scoped `shared_team` bonuses: every member's row carries the team figure. My Team's KPI Rankings therefore shows them as **team boards** on which everyone who scored the same weeks ties — **by design** (Kane's ruling (b), item 247), not a bug to fix by ranking on something else. Employee-scoped bonuses never count (`classifyBonuses`, `src/lib/manager/deliverable-money-order.ts`). This is a ranking rule only; it changes nobody's pay.
 
 ---
 
@@ -570,7 +582,7 @@ Toggle UI is present but no specific bonus formulas are defined. These departmen
 
 ### Additions and Deductions — separate fields
 
-Step 3 (Additions) maintains **separate, editable fields for Additions and Deductions**. An employee can simultaneously carry a standard bonus, an additional amount, and a deduction in the same week. Keeping them in distinct columns simplifies accounting reconciliation and produces clearer line items in exported reports.
+Step 5 (Additions; numbered Step 3 when this was written) maintains **separate, editable fields for Additions and Deductions**. An employee can simultaneously carry a standard bonus, an additional amount, and a deduction in the same week. Keeping them in distinct columns simplifies accounting reconciliation and produces clearer line items in exported reports.
 
 ### Excel Export — Employee ID included
 
@@ -578,11 +590,13 @@ The XLSX export of the weekly payroll report includes the **Employee ID** column
 
 ### Tenure Gifts — removed, replaced by HSL Payroll step
 
-The **Tenure Gifts** section has been **removed** from the Payroll Wizard (redundant with the Orphanage / HR tenure-gift module). Its former position in the wizard is now occupied by **Step 5 — HSL Payroll**, the dedicated Hogan Smith Law calculation path described under the Hogan Cycle section.
+The **Tenure Gifts** section has been **removed** from the Payroll Wizard (redundant with the Orphanage / HR tenure-gift module). Its former position in the wizard was taken by **Step 5 — HSL Payroll**, the dedicated Hogan Smith Law calculation path described under the Hogan Cycle section. *(Corrected 2026-09-29: HSL Payroll stopped being its own step on 2026-08-28 and is now the HSL tab of Step 5 — Additions; see § Hogan Smith Law.)*
 
 ### Audit Log attribution
 
 The Payroll Wizard writes an audit entry for every dispatched payroll run attributed to the **currently logged-in user**. A bug that caused edits made by one user (e.g. Carla T) to be logged under a different user (e.g. Kane R) has been corrected. When no session user can be resolved the entry is attributed to the `Payroll Wizard` system actor.
+
+**Since 2026-09-28 every wizard write is audited, not only the dispatched run:** `POST /api/app-settings` writes `app_settings.changed` by key (before / after), `POST /api/payroll-wizard/additions` writes `wizard.additions_saved` (a server diff after the compare-and-swap), and `POST /api/orphanage-pay` writes `orphanage_pay.records_saved`. Forgive-a-day (`pab_dispute.submitted`), the Hubstaff upload (`csv.upload`) and a manual master / HSL sheet sync (`csv.master.sync`, `csv.hsl.sync`) now record the **session**, never a body or form field; a differing client value is kept only as a `*_claim`. Governing: `docs/features/audit-log.md` §3 and §7b; api-reference.md §16.
 
 ---
 

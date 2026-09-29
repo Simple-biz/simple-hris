@@ -183,7 +183,11 @@ That is why the roster payload is the cached unit and the gate is derived.
 
 Kane: *"add proper caching on this please so when I go to other departments it wont have
 to load the data again"*. My Team's Rankings and Appointments data is cached **one entry
-per dataset per RAW department label**. The key carries the label, so
+per dataset per rail entry's label** (`activeEntry.name` = `formatDeptLabel(cell)`,
+`ManagerApp.tsx:2845`, `team-dept-rail.ts:114`). That is the RAW label for every non-HSL
+department and the display name ("HSL — Intake Specialist") for an HSL sub-team, whose KPI
+read is sent by rail key `hsl:<key>` but cached under that name; the names are distinct per
+sub-team, so no two teams share an entry. The key carries the label, so
 `useManagerCachedState` reseeds during render when the manager comes back to a department,
 and it paints with no skeleton. It still refetches (the rule above).
 

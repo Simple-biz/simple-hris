@@ -11,7 +11,7 @@ that have KPI Bonus dont have the rankings and the view modal performance please
 [2026-09-28-manager-hsl-kpi-rankings.md](../superpowers/plans/2026-09-28-manager-hsl-kpi-rankings.md).
 It is the HSL sibling of the Payment Catalog board ([manager-pm-rankings.md](./manager-pm-rankings.md)),
 and it uses **the same route, payload, pane and `computeLeaderboard`**. Every rule there holds here
-unless this doc says otherwise. Not pushed.
+unless this doc says otherwise. Pushed (`origin/main` = `0fa0b89d`, reflog 2026-09-29).
 
 ## Key files
 
@@ -72,6 +72,12 @@ has **weekly** rows carrying **at least one KPI item**. Measured through the rea
 | Simple Texting · Mail Sorting | none | placement-only: scored under Callback / Post-Hearing |
 | Executive Guest Services · Executive Assistants · Healthcare Specialist | none | no scores (`noKpi`) |
 | **HSL (the parent)** | none | its sub-teams pay on different scales, so a family board would rank the pay scale |
+
+The **retired `case_manager` branch** (singular) is on no board. 50 people scored on it all time;
+46 are now placed in `hsl:case_managers`, 3 are inactive and 1 is in EGS. It has no rail key, and
+the read is `.eq('department', branch)` (`hsl-kpi-rankings.ts:66,77`), so its weeks never surface
+and the Case Managers board ranks `case_managers` rows only (session `77e1ce37`, measured
+2026-09-28; Sep 29 log item 271).
 
 - A board appears for a sub-team the day its branch has a weekly row with a KPI item, with no code
   change. That includes an accountant-created data branch, which keys its Library variables the
@@ -142,5 +148,6 @@ has **weekly** rows carrying **at least one KPI item**. Measured through the rea
 **No migration.** No env vars, no n8n, nothing for Kane to run. Reads only: `hsl_bonus_entries`
 (`period_start, period_end, period_type, employee_email, kpi_data, calculated_bonus`, server-side),
 `bonus_catalog_bonuses` (`id, kind, formula`, never `amount`), `hsl_bonus_period_status`,
-`app_settings` (`payroll.dispatch_lock.%`), `active_employees`, `hubstaff_hours`. Committed locally.
-**Not pushed; not deployed; not clicked through with a real manager session.**
+`app_settings` (`payroll.dispatch_lock.%`), `active_employees`, `hubstaff_hours`. Pushed
+(`origin/main` = `0fa0b89d`, reflog 2026-09-29); **not deployed; not clicked through with a real
+manager session.**

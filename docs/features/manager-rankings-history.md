@@ -12,8 +12,10 @@ Shipped 2026-09-28 from Kane's *"My Team - Rankings - there should be an action 
 labeled "View" where we can see a histogram via line graph on KPI Performance and Ranking
 Performance … make sure its smooth open and close with the data inside it"*. Plan:
 [2026-09-28-manager-rankings-history.md](../superpowers/plans/2026-09-28-manager-rankings-history.md).
-It sits on top of [manager-appointment-leaderboard.md](./manager-appointment-leaderboard.md) and
-[manager-pm-rankings.md](./manager-pm-rankings.md), and every rule in those docs holds here. Not pushed.
+It sits on top of [manager-appointment-leaderboard.md](./manager-appointment-leaderboard.md),
+[manager-pm-rankings.md](./manager-pm-rankings.md) and
+[manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md), and every rule in those docs holds here.
+Pushed (`origin/main` = `0fa0b89d`, reflog 2026-09-29).
 
 ## Key files
 
@@ -49,6 +51,9 @@ those boards is therefore decided on the server too:
 - **Lead Gen / Callback rank on the counts** (`rankBy: { kind: 'values' }`, the default), because
   their appointments ARE their order (one rate). The pane's default must stay the counts, and only the
   KPI wrapper passes `weekRankFor`.
+- **HSL boards** (2026-09-28, [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)) use View
+  unchanged. They are "All bonuses" only, so the modal's rank line is the server's per-week order on
+  the stored `calculated_bonus`.
 - **A payload cached before 2026-09-28 has no `weeks`.** The shell cache paints it
   ([manager-dashboard-cache.md](./manager-dashboard-cache.md) § *The rule*), so the lookup is null,
   the modal says *"Loading each week's bonus order…"*, and the rank tiles and cells read "…" until
@@ -145,12 +150,9 @@ the same reason:
   behind its own two-door gate ([manager-my-team.md](./manager-my-team.md) § *Rankings*), so it has
   no View. Adding one would read `/api/team-rankings`, never this module.
 - **The Appointments pill** (per-week totals, [manager-appointment-rankings.md](./manager-appointment-rankings.md)).
-- **HSL** got its KPI leaderboard on 2026-09-28, and View works on it unchanged. It is "All bonuses" only, so the
-  modal's rank line is the server's per-week order on the stored `calculated_bonus`
-  ([manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)).
 
 ## Deploy notes
 
 **No migration.** No env vars, no n8n, nothing for Kane to run. No read changed. The KPI weekly
-payload carries one new positions-only field (`order.weeks`). Committed locally. **Not pushed; not
-deployed.**
+payload carries one new positions-only field (`order.weeks`). Pushed (`origin/main` = `0fa0b89d`,
+reflog 2026-09-29); **not deployed.**

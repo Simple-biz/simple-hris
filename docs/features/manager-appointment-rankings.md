@@ -5,13 +5,14 @@ Manager → My Team → **Lead Gen** (and any other department that scores appoi
 by appointments set, **Weekly** or **Monthly**, shows each person's **tenure**, and badges every
 week that is not yet finalized by Accounting. Built for the department's own managers. Shipped
 2026-09-26 (session `f73e6c13`, audit item 229), from the brief whose rulings are in
-[the plan](../superpowers/plans/2026-09-26-manager-appointment-rankings.md). Not pushed.
+[the plan](../superpowers/plans/2026-09-26-manager-appointment-rankings.md). Pushed (`origin/main` =
+`0fa0b89d`, reflog 2026-09-29).
 
 ## Key files
 
 | Piece | File |
 | --- | --- |
-| Every rule (pure, tested) | `src/lib/manager/appointment-rankings.ts` · `.test.ts` — `weekBadge` / fill-forward live in `badgeWeeks`, which PM Team's Rankings ([manager-pm-rankings.md](./manager-pm-rankings.md)) also calls, so the badge order below is one rule for both |
+| Every rule (pure, tested) | `src/lib/manager/appointment-rankings.ts` · `.test.ts` — `weekBadge` / fill-forward live in `badgeWeeks`, which every KPI board also calls (the catalog departments and team splits, [manager-pm-rankings.md](./manager-pm-rankings.md); the HSL sub-teams, [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)), so the badge order below is one rule for all of them |
 | The reads (fetch only; projection pinned) | `src/lib/supabase/appointment-rankings.ts` · `.test.ts` |
 | Route | `app/api/manager/appointment-rankings/route.ts` |
 | The gate (shared with the Rankings leaderboard) | `src/lib/manager/managed-department-gate.ts` · guard test `src/lib/manager/appointment-rankings-route.test.ts` |
@@ -28,8 +29,9 @@ Kane, 2026-09-26: *"The my team tab lets you only see what Departments were assi
   `departmentMatchesManagedAssignments` — **even when they also hold an elevated role**;
 - only an elevated caller with **no** assignments may read any department.
 
-It **never consults `canViewTeamRankings`**. That list governs the SP **Rankings** view, a
-different surface with its own rulings (see [manager-my-team.md](./manager-my-team.md) §
+It **never consults `canViewTeamRankings` or `managerMayReadRankings`**. Those two doors (the
+one-name list, and since 2026-09-26 an exact-label manager grant) govern the SP **Rankings** view,
+a different surface with its own rulings (see [manager-my-team.md](./manager-my-team.md) §
 *Rankings*). A guard test pins both facts, plus the order: assignments are checked before the
 elevated fallback, and the read runs only after both. An out-of-scope department returns
 `available: false`, not 403, so the pill simply does not appear.
@@ -146,5 +148,5 @@ duplicate rows it is the **latest** start. The column mixes `M/D/YY` (~1,160 act
 ## Deploy notes
 
 **No migration.** No env vars, no n8n, nothing for Kane to run. Reads only: `bonus_catalog_applied`,
-`hsl_bonus_period_status`, `app_settings` (`payroll.dispatch_lock.%`). Committed locally. **Not
-pushed; not deployed.**
+`hsl_bonus_period_status`, `app_settings` (`payroll.dispatch_lock.%`). Pushed (`origin/main` =
+`0fa0b89d`, reflog 2026-09-29); **not deployed.**

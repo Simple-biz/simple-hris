@@ -102,7 +102,7 @@ Per-employee rate table. Configured via `NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RA
 
 ### 3. `hubstaff_hours`
 
-The weekly Hubstaff export. Replaced entirely on each upload. Configured via `NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE`.
+The weekly Hubstaff export. **Every upload is kept** *(corrected 2026-09-29 — this said "Replaced entirely on each upload")*: each one is archived as a `hubstaff_uploads` row, promoted to `is_current`, and its rows are tagged with that `upload_id`; earlier uploads stay for audit and rollback (`hubstaff-hours-db.ts:721-727`). Configured via `NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE`.
 
 **Columns (mirrored from Hubstaff CSV export):**
 
@@ -123,12 +123,13 @@ The weekly Hubstaff export. Replaced entirely on each upload. Configured via `NE
 - `GET /api/hubstaff-hours` — service role: all columns in DB order; anon: payroll-focused columns only
 
 **Who writes it:**
-- `POST /api/hubstaff-hours` — full replace via `replaceHubstaffHoursFromCsvText()`
+- `POST /api/hubstaff-hours` — archive + promote via `replaceHubstaffHoursFromCsvText()` (the name is historical; it deletes nothing). The uploader recorded on the archive row and on the `csv.upload` audit row is the **session** since 2026-09-28; a differing form `uploaded_by` is kept only as `details.uploaded_by_claim` (`app/api/hubstaff-hours/route.ts:592-617`)
 
 **Key logic in `src/lib/supabase/hubstaff-hours-db.ts`:**
-- `fetchHubstaffRowsOrdered()`: Paginates 1,000 rows at a time (Supabase default limit), derives column order from the first row or the OpenAPI spec.
+- `fetchHubstaffRowsOrdered()`: Paginates 1,000 rows at a time (Supabase default limit) over the current upload, derives column order from the first row or the OpenAPI spec. **It applies no `.order()`**, despite its name (`:283-300`) — see the 1000-row section below.
+- `fetchHubstaffRowsBySourceFile()`: one upload's rows, paged without an order on purpose and guarded against sheared pages (`selectAllPagedUnorderedGuarded`, since 2026-09-26) — see below.
 - `replaceHubstaffHoursFromCsvText()`:
-  1. Deletes all existing rows (`.not('id', 'is', null)` filter — deletes everything).
+  1. Validates the filename's week before anything is written. The old step 1, "Deletes all existing rows", is gone — no rows are deleted; the `hubstaff_uploads` archive row (`createPendingHubstaffUpload`) is written after parsing and **before** any data row lands.
   2. Parses incoming CSV text via `csv-parse/sync`.
   3. **Two-pass column mapping** against the DB schema (fetched from PostgREST OpenAPI spec):
      - **Pass 1 — Exact match**: CSV header `toLowerCase()` === DB column `toLowerCase()`. Handles fixed columns like `"Email"`, `"Total worked"`, `"Activity"`.
@@ -694,12 +695,27 @@ All sixteen now drain pages through `selectAllPaged` (commit `2829a6d`).
 > with one `.in("id", allIds)` lookup, which is capped at 1,000 rows like any read *and* overruns
 > the request URL at ~1,300 ids. Those lookups are now batched (300 numeric / 150 uuid ids).
 > Paging the main read while leaving a whole-list `.in()` behind only moves the truncation.
+>
+> **A filter list has a ceiling of its own — found and FIXED 2026-09-28 (item 244).** Every PostgREST filter travels in
+> the request URL, and this project's Supabase front refuses a long one. Measured with a SELECT of the same shape: a
+> ~14.4 KB query string is answered, ~16.3–25 KB dies in the client (`UND_ERR_HEADERS_OVERFLOW`, "fetch failed"),
+> ~28 KB+ is `400 Bad Request`, and ~77 KB is `414`. The body is not limited that way, so a write can land and the
+> filter-built step after it fail. `saveDeptPeriodApplied` (`bonus-catalog-applied-db.ts`) upserted a dept-week and
+> then deleted `not.in.(<every kept id>)` — Lead Gen 2026-09-20 = 478 ids ≈ 43 KB — so every Lead Gen autosave and Lock
+> answered `Bad Request` (PM Team, ~361 rows ≈ 32 KB, was over the line too). It now pages the id set, computes the
+> stale set in process, and deletes through `inFilterLists` (`src/lib/supabase/in-list-chunks.ts`, 7 tests): lists of
+> ≤ 8 KB URL-encoded, every value quoted with `\` and `"` escaped, and the dept + week filters on every list.
+> `saveQcSubmissions` (`qc-db.ts`) got the same fix, and a failed read there is now an error. **postgrest-js `.in()` does
+> not escape an embedded `"`**: the row `app:2026-09-20:lead_gen:arriola, mark anthony  "mark":…` matched **0**
+> through `.in()` and **1** escaped. Nothing was stranded (0 of 18,967 rows older than their dept-week's last save).
+> **The rule: never build an `in` / `not.in` list from an unbounded set of values** — compute the set to act on in
+> process and send it through `inFilterLists`.
 
 ### Original 2026-07-09 discovery
 
 The active roster was **1075** then, so this bit the master-list readers first. `listActiveMasterListPeople` / `listActiveMasterListNames` (in [global-master-list-db.ts](src/lib/supabase/global-master-list-db.ts)) each did one `.range(0, 9999)` read of `active_employees` and silently dropped ~75 people — `jamesc@simple.biz` among them — off the **Department Transfers "Request transfer in" person picker** and the **New Hire Checklist "Referred By" picker**. The person simply wasn't in the list; no error hinted why.
 
-**Fix:** `fetchAllActiveEmployeeRows` (same file) loops `.range(from, from + 1000 - 1)` in 1000-row pages until a short page returns, with a `from > 200000` safety valve. Both pickers now read through it. `fetchActiveEmployees` in [employees.ts](src/lib/supabase/employees.ts) (which feeds `masterEmployees` — the Payroll Wizard's department source-of-truth + rate-match bridge) paginates the same way via its inner `queryView` loop, as do the pre-existing paginated readers in this doc (`fetchAllMasterRowsForReconcile`, `applyOffboardedFromSheetRows`, `listOffboardedSheetRows`, `fetchHubstaffRowsOrdered`, the `mesa_ledger` reader).
+**Fix:** `fetchAllActiveEmployeeRows` (same file) loops `.range(from, from + 1000 - 1)` in 1000-row pages until a short page returns, with a `from > 200000` safety valve. Both pickers now read through it. `fetchActiveEmployees` in [employees.ts](src/lib/supabase/employees.ts) (which feeds `masterEmployees` — the Payroll Wizard's department source-of-truth + rate-match bridge) paginates the same way via its inner `queryView` loop, as do the pre-existing paginated readers in this doc (`fetchAllMasterRowsForReconcile`, `applyOffboardedFromSheetRows`, `listOffboardedSheetRows`, `fetchHubstaffRowsOrdered` — paged but **unordered**, see the table below —, the `mesa_ledger` reader).
 
 **The rule:** any read of a table that can exceed 1000 rows *after filtering* MUST paginate. `.range(0, 9999)` is not pagination — it is a 1000-row cap with a misleading number.
 
@@ -711,6 +727,17 @@ The active roster was **1075** then, so this bit the master-list readers first. 
 | ~~Rates CSV sync existing-row lookup~~ | [rates-upload-db.ts](src/lib/supabase/rates-upload-db.ts) | **FIXED 2026-09-25** (item 227c) — `loadCurrentRateRowIndex` pages all 22,610 rows (it read 1,000) and keeps each person's row in the `employee_hourly_rates_current` order. Paging alone would have updated whichever of up to 75 history rows was read last. See [csv-imports.md](../features/csv-imports.md) § Rates |
 | ~~`fetchMasterMin`~~ | [current-pay.ts](src/lib/payroll/current-pay.ts) | **Already paged.** This row said STILL OPEN until 2026-09-25, but a read that day found it paging `active_employees` in 1,000-row pages. It is the current-pay / dispatch-queue master-min read that builds the Tech Bonus `startDateByEmail` map |
 | ~~`getTeamRoster`~~ | [team-roster.ts](src/lib/supabase/team-roster.ts) | **FIXED 2026-07-30** — manager team-roster membership (~296 people were missing) |
+
+**Still open or latent — re-checked against the code 2026-09-29** (items 236, 238, 244; the first row is new that day):
+
+| Call site | File | What it reads |
+|---|---|---|
+| `listHrNewHireChecklistDepartments` | [hr-new-hire-checklist.ts](src/lib/supabase/hr-new-hire-checklist.ts) | **STILL OPEN (found 2026-09-29).** One whole-table `.not("department", "is", null).range(0, 4999)` read (`:472-481`). The 2026-09-25 fix (`7adcae0d`) paged the file's `.range(0, 9999)` reads and missed this one. At **1,756** rows (item 227b) the per-department counts behind `GET /api/hr/new-hire-checklist/departments` (the Bulk Invite department picker) come from the first 1,000, and a department whose rows all sit in the tail is missing. Its sibling `listHrNewHireChecklistByDepartment` with no `periodStart` (the legacy all-weeks read) is filtered by department only, which is not a bound |
+| `summarizeApplied` | [bonus-catalog-applied-db.ts](src/lib/supabase/bonus-catalog-applied-db.ts) | **STILL OPEN (item 244f).** Un-paged, and a failed read returns `[]` with no error (`:166-181`). Bonus History's all-weeks call is capped at 1,000 rows (Lead Gen alone holds 2,847 since 08-01). Payroll Readiness calls it for **every** catalog department for one week (`payroll-readiness.ts:585`); Lead Gen's 478 and PM Team's ~361 rows for 2026-09-20 already total 839, so that call is within reach of the cap (**unmeasured**) |
+| `listPendingOrphanageItems` | [orphanage-dispatches.ts](src/lib/supabase/orphanage-dispatches.ts) | **LATENT (item 244f).** `:217` and `:236` send every already-dispatched budget-request / worker-payment id as one `not.in` list — the URL-ceiling shape; 0 rows today. The two reads that build those lists (`:190-205`) are un-paged |
+| ~~`fetchHubstaffRowsBySourceFile`~~ | [hubstaff-hours-db.ts](src/lib/supabase/hubstaff-hours-db.ts) | **GUARDED 2026-09-26 (item 238).** Pages WITHOUT an order on purpose: Steps 1/2 render in API order and the only total order, the UUID `id`, would reshuffle both. `selectAllPagedUnorderedGuarded` detects a shear by a repeated `id`, retries once, then re-reads `ORDER BY id` and throws if even that repeats (`:982-1010`). Whether to give it a real order is Kane's call (item 238b) |
+| `fetchHubstaffRowsGroupedBySourceFile` | [hubstaff-hours-db.ts](src/lib/supabase/hubstaff-hours-db.ts) | **LATENT (items 236d, 238c).** Behind `GET /api/hubstaff-hours?all_files=1`: pages the whole table (~40,500 rows, ~41 pages) with **no** `.order()` (`:1049-1075`), and the route returns it buffered (~22.5 MB, far over Vercel's 4.5 MB body cap — likely `413` in production, **unverified**) |
+| `fetchHubstaffRowsOrdered` | [hubstaff-hours-db.ts](src/lib/supabase/hubstaff-hours-db.ts) | **LATENT.** Pages the current upload with **no** `.order()`, despite its name (`:283-300`); an upload is ~1,120 rows, so 2 pages. Callers: `current-pay.ts:698`, `payroll-readiness.ts:1005`, `payroll-wizard-notes.ts:425`, `ceo-tools.ts:1610`, and `GET /api/hubstaff-hours` with no params |
 
 > These are the *confirmed-live* candidates flagged by the audit; the remaining `.range(0, 9999)` hits are on tables comfortably under 1000 rows today (e.g. HSL agents, departments, leave requests) and are latent — they become bugs the moment their table crosses the ceiling.
 >
@@ -747,12 +774,12 @@ All routes are `export const dynamic = "force-dynamic"` (no caching).
 | `/api/employee-rate-profiles` | GET | Service role preferred | `src/lib/supabase/employee-rate-profiles.ts` |
 | `/api/employee-ids` | GET | Anon | `src/lib/supabase/employee-ids.ts` |
 | `/api/hubstaff-hours` | GET | Service role preferred; anon fallback returns same JSON shape | `src/lib/supabase/hubstaff-hours-db.ts` |
-| `/api/hubstaff-hours` | POST | Service role required | `src/lib/supabase/hubstaff-hours-db.ts` |
+| `/api/hubstaff-hours` | POST | `requireFeatureEdit('accounting','payroll_wizard')`, refused while payroll is processing; service role required; the uploader is the session (2026-09-28) | `src/lib/supabase/hubstaff-hours-db.ts` |
 | `/api/add-employee` | POST | Service role preferred | Both tables |
 | `/api/delete-employee` | DELETE | Service role preferred | Both tables |
 | `/api/update-employee-rates` | POST | Service role preferred | `employee_hourly_rates` |
 | `/api/update-employee-profile` | POST | Service role preferred | Both tables |
-| `/api/app-settings` | GET/POST | Anon read; service role preferred write | `app_settings` table |
+| `/api/app-settings` | GET/POST | GET: any signed-in session for ordinary keys (no gate in the route), elevated for sensitive keys, admin for `secret.*`, `qc.compare_paste.*` refused. POST: `requireElevatedSession` plus the key-family bars; every change audited by key as `app_settings.changed` (2026-09-28). Corrected 2026-09-29 from "Anon read; service role preferred write" (`app/api/app-settings/route.ts:77-205`) | `app_settings` table |
 | `/api/import-daily-report` | POST | `DATABASE_URL` (pg direct) | `src/lib/supabase/import-daily-report.ts` |
 | `/api/payment-dispatches` | GET/POST | Service role preferred | `src/lib/supabase/payment-dispatches.ts` |
 | `/api/payroll-current-pay` | GET | Service role preferred | `src/lib/payroll/current-pay.ts` |

@@ -89,4 +89,6 @@ Ruling (Carla T, 2026-09-08): starts with the **8/30–9/5 payroll week**; the 8
 | Roa, Sajda "Jazmine" *(new to the cohort)* | Mail-Sorting Team Leader | jazminer@simple.biz | weekly batches | 40–50+ → ₱2,000 · 30–39 → ₱1,500 · 29 or fewer → ₱0 |
 | Solon, Emily "Ems" | Pre-Hearing Manager | emss@simple.biz | % cases prepared | 98–100% → ₱5,000 · 95–97.99% → ₱3,500 · 87–94.99% → ₱2,500 · below 87% → ₱0 |
 
+*(Checked 2026-09-29.)* These are the **Managers Weekly** (`hsl_managers`) sets, and the code still pays them as listed: `HSL_MANAGERS` in `src/lib/hsl-bonus/schema.ts` (Star's `completion_pct` and Ems's `case_prepared_pct` bands at `:863-868` and `:909-914`). Star's and Ems's ₱3,500 / ₱2,500 bands are **not** the Pre/Post-Hearing Prep branch's ₱2,500 Monthly Bonus and ₱3,500 weekly cap, which were deleted on 2026-09-28 on Kane's ruling (b) — see [business-logic.md](./business-logic.md) § Hogan Smith Law.
+
 The sheet also notes "Updated Base pay ₱355" for AR — a rate-catalog change, already applied there per Carla, not a KPI-calculator line.

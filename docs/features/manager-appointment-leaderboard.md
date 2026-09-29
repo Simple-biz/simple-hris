@@ -7,7 +7,8 @@ a podium, and every ranked person's tenure is shown. **No money values anywhere*
 2026-09-26). Built for the department's own managers. Shipped 2026-09-26 (session `f73e6c13`, audit
 item 232); rulings are in [the plan](../superpowers/plans/2026-09-26-manager-appointment-leaderboard.md).
 Sibling of the per-week totals view, [manager-appointment-rankings.md](./manager-appointment-rankings.md),
-whose count, gate, roster match and tenure it reuses **unchanged**. Not pushed.
+whose count, gate, roster match and tenure it reuses **unchanged**. Pushed (`origin/main` =
+`0fa0b89d`, reflog 2026-09-29).
 
 ## Key files
 
@@ -25,7 +26,10 @@ whose count, gate, roster match and tenure it reuses **unchanged**. Not pushed.
 ## Two callers of the pane and the math
 
 Since 2026-09-26, `computeLeaderboard` and `AppointmentLeaderboardPane` also serve the **KPI**
-Rankings of PM Team and (2026-09-27) every other per-person KPI-bonus department ([manager-pm-rankings.md](./manager-pm-rankings.md)). That view is ranked by bonus earned and
+Rankings of PM Team, (2026-09-27) every other per-person KPI-bonus department, and (2026-09-28) the
+HR / QC / Accounting team boards and every scored HSL sub-team
+([manager-pm-rankings.md](./manager-pm-rankings.md),
+[manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)). That view is ranked by bonus earned and
 shows KPI items. It reuses them rather than copying them, so this doc's rules (settled weeks, window,
 minimum history, the three averages, ties) hold on both. The additions are all opt-in, and each
 defaults to this view's behaviour:
@@ -33,7 +37,7 @@ defaults to this view's behaviour:
 - `computeLeaderboard` sums an optional per-row `parts` map into `LeaderboardRow.parts`. Appointment
   rows never carry one, so a Lead Gen row has no `parts` field (a test pins it).
 - The pane takes `unit` (default *appointments*, so every sentence here reads as before), `controls`,
-  `partLabels`, `notes`, `animationKey`, `rankNote`, `reorder` and `showValues` (false = order-only: no figure anywhere; for a KPI whose variable is the pesos). **`reorder` is how PM Team applies
+  `partLabels`, `notes`, `animationKey`, `rankNote`, `reorder` and `showValues` (false = order-only: no figure anywhere; for a KPI whose variable is the pesos), plus the View modal's `weekRankFor`, `weekRankedBy` and `historyNote` (2026-09-28). **`reorder` is how PM Team applies
   a server-computed order without pesos in the browser.** This view passes none of them.
 - The badge + fill-forward (`badgeWeeks`) and the badge-input reads (`readWeekBadgeInputs`) were
   lifted out of `buildAppointmentWeeks` / `getAppointmentRankings` unchanged, so PM Team's weeks badge
@@ -45,7 +49,8 @@ Never let a PM Team change alter this view's defaults. Lead Gen's order is still
 ranking history, week by week ([manager-rankings-history.md](./manager-rankings-history.md)). Its weeks
 come from `countedWindowWeeks`, the window rule lifted out of `computeLeaderboard` unchanged, so the
 modal and the board cover the same weeks. Its weekly rank defaults to the counts, which is Lead Gen's
-order. Only PM Team's wrapper passes `weekRankFor`, the server's bonus order.
+order. Only the KPI wrapper (`DeliverableLeaderboardPane`, every KPI board including HSL) passes
+`weekRankFor`, the server's bonus order.
 
 **Search** (2026-09-27) is built into the pane for both callers: names + WORK emails
 (`rankings-search.ts`), never a personal email. It filters and never re-ranks, and it hides the podium
@@ -144,5 +149,5 @@ and **0** were active Lead Gen agents the match missed.
 ## Deploy notes
 
 **No migration.** No env vars (the Hubstaff table honours `NEXT_PUBLIC_SUPABASE_HUBSTAFF_HOURS_TABLE`
-like every other reader), no n8n, nothing for Kane to run. Reads only. Committed locally. **Not
-pushed; not deployed.**
+like every other reader), no n8n, nothing for Kane to run. Reads only. Pushed (`origin/main` =
+`0fa0b89d`, reflog 2026-09-29); **not deployed.**

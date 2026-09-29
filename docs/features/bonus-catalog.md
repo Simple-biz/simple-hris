@@ -365,8 +365,11 @@ US Manager Bonus · USEE**.
     grep 2026-09-22), so in practice a removed bonus's `catalog:` keys survive in
     `kpi_data` indefinitely. They score nothing while no assignment resolves them,
     and **come back to life if the same bonus id is ever re-assigned to that
-    branch.** Until the function is wired, a retirement script strips them
-    explicitly (`scripts/retire-filing-team-library-bonus.mts`).
+    branch.** Until the function is wired, **nothing strips them**: the one
+    retirement script written for this (`scripts/retire-filing-team-library-bonus.mts`)
+    was **deleted** when Filing's ruling reversed (see *Which way a duplication is
+    resolved…* in the next bullet), because with the code rules gone it would have
+    wiped the branch's only pay rule.
   - **A branch may hand its whole programme to the Library** *(2026-09-22)*.
     The other resolution of the duplication below: instead of retiring the
     bonus, retire the CODE. **`intake_specialist` and `filing_specialist` both
@@ -382,18 +385,9 @@ US Manager Bonus · USEE**.
     (Kane, ruling (b): *"Both docs are stale!"*). Their Library bonuses omit
     the ₱2,500 monthly flats and the ₱3,500 cap, so those stop paying until
     Accounting adds them to the Library. What each pays is pinned in
-    `schema.test.ts` (`RULED_B_2026_09_28`). Audit item 246.
-    - **The card states each Library bonus's version and last save**
-      *(2026-09-28, Kane: "add like a timestamp on who changed it and all that
-      even the version")*. The `Bonus Library` legend strip prints
-      `v<n> · from <effective date> · saved <when> by <handle>`, and its `title`
-      carries the full address, the creation stamp, and that **the card scores
-      the CURRENT version whichever week is open** (versions are display + audit
-      only, §8). `saved` is the row's last save, and a star toggle is a save, so
-      it can move without the version. Read the two together. Pure part:
-      `bonusProvenance` (`bonus-catalog/history.ts`, tested). No new route: the
-      catalog GET already returns every field. The flag is what stops `rules: []` being read as
-    "roster-only"; `noKpi` would hide the card and the Library column with it.
+    `schema.test.ts` (`RULED_B_2026_09_28`). Audit item 246. The flag is what
+    stops `rules: []` being read as "roster-only"; `noKpi` would hide the card
+    and the Library column with it.
     **Which way a duplication is resolved is a pay decision, and it can be ruled
     twice:** Filing was first resolved the OTHER way (`b3dc6a98` moved the
     formula's bands into code and was to retire the assignment), then reversed
@@ -404,6 +398,16 @@ US Manager Bonus · USEE**.
     **The cost, in both cases:** the rule leaves the test suite. It is a row in
     `bonus_catalog_bonuses`, no unit test can reach it, and an edit reprices the
     team with nothing red to stop it.
+    - **The card states each Library bonus's version and last save**
+      *(2026-09-28, Kane: "add like a timestamp on who changed it and all that
+      even the version")*. The `Bonus Library` legend strip prints
+      `v<n> · from <effective date> · saved <when> by <handle>`, and its `title`
+      carries the full address, the creation stamp, and that **the card scores
+      the CURRENT version whichever week is open** (versions are display + audit
+      only, §8). `saved` is the row's last save, and a star toggle is a save, so
+      it can move without the version. Read the two together. Pure part:
+      `bonusProvenance` (`bonus-catalog/history.ts`, tested). No new route: the
+      catalog GET already returns every field.
   - **A Library bonus must never re-express a programme that already exists in
     code** *(the invariant this section was missing, 2026-09-22)*. `scoreEntry`
     returns `calcBonus(schema rules) + calcHslCatalogTotal(catalog)` with **no

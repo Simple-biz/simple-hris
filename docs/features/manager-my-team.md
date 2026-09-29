@@ -20,12 +20,13 @@ Removed from `ManagerApp.tsx`:
 
 - The global **Show rates / Hide rates** toggle and its `ratesHidden` state.
 - The per-card **rate footer** on each roster card. A quiet email/identity footer
-  remains (see the inline comment near `ManagerApp.tsx:3061`, "rates removed:
+  remains (see the inline comment near `ManagerApp.tsx:4514`, "rates removed:
   managers no longer see pay rates").
 - The now-unused `AnimatedRate` / rate-formatting helpers.
 
-Kept: the **Active now** control (`ActiveNowButton`, `ManagerApp.tsx:2694` /
-`:3193`), which shows online presence and is unrelated to pay.
+Kept: the **Active now** control (`ActiveNowButton`, rendered at `ManagerApp.tsx:3353`,
+defined at `:4935`; lines measured 2026-09-29), which shows online presence and is
+unrelated to pay.
 
 ## Member dialog (`ManagerMemberDialog.tsx`)
 
@@ -34,7 +35,7 @@ The modal has a left **identity rail** and a right **tabbed detail panel**.
 ### Recognition card replaces the pay-rate card
 
 The rail's old **Pay rates** card (with its show/hide toggle and `MaskedRate`) is
-gone. In its place is a read-only **`RecognitionCard`** (`ManagerMemberDialog.tsx:167`)
+gone. In its place is a read-only **`RecognitionCard`** (`ManagerMemberDialog.tsx:168`)
 that surfaces the medals awarded to the teammate from the roster:
 
 - **Commendation** (green flag) and **flag-for-review** (red flag) groups, ordered
@@ -44,20 +45,20 @@ that surfaces the medals awarded to the teammate from the roster:
 - Empty state: "No commendations or flags yet."
 
 Data comes from a new optional **`medals?: MedalRecord[]`** prop
-(`ManagerMemberDialog.tsx:54`), supplied by the roster's medal context. In
-`ManagerApp.tsx` the medals map is read from `useMedalCtx()` (`:2008`) and the
+(`ManagerMemberDialog.tsx:55`), supplied by the roster's medal context. In
+`ManagerApp.tsx` the medals map is read from `useMedalCtx()` (`:2288`) and the
 selected member's medals are passed into the dialog keyed on personal/work email
-(`:3159`). Awarding still happens via roster drag-drop, not in the dialog
+(`:4654`). Awarding still happens via roster drag-drop, not in the dialog
 (the card is read-only here).
 
 ### Tabs: Work · Notes · Hours
 
-`TabId = 'work' | 'notes' | 'hours'` (`ManagerMemberDialog.tsx:31`). The former
-**Payments** tab is renamed **Hours** (`CalendarDays` icon, `:227`) and is now
+`TabId = 'work' | 'notes' | 'hours'` (`ManagerMemberDialog.tsx:32`). The former
+**Payments** tab is renamed **Hours** (`CalendarDays` icon, `:228`) and is now
 **attendance-only** — the pay summary was removed. The tab renders
-`ManagerMemberHoursMini` (`:441`), passing `workEmail`, `personalEmail`,
+`ManagerMemberHoursMini` (`:443`), passing `workEmail`, `personalEmail`,
 `alternateWorkEmail`, `alternateWorkEmail2`, and the member's **`department`**
-(`:447`).
+(`:448`).
 
 ## Attendance mini-calendar (`ManagerMemberHoursMini.tsx`)
 
@@ -81,12 +82,14 @@ Because the server pay payload was removed, the HSL-specific attendance rule
 **`department` prop**:
 
 ```ts
-const isHslMember = (department ?? '').trim().toLowerCase() === 'hsl';
+// Family-aware — an `hsl:<sub>` sub-team label is still HSL.
+const isHslMember = isHslFamilyLabel(department);
 ```
 
-(`ManagerMemberHoursMini.tsx:312`, passed down as `isHsl`). HSL members qualify a
+(`ManagerMemberHoursMini.tsx:323`, passed down as `isHsl`; family-aware since `7b46843d`,
+2026-08-10 — it compared against the bare `'hsl'` before). HSL members qualify a
 weekend day at `hours >= 7` and get the overnight rule (`hslOvernightQualifies`,
-`:539`) that combines a short day with the adjacent day to reach the 7h threshold.
+`:575`) that combines a short day with the adjacent day to reach the 7h threshold.
 
 > **Caller invariant:** `ManagerMemberHoursMini` has exactly one caller —
 > `ManagerMemberDialog`, which passes `department`. If you add another caller, it
@@ -173,7 +176,7 @@ exist:
 | View | Appears when | Source |
 | --- | --- | --- |
 | **Scheduling** | the selected entry is in the HSL family | `departmentHasScheduling` |
-| **Rankings** | ONE pill whose content follows the data (Kane 2026-09-26, Q1 → a): **SP** weeks the viewer may read (kaner@, or a manager holding a grant for that department) → `RankingsPane`; **appointment** weeks in the viewer's My Team scope → the average-appointments leaderboard; **per-person KPI bonuses** (PM Team; since 2026-09-27 also Edit, Site Building, Sales Assistant, Discovery, and Client VA order-only) and, since 2026-09-28, **team-split KPI bonuses** (HR; QC and Accounting order-only; everyone ties, and the board says why) and, since 2026-09-28, **every scored HSL sub-team** (its KPI Calculator scores, All bonuses only, the whole HSL family ranked; read by the rail key `hsl:<key>` — [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)) in the viewer's My Team scope → the leaderboard ranked by bonus earned, shown as KPI items only. A department with its own SP or appointment view never also gets this one. They stack if a team ever has more than one | SP via `/api/team-rankings?view=manager` (only rows carrying `SP` **and** `Ranking`, since 2026-09-26); appointments via `/api/manager/appointment-rankings` + `/days` — [manager-appointment-leaderboard.md](./manager-appointment-leaderboard.md); PM Team via `/api/manager/deliverable-rankings` (+ `?basis=daily`) — [manager-pm-rankings.md](./manager-pm-rankings.md) |
+| **Rankings** | ONE pill whose content follows the data (Kane 2026-09-26, Q1 → a): **SP** weeks the viewer may read (kaner@, or a manager holding a grant for that department) → `RankingsPane`; **appointment** weeks in the viewer's My Team scope → the average-appointments leaderboard; **per-person KPI bonuses** (PM Team; since 2026-09-27 also Edit, Site Building, Sales Assistant, Discovery, and Client VA order-only) and, since 2026-09-28, **team-split KPI bonuses** (HR; QC and Accounting order-only; everyone ties, and the board says why) and, since 2026-09-28, **every scored HSL sub-team** (its KPI Calculator scores, All bonuses only, the whole HSL family ranked; read by the rail key `hsl:<key>` — [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md)) in the viewer's My Team scope → the leaderboard ranked by bonus earned, shown as KPI items only, or as the order alone for an order-only KPI (Client VA, QC, Accounting, some HSL KPIs). A department with its own SP or appointment view never also gets this one. They stack if a team ever has more than one | SP via `/api/team-rankings?view=manager` (only rows carrying `SP` **and** `Ranking`, since 2026-09-26); appointments via `/api/manager/appointment-rankings` + `/days` — [manager-appointment-leaderboard.md](./manager-appointment-leaderboard.md); the KPI boards (PM Team and the other per-person KPI departments, the HR / QC / Accounting team splits, and HSL sub-teams sent as the rail key `department=hsl:<key>`) via `/api/manager/deliverable-rankings` (+ `?basis=daily`) — [manager-pm-rankings.md](./manager-pm-rankings.md) · [manager-hsl-kpi-rankings.md](./manager-hsl-kpi-rankings.md) |
 | **Appointments** | the department's rows carry `Appts_Set` / `Appts` (Lead Gen, Callback) **and** the department is in the viewer's My Team scope | the data, via `/api/manager/appointment-rankings` — [manager-appointment-rankings.md](./manager-appointment-rankings.md) |
 
 > **SP Rankings and the appointment views (Appointments, and the Rankings leaderboard) have DIFFERENT gates, on purpose — never harmonize them.**
@@ -199,9 +202,10 @@ no-pesos rule has to hold identically on both surfaces, and two copies would be 
 places for a peso column to appear.
 
 - **`amount` is absent from the projection**, not selected-then-dropped, and a test
-  pins the projection *string*. This surface reuses `/api/team-rankings` unchanged
-  precisely so that control keeps covering it. **Do not write a manager-specific
-  read.**
+  pins the projection *string*. This surface reuses `/api/team-rankings` (the same
+  `getTeamRankings` read and projection; since 2026-09-26 the route only gained the
+  `view=manager` door below) precisely so that control keeps covering it. **Do not
+  write a manager-specific read.**
 - **`vars.Ranking` is a TIER FLAG** (1 / 25 / 50 / 0). The `#1..#n` shown is derived
   by sorting SP descending and is never stored.
 - **Who may see it: kaner@, plus the department's own managers — HERE only.**
@@ -247,6 +251,9 @@ places for a peso column to appear.
   roster through `workEmailIndex`, and the personal address is only a key. **Filtering never re-ranks**:
   rows keep their real position, and the podium steps aside while a query is active (its gold slot would
   otherwise hold #7). The SP search persists across week navigation; a department switch starts fresh.
+  On AI/API the name matched is the board's SHORT display name ("Ram D."), and the email is the roster
+  work email, so a search on a surname misses unless that surname is in one of those two (session
+  `fdd8a4bd`, 2026-09-27 05:14Z; Sep 29 log item 258).
 - **Both leaderboards have a View action after Tenure** (Kane, 2026-09-28). It opens one person's KPI
   performance (their count each settled week against the team average) and ranking performance (their
   position each week). A KPI board's weekly rank is the server's bonus order, and the modal shows no

@@ -5,7 +5,7 @@ the right edge of the screen after every **5 minutes she is actively using the H
 plays the whole *Jellyfish Jam* (2:31), and the bubble becomes a small player she can pause, resume
 and close. It is a one-person easter egg, the sibling of her [sign-in song](./login-carla-song.md).
 Nobody else ever sees it or arms anything. Built 2026-09-28 (session `9a92b2cd`, blueprint, no
-NEEDS), committed locally, not pushed. No DB, no API, no migration.
+NEEDS), pushed (`origin/main` = `0fa0b89d`, reflog 2026-09-29). No DB, no API, no migration.
 
 ## Key files
 
@@ -109,7 +109,7 @@ SquarePants", because the longer name truncates in the 20rem player.
 ## Deploy notes
 
 **No migration.** No env vars, no n8n, no API. Nothing to run by hand.
-PENDING: push + deploy (Kane).
+Pushed (`origin/main` = `0fa0b89d`, reflog 2026-09-29). PENDING: deploy (Kane).
 
 **Not clicked through signed in as Carla** by the building session. It was verified by 21 unit
 tests, a clean typecheck, the dev server compiling and serving the bubble in the client bundle,

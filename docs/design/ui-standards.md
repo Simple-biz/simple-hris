@@ -1,5 +1,7 @@
 # UI Standards — Simple HRIS
 
+**Last swept 2026-09-29** against the UI commits of 2026-09-17 → 2026-09-29 (Sep 29 session log item 270).
+
 This document captures the visual conventions, layout patterns, and component
 conventions actually in use across the Simple HRIS codebase. It is descriptive,
 not prescriptive: every rule here was extracted from existing components in
@@ -9,11 +11,15 @@ the code.
 
 Cross-references:
 
-- [`docs/responsive-design.md`](./responsive-design.md) — breakpoints, safe
-  areas, drawer pattern, short-viewport handling. This document does **not**
+- [`docs/design/responsive-design.md`](./responsive-design.md) — breakpoints, safe
+  areas, drawer pattern, short-viewport handling, and the four rules every `p-0`
+  dialog follows (§ "Dialogs and modals"). This document does **not**
   re-derive any of that; it builds on top of it.
-- [`docs/components.md`](../reference/components.md) — what each component does and why.
+- [`docs/reference/components.md`](../reference/components.md) — what each component does and why.
   This document covers visual standards (look, feel, spacing).
+- [`PRODUCT.md`](../../PRODUCT.md) — the brief this file serves: calm, trustworthy, clear;
+  WCAG AA; light **and** dark each meet contrast (PRODUCT.md:43-46).
+- `.impeccable/config.json` — the design detector's waivers (§ 15.4).
 - `components/ui/*.tsx` — the shadcn/base-ui primitives (`Button`, `Badge`,
   `Card`, `Dialog`, `Input`, `Tabs`, `Table`, etc.).
 
@@ -55,6 +61,8 @@ Every shell component this is derived from:
 - `src/components/contractor/ContractorApp.tsx`
 - `src/components/tickets/TicketsBoard.tsx` (standalone `/tickets` page — same
   shell mechanics, but a fixed black+red theme; see § 1.4)
+- `src/components/hr/HrApp.tsx` (`/hr`, via `app/hr/page.tsx`)
+- `src/components/qc/QCApp.tsx` (`/qc`)
 
 Reasons for the shape:
 
@@ -71,11 +79,13 @@ Reasons for the shape:
 
 | Dashboard      | Accent family | Sidebar bg                           | Selected nav state                                                      | Brand mark               |
 | -------------- | ------------- | ------------------------------------ | ----------------------------------------------------------------------- | ------------------------ |
-| Accounting     | Orange / blue | `bg-gradient-to-b from-white to-orange-50/40` (light) / `from-[#0d1117] to-[#0f1729]` (dark) | `bg-gradient-to-r from-orange-100 to-orange-50` (light) | Wand icon in orange tile + `simple-logo.png` |
-| Payroll Clerk  | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | Lowercase `s` tile       |
-| Admin          | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | Lowercase `s` tile + "Admin" caption |
-| CEO            | Editorial zinc + crown accents | `bg-white` / `dark:bg-zinc-950`             | `bg-[#18181b] text-white`                                               | Lowercase `s` tile       |
-| Manager        | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | Lowercase `s` tile       |
+| Accounting     | Orange / blue | `bg-gradient-to-b from-white to-orange-50/40` (light) / `from-[#0d1117] to-[#0f1729]` (dark) | `bg-gradient-to-r from-orange-100 to-orange-50` (light) | `SidebarLogoHeader`, tile `from-orange-500 to-amber-600` (`Sidebar.tsx:149`) — was "Wand icon in orange tile + `simple-logo.png`" until `SidebarLogoHeader` landed 2026-07-04, d13d5372 |
+| Payroll Clerk  | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | `SidebarLogoHeader`, tile `from-zinc-700 to-zinc-900` (`PayrollClerkSidebar.tsx:149`) — was "Lowercase `s` tile" until 2026-07-04, d13d5372 |
+| Admin          | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | `SidebarLogoHeader`, tile `from-zinc-700 to-zinc-900` (`AdminSidebar.tsx:197`) — was "Lowercase `s` tile + "Admin" caption" until 2026-07-04, d13d5372 |
+| CEO            | Yellow / amber (tinted editorial) | `bg-gradient-to-b from-white via-yellow-50/30 to-white` / `dark:from-black dark:via-yellow-950/10 dark:to-black` (`CeoSidebar.tsx:108`) | `bg-gradient-to-r from-yellow-500 to-amber-600 text-white shadow-sm shadow-yellow-600/25` (`CeoSidebar.tsx:83`) | `SidebarLogoHeader`, tile `from-yellow-500 to-amber-600` (`CeoSidebar.tsx:115`) — this row read "Editorial zinc + crown accents · `bg-white` / `dark:bg-zinc-950` · `bg-[#18181b] text-white` · Lowercase `s` tile"; the code has been yellow/amber since 2026-05-04, b274b489 (changed in code; no ruling recorded) |
+| Manager        | Blue (tinted editorial) | `bg-gradient-to-b from-white via-blue-50/30 to-white` / `dark:from-black dark:via-blue-950/20 dark:to-black` (`ManagerSidebar.tsx:162`) | `bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-sm shadow-blue-600/25` (`ManagerSidebar.tsx:118`) | `SidebarLogoHeader`, tile `from-blue-500 to-blue-700` (`ManagerSidebar.tsx:168`) — this row read "Editorial zinc · `bg-white` / `dark:bg-zinc-950` · `bg-[#18181b] text-white` · Lowercase `s` tile"; the code has been blue since 2026-04-30, 19f384c9 (changed in code; no ruling recorded) |
+| HR             | Emerald / teal (tinted, 256px) | `bg-gradient-to-b from-white via-emerald-50/30 to-white` / `dark:from-black dark:via-emerald-950/15 dark:to-black` (`HrSidebar.tsx:147`) | `bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25` (`HrSidebar.tsx:118`) | `SidebarLogoHeader`, tile `from-emerald-500 to-teal-600` (`HrSidebar.tsx:158`) — row added 2026-09-29; the rail has been emerald since 2026-05-08, 7656e18d |
+| QC             | Orange (tinted editorial) | `bg-gradient-to-b from-white via-orange-50/30 to-white` / `dark:from-black dark:via-orange-950/20 dark:to-black` (`QCSidebar.tsx:97`) | `bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-600/25` (`QCSidebar.tsx:74`) | `SidebarLogoHeader`, tile `from-orange-500 to-orange-600` (`QCSidebar.tsx:103`) — row added 2026-09-29; the rail has been orange since 2026-06-26, 0f2f293d |
 | Orphanage      | Pink / rose    | (per-section)                        | per-section                                                             | Heart icon               |
 | Employee       | Orange / blue (matches Accounting) | `bg-gradient-to-b from-white to-orange-50/40` | `bg-gradient-to-r from-orange-100 to-orange-50` | Orange tile + `simple-logo.png` |
 | Contractor     | Blue (branded family, blue instead of orange) | `bg-gradient-to-b from-white to-blue-50/40` (light) / `from-[#0d1117] to-[#0f1729]` (dark) | `bg-gradient-to-r from-blue-100 to-blue-50 text-blue-900` (light) / `dark:from-blue-950/70 dark:to-blue-950/40` | Blue tile (`from-blue-500 to-blue-700`) + `simple-logo.png` |
@@ -87,10 +97,18 @@ Three distinct visual families:
    with marketing-style hero numbers and decorative blobs (`PayrollDispatch`,
    `Overview`). Accounting/Employee are the orange/blue originals; Contractor
    is the same anatomy recolored blue.
-2. **Editorial** — Admin, Payroll Clerk, Manager, CEO use a near-monochrome
+2. **Editorial** — Admin and Payroll Clerk use a near-monochrome
    zinc palette, hairline borders, monospace numerals, and dense per-row UI
-   (`AdminGlobalMasterList`, `Rates`, `AdminOverview`). When in doubt for a new admin
-   surface, follow the editorial family.
+   (`AdminGlobalMasterList`, `AdminOverview`; the `Rates` tab this list also named was
+   deleted 2026-06-22, 63add1bb — the People tab replaced it, `src/App.tsx:316`). When in
+   doubt for a new admin surface, follow the editorial family. (This item read "Admin,
+   Payroll Clerk, Manager, CEO" — Manager and CEO moved to the tinted rail below in code;
+   no ruling recorded.)
+   **Tinted editorial** — Manager (blue), CEO (yellow/amber) and QC (orange) keep the
+   editorial 220px density and `text-[13.5px]` nav, but the rail is a
+   `from-white via-<hue>-50/30 to-white` gradient (dark `from-black via-<hue>-950/… to-black`)
+   and the selected row is a solid gradient pill with white text. HR is the same treatment
+   at the branded 256px width (emerald → teal). Rows and sources in the table above.
 3. **Console (Tickets only)** — the `/tickets` board is a fixed near-black
    surface with red actions in **both** global themes. It is deliberately
    scoped to that one page; don't reuse the black+red look on any dashboard
@@ -108,6 +126,14 @@ Three distinct visual families:
 The gradient hero tone is reserved for the **branded** surfaces. Don't
 introduce it on Admin / Payroll Clerk / CEO / Manager — the editorial family
 expects flat backgrounds with hairline borders.
+
+**The navy surface travels with its rings (2026-09-26).** Every Employee tab — Profile
+included since b7e954c8, which moved it off a near-black `#0a0a0a` — is
+`dark:bg-[#0d1117]`. Anything painted *as* the surface moves with it: `ring-2
+dark:ring-[#0d1117]` separators and `dark:focus-visible:ring-offset-[#0d1117]`
+(`EmployeeProfile.tsx`, `CompensationSections.tsx`). My Team → Rankings cards use the same
+navy: `dark:border-blue-950/60 dark:bg-[#0d1117]` (`RankingsSkeleton.tsx:15-16`,
+`RankingHistoryModal.tsx:241`).
 
 ### 1.4 Tickets console theme (`.tickets-theme`)
 
@@ -134,6 +160,17 @@ re-points every semantic token (`--background`, `--card`, `--primary`,
   `TicketCard.tsx`).
 - Scope: this theme exists for exactly one surface. New dashboards pick
   branded or editorial (§ 1.2); don't opt anything else into `.tickets-theme`.
+
+### 1.5 Floating chrome (2026-09-29)
+
+The screen corners are already taken: bottom-right = Penny / Notes FAB / tutorial /
+cobrowse; bottom-left = dispatch paid toasts; top-centre = the sign-in pill; top-right =
+sonner (`CarlaJamBubble.tsx:33-36`). The Employee Help control went into the page header
+cluster, not a corner, on that reasoning (`EmployeeHelpMenu.tsx:19-28`, "NOT A FLOATING
+BUBBLE, AND IT MUST NOT BECOME ONE"). The one floating control added since is Carla's
+Jellyfish bubble: right edge, vertically centred, `z-[110]`, above the dashboard switch
+loader (100) and below the collab chrome (120+) (`CarlaJamBubble.tsx:33-36, 101`;
+`carla-jellyfish-bubble.md`).
 
 ---
 
@@ -163,7 +200,12 @@ All sidebars share these mechanics:
 - The mobile hamburger button uses `aria-controls="<surface>-sidebar-nav"` and
   `aria-expanded={mobileOpen}`
 
-### 2.1 Editorial (Admin, Payroll Clerk, Manager, CEO)
+### 2.1 Editorial (Admin, Payroll Clerk)
+
+This heading read "(Admin, Payroll Clerk, Manager, CEO)". Manager, CEO and QC share the
+width, padding, captions and nav metrics below but not the `#18181b` selected state or the
+flat `bg-white` rail — see § 1.2 *tinted editorial* (`ManagerSidebar.tsx:116-119`); changed
+in code, no ruling recorded.
 
 - Width: `w-[220px]`
 - Padding: `px-5 pb-4 pt-7`
@@ -247,9 +289,13 @@ differ. How it works and the rules to follow:
   left edge and stay put, so they read the same collapsed or expanded. Labels
   and right-aligned badges fade out via the shared `.sb-collapse-fade` class
   (opacity + a short slide, `md:`-scoped).
-- **Timing is centralised.** `src/index.css` owns `--sb-collapse-ms` (560ms) and
-  `--sb-collapse-ease` (`cubic-bezier(0.65,0,0.35,1)`), collapsed to ~0 under
-  `prefers-reduced-motion`. Don't re-declare per-rail durations for the collapse.
+- **Timing is centralised.** `src/index.css` owns `--sb-collapse-ms` (700ms) and
+  `--sb-collapse-ease` (`cubic-bezier(0.22, 1, 0.36, 1)`, the dialog ease), 0.01ms under
+  `prefers-reduced-motion` (`src/index.css:11-19`) — was 560ms /
+  `cubic-bezier(0.65,0,0.35,1)` until 2026-07-23, 9feb86c1 (changed in code; no ruling
+  recorded). The width slide is applied with `!important` on `[data-collapsible-rail]` so
+  Tailwind's transition utilities can never out-order it (`src/index.css:21-30`). Don't
+  re-declare per-rail durations for the collapse.
 - **Counts / badges are preserved but relocated when collapsed.** The full
   count pill (e.g. HR's unread-notifications bell, Employee's profile-nudge and
   bell, Admin's Roles / Global Master List counts and webhook-alert pill, and
@@ -285,8 +331,13 @@ Constraints:
   would otherwise pin the image back to full opacity and leak the cut-off logo
   into the collapsed 64px rail.
 - **Collapsed swap.** When collapsed, the whole logo box fades out and a single
-  compact `SidebarBrandMark` icon (tinted by each rail's `accentClassName`)
-  fades in, aligned with the nav icon column below.
+  compact `SidebarBrandMark` — the Penny heart, `/chatbubble.png` — fades and scales in,
+  aligned with the nav icon column below. It is self-coloured: the rail's
+  `accentClassName` reaches it only as a positioning class and tints nothing
+  (`SidebarBrandMark.tsx:4-17`, `SidebarLogoHeader.tsx:86`). Its heartbeat starts only once
+  collapsed and stops under reduced motion. (This bullet said "tinted by each rail's
+  `accentClassName`"; the heart replaced the tinted mark 2026-07-06, 8d1e2ca4 — changed in
+  code, no ruling recorded.)
 
 ---
 
@@ -332,7 +383,7 @@ two common shapes.
 
 #### 3.2.1 Editorial header (zinc, hairline)
 
-Used by `AdminOverview`, `Rates`, `AdminGlobalMasterList`, `PayrollDispatch`'s
+Used by `AdminOverview`, `AdminGlobalMasterList`, `PayrollDispatch`'s
 secondary panels.
 
 ```
@@ -363,7 +414,12 @@ Conventions:
 
 #### 3.2.2 Branded hero header (orange / rose)
 
-Used by `PayrollDispatch`, `Overview`, employee landing.
+Used by `PayrollDispatch`, `Overview`, employee landing — **as written, this spec has no
+current user (2026-09-29).** The eyebrow class below (`border-orange-200/80 bg-white/70
+px-2.5 py-0.5`) is in no component; the `Sparkles` caption pill survives only inside the
+greeting modal (`PayrollCycleGreetingModal.tsx:192-195`). What ships today is described
+under *As shipped* at the end of this section. Whether "no hero by default" is itself a
+standard is open — § 20 D13.
 
 ```
 <div className="relative shrink-0 px-4 pt-5 sm:px-8 sm:pt-8">
@@ -395,6 +451,25 @@ Conventions:
 - BackgroundOrbs: optional decorative blurred blobs (`PayrollDispatch.tsx`).
   Reserve for the highest-traffic landing surfaces; don't reuse on every page.
 
+**As shipped (2026-09-24): the work-surface heading.** Payment Dispatch
+(`PayrollDispatch.tsx:1644-1690`, f957cb10) leads with the pay week: a muted
+`text-[13px] text-zinc-500` "Welcome back, {name}" line, then
+`<h1 className="text-xl font-semibold tracking-tight tabular-nums sm:text-2xl">` naming the
+week, with the week switcher (`CycleSelector`) inline beside it. The processing status and
+its Start/Stop button are ONE bordered group (`rounded-lg border border-zinc-200 bg-white
+py-1 pr-1 pl-3`), solid emerald / rose fills. `BackgroundOrbs` stays
+(`PayrollDispatch.tsx:1642`). Employee Overview uses the same H1 scale with a 2px
+orange→rose rule under the greeting (`EmployeeDashboard.tsx:2776-2790`).
+
+Three hero banners were removed in one week, each at Kane's request:
+
+- Gift Tracker — the gradient hero card and four tiles; "keep four stat tiles that answer
+  something" (ca8bbcb2, 2026-09-23).
+- Payment Dispatch — the heading and blurb (e7f67ad2), the eyebrow badge, gradient name and
+  wave emoji (f957cb10), the source CSV filename (d309dc61), 2026-09-24.
+- HR → Onboarding — the gradient hero card and its Bulk promote (Lead Gen) button; the page
+  "now opens straight on the Onboarding Form / Pending Hires sub-tabs" (5c5cc077, 2026-09-25).
+
 ---
 
 ## 4. Common bottom sections
@@ -406,10 +481,15 @@ nothing when `views.length <= 1`. Treat it as a drop-in component — do not
 restyle. Mount it inside the sidebar's `<ScrollArea>` (NOT in the `mt-auto`
 footer) so it remains scrollable on short viewports.
 
-Animation contract: clicking a target view delays the route push by 520ms while
-playing a glow + ring overlay (`<ViewSwitchOverlay>`). New surfaces should not
-intercept the click; just call `withViewTransition(() => router.push(url))`
-which is what `ViewSwitcher` already does.
+Animation contract: the click paints `DashboardSwitchLoader` — the same component the
+target route's `loading.tsx` renders — this frame, and pushes on the next
+`requestAnimationFrame` (`ViewSwitcher.tsx:80-99`). It deliberately does NOT wrap the push
+in a View Transition: the snapshot cross-fade masked the loader for ~400ms. Hover/focus
+prefetches the target route. New surfaces should not intercept the click.
+(This paragraph read: "clicking a target view delays the route push by 520ms while playing
+a glow + ring overlay (`<ViewSwitchOverlay>`) … just call `withViewTransition(() =>
+router.push(url))` which is what `ViewSwitcher` already does" — changed 2026-07-22,
+0e1c3626, which also deleted `ViewSwitchOverlay`; changed in code, no ruling recorded.)
 
 ### 4.2 Theme toggle
 
@@ -484,7 +564,7 @@ Used in: `AuditLogPanel.tsx`, `AdminRoles.tsx` table view.
 
 ### 5.2 Editorial card-list (the main pattern)
 
-Used in `Rates`, `AdminGlobalMasterList`, `ProcessorQueue` (Payroll Clerk),
+Used in `AdminGlobalMasterList`, `ProcessorQueue` (Payroll Clerk),
 `SentPaymentsHistory`. Each row is a flex card, not a `<tr>`. Reasons:
 
 - Each row mixes inline meta with avatars, status pills, and CTAs that are
@@ -562,6 +642,8 @@ Conventions:
   list scrolls.
 - `text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400` — the
   "tiny caps" used for every column heading and section label app-wide.
+  > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** § 11.2 of this document says
+  > `zinc-400` fails AA (2.8:1); the new Rankings tables head in `text-zinc-500` — § 20 D7.
 - Hidden below `md` (`md:grid`) because mobile rows use the stacked card
   layout above.
 
@@ -576,7 +658,34 @@ Three distinct states, never merged:
 | **Loading** | Data is in flight | small skeleton matching the row layout (`QueueSkeleton`), or a centered spinner with `text-[10px] uppercase tracking-[0.22em] text-zinc-400` caption |
 
 See `ProcessorQueue.tsx` (`EmptyQueueState`, `NoMatchesState`,
-`QueueSkeleton`) for the canonical refs.
+`QueueSkeleton`) for the canonical refs. Board-shaped skeletons and the refetch rule:
+§ 12.3.
+
+### 5.6 Pagination (display only, 2026-09-29)
+
+Paging is DISPLAY ONLY: counts, pills, totals, KPI tiles and exports read the full filtered
+list, never the page on screen (`src/lib/manager/page-window.ts:1-10`; b47bb153's Gift
+Tracker comment). Five shipped pagers share the shape — `QueuePagination`
+(`QueuePagination.tsx:27-39`, the Payment Dispatch queues), the My Team roster list
+(`ManagerApp.tsx:4274-4309`), Orientation's `Pager` (`OrientationAttendancePanel.tsx:133`,
+weeks and people at 10, a8507246), People → Search Bar (`PeopleBankSearch.tsx:314-318`),
+Gift Tracker → Submissions (`GiftTracker.tsx:2939-2965`, 20 per page, b47bb153):
+
+- **Clamp, never trust the page.** A refresh, an approval or a filter can shrink the list
+  under the cursor; `pageWindow()` (`src/lib/manager/page-window.ts`, tested) clamps it, and
+  Gift Tracker clamps at read time (`GiftTracker.tsx:2594`).
+- **Reset to page 1** on a filter / search / department change.
+- **Say which slice:** "Showing 11–20 of 24 weeks" (or "Page 2 of 3 · 41 total"), then
+  `Button variant="outline" size="sm"` Prev / Next at `h-7 text-xs`, the page as a mono
+  `n / N` chip between them (My Team, Orientation). **Render nothing for a single page**
+  (`QueuePagination.tsx:27`; `OrientationAttendancePanel.tsx` `Pager`).
+- Inside a `ReadOnlyTab`, the pager carries `data-readonly-allow` so a view-only viewer can
+  still page (`ReadOnlyTab.tsx:22, 46`; `ManagerApp.tsx:4274`, `GiftTracker.tsx:2940`).
+- Next / Prev scroll the list back into view only if its top has left the viewport
+  (`OrientationAttendancePanel.tsx`, `goToWeekPage`).
+
+Append variant, used by the Rankings leaderboards: "Show 25 more · N left"
+(`AppointmentLeaderboardPane.tsx:51, 636`; `AppointmentRankingsPane.tsx:45`).
 
 ---
 
@@ -596,7 +705,8 @@ filters card, `AdminGlobalMasterList`'s roster card.
 
 ### 6.2 Hairline panel (editorial alternative)
 
-Used widely in `AdminOverview`, `Rates` row detail, dispatch reports. Pattern:
+Used widely in `AdminOverview`, dispatch reports (that tab was retired 2026-08-12,
+4c556c02). Pattern:
 
 ```
 <div className="rounded-lg border border-zinc-200/90 bg-gradient-to-br
@@ -696,6 +806,37 @@ Rules:
 - **`onError` → fall back** to the gradient monogram/icon tile (the §6.3 pattern)
   so a missing asset degrades instead of showing an empty plate.
 
+### 6.5 Rotating spotlight (2026-09-26, two users)
+
+One item at a time, crossfading, open / most important first — Accounting Overview's
+Payroll Notes Steps 1–8 card (`PayrollNotesSetupCard.tsx`, da7d22f5) and the KPI
+Calculator's Department spotlight (`KpiInsightCards.tsx`, 98a9ecc7). What they share:
+
+- Dwell **5200ms** (`PayrollNotesSetupCard.tsx:46` `DWELL_MS`; `KpiInsightCards.tsx:57`
+  `ROTATE_MS`).
+- Crossfade on `[0.22, 1, 0.36, 1]` with a 2–4px blur (`PayrollNotesSetupCard.tsx:71-80`;
+  `KpiInsightCards.tsx:320-330`).
+- Hover and keyboard focus **pause** it (`PayrollNotesSetupCard.tsx:180-183`;
+  `KpiInsightCards.tsx:234`). The KPI card also pauses on `document.hidden` and draws a
+  progress pill that freezes where it is (`KpiInsightCards.tsx:255-261, 400-430`).
+- Markup: `role="group" aria-roledescription="carousel"` with a `role="tablist"` of slides
+  (`KpiInsightCards.tsx:310, 400`).
+
+Where they differ: under reduced motion the KPI card stops rotating
+(`kpi-calculator-insights.md:79`), while the Notes card keeps rotating with an
+opacity-only fade (`PayrollNotesSetupCard.tsx:183`). Not decided here.
+
+### 6.6 Container-query layouts (four users)
+
+A layout that must answer to its **pane**, not the viewport — the rail collapses, so the
+pane width moves independently — uses `@container`: Employee Profile's Overview
+(`EmployeeProfile.tsx:2108-2109`, `@4xl:grid-cols-[minmax(0,1fr)_372px]`, 0d5e26e2, the ID
+card to the right of the information at a ≥56rem pane), the Accounting Overview roster
+(`Overview.tsx:4852`), the HSL share explainer (`HslBonusCalculator.tsx:4558`), and the ID
+card itself (`EmployeeIdCard.tsx:69`). A `cqw`-sized child sits in a FIXED track (`372px`),
+never `fr` / `auto` / `%`, or it shrinks on screen while its exported PNG does not
+(`EmployeeProfile.tsx:2164-2168`).
+
 ---
 
 ## 7. Buttons (`components/ui/button.tsx`)
@@ -786,6 +927,32 @@ Glyphs in use:
 | threshold | `△`   |
 | problem   | `✕`   |
 
+### 8.4 Step-status palette (two users)
+
+A step's state, the same four colours on every step track: done `bg-emerald-500
+dark:bg-emerald-400` · attention `bg-amber-400` · blocked `bg-rose-500 dark:bg-rose-400` ·
+pending `bg-sky-400` (`PayrollNotesSetupCard.tsx:62-67`; `PayrollCycleGreetingModal.tsx:45-50`;
+the matching pills are `SETUP_STATUS_PILL` in `accounting/wizard-setup-meta.ts`). The
+employee's Current Paycycle track uses the same done-emerald and a sky ping for the step in
+progress (`CurrentPaycycle.tsx:53-73`). These map onto § 6.3's tones: emerald = done,
+amber = caution, sky = neutral / pending.
+
+### 8.5 Rank tones — the podium (two users)
+
+Gold / silver / bronze mean **rank, not money**: `from-amber-400 to-amber-600`,
+`from-zinc-300 to-zinc-500`, `from-orange-400 to-orange-700`, on a `h-7 w-7 rounded-md
+bg-gradient-to-br text-white shadow-sm` tile with `Crown` for #1 and `Medal` otherwise
+(`RankingsPane.tsx:70-75`; `AppointmentLeaderboardPane.tsx:67-71` — the constant is
+duplicated; keep the two identical). The podium shows only fields the rows show
+(`RankingsPane.tsx:25-29`) and steps aside while a search is live, so a #7 never sits in a
+gold slot (`AppointmentLeaderboardPane.tsx:299-310`; `RankingsPane.tsx:223`). Used on My Team
+→ Rankings (13e59805, 5db19364); the Employee tab has no podium.
+
+Also used once — the HSL Bonus Library **provenance chip**, `v<n> · from <date> · saved
+<when> by <who>`: local-time stamp, the handle before `@` on the chip and the full address in
+the `title` (`HslBonusCalculator.tsx:2995-3070`, c9153d9a; Kane: "add like a timestamp on who
+changed it ... even the version").
+
 ---
 
 ## 9. Inputs / forms
@@ -836,6 +1003,20 @@ The compact search input used in queues, audit logs, and roster filters:
 Always include the typing-dots indicator (debounce in flight) and the result
 count once the debounced query has resolved. See `ProcessorQueue.SearchBar`.
 
+> ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** `RankingsSearch`, on every My Team
+> Rankings view, shows neither dots nor a count (it is a synchronous filter, no debounce) —
+> § 20 D5.
+
+Variants, each used once:
+
+- **Compact 26px filter** — `RankingsSearch` (`RankingsSearch.tsx:21-61`, fe676f9d): sits in
+  a row with the segmented toggles and the KPI picker; names and **work** emails only;
+  Escape clears; filtering hides rows and never re-ranks (`src/lib/manager/rankings-search.ts`).
+- **Hero search** — People → Search Bar (`PeopleBankSearch.tsx`, 27225f85 / b2c7de37): a
+  centred logo + bar that lifts to the top on the first keystroke as a FLIP (motion
+  `layout`, 500ms), results arriving once per search 180ms behind it and then live-filtering
+  without re-animating (`people-bank-search.md` § 7).
+
 ### 9.3 Date / time inputs
 
 Use the shared pickers in `components/ui/date-picker.tsx` — still no
@@ -883,6 +1064,9 @@ app theme and renders inconsistently across browsers.
 ## 10. Dialogs (`components/ui/dialog.tsx`)
 
 Backdrop is intentionally branded (`bg-gradient-to-br from-orange-950/40 to-blue-950/40 backdrop-blur-[2px]`). Don't override.
+Its dark variant is `dark:from-black/75 dark:to-blue-950/60`; the popup itself is
+`from-white via-orange-50 to-blue-50` (dark `from-[#0d1117] via-[#0f1729] to-[#0a1628]`) and
+closes on `zoom-out-[0.97]` over 180ms `ease-in` (`components/ui/dialog.tsx:32-34, 56-60`).
 
 Default size is `sm:max-w-sm`. Override with explicit pixel widths for
 specialty content:
@@ -891,8 +1075,8 @@ specialty content:
 | ---------------------------- | ------------------------------------------------------ |
 | Standard form (Mark paid)    | `sm:max-w-[440px]` to `sm:max-w-[520px]`               |
 | Lock-toggle confirm          | `sm:max-w-[440px]`                                     |
-| Profile dialog (Rates)       | `w-[min(92vw,1100px)] max-w-[min(92vw,1100px)] max-h-[min(92vh,960px)] overflow-hidden rounded-2xl p-0` |
 | Bulk-create disputes         | `max-w-[1200px] w-[95vw]`                              |
+| Rankings View (My Team)      | `flex max-h-[calc(100dvh-1.5rem)] max-w-[calc(100%-2rem)] flex-col gap-0 p-0 sm:max-h-[92dvh] sm:max-w-3xl` (`RankingHistoryModal.tsx:109`) |
 | Multi-column live modal (CEO Live Processing) | `lg:max-w-6xl` — three peer columns |
 | Confirm delete               | default `sm:max-w-sm`                                  |
 
@@ -903,13 +1087,24 @@ make each a **standalone peer column** — its own header + count pill,
 sibling. Widen to `lg:max-w-6xl` and let the columns **stack vertically** below
 `lg`. ("Separate it into another column, not inline with the people.")
 
-Layout inside a sectioned dialog (Profile / bulk-create):
+Layout inside a sectioned dialog (Profile / bulk-create — the Profile dialog was the
+`Rates` one, deleted with that tab):
 
 - `<DialogHeader>` is `shrink-0`, sits in a slim `border-b` bar.
 - Action row sits below the header, `shrink-0`.
 - The body uses `overflow-y-auto bg-zinc-50/40 px-6 [-webkit-overflow-scrolling:touch] dark:bg-[#0a0d12]` with `style={{ maxHeight: "min(58vh, 600px)" }}`.
+  > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** doc vs doc — responsive-design.md
+  > § "Dialogs and modals" (lines 108-111) forbids a pixel `maxHeight` on the scroll region;
+  > no code still uses `min(58vh, 600px)` — § 20 D10.
 - `<DialogFooter>` extends edge-to-edge by undoing the dialog's padding:
   `-mx-4 -mb-4` — already baked into the primitive's default classes.
+
+Any dialog that overrides the padding with `p-0` follows the four rules in
+[responsive-design.md § "Dialogs and modals"](./responsive-design.md): `gap-0`, a height cap
+(`max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh]`), a width re-declared at `sm:`, and
+`flex flex-col` with `shrink-0` chrome around one `min-h-0 flex-1 overflow-y-auto` body.
+Shipped reference since that rule: `RankingHistoryModal.tsx:109-123` (2026-09-28), which
+cites it in its header (`RankingHistoryModal.tsx:19-21`).
 
 Animation: dialog uses `data-open:animate-in data-open:fade-in-0
 data-open:zoom-in-[0.94] data-open:slide-in-from-bottom-6` over 320ms with the
@@ -922,6 +1117,25 @@ Confirmation dialogs always have:
 2. A short description that explains side effects (NOT just "Are you sure?").
 3. Two buttons: `<Button variant="outline">Cancel</Button>` and a
    variant-tinted confirm (emerald for go, rose for stop, red for delete).
+
+Notes from dialogs shipped 2026-09-26 → 09-28, each "used by":
+
+- **The built-in ✕** sits `absolute top-2 right-2` (`components/ui/dialog.tsx:67-80`), so a
+  custom header reserves `pr-12` — used by `RankingHistoryModal.tsx:110`.
+- **Close plays on content.** The primitive animates the close on whatever the popup still
+  renders, so the opener keeps the row after close and flips only `open` — used by
+  `AppointmentLeaderboardPane.tsx:165-179` / `RankingHistoryModal.tsx:15-17`. The same idea
+  outside a dialog: Carla's bubble holds its last view while it floats away
+  (`CarlaJamBubble.tsx:59-80`).
+- **Escape backs out one layer.** A lightbox over the time-adjustment View modal closes only
+  itself (`TimeAdjustmentIssueRows.tsx:242-243, 280`); a chart readout inside the Rankings
+  View modal clears on the first Escape, and a second closes the dialog
+  (`RankingHistoryChart.tsx:202-206`).
+- **Greeting on arrival** — used by `PayrollCycleGreetingModal` ("Hi Kane", 5f22e91b): at
+  most once per browser session, only when a step is unfinished, never over another open
+  dialog, about 600ms after the data is ready so it lands after the dashboard paints
+  (`PayrollCycleGreetingModal.tsx:27-43`). Its shell is `max-h-[85dvh] gap-0 p-0
+  sm:max-w-xl` with one scrolling body (`PayrollCycleGreetingModal.tsx:187-247`).
 
 ### 10.1 Confirm-then-progress (2026-09-17)
 
@@ -937,8 +1151,35 @@ same shell and swaps its footer for a determinate bar
 - **The backdrop stops dismissing while the write is in flight**, and a failure
   keeps the dialog open carrying the server's own sentence plus *Try again* —
   never a toast that disappears while the user is reading it (§12.4).
+  > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** Gift Orders' "Creating invoice"
+  > overlay closes on failure and toasts the reason — § 20 D8.
 
 A single-step confirm does NOT get a progress bar. It is a confirm.
+
+Second user of the steps-not-time rule: `InvoiceProgress.tsx` (Gift Orders lock, c6f4d06f,
+2026-09-23) — a stepped checklist overlay rather than a footer bar. `locking → pdf → done`
+are real phases of the lock, never a timer, and the LOCKED stamp lands only once both
+finished (`InvoiceProgress.tsx:7-24, 88-104`).
+
+### 10.2 Full-screen viewer (2026-09-26, used by `ProofLightbox`)
+
+`ProofLightbox` (`TimeAdjustmentIssueRows.tsx:248-473`, 2aebfde3), the Accounting → Issues
+proof viewer: `fixed inset-0 z-[70] bg-black/85 backdrop-blur-sm`, `role="dialog"
+aria-modal="true"`, focus taken on open and handed back to the thumbnail that opened it. A
+"Proof N of M" header; Previous / Next as `h-10 w-10 rounded-full bg-white/10 ring-1
+ring-white/20` beside the stage; ←/→ step and wrap, like the manager and employee viewers. A
+numbered thumbnail strip underneath shows how many proofs there are, the current one ringed by
+a shared `layoutId` and scrolled into view. An expired signed URL keeps its slot and says so
+on stage — the count never shrinks silently. Escape closes this layer only (§ 10 notes).
+
+### 10.3 Inline confirm (two users)
+
+For a row-level action, a tinted panel opens under the row instead of a modal: the side
+effects in one sentence, then a ghost Cancel and a solid `bg-rose-600` confirm — Gift Orders'
+Delete and Reopen (`GiftOrders.tsx:727-751`, c6f4d06f). The two-step variant arms on the first
+click and commits on the second — Payment Dispatch's closed-week Reopen
+(`PayrollDispatch.tsx:1692-1735`). Neither is a dialog, so § 10's "Confirmation dialogs
+always have" list does not describe them.
 
 ---
 
@@ -987,8 +1228,9 @@ For dense in-page tab/filter rows the codebase uses a hand-rolled pill row
 instead of the shadcn `<Tabs>` primitive. The signature is a **single gradient
 indicator that physically glides between pills** via a Framer `layoutId`
 (shared-element transition) rather than each pill toggling its own background.
-Canonical references (this table is the set to copy from; the codebase holds about forty
-such indicators and `grep -rn 'layoutId=' src/components` is the inventory):
+Canonical references (this table is the set to copy from; the codebase holds about
+sixty-five `layoutId` sites — counted 2026-09-29; "about forty" on 2026-09-15 — and
+`grep -rn 'layoutId=' src/components` is the inventory):
 
 | Pill component | File | `layoutId` |
 | --- | --- | --- |
@@ -1047,8 +1289,22 @@ Rules:
   "All".
 - The indicator transition is `duration: 0.28, ease: [0.22, 1, 0.36, 1]`,
   **gated behind `useReducedMotion()`** (`reduce ? 0`).
+  > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** about 40 of the ~65 `layoutId`
+  > transitions in 21 files are springs, most predating this rule — § 20 D2 (and § 11.2's OPEN).
 - `aria-pressed={active}` on every pill; the label/count sit at `relative z-10`
   above the absolute indicator.
+
+Two notes from 2026-09-25 → 09-28:
+
+- **One strip, one id** — used by `PeopleBankSearch.tsx:618-620`: the person page's
+  underline takes its own `layoutId` (`search-person-tab-underline`) because the People
+  popup can open over the page, and a shared id would fly the popup's underline across the
+  screen between the two.
+- **A static segmented control exists too.** `Segmented` (`manager/leaderboard-ui.tsx:32-70`)
+  is `role="tablist"` / `role="tab"` + `aria-selected`, a white active pill with
+  `text-blue-700`, and **no** `layoutId` — the pill swaps, it does not glide. Used by My
+  Team → Rankings' Average and Window toggles (`AppointmentLeaderboardPane.tsx:252-267`) and
+  the Rankings View modal (`RankingHistoryModal.tsx:130-135`). See § 17.5 and § 20 D3.
 
 The associated **panel content** does a directional crossfade/slide keyed on the
 active value, wrapped in `overflow-x-clip` so the horizontal slide never spawns
@@ -1099,10 +1355,19 @@ What differs — **recorded here, not ratified**:
 | Panel swap | `AnimatePresence mode="wait"` with a directional slide | **no `mode="wait"`** — panes settle in over `0.22` on `[0.22, 1, 0.36, 1]` (`TEAM_EASE`) while the old one is already gone, because waiting doubles the perceived latency of every click on a surface people work in rather than look at. Pane keys cover both axes (tab AND department) |
 
 > **OPEN — spring vs ease.** § 11.1 and § 18 item 8 name only the two eases; this is
-> the first indicator on a spring. Either the rule gains a spring allowance, with
+> not the first indicator on a spring — about 40 `layoutId` transitions in 21 files already
+> ran on one (e.g. `EmployeeProfile.tsx:794` 2026-05-03, `HrMesa.tsx:161` 2026-05-15,
+> `BonusCatalog.tsx:1352` 2026-06-12 and eight more in that file, `PayProcessorsTab.tsx:1359`
+> 2026-09-03, `CompensationSections.tsx:94` 2026-09-12). (Corrected 2026-09-29; this sentence
+> read "this is the first indicator on a spring".) Either the rule gains a spring allowance, with
 > these parameters as the reference, or the component moves to the 0.28 ease. Not
 > decided here — logged 2026-09-15 (Sep 14 session log, row 109). Do not resolve it
 > by editing only one side.
+>
+> **Scope widened 2026-09-29 (note, not a ruling):** since 09-15 the same question covers
+> more than springs — ease-in exits `[0.4, 0, 1, 1]`, ease-in-out travel `[0.4, 0, 0.2, 1]`,
+> a JS `easeOutCubic` wipe, and further springs (inventory in § 14.1; § 20 D1, D2). Row 109
+> was not carried into the Sep 16, 23 or 25 session logs' Open items.
 
 **The vertical rail variant.** The department rail is a tall, nested list — parents
 disclosing their `hsl:*` sub-teams — and it is where the glide earns the most: moving
@@ -1146,12 +1411,31 @@ Default tone: emerald. Header is medium weight, sub-line is muted.
 Same shape, but zinc tile + `<SearchX>` icon + the query rendered in mono
 inside a small chip + a "Clear search" pill below. See `ProcessorQueue.NoMatchesState`.
 
+> ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** `RankingsNoMatch` and People → Search
+> Bar render a text-only dashed card with the query in curly quotes and no Clear pill —
+> § 20 D4.
+
 ### 12.3 Loading
 
 Three flavors:
 
-- **Skeleton** for table-style content (`QueueSkeleton`, `ReportListSkeleton`).
+- **Skeleton** for table-style content (`QueueSkeleton`; `ReportListSkeleton` was also
+  named here — deleted 2026-08-12 with the Reports tab, 4c556c02).
   Preserves layout — pulses the row outlines.
+- **Skeleton shaped like what arrives** (2026-09-27, 34e31cab) — `RankingsSkeleton`
+  (`src/components/team/RankingsSkeleton.tsx:3-13`): the header bar, the top-3 podium, then
+  the rows, on the same card classes, so the real view lands in place instead of pushing the
+  list down when the podium appears. One component for all three Rankings views, so they
+  cannot drift into three skeletons; `podium={false}` where no podium will appear
+  (`RankingsPane.tsx:128-129`). Two skeleton primitives exist: `<Skeleton>`
+  (`components/ui/skeleton.tsx`, `animate-pulse`, 18 importers) and `.skeleton-shimmer`
+  (`src/index.css:960-981`, a sweep that becomes a still zinc bar under reduced motion,
+  `src/index.css:1017-1026`).
+- **A refetch never re-skeletons** (three users). Painted figures stay on screen: the KPI
+  insight cards dim a refetch to `opacity-60` (`KpiInsightCards.tsx:12-14, 176`), the
+  Payroll Notes card keeps what is on screen through a background failure
+  (`PayrollNotesSetupCard.tsx:37-42`), and Diagnostics' background refresh "covers nothing"
+  (`performance-ui.tsx:36-38`). A skeleton is for the first paint.
 - **Spinner** for non-tabular ("Loading payment history…", profile detail).
   `<Loader2 className="h-4 w-4 animate-spin text-orange-500" />` + a tiny-caps
   caption.
@@ -1194,6 +1478,21 @@ Use a verb that matches the domain ("Reading ledger", "Loading roster",
 Always show the **actual error message** in the sub-line. Don't replace it
 with a friendly rewrite — internal users want to know what failed.
 
+### 12.5 Absence is not zero (2026-09-29, four users)
+
+A value that was never recorded renders as absence — "—", "No entry", a hatch, a flat stub —
+never as 0, and a loading or failed read never renders as success:
+
+- Current Paycycle days: `null` means the upload has no cell for that day and shows "—", not
+  "0.00" (`CurrentPaycycle.tsx:35-37`).
+- KPI spotlight bars: a week the department did not send is a 1px stub on the baseline,
+  never a zero-height column that reads as ₱0 (`KpiInsightCards.tsx:364-390`).
+- Payment Dispatch: a processor shows the green **done** check only if it had payments this
+  week and none are left; an unused processor keeps its plain 0, and nothing shows while
+  loading (`PayrollDispatch.tsx:1944`; `ProcessorCard.tsx:167-175`; 277352b0).
+- Charts: § 19 rules 2–3. The Rankings View table prints "No entry" and "—"
+  (`RankingHistoryModal.tsx:299-315`).
+
 ---
 
 ## 13. Typography scale
@@ -1204,7 +1503,7 @@ reason):
 | Use | Class | Notes |
 | --- | --- | --- |
 | Hero number (financial display) | `text-[40px] font-medium … sm:text-[56px]` mono | Counter animation, tight tracking |
-| Page H1 | `text-xl font-bold tracking-tight sm:text-[28px]` (branded) / `text-base font-semibold sm:text-xl` (editorial) | |
+| Page H1 | `text-xl font-semibold tracking-tight sm:text-2xl` (branded: `PayrollDispatch.tsx:1657-1661`, `EmployeeDashboard.tsx:2776`; Employee Profile `text-[20px] font-semibold tracking-[-0.02em] sm:text-[28px]`, `EmployeeProfile.tsx:1992`) / `text-base font-semibold sm:text-xl` (editorial) | Branded was `text-xl font-bold tracking-tight sm:text-[28px]`; no page H1 uses `font-bold` any more — Payment Dispatch moved 2026-09-24, f957cb10 (changed in code; no ruling recorded) |
 | Section heading | `text-base font-semibold` | Card / panel titles |
 | Body | `text-sm` | The default. |
 | Caption / body-sm | `text-xs text-zinc-500` | |
@@ -1249,6 +1548,24 @@ ease: [0.22, 1, 0.36, 1]  // dialog enter, tab swap (slightly less aggressive)
 
 Use one of these two — do not introduce custom curves.
 
+> ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** shipped code uses at least three more
+> curves and ~40 springs (inventory below) — § 20 D1; the same ruling as § 11.2's OPEN.
+
+> **Observed in shipped code (2026-09-29), not ratified:**
+> - exit ease-in `[0.4, 0, 1, 1]` — `issue-row-motion.tsx:48`,
+>   `TimeAdjustmentIssueRows.tsx:315`, `ManagerApp.tsx:4023, 4319`, `GiftTracker.tsx:351`,
+>   `CollabLayer.tsx:576, 720`, `EmployeeLeaves.tsx:923`; the Dialog primitive's own close is
+>   `ease-in` (`components/ui/dialog.tsx:59`);
+> - travel ease-in-out `[0.4, 0, 0.2, 1]` — `PeopleBankSearch.tsx:75` (`TRAVEL`, for a ~280px
+>   move where expo-out lurched 21% in one frame, measured in `people-bank-search.md` § 7),
+>   `HrApp.tsx:837, 881`, `MarkPaidDialog.tsx:667`, `OrphanageMarkPaidDialog.tsx:239`, `SWall.tsx:69`;
+> - `easeOutCubic` as a JS function for a chart wipe — `KpiInsightCards.tsx:646`;
+> - `cubic-bezier(0.45, 0, 0.55, 1)` for the ID-card sheen — `EmployeeIdCard.tsx:136`;
+> - CSS keyword `ease-in-out` / `ease-out` / `linear` on ambient loops —
+>   `CarlaJamBubble.tsx:250-279`, `InvoiceProgress.tsx:62-63`;
+> - springs on ~40 `layoutId` indicators (§ 11.1, § 11.2) and on chart crosshairs / markers
+>   (`KpiInsightCards.tsx:717-718, 912`).
+
 ### 14.2 Standard durations
 
 | Use | Duration |
@@ -1279,6 +1596,17 @@ larger cap (`Math.min(i * 0.025, 0.25)`) and **no exit** — its rows are keyed
 cascade. Always gate the delay on `useReducedMotion()`. The My Team roster cards cap
 at `Math.min(idx * 0.025, 0.18)` (§ 11.2).
 
+**Rows that leave and rows that change** — used by Accounting → Issues (`IssueMotionRow`,
+`issue-row-motion.tsx:37-60`, 2aebfde3, shared by both row kinds so they never move
+differently in one table): rows rise on `[0.16, 1, 0.3, 1]` with
+`Math.min(index * 0.028, 0.2)`; a row leaving the view drifts `x: -14` while the rest close
+the gap with `layout="position"` (position only, so a wrapped explanation never
+scale-distorts); a row whose status changed between two reads sweeps its outcome colour once
+(`.issue-row-flash`, 1.5s, `src/index.css:1156-1168`; which rows is the pure
+`src/lib/accounting/issue-row-flash.ts`), and its badge swaps in place (`IssueStatusSwap`).
+The sweep stays on under reduced motion because it IS the confirmation — § 16's "stop travel,
+keep the signal". Search is not in the body key, so typing never replays the entrance.
+
 ### 14.4 Hover affordance
 
 Three patterns in use:
@@ -1294,6 +1622,17 @@ Honor `useReducedMotion()` from `motion/react` for any animation longer than
 in `PaymentHistoryPanel` (deleted but the pattern is canonical). Don't ship
 mount animations that the user can't bypass.
 
+> ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** the Start Processing peer modal runs
+> four infinite motion loops with no reduced-motion gate — § 20 D12.
+
+What the platform does for you, and what it does not: under reduced motion a global rule
+kills every CSS **transition** (`transition: none !important`, `src/index.css:873-878`). It
+does not reach CSS keyframe animations or `motion/react` — there is no `MotionConfig` in the
+app — so every JS animation and keyframe loop gates itself, with `useReducedMotion()` or
+`@media (prefers-reduced-motion: no-preference)` around the keyframes
+(`CarlaJamBubble.tsx:250-279`). A live counter in current code: `AnimatedPeso`
+(`KpiInsightCards.tsx:96-121`), which snaps under reduced motion — see D9 on its digits.
+
 **Rolling / slot-machine counters** (e.g. the Accounting Overview "Total Payout
 Value" spin) are the same `CountUp` contract: ease to the real figure, then hold;
 under reduced motion, render the final number with no roll. If you mask digit
@@ -1303,12 +1642,18 @@ headless-Chromium rasterization quirk seen while building it — harmless in rea
 browsers, but don't rely on `will-change` to clip). Prefer `tabular-nums` so
 digits don't reflow as they change.
 
+> ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** `AnimatedPeso` rolls for 0.9s in
+> proportional figures by choice ("a standalone number, not a column") — § 20 D9.
+
 ### 14.6 Theme-toggle / view-switch
 
-Both use the `withViewTransition` helper (`@/lib/theme/with-view-transition`)
+The theme toggle uses the `withViewTransition` helper (`@/lib/theme/with-view-transition`)
 which calls the View Transitions API when available, gracefully degrading to
-no-animation otherwise. `ViewSwitcher` additionally injects an overlay card
-with a 700ms ring expand. Don't reinvent — call the helper.
+no-animation otherwise. Don't reinvent — call the helper. The **view switch does not** use
+it: `ViewSwitcher` paints `DashboardSwitchLoader` this frame and pushes the route on the next
+(§ 4.1, `ViewSwitcher.tsx:80-99`). (This paragraph read "Both use the `withViewTransition`
+helper … `ViewSwitcher` additionally injects an overlay card with a 700ms ring expand" —
+changed 2026-07-22, 0e1c3626; changed in code, no ruling recorded.)
 
 The overlay card is **themed to the destination dashboard**, so the transition
 reads as a continuous colored move from click to landed view. Both the click-time
@@ -1377,6 +1722,9 @@ Tailwind defaults in use, mapped to semantic intent:
 Do not introduce a sixth status color (e.g. teal, indigo) without updating
 this table. The five colors above carry semantic weight across the app.
 
+> ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** the Accounting → Issues "moved" flash is
+> indigo (`src/index.css:1165, 1168`) — § 20 D6.
+
 ### 15.1 `--primary` cannot carry small text
 
 **Measured 2026-09-02 on the Manager Overview: `--primary` orange is 2.7:1 against
@@ -1413,6 +1761,25 @@ My Hours weekend tile, the Time Adjustments explanation ink to its own fill
 hover** and the text turns with it; waive it file-scoped in `.impeccable/config.json`
 with the reasoning in the commit message, never by changing the resting colour.
 
+### 15.4 The design detector (`.impeccable/config.json`, 2026-09-29)
+
+`detector.ignoreValues` is the only waiver mechanism in use — no `ignoreRules`, no
+`ignoreFiles`. A rule is waived per file (`value: "*"`, `files: [...]`); a value rule is
+waived per value (`bounce-easing` → `jam-wobble`, d9dc6322 — the impeccable skill's own
+procedure for value findings). Every entry carries `createdAt` and a `reason` naming who
+decided (Kane, or a Claude session id) and the evidence. Rules waived so far:
+`gray-on-color` (11 files, every one a hover-only ground, § 15.3), `broken-image` (4 —
+runtime signed URLs, or files with no JSX), `gradient-text` (1), `bounce-easing` (1).
+`.impeccable/hook.cache.json` is local (`.git/info/exclude`).
+
+Two findings, recorded here and not acted on (§ 20 D14):
+
+- The `gradient-text` waiver for `src/components/payroll-clerk/PayrollDispatch.tsx` has
+  outlived its subject: the orange→rose "Welcome back" fill was removed 2026-09-24
+  (f957cb10), and the doc line it cites (`payment-dispatch.md:39`) no longer mentions it.
+- `EmployeeDashboard.tsx:2780` renders a `bg-clip-text text-transparent` orange→rose
+  gradient on the greeting name with no waiver.
+
 ---
 
 ## 16. Accessibility checklist
@@ -1438,6 +1805,9 @@ Every new surface must:
   hue (§15.3), and never use `--primary` for text (§15.1, 2.7:1).
 - Respect `prefers-reduced-motion` by stopping travel, not by removing the signal:
   the KPI Calculator's payroll-lock rim stays lit and stops rotating.
+- Auto-rotating content pauses on hover and on keyboard focus (§ 6.5).
+- A chart is one tab stop with ←/→ (Home/End), an `aria-live` sentence per point, and a
+  table twin carrying every value (§ 19 rules 13–14).
 
 ---
 
@@ -1450,22 +1820,36 @@ Every new surface must:
   logo
 - Header: editorial breadcrumb header at the page level for most tabs;
   branded hero header on `Overview`
-- Notable surfaces: `Overview` (mixed densities), `Rates` (editorial
-  card-list), `PayrollWizard` (its own deep convention — do not modify; its
+- Notable surfaces: `Overview` (mixed densities), `PayrollWizard` (its own deep
+  convention — do not modify; its
   Step-8 paystub preview is a *document* and follows § 12.3's per-field rule,
   not app-table chrome),
-  `PabDisputeQueue` (table + dialog), `LeaveRequestsPanel`
+  `PabDisputeQueue` (table + dialog), `LeaveRequestsPanel`. (`Rates`, the editorial
+  card-list this list also named, was deleted with its tab — § 1.2.)
+- Nav (2026-09-29, `Sidebar.tsx:64-75`): Overview · People · Payroll Wizard · Payment
+  Catalog · Payment Dispatch · Issues · Transfers · MESA · Documents · Announcements ·
+  Notifications · System Settings.
+- Since 2026-09-26: Overview's **Payroll Notes · Steps 1–8** card replaced New hires +
+  Attrition (§ 6.5, da7d22f5); the shell mounts the "Hi Kane" greeting modal (§ 10 notes,
+  5f22e91b); **Issues** runs both row kinds through `IssueMotionRow` (§ 14.3) with the proof
+  viewer (§ 10.2); **People** opens on the Search Bar (§ 9.2, 9258059e) whose person page has
+  Profile / Payroll / PAB tabs (7480c046).
 
 ### 17.2 Payroll Clerk (`/payroll-clerk`)
 
 - Family: branded (with editorial sidebar)
 - Sidebar: 220px wide, editorial zinc with a "cycle ready" pill above the nav
-- Hero header: branded with backgroundOrbs, "Welcome back, {name} 👋", three
-  hero stats (Pending / Sent / Paid)
+- Hero header: backgroundOrbs kept; a muted "Welcome back, {name}" line, the pay week
+  as the H1 with the week switcher beside it, and the processing status + Start/Stop as one
+  bordered group (§ 3.2.2 *As shipped*); three hero stats (Pending / Sent / Paid). Was
+  "branded with backgroundOrbs, "Welcome back, {name} 👋"" until 2026-09-24 (e7f67ad2,
+  f957cb10, d309dc61 — Kane's requests).
 - Filter rail (left within the body): processor cards (`ProcessorCard`),
-  vertical on lg, horizontal scroll on sm
+  vertical on lg, horizontal scroll on sm. A processor that had payments this week and has
+  none left shows a green check instead of 0 (§ 12.5, 277352b0).
 - Table: editorial card-list (`ProcessorQueue`), one row per recipient
-- Reports drilldown: ledger-style row layout
+- Reports drilldown: ledger-style row layout — retired with the Reports tab 2026-08-12
+  (4c556c02; § 5.3 keeps the spec).
 
 ### 17.3 Admin (`/admin`)
 
@@ -1476,24 +1860,51 @@ Every new surface must:
   with three small action pills on the right (Sync, Export Audit, Roles)
 - Body: hairline panels in a flex row on lg, single scrollable column below
   lg (see `AdminOverview` mobile fix)
+- Nav (2026-09-29, `AdminSidebar.tsx:60-84`): System — Overview · Penny AI · Roles &
+  permissions · Global Master List · Google Workspace · Webhooks & Integrations (with the
+  Data catalog, ab361ae3) · Pages · Design & Specifications · Notifications; Security —
+  Audit log · Diagnostics (scoped service maps; the Performance tabs carry
+  `CycleTrendChart`, § 19) · API tokens · Backups.
 
 ### 17.4 CEO (`/ceo`)
 
-- Family: editorial
-- Crown icon as brand cue; otherwise mirrors Admin's chrome
+- Family: tinted editorial, yellow / amber (§ 1.2) — was "editorial" / "Crown icon as
+  brand cue; otherwise mirrors Admin's chrome"; the rail has been yellow/amber since
+  2026-05-04, b274b489 (changed in code; no ruling recorded)
+- Rail: `from-white via-yellow-50/30 to-white`, selected `from-yellow-500 to-amber-600
+  text-white`, `SidebarLogoHeader` tile `from-yellow-500 to-amber-600`
+  (`CeoSidebar.tsx:83, 108, 115`)
 - Surfaces are read-only summary panels — no destructive actions in the
   default ribbon
 
 ### 17.5 Manager (`/manager`)
 
-- Family: editorial
+- Family: tinted editorial, blue (§ 1.2) — was "editorial"; the rail has been blue since
+  2026-04-30, 19f384c9 (changed in code; no ruling recorded)
 - 'Manager' caption under the brand mark; nav scoped to the manager's
   department members + leave requests + orphanage create
+- Nav (2026-09-29, `ManagerSidebar.tsx:177-236`): Overview · Time adjustments · Leaves ·
+  My team · Transfers · Announcements · S-Wall (violet→indigo selected state,
+  `ManagerSidebar.tsx:207-209`) · *Bonuses*: KPI Calculator · Bonus History · Notifications
 - My Team (2026-09-14): a vertical **department rail** is the outer axis — no
   "All" entry, HSL folded to one parent, a granted-but-empty department still
   shows a 0 tab — then Roster / New Hire Check List / Orientation, with the
   per-department views (HSL Scheduling, AI/API Rankings) beside the search. Every
   selector on the screen is a `SlidingTab` (§ 11.2). Doc: `manager-my-team.md`.
+  > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** the Rankings views use the static
+  > `Segmented` toggle and a `SmoothSelect` KPI picker — § 20 D3.
+- My Team → **Rankings** (2026-09-26 → 09-28): every per-person KPI-bonus department, PM
+  Team, Lead Gen appointments, HR / QC / Accounting team boards and the HSL sub-teams. Each
+  board opens with the § 8.5 podium, carries the 26px `RankingsSearch` (§ 9.2), loads as the
+  board-shaped `RankingsSkeleton` (§ 12.3), pages with "Show 25 more" (§ 5.6), and has a
+  **View** row action (`Button variant="outline" size="sm"`, blue tint, `ChartLine` icon,
+  `AppointmentLeaderboardPane.tsx:606-621`) opening `RankingHistoryModal` (§ 10, § 19).
+  The "Showing active roster members in …" header line was dropped (459d65a2).
+- My Team → **Orientation** pages its weeks and each week's people at 10 (§ 5.6, a8507246).
+- **KPI Calculator** opens on three insight cards — Department spotlight (§ 6.5), Top earner
+  (a 44px initials avatar whose ring is a `border-2`, inside the box, because a `0 0 0 2px`
+  box-shadow ring was sliced by the card's `overflow-hidden`, `KpiInsightCards.tsx:527-536`),
+  and the Sent-to-Accounting trend (§ 19) — `kpi-calculator-insights.md`, 98a9ecc7.
 
 ### 17.6 Orphanage (`/orphanage`)
 
@@ -1506,7 +1917,20 @@ Every new surface must:
 
 - Family: branded (mirrors Accounting closely)
 - Per-employee landing with hero, hours summary, dispute filing,
-  announcements; all ScrollArea-bounded
+  announcements; all ScrollArea-bounded — "dispute filing" is out of date: the employee
+  disputes tab has been hidden (`EmployeeSidebar.tsx:85`, "disputes now go through Orphanage
+  Manager → Accounting flow")
+- Nav (2026-09-29, `EmployeeSidebar.tsx:77-92`): Overview · Profile · Time Adjustments ·
+  KPI Results · Leave · MESA · My Team · Approvals (only for someone a manager named as
+  second approver, `EmployeeSidebar.tsx:88-91`) · Notifications
+- Overview: greeting H1 (§ 3.2.2 *As shipped*), the PAB calendar following a wizard PAB
+  Period save live (bbdea24a), and the header **Help** control — a popover with exactly two
+  doors, Chat Support and Raise a ticket (`EmployeeHelpMenu.tsx`, 386c5c10; § 1.5)
+- Profile: four chips — Overview (Personal / Employment / Address on the left, the ID card in
+  a fixed 372px right track at a ≥56rem pane, § 6.6, 0d5e26e2) · Compensation (Rates · Pay
+  Stubs · Payout · Current Paycycle, e3ee5541) · Skill Sets · Request Documents; dark
+  `#0d1117` like every Employee tab (§ 1.3, b7e954c8)
+- My Team: the SP Rankings pane without a podium (`RankingsPane`, `showPodium` off)
 
 ### 17.8 Contractor (`/contractor`)
 
@@ -1543,6 +1967,30 @@ Every new surface must:
   surface
 - Access: dedicated `tickets` role (plus admin) via the `/tickets` layout
   guard; the per-user `tickets` feature grant decides create/drag vs read-only
+- Since 2026-09-21 the rail adds an **Employee Support** group — Support Chat, then Support
+  Tickets — drawn from `access.supportTabs` for the `employee_support` role (e59a16ea,
+  2e542207, 240192e2). While access is still unknown the rail paints a skeleton, never the
+  dev board's three entries (`TicketsSidebar.tsx:50-85`).
+
+### 17.10 HR (`/hr`)
+
+- Family: branded width (256px) with the emerald → teal tinted rail (§ 1.2,
+  `HrSidebar.tsx:118, 147, 158`)
+- Nav (2026-09-29, `HrSidebar.tsx:171-184`): Overview · Global Master List · Screening ·
+  New Hire Checklist · Onboarding · Offboarding · Leave Requests · Transfers · Gift Tracker ·
+  MESA · Announcements · Notifications
+- Onboarding opens straight on the Onboarding Form / Pending Hires sub-tabs — its hero card
+  was removed at Kane's request (5c5cc077); the Archived / Archived-Complete pills are § 11.1
+- Gift Tracker: the hero banner went, four stat tiles stayed (ca8bbcb2); Submissions pages at
+  20 (§ 5.6); the Orders tab sits after Submissions and locks with the "Creating invoice"
+  overlay (§ 10.1) and inline Delete / Reopen (§ 10.3)
+- Offboarding's queue dialogs render light in light mode since 2026-09-28 (8423e710: each
+  hard-coded dark class kept behind `dark:` with a light base beside it, per PRODUCT.md:45)
+
+### 17.11 QC (`/qc`)
+
+- Family: tinted editorial, orange (§ 1.2, `QCSidebar.tsx:74, 97, 103`)
+- Nav (2026-09-29, `QCSidebar.tsx:112-114`): Overview · QC Calculator · Notifications
 
 ---
 
@@ -1560,6 +2008,107 @@ Every new surface must:
 7. Use only the existing color palette (§ 15). No sixth status color without
    adding it to this doc first.
 8. Animations: only `[0.16, 1, 0.3, 1]` or `[0.22, 1, 0.36, 1]` ease (§ 14.1).
+   > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** springs and three more curves ship
+   > (§ 14.1 inventory) — § 20 D1, D2; § 11.2's OPEN.
 9. Empty / loading / error states: distinct, follow § 12.
 10. Test mobile (drawer + content overflow) and short-viewport
     (`@media(max-height:900px)`) before merging.
+11. A `p-0` dialog follows responsive-design.md's four rules (§ 10).
+12. A paged list follows § 5.6.
+13. A chart follows § 19.
+
+---
+
+## 19. Charts (2026-09-29)
+
+There is no charting library — every chart is hand-rolled SVG on `motion/react`
+(`src/components/ceo/financial-chart.tsx:7-15`). The July `PayoutTrendChart`
+(`financial-chart.tsx`, reused by `manager/transfer-charts.tsx`) is the older generation; the
+three September charts below are the ones to copy:
+
+| Chart | File | Surface | Form |
+| --- | --- | --- | --- |
+| `CycleTrendChart` | `admin/performance-ui.tsx:1005` | Admin → Diagnostics → Payroll Cycles | two strips (rate · people paid), straight segments, area wash, dashed grid |
+| `RankingHistoryChart` | `manager/RankingHistoryChart.tsx:114` | My Team → Rankings → View | two strips (count vs team average · rank), straight segments, lines only |
+| `KpiSentTrendChart` | `manager/KpiInsightCards.tsx:651` | Manager → KPI Calculator | one series, monotone cubic, area, zero-based |
+
+1. **Measured, not scaled.** Width from a `ResizeObserver` (`useMeasuredWidth`:
+   `performance-ui.tsx:921`, `RankingHistoryChart.tsx:49`, `KpiInsightCards.tsx:630`); real
+   pixel coordinates, so a stroke never thins.
+2. **A missing measurement breaks the line** (`toRuns`: `performance-ui.tsx:950`,
+   `RankingHistoryChart.tsx:68`, `src/lib/manager/kpi-insights.ts:396`) — no point, no
+   segment in or out, never interpolated, never drawn as 0. A measured zero IS plotted.
+3. **The gap is a 45° hatch** (`HATCH`, `performance-ui.tsx:892`; a `<pattern>`,
+   `KpiInsightCards.tsx:832`). `RankingHistoryChart` leaves the gap empty and says so in words
+   (`RankingHistoryModal.tsx:222-225`).
+4. **Never a curve that overshoots.** Straight segments by default
+   (`performance-ui.tsx:969-972`; `RankingHistoryChart.tsx:17, 83`). A Steffen monotone cubic
+   is allowed because it stays inside each pair's own range (`kpi-insights.ts:413-422`, used by
+   `KpiSentTrendChart`). Do not copy `financial-chart.tsx`'s Catmull-Rom (`smoothPath`, :41):
+   it overshoots after a sharp drop.
+5. **Two measures → two strips on one x axis, never two y axes** (`performance-ui.tsx:985-990`;
+   `RankingHistoryChart.tsx:12-13`).
+6. **Area wash: one series, on a zero-based axis** (`RankingHistoryChart.tsx:25-26`;
+   `KpiInsightCards.tsx:852`; `kpi-calculator-insights.md:56-57`).
+   > ⚠ **Deviation (2026-09-29, OPEN — Kane's call):** `CycleTrendChart` fills an area under
+   > its rate strip, whose axis is not zero-based (`performance-ui.tsx:1285`) — § 20 D11.
+7. **Markers** r=4 (hover 5–5.5) with a 2px ring in the SURFACE colour, never a fixed white
+   (`performance-ui.tsx:1312-1316`; `RankingHistoryChart.tsx:470-490`;
+   `KpiInsightCards.tsx:898-918`). A still-open newest point is hollow
+   (`KpiInsightCards.tsx:898-903`).
+8. **Selective direct labels** — newest + best (or best / worst / newest), never every
+   point; label ink is a text token, never the series colour (`performance-ui.tsx:1038-1060`;
+   `RankingHistoryChart.tsx:171-181`; `KpiInsightCards.tsx:922`).
+9. **Colour is validated, not chosen** (the dataviz validator): orange-600 / 500
+   (`performance-ui.tsx:885-889`), blue-600 / 500 (`RankingHistoryChart.tsx:19-24`),
+   `#059669` / `#12a574` (`KpiInsightCards.tsx:780`). A context line (team average, no-data
+   grey) sits under the chroma floor on purpose. Series colour flows through `currentColor`
+   or a CSS variable, so the theme switch is automatic.
+10. **Reveal**: a `stroke-dashoffset` draw-on with `pathLength={1}`, 900ms on
+    `[0.22, 1, 0.36, 1]` (`performance-ui.tsx:1300`; `RankingHistoryChart.tsx:446-468`), or a
+    clip wipe (`KpiInsightCards.tsx:802`). A refetch that only moves values morphs `d` in
+    place; the reveal replays only on a structural change (`KpiInsightCards.tsx:692-697`).
+    Reduced motion lands the finished chart.
+11. **The chart box scrolls, never the page**: `MIN_SLOT_PX` 34 / 36 per week
+    (`performance-ui.tsx:899`; `RankingHistoryChart.tsx:38`), the axis gutter OUTSIDE the
+    scroller (`performance-ui.tsx:1098`; `RankingHistoryChart.tsx:227`), opening on the
+    newest week (`RankingHistoryChart.tsx:150-154`).
+12. **Readout**: an HTML tooltip (`rounded-lg border border-zinc-200 bg-white shadow-lg`, dark
+    `bg-zinc-900`) that flips or clamps at the edge (`performance-ui.tsx:1383`;
+    `RankingHistoryChart.tsx:552`; `KpiInsightCards.tsx:719`); a crosshair finds the week;
+    hit targets are full-height week columns, never the dot (`RankingHistoryChart.tsx:352-370`).
+13. **Keyboard**: one tab stop (`role="group"`, `tabIndex={0}`), ←/→ per week, Home/End,
+    Escape clears the readout first, an `aria-live` sentence per week
+    (`RankingHistoryChart.tsx:190-207, 255-265`; `KpiInsightCards.tsx:752-786`).
+    `CycleTrendChart` instead makes each week its own tab stop (`performance-ui.tsx:1361`).
+14. **A table twin carries every value** — visible below (`PayrollCyclePerformance.tsx:335`;
+    `RankingHistoryModal.tsx:259-279`, `table-keep`) or `sr-only` (`KpiInsightCards.tsx:1026`).
+
+Gridlines are solid hairlines, `stroke-zinc-100 dark:stroke-zinc-800/80`
+(`RankingHistoryChart.tsx:431-440`; `KpiInsightCards.tsx:852-860`); `CycleTrendChart`'s dashed
+`2 4` (`performance-ui.tsx:1276`) is the older variant.
+
+---
+
+## 20. Open deviations — shipped UI vs this document (2026-09-29)
+
+Shipped code that contradicts a written rule is **flagged here, never resolved by rewording
+the rule**. Each row stays OPEN until Kane rules; the rule text above is unchanged and carries
+a ⚠ marker pointing here. Line numbers are this file as of the 2026-09-29 sweep.
+
+| D# | Rule (verbatim, with § and line) | Shipped code (file:line) | State |
+| --- | --- | --- | --- |
+| D1 | § 14.1 L1549: "Use one of these two — do not introduce custom curves." Also § 18 item 8, L2010: "Animations: only `[0.16, 1, 0.3, 1]` or `[0.22, 1, 0.36, 1]` ease (§ 14.1)." | `[0.4, 0, 1, 1]`: `issue-row-motion.tsx:48`, `TimeAdjustmentIssueRows.tsx:315`, `ManagerApp.tsx:4023, 4319`, `GiftTracker.tsx:351`, `CollabLayer.tsx:576, 720`, `EmployeeLeaves.tsx:923`. `[0.4, 0, 0.2, 1]`: `PeopleBankSearch.tsx:75`, `HrApp.tsx:837, 881`, `MarkPaidDialog.tsx:667`, `OrphanageMarkPaidDialog.tsx:239`, `SWall.tsx:69`. `easeOutCubic`: `KpiInsightCards.tsx:646`. `cubic-bezier(0.45, 0, 0.55, 1)`: `EmployeeIdCard.tsx:136`. The Dialog primitive's own close is `ease-in` (`components/ui/dialog.tsx:59`). | OPEN — joined to § 11.2's spring-vs-ease ruling |
+| D2 | § 11.1 L1290-1291: "The indicator transition is `duration: 0.28, ease: [0.22, 1, 0.36, 1]`, **gated behind `useReducedMotion()`**". § 11.2's OPEN (L1357) rested on "this is the first indicator on a spring" — a false premise, corrected in place. | About 40 spring transitions on `layoutId` indicators in 21 files, e.g. `EmployeeProfile.tsx:794` (2026-05-03), `HrMesa.tsx:161` (2026-05-15), `BonusCatalog.tsx:1352` (2026-06-12; 9 in the file), `PayProcessorsTab.tsx:1359` (2026-09-03), `CompensationSections.tsx:94` (2026-09-12), `ManagerApp.tsx:324, 416` (`SlidingTab`, rail). | OPEN — the § 11.2 ruling (Sep 14 log row 109) was never carried into a later Open items table |
+| D3 | § 17.5 L1892-1893: "Every selector on the screen is a `SlidingTab` (§ 11.2)." | My Team → Rankings uses the static `Segmented` (`leaderboard-ui.tsx:32-70`; `AppointmentLeaderboardPane.tsx:252-267`; `RankingHistoryModal.tsx:130-135`) — the swap-a-white-pill control § 11.2 says My Team replaced — and a `SmoothSelect` KPI picker (`DeliverableLeaderboardPane.tsx:175`). | OPEN |
+| D4 | § 12.2 L1411-1412: "Same shape, but zinc tile + `<SearchX>` icon + the query rendered in mono inside a small chip + a "Clear search" pill below." | `RankingsNoMatch` (`RankingsSearch.tsx:65-73`): a dashed text-only card, the query in curly quotes, no Clear pill; People → Search Bar the same (`PeopleBankSearch.tsx:286-289`). | OPEN |
+| D5 | § 9.2 L1003-1004: "Always include the typing-dots indicator (debounce in flight) and the result count once the debounced query has resolved." | `RankingsSearch` (`RankingsSearch.tsx:21-61`) shows neither, on every Rankings view (`RankingsPane.tsx:203`; `AppointmentLeaderboardPane.tsx:250`). It is a synchronous filter with no debounce, so the question is whether the rule is scoped to debounced searches. | OPEN |
+| D6 | § 15 L1722-1723: "Do not introduce a sixth status color (e.g. teal, indigo) without updating this table." | `.issue-row-flash-moved` is indigo — `rgb(99 102 241 / 0.14)`, dark `rgb(129 140 248 / 0.2)` (`src/index.css:1165, 1168`; 2aebfde3). | OPEN |
+| D7 | § 5.4 L643-644: "`text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400` — the "tiny caps" used for every column heading and section label app-wide." Contradicted inside this document by § 11.2 ("`zinc-400` at 2.8:1 failed"). | The new tables head in `text-[10px] uppercase tracking-wide text-zinc-500` (`AppointmentLeaderboardPane.tsx:527`; `RankingHistoryModal.tsx:281`). | OPEN |
+| D8 | § 10.1 L1151-1153: "a failure keeps the dialog open carrying the server's own sentence plus *Try again* — never a toast that disappears while the user is reading it (§12.4)." | `InvoiceProgress.tsx:14-15` ("A failure closes it immediately (the toast says why)"); `GiftOrders.tsx:261-268` `toast.error`. Scope is arguable: it is a progress overlay after the click, not a confirm. | OPEN |
+| D9 | § 14.5 L1642-1643: "Prefer `tabular-nums` so digits don't reflow as they change." | `AnimatedPeso` (`KpiInsightCards.tsx:94-121`, "Proportional figures: this is a standalone number, not a column") rolls for 0.9s without `tabular-nums`; `performance-ui.tsx:39-40` states the opposite rule for its own counters. | OPEN |
+| D10 | **Doc vs doc.** § 10 L1095: "The body uses `overflow-y-auto bg-zinc-50/40 px-6 [-webkit-overflow-scrolling:touch] dark:bg-[#0a0d12]` with `style={{ maxHeight: "min(58vh, 600px)" }}`." vs `docs/design/responsive-design.md:108-111`: "Never a hard-coded pixel `maxHeight` on the scroll region". | No code still uses `min(58vh, 600px)`. Against the responsive-design rule, restyled 2026-09-28 (8423e710) without the dialog fixes: `ManagerOffboardQueueDialog.tsx:189` (`max-h-[88vh]`, vh not dvh); `HrOffboardQueueProcessor.tsx:370`, `HrOffboarding.tsx:1044, 1142` (`p-0`, no `gap-0`, no height cap). | OPEN |
+| D11 | § 19 rule 6, L2051-2052: "Area wash: one series, on a zero-based axis"; `docs/features/kpi-calculator-insights.md:56-57`: "The Diagnostics chart's floating floor was licensed for a line with no fill." | `CycleTrendChart` fills an area (`areaPath` + gradient, `performance-ui.tsx:1285`) under its rate strip, whose axis is not zero-based (`trendRateBand`). | OPEN |
+| D12 | § 14.5 L1620-1623: "Honor `useReducedMotion()` from `motion/react` for any animation longer than ~300ms or any number-counter. Snap to the final value. Example: `CountUp` in `PaymentHistoryPanel` (deleted but the pattern is canonical). Don't ship mount animations that the user can't bypass." | `StartProcessingBroadcastModal.tsx:61, 161, 168, 172` — four `repeat: Infinity` motion loops, no reduced-motion gate (file touched 2026-09-25, 0f4667c5). The global CSS kill (§ 14.5) does not reach `motion/react`. | OPEN |
+| D13 | § 3.2.2 L417 (the branded hero spec, now with no current user). Question, not a contradiction: is "no hero by default" a standard? | Three heroes removed at Kane's request: Gift Tracker ca8bbcb2 (2026-09-23); Payment Dispatch e7f67ad2, f957cb10, d309dc61 (2026-09-24); HR Onboarding 5c5cc077 (2026-09-25). | OPEN — Kane's call |
+| D14 | Findings, not a contradiction of a written rule (recorded in § 15.4, L1764). Nearest text: § 15.3 L1761-1762: "waive it file-scoped in `.impeccable/config.json` with the reasoning in the commit message, never by changing the resting colour." | `.impeccable/config.json` still waives `gradient-text` for `PayrollDispatch.tsx`, which has had no gradient text since f957cb10 (the cited `payment-dispatch.md:39` no longer mentions it); `EmployeeDashboard.tsx:2780` carries an unwaived `bg-clip-text` gradient. Config not edited. | OPEN |

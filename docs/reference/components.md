@@ -6,9 +6,13 @@ This document covers UI components — what each renders, why it is designed tha
 > It claimed to cover *"every UI component"* until that count was taken. It also still describes `src/components/Rates.tsx` *(deleted — no file of this name exists in the tree, measured 2026-09-22)*,
 > **which does not exist anywhere in the tree** — as do `llm-context.md`, `system-architecture.md` and `data-sources.md`.
 > **Fixed for the index question: § *Component & hook index* at the foot of this file lists all 297 files**
-> (265 components + 32 hooks). A file absent from **that table** does not exist; a file absent from the prose above is
+> (265 components + 32 hooks, 2026-09-22). A file absent from **that table** does not exist; a file absent from the prose above is
 > merely **undescribed**. By the index's broader match — path, `` `Name` `` or `<Name` rather than bare filename —
 > **140** are named somewhere above and **58** appear in no feature doc at all.
+> **Tree on 2026-09-29: 287 `.tsx` under `src/components/` and 33 hooks in `src/hooks/` (+1 test).** Five `.tsx` files
+> were missing from the index until that day — `employee/CurrentPaycycle.tsx`, `manager/KpiInsightCards.tsx`,
+> `manager/RankingHistoryChart.tsx`, `manager/RankingHistoryModal.tsx`, `manager/leaderboard-ui.tsx` — and are now
+> listed. The 127 / 140 / 58 counts above are the 2026-09-22 measurement and were not re-taken.
 > Session log item 146; [[reference-docs-rot-silently]].
 
 ---
@@ -454,9 +458,11 @@ Triggered by trash icon. Shows the employee name + email. On confirm: calls `DEL
 
 ## `src/components/PayrollWizard.tsx`
 
-The core feature. A multi-step wizard for the weekly payroll cycle. Steps: Upload & Preview → Initial Calculation → Additions → Validation → HSL Payroll → Contractors → Dispatch.
+The core feature. A multi-step wizard for the weekly payroll cycle. Steps *(corrected 2026-09-29 against the `steps` array, `PayrollWizard.tsx:2042-2080`)*: 1 Initialize Payroll Data → 2 Initial Calculation → 3 Orphanage → 4 PAB → 5 Additions (every department plus the HSL tab) → 6 Contractors → 7 Validation → 8 Dispatch → 9 Reports. This line listed "Upload & Preview → Initial Calculation → Additions → Validation → HSL Payroll → Contractors → Dispatch" until then; HSL stopped being its own step on 2026-08-28 and PAB moved before Additions on 2026-09-01 (`1f7a631d`). The per-step headings below keep their historical numbers.
 
 **`jumpRequest` prop** *(2026-09-26)*: an optional `{ step, sourceFile, nonce }` from the Accounting shell's greeting modal. One effect applies each `nonce` once, after the upload list has loaded, through `planWizardJump` (`src/lib/payroll-wizard/step-jump.ts`). A jump has exactly a rail click's power: it is refused while spectating (toast), steps outside 1..9 are refused, PAB (4) outside the payout week lands on 5, and the cycle switches only BACK to the newest upload, never into a replay.
+
+**All-uploads PAB merge** *(2026-09-26)*: the merge Step 2's pay hours read is one streamed `POST /api/payroll-wizard/pab-merge` (api-reference §4); any failure falls back to one `GET /api/hubstaff-hours?source_file=` per upload, merged by the same `mergeHubstaffUploadsForPab` (`src/lib/payroll/pab-merge.ts`, `src/lib/payroll-wizard/load-pab-merge.ts`). **The week in view is read once:** Step 1's preview, Step 2's calc load and Step 1's file table share ONE in-flight request through `createInflightDedupe` (`src/lib/payroll-wizard/inflight-dedupe.ts`, `PayrollWizard.tsx:4969-4975`). It is deliberately **not a cache** — a key leaves the map when its request settles, and the key carries the upload-list generation, so a read that started before an upload is never shared with a caller that asked after it. Doc: [payroll-wizard-step-load.md](../features/payroll-wizard-step-load.md).
 
 **Step navigation**: Left sidebar shows numbered steps with a `layoutId="active-indicator"` animated pill (Framer Motion) that slides between steps. Forward/back buttons in each step. Steps are rendered as `<motion.div>` wrappers inside `<AnimatePresence>` — entering steps slide in from the right (+x), exiting steps slide out to the left (-x), and the direction reverses when going back.
 
@@ -776,6 +782,10 @@ The one "Set bank" editor shared by Payroll Readiness → Bank Info, Payroll Not
 
 `SetRateDialog` (shared by Readiness → No Pay Rate and the Offboarded pane) takes an optional `current` (`OffboardedRateCurrent`): when passed it renders a "Currently on file" card (rate, OT, source, department) and seeds the department / rate / OT / currency fields from it; `undefined` (the No-Pay-Rate tab) renders nothing extra. The effective date still defaults to today and is sent verbatim (`setrate-effective-date.test.ts`). After a successful save it dispatches `RATES_CHANGED_EVENT` (`adjustment-bridge.ts`) so a mounted `PayrollWizard` re-pulls its catalog, rates cache and rate history. `OffboardedGlance` keys Set rate to `rateWriteEmail` (Hubstaff → work → personal), disables it only when no email exists at all, titles the "Rate OK" pill with the current figure and source, and mounts `SetBankDialog` with `override` + `current`.
 
+## `src/components/people/PeopleBankSearch.tsx` · `person-record-panels.tsx` — People → Search Bar *(2026-09-25; four tabs 2026-09-28)*
+
+**Search Bar** is the first of People's top-level tabs (`PeopleTab.tsx`: Search Bar · Roster · Statistics · Bank changes · Offboarded; Roster is still the tab People opens on), on Accounting and on the CEO's People tab. It finds active-roster people by **name or work email only** (`src/lib/people/bank-search.ts`); **View** replaces the results with that person's page, which since 2026-09-28 carries the popup's four tabs — **Profile · Banking · Payroll · PAB Calendar** (`PERSON_TABS`). The tab bodies are shared with the People popup, not copied: `person-record-panels.tsx` exports `ProfileReadView`, `PayrollHistoryList` + `usePersonPayWeeks` and `PersonPabPanel`; the payout card is `payout-record.tsx`. Banking is masked, and unmasking is a click through `POST /api/people/[email]/reveal-banking` (audited). Payroll is fetched when its tab is first opened, from `GET /api/people/[email]/payroll` (each week's Net pay with its bonus lines; fails closed), no longer from `GET /api/people/[email]`. Docs: [people-bank-search](../features/people-bank-search.md), [people-payroll-history](../features/people-payroll-history.md).
+
 ---
 
 ## Employee Portal (`src/components/employee/`)
@@ -809,7 +819,8 @@ The primary employee-facing view. Shows weekly hours, pay calculations, and PAB 
 ### `EmployeeProfile.tsx` — Profile *(redesigned 2026-05-02; chips merged 9 → 5 on 2026-09-12)*
 
 Employee profile screen — modern minimal layout (Linear/Vercel-style). **Five in-page chips**
-since 2026-09-12: **Overview** (identity, employment, address, ID card) · **Compensation** (an
+since 2026-09-12: **Overview** (identity, employment, address, ID card — since 2026-09-27 the ID card sits in a
+fixed 372px right track once the Overview pane is ≥ 56rem, a container query, and stacks below that) · **Compensation** (an
 inner segmented strip: Rates · Pay Stubs · Payout) · **Skill Sets** (skills + commendations,
 stacked) · **Request Documents** · **Resign**. The tab, section and deep-link vocabulary lives
 in `src/lib/employee/profile-tabs.ts` — the union is **not** re-declared anywhere else, and
@@ -1234,7 +1245,7 @@ Promote copies the staged row into `global_master_list`, appends to the Google S
 
 ### `src/components/hr/HrOnboardingForm.tsx`
 
-The **Onboarding Form** sub-tab -- the self-serve, no-SSO onboarding-link manager. HR generates a unique link (row in `hr_onboarding_submissions`, status `pending`); the hire completes the public 6-step form (`/onboarding/[token]`); the row flips to `submitted`; HR reviews, then "Set work email" converts the submission into a `hr_pending_employees` row (status `ready`). Statuses: `pending`/`submitted`/`archived`. Main view = status filter pills + search + a multi-select table with a bulk action bar (Send / Archive / Delete). Dialogs:
+The **Onboarding Form** sub-tab -- the self-serve, no-SSO onboarding-link manager. HR generates a unique link (row in `hr_onboarding_submissions`, status `pending`); the hire completes the public 6-step form (`/onboarding/[token]`); the row flips to `submitted`; HR reviews, then "Set work email" converts the submission into a `hr_pending_employees` row (status `ready`). Statuses: `pending`/`submitted`/`archived`. Main view = status filter pills + search + a multi-select table with a bulk action bar (Send / Archive / Delete). **Status pills** *(2026-09-25)*: **All** is the live pipeline only; an archived submission is bucketed by its linked hire (`onboardingSubmissionBucket`, `src/lib/hr/onboarding-submission-bucket.ts`) into the plain **Archived** pill (never submitted, no-show, no hire record, staged but never promoted) or the Archive-icon pill **Archived/Complete** (the hire was promoted). The list reads every submission (paged since 2026-09-25, item 219 — see data-sources.md). Dialogs:
 
 - `GenerateLinkDialog` -- pre-fill name/email/department/note; `POST /api/hr/onboarding-submissions`.
 - `LinkCreatedDialog` -- shareable URL + prewritten email body + "Send via webhook". **Send rotates the token server-side**, so the dialog caches the rotated token.
@@ -1331,7 +1342,7 @@ Route shell; `<Suspense>`-wraps `<ManagerApp />`. No server gating here -- acces
 
 ### `src/components/manager/ManagerApp.tsx`
 
-Top-level client shell -- resolves viewer, gates access, loads the department-scoped roster, routes 9 tabs (~2000 lines; also defines `Overview`, `TeamPanel`, `TimeAdjustments`, announcement/S-Wall wrappers, `ActiveNowButton`, `StatTile`). **Access gate:** `GET /api/employee-roles?email=`; lacking `manager`/`admin` -> `router.replace('/employee')`. **Team roster:** `GET /api/manager/department-members` returns `{ rows, scope: 'elevated'|'department', departments }`. The server scopes the roster: explicit `department_managers` assignments win even for elevated users; full org roster only when elevated AND no assignments; empty when a plain manager has no assignments. Rows are decorated with `hsl_role`/`hsl_hourly_rate` (from `active_hsl_agents`) and `regular_rate`/`ot_rate`/`mesa_member` (from `employee_hourly_rates`). Pending-leaves badge from `GET /api/leave-requests?scope=all`.
+Top-level client shell -- resolves viewer, gates access, loads the department-scoped roster, routes 9 tabs (~5,050 lines on 2026-09-29, ~2000 when this was written; also defines `Overview`, `TeamPanel`, `TimeAdjustments`, announcement/S-Wall wrappers, `ActiveNowButton`, `StatTile`). **Access gate:** `GET /api/employee-roles?email=`; lacking `manager`/`admin` -> `router.replace('/employee')`. **Team roster:** `GET /api/manager/department-members` returns `{ rows, scope: 'elevated'|'department', departments }`. The server scopes the roster: explicit `department_managers` assignments win even for elevated users; full org roster only when elevated AND no assignments; empty when a plain manager has no assignments. Rows are decorated with `hsl_role`/`hsl_hourly_rate` (from `active_hsl_agents`) and `regular_rate`/`ot_rate`/`mesa_member` (from `employee_hourly_rates`). Pending-leaves badge from `GET /api/leave-requests?scope=all`.
 
 Tabs (`ManagerTab`): `overview`, `time-adjustments` (`ManagerTimeAdjustments` — live as of 2026-06-02), `leaves` (`LeaveRequestsPanel`), `team`, `announcements`, `s-wall`, `hsl-bonus` (the KPI Calculator -- renders `HslBonusCalculator` and/or `DeptBonusCalculator` based on `hslVisible`/`deptVisible`), `bonus-history`, `notifications`.
 
@@ -1345,7 +1356,7 @@ Two sections:
 
 The sidebar pending-approval badge (`pendingApprovals`) is updated by a `useEffect` keyed on `activeTab` that fetches the same endpoint and counts `status === 'pending'` rows. Previously this was a hardcoded `0`.
 
-**TeamPanel (My Team)** is the most complex tab: wrapped in `<MedalProvider>`. **Since 2026-09-14 the department RAIL is the outer axis** (`manager-my-team.md` § *The department rail*): a vertical rail on the left built by `src/lib/manager/team-dept-rail.ts` over the catalog's `dept-rail.ts` geometry — no "All" entry, HSL folded to one parent disclosing its sub-teams, a granted-but-empty department still gets a 0 tab, labels through `formatDeptLabel` with keys kept raw, and the selection cached as a raw key under `MANAGER_CACHE_KEYS.teamDeptRailKey`. Three inner tabs — **Roster** (opens as the LIST, switchable to cards), **New Hire Check List** (`NewlyHiredPanel`) and **Orientation** (`OrientationAttendancePanel`) — all scope to the selected entry through one splitter, `scopeRowsToDept`; hires in a department with nobody on the active roster are named in an amber banner, never dropped. Beside the department search sit the per-department views: **Scheduling** (`SchedulingPanel`, HSL family only via `departmentHasScheduling`) and **Rankings** (`RankingsPane` with `showPodium` since 2026-09-27, a top-3 podium of SP + tier; every Rankings view and the in-flight hold load through ONE `RankingsSkeleton` shaped like the board (header bar, 3 podium cards, rows), and every one carries `RankingsSearch` (names + WORK emails only, never re-ranks, podium hidden while searching); data-driven via `hasSpRankings`; fetched with `view=manager`, so readable by `canViewTeamRankings` (kaner@) or, since 2026-09-26, `managerMayReadRankings` — a live grant for exactly that department, no role consulted). Search stays GLOBAL, with a per-entry match count and a jump list. A **per-department wallpaper banner** (multipart upload, 10 MB cap, drag-to-reposition that PATCHes a `background-position` string) via `GET/POST/PATCH/DELETE /api/manager/team-wallpaper?department=`. Row actions are **View** (`ManagerMemberDialog`) · **Suspend** · **Reactivation** · **Offboard** (the queue dialog), identical in the list and in every card footer; **there is no rate column anywhere** (stripped 2026-06-16). Live presence via `useOnlineEmails()` (green dots + `ActiveNowButton`). Roster rows are medal drop targets. Every selector's indicator is one `SlidingTab` with a shared `layoutId` per group on `TEAM_EASE`; reduced motion collapses the glide to zero duration but keeps the indicator.
+**TeamPanel (My Team)** is the most complex tab: wrapped in `<MedalProvider>`. **Since 2026-09-14 the department RAIL is the outer axis** (`manager-my-team.md` § *The department rail*): a vertical rail on the left built by `src/lib/manager/team-dept-rail.ts` over the catalog's `dept-rail.ts` geometry — no "All" entry, HSL folded to one parent disclosing its sub-teams, a granted-but-empty department still gets a 0 tab, labels through `formatDeptLabel` with keys kept raw, and the selection cached as a raw key under `MANAGER_CACHE_KEYS.teamDeptRailKey`. Three inner tabs — **Roster** (opens as the LIST, switchable to cards), **New Hire Check List** (`NewlyHiredPanel`) and **Orientation** (`OrientationAttendancePanel`) — all scope to the selected entry through one splitter, `scopeRowsToDept`; hires in a department with nobody on the active roster are named in an amber banner, never dropped. Beside the department search sit the per-department views: **Scheduling** (`SchedulingPanel`, HSL family only via `departmentHasScheduling`) and **Rankings** (`RankingsPane` with `showPodium` since 2026-09-27, a top-3 podium of SP + tier; every Rankings view and the in-flight hold load through ONE `RankingsSkeleton` shaped like the board (header bar, 3 podium cards, rows), and every one carries `RankingsSearch` (names + WORK emails only, never re-ranks, podium hidden while searching); data-driven via `hasSpRankings`; fetched with `view=manager`, so readable by `canViewTeamRankings` (kaner@) or, since 2026-09-26, `managerMayReadRankings` — a live grant for exactly that department, no role consulted). **Since 2026-09-26..28 the Rankings pill picks its board from the data, in order:** an SP team (`hasSpRankings`) → `RankingsPane`; an appointment team → `AppointmentLeaderboardPane`; any other department with a per-person or team KPI bonus, or an HSL sub-team (rail key `hsl:<key>`, `hslBranchFromRailKey`) → `DeliverableLeaderboardPane` over `/api/manager/deliverable-rankings`. **Appointments** (`AppointmentRankingsPane`) is a separate per-department view beside it. Every leaderboard row has **Actions → View** (`RankingHistoryModal`, 2026-09-28); the SP board has none. Search stays GLOBAL, with a per-entry match count and a jump list. A **per-department wallpaper banner** (multipart upload, 10 MB cap, drag-to-reposition that PATCHes a `background-position` string) via `GET/POST/PATCH/DELETE /api/manager/team-wallpaper?department=`. Row actions are **View** (`ManagerMemberDialog`) · **Suspend** · **Reactivation** · **Offboard** (the queue dialog), identical in the list and in every card footer; **there is no rate column anywhere** (stripped 2026-06-16). Live presence via `useOnlineEmails()` (green dots + `ActiveNowButton`). Roster rows are medal drop targets. Every selector's indicator is one `SlidingTab` with a shared `layoutId` per group on `TEAM_EASE`; reduced motion collapses the glide to zero duration but keeps the indicator.
 
 ### `src/components/manager/ManagerSidebar.tsx`
 
@@ -1395,19 +1406,33 @@ UI: sticky header with spring-animated grand total + headcount, `FilterPill` row
 
 **Per-card Refresh** *(2026-09-14)*: a chip in each department card's header (beside → Payout) reloads that one department via `refreshDept` → `loadDept`. Unlike the toolbar Refresh, which skips departments with unsaved local work, the card button saves the pending edit first (`saveDept`, after cancelling the key's autosave timer) and refuses to reload if that save fails. Built for the KPI Calculator modal Accounting opens from Payroll Readiness (`PayrollWizardNotesFab.tsx`).
 
+**Insight cards** *(2026-09-28)*: behind the `showInsights` prop (only `ManagerApp` passes it) the Departments grid is topped by `KpiInsightCards`, below.
+
+### `src/components/manager/KpiInsightCards.tsx`
+
+Manager → KPI Calculator → Departments *(2026-09-28)*: three read-only cards — **Department spotlight** (rotates every 5.2 s through each department's average bonus per week sent), **Top earner** for the week picker's week, and a wide **Sent to Accounting** card with the weekly-total chart. Fed by `GET /api/manager/kpi-insights?depts=&week=` (the server re-scopes `depts`; api-reference §22). Every figure is **PHP pesos** (`bonus_catalog_applied.amount`), and "sent" means a `ready` / `locked` dept-week. A week with no saved row has **no point** (a hatched gap, `toRuns`); the curve is monotone (`monotonePath`) and the axis zero-based (`niceTicks`) — every rule is in `src/lib/manager/kpi-insights.ts`. The cached payload (`KPI_CACHE_KEYS.insights`) paints and never decides: the cards always refetch, 4 s after the grid's figures stop moving (`liveKey`) and when the page's Refresh ends. See [kpi-calculator-insights](../features/kpi-calculator-insights.md).
+
 ### `src/components/manager/AppointmentLeaderboardPane.tsx`
 
 Manager → My Team → *<appointment department>* → **Rankings** *(2026-09-26)*: the current roster ranked by **average** appointments set, with a **Daily | Weekly | Monthly** toggle picking the ranking column and a **Last 4 weeks | Last 3 months | All time** window. It shows a top-3 podium, then a table of #, name, per day / per week / per month, total, days, weeks and tenure (paged at 25). Below the table are lines for drafts left out, people with too little history, people with no Hubstaff days (Daily), and people no longer on the roster. **Paints only**: every rule is in `src/lib/manager/appointment-averages.ts` (`computeLeaderboard`). Daily shows a loading state until the Hubstaff days arrive, and a failed days read disables it. It shares the **Rankings** pill with `RankingsPane` (content follows the data); basis and window live in `ManagerApp` (`leaderView`). **No money values.** See [manager-appointment-leaderboard](../features/manager-appointment-leaderboard.md).
 
 **Second caller** *(2026-09-26)*: PM Team's Rankings renders this pane through `DeliverableLeaderboardPane`, using opt-in props `unit`, `controls`, `partLabels`, `notes`, `animationKey`, `rankNote`, `reorder` and `showValues` (false = no average, total or day figure anywhere: order-only). Each defaults to the appointment behaviour. `reorder` applies a server-computed order, so PM Team can be ranked by bonus pesos without the pesos reaching the browser.
 
+**View** *(2026-09-28)*: an **Actions** column after Tenure opens `RankingHistoryModal` for that row (`openHistory`). On a KPI board the modal's weekly positions come from the server (`weekRankFor` → `order.weeks`); Lead Gen's are its counts. Search is `RankingsSearch` (names + work emails, over `src/lib/manager/rankings-search.ts`), and the toggle and date helpers come from `leaderboard-ui.tsx`.
+
 ### `src/components/manager/DeliverableLeaderboardPane.tsx`
 
 Manager → My Team → **PM Team** (and every per-person KPI-bonus department since 2026-09-27) → **Rankings** *(2026-09-26)*: a thin wrapper over `AppointmentLeaderboardPane`. The picker shows only with 2+ KPIs. A one-KPI board reads in the KPI's own words (`kpiVariableLabel`). An order-only KPI (Client VA) renders with `showValues={false}`: rank, name, weeks and tenure only, with no figure. It adds a **KPI** picker ("All bonuses" plus every one-variable bonus the data carries, labelled with its newest bonus name, so a new bonus appears with no code change). It projects the weeks to KPI item counts (`projectDeliverableWeeks`), which are the figures **shown**. It puts the rows in the server's **bonus order** (`applyMoneyOrder` over `MoneyOrder` positions). The header reads *"Ranked by bonus earned · amounts hidden"*, and the shown averages are not always in rank order, by design. **No peso is in its props, state or payloads.** Basis, window and KPI live in `ManagerApp` (`delivView`). Fed by `GET /api/manager/deliverable-rankings` (+ `?basis=daily`). See [manager-pm-rankings](../features/manager-pm-rankings.md).
 
+**Team boards** *(2026-09-28, ruling (b))*: HR, QC and Accounting render with `metrics[].team`; everyone who scored a week ties **by design**, and the board and the View modal say why (`historyNote`). QC and Accounting are order-only. **HSL sub-teams** *(2026-09-28)*: `department=hsl:<key>` with `allOnly` — no KPI picker, ranked on the stored `calculated_bonus` ([manager-hsl-kpi-rankings](../features/manager-hsl-kpi-rankings.md)). Code: `DeliverableLeaderboardPane.tsx:57-140`.
+
 ### `src/components/manager/AppointmentRankingsPane.tsx`
 
 Manager → My Team → *<department>* → **Appointments** *(2026-09-26)*: the department’s current roster ranked by appointments set, **Weekly | Monthly** with a period stepper, a badge per week (Not scored yet · Draft · With Accounting · Finalized by Accounting · No payroll record · Couldn’t check), and a table of #, name, appointments, weeks (monthly), tenure — sortable by appointments or tenure, paged at 25 because `TeamAvatar` loads eagerly. **Paints only**: every rule is in the pure `src/lib/manager/appointment-rankings.ts` (`buildAppointmentWeeks`, `groupMonths`, `rankAppointments`). Mode / period / sort are owned by `ManagerApp` (`apptView`), because My Team panes unmount on every view switch. Counts only, never pesos. Fed by `GET /api/manager/appointment-rankings`, gated like `/api/manager/department-members` — **not** by `canViewTeamRankings`. See [manager-appointment-rankings](../features/manager-appointment-rankings.md).
+
+### `src/components/manager/RankingHistoryModal.tsx` · `RankingHistoryChart.tsx` · `leaderboard-ui.tsx`
+
+Manager → My Team → *<department>* → **Rankings** → **Actions → View** *(2026-09-28)*: one person's settled weeks — **KPI performance** (their count each week against the team's weekly average) above **Ranking performance** (their position each week, #1 at the top), with stat tiles and a week-by-week table. **It never fetches**: every number is built from the weeks, roster and window rule the leaderboard already holds (`buildPersonHistory`, `src/lib/manager/ranking-history.ts`). On a KPI board a week's position is the server's bonus order (`rankBy: 'server'`); nothing here ranks KPI counts. The pane keeps the row after close, so the close animation plays over content; the shell carries the four dialog fixes (`gap-0`, a height cap, a `shrink-0` header, a `min-h-0 flex-1 overflow-y-auto` body). `RankingHistoryChart` draws two strips on one x axis (never two y-axes), with straight segments that **break** on a week with no entry (no entry ≠ 0), lines only, validated colours (`blue-600` / `blue-500` for the person, `zinc-500` for the team average), and opens scrolled to the newest week. `leaderboard-ui.tsx` holds the `Segmented` toggle and the `dateLabel` / `addDaysIso` / `fmtCount` helpers the board and the modal share. Opened from `AppointmentLeaderboardPane` (and so from `DeliverableLeaderboardPane`); the SP board (`RankingsPane`) has no View. See [manager-rankings-history](../features/manager-rankings-history.md).
 
 ### `src/components/manager/ManagerMemberDialog.tsx`
 
@@ -1429,7 +1454,7 @@ Orientation-attendance gate for HR pending hires routed to the manager's departm
 
 ### `src/components/manager/OrientationAttendancePanel.tsx`
 
-The **Orientation** inner tab of My Team: weekly attendance cards and tally built by `buildOrientationWeeks` from `GET /api/manager/orientation-history` (one hook, `useOrientationHistory`, shared with the New Hire Check List so the two cannot disagree on a week or a count), PDF export of the selected department's history. Department-scoped by the rail since 2026-09-14 — scoping filters the INPUT hires and re-runs the same model; `attendanceRate` is not department-aware and must not become so, because the HR twin imports it. Doc: `manager-orientation-attendance.md`.
+The **Orientation** inner tab of My Team: weekly attendance cards and tally built by `buildOrientationWeeks` from `GET /api/manager/orientation-history` (one hook, `useOrientationHistory`, shared with the New Hire Check List so the two cannot disagree on a week or a count), PDF export of the selected department's history. Department-scoped by the rail since 2026-09-14 — scoping filters the INPUT hires and re-runs the same model; `attendanceRate` is not department-aware and must not become so, because the HR twin imports it. **Pagination** *(2026-09-28)*: the week cards and the people inside an opened week page at 10 (`ORIENTATION_PAGE_SIZE`) through `pageWindow` (`src/lib/manager/page-window.ts`), which clamps the requested page so a refresh can't strand an empty one. Display only — counts, totals and the PDF export never read a page. Doc: `manager-orientation-attendance.md`.
 
 ### `src/components/manager/SchedulingPanel.tsx`
 
@@ -1810,7 +1835,7 @@ These mount across multiple dashboards. (Auth/RBAC libs + `ViewSwitcher` are doc
 
 ### `src/components/team/RankingsPane.tsx` *(extracted 2026-09-14)*
 
-The **SP Rankings** pane shared by Employee → My Team and Manager → My Team → (AI/API Team) → Rankings — extracted from `EmployeeTeam.tsx` rather than copied, so the **no-pesos rule holds identically on both surfaces**. Reads `/api/team-rankings` (the projection has NO `amount`; a test pins the projection string), derives `#1..#n` by sorting SP descending (`vars.Ranking` is a TIER FLAG 1/25/50/0, never a stored rank) and crowns the leader. Who may read it is decided in the route, never here. On the employee surface it is `canViewTeamRankings` alone, a one-name allow-list (kaner@) above the elevated bypass (Kane 2026-08-29). On the manager surface (`view=manager`) the department's own granted managers may also read it via `managerMayReadRankings`. Kane reversed his 2026-09-14 "no" on 2026-09-26, and no role is consulted. A denied viewer sees the same empty week list as an unscored team, so the pane has **no gate of its own and must not grow one**. Props: `rankings`, `loading`, `selfNorm` (highlights the viewer on the employee surface; null on the manager's). Docs: `manager-my-team.md` § *Rankings*, `employee-team-directory.md`.
+The **SP Rankings** pane shared by Employee → My Team and Manager → My Team → (AI/API Team) → Rankings — extracted from `EmployeeTeam.tsx` rather than copied, so the **no-pesos rule holds identically on both surfaces**. Reads `/api/team-rankings` (the projection has NO `amount`; a test pins the projection string), derives `#1..#n` by sorting SP descending (`vars.Ranking` is a TIER FLAG 1/25/50/0, never a stored rank) and crowns the leader. Who may read it is decided in the route, never here. On the employee surface it is `canViewTeamRankings` alone, a one-name allow-list (kaner@) above the elevated bypass (Kane 2026-08-29). On the manager surface (`view=manager`) the department's own granted managers may also read it via `managerMayReadRankings`. Kane reversed his 2026-09-14 "no" on 2026-09-26, and no role is consulted. A denied viewer sees the same empty week list as an unscored team, so the pane has **no gate of its own and must not grow one**. Props *(corrected 2026-09-29, `RankingsPane.tsx:91-122`)*: `weeks`, `loading`, `error`, `selfNorm` (highlights the viewer on the employee surface; null on the manager's), `index` / `dir` / `onNavigate` (the week shown, owned by the parent so it survives a sub-tab hop), and opt-in `showPodium` (2026-09-27, a top-3 podium) and `searchable` + `workEmailsFor` (2026-09-27, `RankingsSearch` over names and WORK emails; it never re-ranks). Since 2026-09-26 only `isSpRankingRow` rows (SP **and** Ranking) reach it. Docs: `manager-my-team.md` § *Rankings*, `employee-team-directory.md`.
 
 ### `src/components/presence/PresenceProvider.tsx`
 
@@ -2014,8 +2039,17 @@ component that was never built. **A file missing from this table does not exist*
 claim the table makes. It does not describe what anything renders; the sections above and the linked
 feature docs do that.
 
+**Re-checked 2026-09-29:** the tree holds 287 `.tsx` under `src/components/` and 33 hooks (+1 test), and every one is
+below — 324 rows, after five `.tsx` rows that later commits had not added (`CurrentPaycycle`, `KpiInsightCards`,
+`RankingHistoryChart`, `RankingHistoryModal`, `leaderboard-ui`) and `accounting/wizard-setup-meta.ts` were added. The
+table also carries a few `.ts` helpers that sit under `src/components/`; six of those are **not** listed
+(`ceo/use-ceo-chat.ts`, `manager/useDepartedMembers.ts`, `payroll-clerk/mock-queue.ts`,
+`payroll-clerk/useDispatchQueue.ts`, `payroll/use-oms-hours.ts`, `payroll/useManualValidations.ts`), so for a `.ts`
+file the "does not exist" claim does not hold.
+
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
-not a description. **58 files are named in no feature doc and nowhere above.**
+not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
+2026-09-29, a count of cells — the matches were not re-run).
 
 | File | Kind | Mentioned in |
 |---|---|---|
@@ -2051,6 +2085,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/accounting/kpi-stat-card.tsx` | component | [bank-preferred-routing](../features/bank-preferred-routing.md) |
 | `src/components/accounting/termination-docs/TerminationDocsPanel.tsx` | component | — **no doc** |
 | `src/components/accounting/termination-docs/TerminationDocsTabRow.tsx` | component | — **no doc** |
+| `src/components/accounting/wizard-setup-meta.ts` | util | *this file* · [accounting-overview-payroll-notes-card](../features/accounting-overview-payroll-notes-card.md) · [payroll-cycle-greeting-modal](../features/payroll-cycle-greeting-modal.md) · [payroll-readiness](../features/payroll-readiness.md) |
 | `src/components/admin/AdminApiKeys.tsx` | component | *this file* · [admin-api-keys](../features/admin-api-keys.md) |
 | `src/components/admin/AdminCsvImports.tsx` | component | *this file* · [csv-imports](../features/csv-imports.md) |
 | `src/components/admin/AdminDataCatalog.tsx` | component | *this file* · [integrations-data-catalog](../features/integrations-data-catalog.md) |
@@ -2112,6 +2147,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/contractor/ContractorSidebar.tsx` | component | *this file* |
 | `src/components/contractor/InvoiceReceiptDialog.tsx` | component | — **no doc** |
 | `src/components/employee/CompensationSections.tsx` | component | [employee-profile](../features/employee-profile.md) |
+| `src/components/employee/CurrentPaycycle.tsx` | component | [employee-current-paycycle](../features/employee-current-paycycle.md) |
 | `src/components/employee/DisputeDialog.tsx` | component | *this file* |
 | `src/components/employee/DocumentPreviewPanel.tsx` | component | — **no doc** |
 | `src/components/employee/EmployeeApp.tsx` | component | *this file* · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-penny-ai](../features/employee-penny-ai.md) |
@@ -2178,6 +2214,7 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/manager/HslBonusEditModal.tsx` | component | *this file* · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
 | `src/components/manager/HslBonusReadyPreview.tsx` | component | *this file* |
 | `src/components/manager/KpiCalculatorLoading.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/KpiInsightCards.tsx` | component | *this file* · [kpi-calculator-insights](../features/kpi-calculator-insights.md) |
 | `src/components/manager/ManagerApp.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
 | `src/components/manager/ManagerBonusHistory.tsx` | component | *this file* · [hsl-subdepartments](../features/hsl-subdepartments.md) · [payment-catalog-departments](../features/payment-catalog-departments.md) |
 | `src/components/manager/ManagerMemberDialog.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) · [manager-my-team](../features/manager-my-team.md) |
@@ -2191,10 +2228,13 @@ not a description. **58 files are named in no feature doc and nowhere above.**
 | `src/components/manager/NewlyHiredPanel.tsx` | component | *this file* · [hr-orientation-attendance](../features/hr-orientation-attendance.md) · [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
 | `src/components/manager/OffboardedSuggestions.tsx` | component | — **no doc** |
 | `src/components/manager/OrientationAttendancePanel.tsx` | component | *this file* · [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
+| `src/components/manager/RankingHistoryChart.tsx` | component | *this file* · [manager-rankings-history](../features/manager-rankings-history.md) |
+| `src/components/manager/RankingHistoryModal.tsx` | component | *this file* · [manager-rankings-history](../features/manager-rankings-history.md) |
 | `src/components/manager/SchedulingPanel.tsx` | component | *this file* · [manager-scheduling](../features/manager-scheduling.md) |
 | `src/components/manager/kpi-calculator-switch.tsx` | component | — **no doc** |
 | `src/components/manager/kpi-readiness-chip.tsx` | component | — **no doc** |
 | `src/components/manager/kpi-status-chip.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/components/manager/leaderboard-ui.tsx` | component | *this file* · [manager-rankings-history](../features/manager-rankings-history.md) |
 | `src/components/manager/transfer-charts.tsx` | component | [department-transfers](../features/department-transfers.md) |
 | `src/components/mesa/bulk-selection.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) |
 | `src/components/notifications/NotificationToast.tsx` | component | [notification-alerts](../features/notification-alerts.md) |

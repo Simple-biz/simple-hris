@@ -322,6 +322,10 @@ The first apply (01:15Z) predated the RLS line and left the table open for about
 Anon and authenticated had full CRUD and an anon-key GET returned 200. It held 0 rows the whole
 time, so nothing was exposed. Every landed send writes a row
 (`app/api/payment-dispatches/route.ts:680`), issue 1 included.
+**Not exercised end to end.** At 2026-09-26 01:46Z the table held 0 rows and no statement had been
+re-sent since it landed, so production has never produced an issue number or a Reissued/Amended
+chip. The Monday reissue row was staged Done on the apply alone (Sep 29 log item 262 (k)). The
+first landed send after the deploy is the first real test.
 
 Safe to deploy the code before or after: with the table absent, statements still send and the
 issue number falls back to `send_count`. No env vars, no n8n change.

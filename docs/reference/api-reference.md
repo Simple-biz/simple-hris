@@ -2,16 +2,18 @@
 
 REST API endpoint documentation. Base URL: `http://localhost:3000` (development).
 
-> **Coverage, measured 2026-09-22: this file documents 119 of the 325 `app/api/**/route.ts` files — 206 are absent.**
+> **Coverage, re-measured 2026-09-29: this file documents 129 of the 335 `app/api/**/route.ts` files — 206 are absent**
+> (119 of 325 on 2026-09-22; a `[param]` route counts when its parent path is named in lines above § *Route index*). The
+> 41 / 165 split below is the 2026-09-22 measurement and was not re-taken.
 > It said *"complete documentation for all REST API endpoints"* until that count was taken. 41 of the 206 appear in **no doc at all**;
 > the other 165 are described in a feature doc but never reached this index. Entire families are missing — `/api/hsl-bonus`,
 > `/api/support`, `/api/orphanage-interns`, `/api/swall`, `/api/presence`, `/api/screening` have **zero** mentions here.
-> **That is now fixed for the index question: § *Route index* at the foot of this file lists all 325.**
+> **That is now fixed for the index question: § *Route index* at the foot of this file lists all 335** (325 when it was generated on 2026-09-22).
 > An endpoint absent from **that table** does not exist; an endpoint absent from the hand-written sections above is
 > merely **unspecified**. The two are different claims and only the first is safe to act on.
 > Session log item 146; [[reference-docs-rot-silently]].
 
-> **Auth status — the 2026-04-21 text below is STALE and kept only for its still-live gaps.** RBAC shipped: `requireFeatureAccess` (`src/lib/auth/authorize-feature.ts`) gates **58** route files and `requireElevatedSession` **46**; **189 of 325** routes carry a recognised auth or cron gate and **136 do not** (measured 2026-09-22 — a count of gates, **not** a security verdict: some of the 136 are public by design and some may gate in a helper this scan does not know). *An earlier pass the same day printed 121/204 against a narrower list of helper names; widening it to include `requirePageRoles`, `authorizeEmail`, `getServerSession`, cron secrets and service-role use gives 189/136, and the per-route result is in § Route index*. See [route-authorization.md](../features/route-authorization.md) (2026-06-23) and [rbac-feature-permissions.md](../features/rbac-feature-permissions.md), not the RBAC *plan* linked below. Original note follows.
+> **Auth status — the 2026-04-21 text below is STALE and kept only for its still-live gaps.** RBAC shipped: `requireFeatureAccess` (`src/lib/auth/authorize-feature.ts`) is named in **63** route files and `requireElevatedSession` in **45** (re-measured 2026-09-29 by file mention; 58 / 46 on 2026-09-22). **314 of 335** routes name a recognised auth, token, API-key or cron gate in the route file and **21 do not** (re-measured 2026-09-29 — a count of gates, **not** a security verdict: some of the 21 are public by design). *An earlier pass on 2026-09-22 printed 121/204 against a narrower list of helper names, and widening it gave 189/136 — but that list still lacked `requireFeatureEdit`, `requireRateVisibilitySession`, `requireAdminSession`, `requireFeatureEditAnyView`, `requireRateVisibilityOrFeatureEdit`, `getToken` and `admitExternalCall`, so **115 gated routes read "none found"**: 107 call one of those five `src/lib/auth` helpers in the route file, 6 refuse a request with no NextAuth `getToken`, and 2 admit only a per-client API key. That was already true at the walk commit `6a776c7f`. The cells were corrected 2026-09-29; the per-route result, and the 21 routes that name no gate, are in § Route index*. See [route-authorization.md](../features/route-authorization.md) (2026-06-23) and [rbac-feature-permissions.md](../features/rbac-feature-permissions.md), not the RBAC *plan* linked below. Original note follows.
 >
 > **Auth status** (as of 2026-04-21): most endpoints were then still **unauthenticated** pending SSO. The PAB dispute decide/edit endpoints (`PATCH /api/pab-disputes/[id]`) enforce server-side role-based access via `canActOnDisputes(email)` — caller must hold an active role from `DISPUTE_ACTOR_ROLES` in `employee_roles`. Orphanage-visit endpoints still trust a client-supplied `admin_name` (auth gap). See [IMPLEMENTATION_PLAN_RBAC.md](../implementation-plans/implementation-plan-rbac.md) and [AUDIT_2026-04-21.md](../audits/audit-2026-04-21.md) for the full picture.
 
@@ -34,16 +36,27 @@ REST API endpoint documentation. Base URL: `http://localhost:3000` (development)
 11. [Payment Dispatches](#11-payment-dispatches)
 12.5. [Leave Requests](#125-leave-requests)
 12.7. [Admin Diagnostics](#127-admin-diagnostics)
+12.8. [Employee Notifications](#128-employee-notifications-added-2026-05-15)
+12.9. [Feature Permissions](#129-feature-permissions-added-2026-05-15)
+12.10. [Force Logout](#1210-force-logout-added-2026-05-15)
+12.11. [MESA Requests](#1211-mesa-requests-added-2026-06-01)
 12.9. [Time Adjustment Requests](#129-time-adjustment-requests)
 12.12. [Onboarding (public)](#1212-onboarding-public)
 14. [Paystub Dispatch Queue](#14-paystub-dispatch-queue)
 13. [Planned Endpoints (Payroll Automation)](#13-planned-endpoints-payroll-automation)
 15. [New endpoints (2026-07-08..10)](#15-new-endpoints-2026-07-0810)
+20. [FPU classes & enrollment](#20-fpu-classes--enrollment-added-2026-09-16)
+21. [FPU groups, attendance and class close](#21-fpu-groups-attendance-and-class-close-added-2026-09-17)
 16. [Audit log + routes gated 2026-09-09](#16-audit-log--routes-gated-2026-09-09)
 17. [Penny AI (assistants)](#17-penny-ai-assistants-added-2026-09-12)
 18. [QC Compare sheet (shared)](#18-qc-compare-sheet-shared-added-2026-09-14)
 19. [Manager departed members, HSL scheduling and the QC assignments contract](#19-manager-departed-members-hsl-scheduling-and-the-qc-assignments-contract-added-2026-09-14)
+20. [External read API — REST + MCP, per-client keys](#20-external-read-api--rest--mcp-per-client-keys-added-2026-09-16-widened-2026-09-17)
 20. [Department sub-teams — the contract changes](#20-department-sub-teams--the-contract-changes-added-2026-09-2122)
+22. [Manager rankings and KPI insights](#22-manager-rankings-and-kpi-insights-added-2026-09-29)
+— [Route index — every `app/api/**/route.ts`](#route-index--every-appapiroutets-in-the-tree)
+
+*Two numbers are reused — 12.9 (Feature Permissions, Time Adjustment Requests) and 20 (FPU classes, External read API, Department sub-teams) — and are kept rather than renumbered so existing anchors keep working (2026-09-29).*
 
 ---
 
@@ -652,7 +665,7 @@ Uploads or replaces an employee's profile photo.
 
 ### `GET /api/hubstaff-hours`
 
-Four modes depending on query parameters:
+Five modes depending on query parameters (Mode 5 documented 2026-09-29; the employee live-hours overlay, `?live=1&email=`, `authorizeEmailAccess`, is not specified here — `route.ts:129`):
 
 #### Mode 1: List source files
 
@@ -701,7 +714,7 @@ When `email` is supplied the route post-filters the file's rows down to the one 
 
 #### Mode 3: Fetch all (no params)
 
-Returns all rows ordered, with OpenAPI column discovery when service role is available.
+Returns the **current upload's** rows (`fetchHubstaffRowsOrdered`, filtered to the `is_current` upload id), with OpenAPI column discovery when service role is available. **Not ordered, despite the helper's name:** it pages 1,000 at a time with no `.order()` (`src/lib/supabase/hubstaff-hours-db.ts:283-300`), so its pages can shear under a concurrent write (latent while an upload is ~1,120 rows; see [data-sources.md](./data-sources.md) § the 1000-row cap).
 
 **Response** `200`: Same shape as Mode 2.
 
@@ -728,6 +741,12 @@ Server-side replacement for the employee portal's old N-parallel `?source_file=�
 
 `row` is `null` when the employee didn't appear in that file.
 
+#### Mode 5: All uploads, grouped by source file *(documented 2026-09-29)*
+
+**Query Parameters**: `?all_files=1`
+
+One scan of `hubstaff_hours` grouped by `source_file`, for the Accounting Overview's All Time view (`route.ts:243-256`). **Response** `200`: `{ "files": [{ "source_file", "columns", "rows" }], "error": null }`. A read error also answers `200`, with `files: []` and `error` set. `fetchHubstaffRowsGroupedBySourceFile` (`hubstaff-hours-db.ts:1049-1075`) pages the **whole table** (~41 pages) with **no** `.order()`, and the route returns it **buffered** — ~22.5 MB, far over Vercel's 4.5 MB Function body cap, so it is likely `413`ing in production (**unverified**, session log item 238(c)). No gate in the route beyond the edge proxy's session.
+
 **Tables**: Reads `hubstaff_hours`, `hubstaff_uploads`
 **Service Role**: Required for Mode 3 full fetch and Mode 4 merge; Modes 1-2 use service role if available, fall back to anon
 
@@ -737,13 +756,16 @@ Server-side replacement for the employee portal's old N-parallel `?source_file=�
 
 Uploads a Hubstaff CSV file.
 
+**Gate**: `requireFeatureEdit('accounting','payroll_wizard')`; refused while payroll is processing (`rejectWhilePayrollProcessing`) — `app/api/hubstaff-hours/route.ts:559-566`.
+
 **Content-Type**: `multipart/form-data`
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `file` | File/Blob | Yes | Hubstaff-format CSV |
-| `mode` | string | No | `"replace"` = full table replace; default = append |
+| `mode` | string | No | **Ignored** (kept for back-compat): every upload is archived and promoted to current (`route.ts:597-598`). It once meant `"replace"` = full table replace, default = append |
 | `fileName` | string | No | Fallback if `file.name` unavailable |
+| `uploaded_by` | string | No | **Not the uploader since 2026-09-28** — the session is (`authz.sessionEmail`), on both the archive row's `uploaded_by` and the `csv.upload` audit actor. A value that differs from the session is kept only as `details.uploaded_by_claim` (`route.ts:592-617`) |
 
 **CSV requirements**:
 - Must have header row + at least 1 data row
@@ -760,7 +782,7 @@ Uploads a Hubstaff CSV file.
 { "success": false, "error": "SUPABASE_SERVICE_ROLE_KEY is required." }
 ```
 
-**Tables**: Writes to `hubstaff_hours` (append or full replace)
+**Tables**: Writes a `hubstaff_uploads` archive row (promoted to `is_current`) and that upload's `hubstaff_hours` rows; **deletes nothing** — earlier uploads stay for audit and rollback (`replaceHubstaffHoursFromCsvText`, `src/lib/supabase/hubstaff-hours-db.ts:721-727`). The "append or full replace" wording this line carried is retired.
 **Service Role**: **Mandatory** (returns 400 without it)
 
 ---
@@ -823,6 +845,7 @@ Returns `null` value if key doesn't exist.
 
 **Tables**: Reads `app_settings`
 **Service Role**: Not required
+**Auth** *(stated 2026-09-29)*: `secret.*` / admin-only keys need `requireAdminSession()`; sensitive keys (auth state, webhook URLs, tokens) need `requireElevatedSession()`; `qc.compare_paste.*` is refused (§18). **Every other key has no gate in the route** — any signed-in session that passes the edge proxy reads it, `payroll.wizard.*` included (`app/api/app-settings/route.ts:77-117`). The § *Route index* row's `requireElevatedSession` is the first helper in the file, not this GET's gate.
 
 ---
 
@@ -850,6 +873,7 @@ Creates or updates an application setting.
 
 **Tables**: Upserts to `app_settings`
 **Service Role**: Not required (uses utility function)
+**Auth** *(stated 2026-09-29)*: `requireElevatedSession()` for every key; then `secret.*` and sensitive keys are admin-only to write, payroll-lock keys need Payment Dispatch or Payroll Wizard edit, and `payroll.wizard.additions.*` / `qc.compare_paste.*` are refused here (their only doors are `/api/payroll-wizard/additions` and `/api/qc/compare-paste`) — `app/api/app-settings/route.ts:138-198`.
 
 **Side effect — PAB period broadcast** *(2026-09-28)*: after a **successful** write of a PAB
 period key (`pab_period_overrides`, `pab_period_active_month`, legacy `pab_period_manual` /
@@ -2630,6 +2654,7 @@ gone — it was the one action that could not record itself.
 | `POST /api/orphanage-pay` | `orphanage_pay.records_saved` | The rows as stored (email, hours, reg/OT hours, rates, amount), first 300 + `saved` count, `cycle.source_file` |
 | `POST /api/pab-disputes` | `pab_dispute.submitted` | Actor = the session — see §*PAB disputes* |
 | `POST /api/cron/sync-master-from-sheet`, `sync-hsl-from-sheet` | `csv.master.sync`, `csv.hsl.sync` | Manual click = the session (`trigger: "manual"`) |
+| `POST /api/hubstaff-hours` (+ `DELETE`, `PATCH` rename / set-current) | `csv.upload` (`csv.delete`, `csv.rename`, `csv.set_current`) | Actor = the session: the upload form's `uploaded_by` was taken first until 2026-09-28 and is now kept only as `details.uploaded_by_claim` when it differs; the other three use the gate's identity instead of `getSessionActor()`. Pinned by `src/lib/audit/actor-from-gate.test.ts` — see §6 |
 
 Governing doc: [audit-log.md](../features/audit-log.md) §3 and §7b.
 
@@ -3003,81 +3028,199 @@ rather than `isHslSubDeptLabel`, which knew only the code teams and would have
 
 ---
 
+## 22. Manager rankings and KPI insights *(added 2026-09-29)*
+
+Five read-only routes behind Manager → My Team → *<department>* → **Rankings** / **Appointments** and the KPI
+Calculator's insight cards, shipped 2026-09-26..28 and documented here 2026-09-29. None writes and none has an audit
+action. Feature docs: [manager-appointment-rankings.md](../features/manager-appointment-rankings.md),
+[manager-appointment-leaderboard.md](../features/manager-appointment-leaderboard.md),
+[manager-pm-rankings.md](../features/manager-pm-rankings.md),
+[manager-hsl-kpi-rankings.md](../features/manager-hsl-kpi-rankings.md),
+[manager-rankings-history.md](../features/manager-rankings-history.md),
+[manager-my-team.md](../features/manager-my-team.md),
+[kpi-calculator-insights.md](../features/kpi-calculator-insights.md).
+
+**Two gates, never harmonized.** The three `/api/manager/*-rankings` reads use `authorizeManagedDepartment`
+(`src/lib/manager/managed-department-gate.ts`), which mirrors `/api/manager/department-members`: a `manager`, `admin` or
+elevated role (`403` otherwise); a caller WITH `department_managers` rows is scoped to them even when elevated; only an
+elevated caller with none reads any department. An out-of-scope department answers `200` with `available: false` (or
+`days: []`), never `403`, so the pill simply does not appear. `/api/team-rankings` keeps its own doors (below). No route
+here takes an email parameter; each roster is resolved server-side from the department just authorized.
+
+### `GET /api/manager/appointment-rankings?department=<raw roster label>`
+
+Every week of the department's appointment counts (`vars.Appts_Set` / `vars.Appts`), badged, for **Appointments** and the
+appointment **Rankings** leaderboard. Key = `normalizeDeptToKey(label) ?? slugifyDeptKey(label)`.
+
+**Response `200`**: `{ "available": bool, "currentWeekStart": "<sunday>", "weeks": [{ "periodStart", "periodEnd", "badge",
+"rows": [{ "email", "appointments" }] }], "error": null }`. `badge` is one of `not_scored` · `draft` · `with_accounting` ·
+`finalized` · `no_record` · `unknown`. **Counts only** — the read never selects `amount`
+(`src/lib/supabase/appointment-rankings.ts`). `401` no session · `403` role · `500` with `error` on a failed read.
+
+### `GET /api/manager/appointment-rankings/days?department=<raw roster label>`
+
+Hubstaff **days worked** per person-week for the department's roster, the denominator of the leaderboard's per-day average.
+**Response `200`**: `{ "days": DaysWorkedRow[], "error": null }` — emails, weeks and day counts; no hours, no money
+(`src/lib/supabase/appointment-days.ts`). Same gate and failure shape.
+
+### `GET /api/manager/deliverable-rankings?department=<label | hsl:<key>>[&basis=daily]`
+
+**KPI Rankings** for every department on a per-person Payment Catalog KPI bonus that has no Rankings view of its own (PM
+Team 2026-09-26, widened 2026-09-27), the **team boards** HR / QC / Accounting (2026-09-28, ruling (b)), and — with the
+rail key `hsl:<key>` (`hslBranchFromRailKey`) — each scored HSL sub-team (2026-09-28, from `hsl_bonus_entries`,
+`src/lib/supabase/hsl-kpi-rankings.ts`). Three one-row probes run first (any row · an appointment variable · an `SP` +
+`Ranking` row) and end the call with `available: false` when the department is served by another view.
+
+**Ordered by bonus pesos on the server; no peso is returned.** The read selects `amount` (`DELIVERABLE_APPLIED_SELECT`,
+pinned by a test), and the payload is built only by `toClientPayload` (`src/lib/manager/deliverable-money-order.ts`),
+pinned by a serialization test.
+
+**Response `200`** (weekly): `{ "available", "currentWeekStart", "weeks": [{ "periodStart", "periodEnd", "badge", "rows":
+[{ "email", "counts", "hidden"? }] }], "metrics": [{ "key", "label", "shown", "team" }], "skippedRows", "allOnly"?,
+"order": { "people", "positions", "weeks"? }, "error": null }`. `shown: false` = order-only (Client VA's `=Appt_Bonus`,
+QC, Accounting); `team: true` = a team split whose members carry the same figure, so everyone who scored a week **ties
+by design**; `allOnly` = HSL (one stored amount per row, so no KPI picker); `order.weeks` = each settled week's positions
+for the **View** modal (2026-09-28). **`?basis=daily`**: `{ "days", "order", "error" }`. Types:
+`src/lib/manager/deliverable-rankings.ts:49-160`.
+
+### `GET /api/team-rankings?department=X[&view=manager]`
+
+Weekly **SP** rankings — SP, the `Ranking` tier flag and a derived position, never `amount` — for Employee → My Team →
+Rankings and Manager → My Team's SP board.
+
+- **Gate 1** `canViewTeamRankings` (a one-name allow-list) runs above the elevated bypass.
+- **Gate 1b** *(2026-09-26, resolution (b))*: a caller not on the list reads only with `view=manager` AND a live
+  `department_managers` grant for exactly that department (`managerMayReadRankings`, `src/lib/rbac/rankings-viewers.ts`).
+  No role is consulted, so an elevated session without the grant reads nothing. The employee tab never sends `view`.
+- **Gate 2** (allow-listed callers) is unchanged: elevated → any department; everyone else → home department + managed ones.
+
+Every denial answers `{ "weeks": [], "error": null }`, the same as an unscored team. **Rows** *(2026-09-26)*: only
+`isSpRankingRow` rows count (`SP` AND `Ranking`, `src/lib/manager/sp-ranking-row.ts`); a week with none is not returned.
+
+### `GET /api/manager/kpi-insights?depts=a,b,c&week=<sunday>`
+
+The three cards above Manager → KPI Calculator → Departments (`KpiInsightCards.tsx`): the department spotlight (average
+bonus per week sent), the week's top earner, and the weekly total sent to Accounting.
+
+**Auth**: session (`401`); `manager`, `admin` or elevated (`403`). **Scope** is `/api/manager/department-members`'s:
+`depts` proves nothing — each key is re-matched against the session's `department_managers` rows
+(`scopeInsightDeptKeys`), and an out-of-scope key is dropped, not an error; only an elevated caller with no assignments
+reads every requested department. **Params**: `week` must be a Sunday (`400`).
+
+**"Sent" is a status**: a dept-week counts only when its `hsl_bonus_period_status` is `ready` or `locked`; saved draft rows
+are `pending`. **Trend** = the 12 Sunday weeks (`INSIGHT_WEEKS`) ending at the newest week any scoped department sent
+(`through`); a week with no saved row has no point.
+
+**Response `200`**: `{ "depts", "through", "insights": { "weeks", "depts", "spotlight" } | null, "error": null }`. **It
+carries PESOS** (PHP `bonus_catalog_applied.amount`, summed in centavos) and the top earner's name and email — figures
+these managers already see on the calculator grid and in Bonus History, unlike the My Team rankings above. Reads are paged
+(`src/lib/supabase/kpi-insights-db.ts`). `500` with `error` on a failed read.
+
+---
+
 ## Route index — every `app/api/**/route.ts` in the tree
 
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
-sending-bank approval gate; routes added by other commits since the walk are not counted here). This section exists because the
+sending-bank approval gate). Later commits have added rows since: **335 route files on 2026-09-29**
+(`git ls-files 'app/api/**/route.ts'`), and this table lists all 335 — the last two missing,
+`/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
 rest of this file documents 119 of them by hand, so for years an endpoint's absence here could not be
 told apart from an endpoint that does not exist. **A route missing from this table is a route that
 does not exist** — that is the only claim this table makes. It does not describe request or response
 shapes; the hand-written sections above and the linked feature docs do that.
 
-**Gate** is the first authorization helper found in the route file itself: `requireFeatureAccess`
-(`src/lib/auth/authorize-feature.ts`), `requireElevatedSession`, a cron secret, and so on. **136 routes
-show no gate in the file.** That is a **grep result, not a security finding** — a route may be public
-by design, may be gated by its caller, or may use a helper this scan does not know. Do not read this
-column as an audit; see [pre-release-security-readiness.md](../features/pre-release-security-readiness.md).
+**Gate** is the authorization helper found in the route file itself: `requireFeatureAccess`
+(`src/lib/auth/authorize-feature.ts`), `requireElevatedSession`, a cron secret, and so on (two helpers are
+joined with `·`). **21 routes show no gate in the file** (re-measured 2026-09-29). That is a **grep result, not a
+security finding** — a route may be public by design, may be gated by its caller, or may use a helper this scan
+does not know. Do not read this column as an audit; see
+[pre-release-security-readiness.md](../features/pre-release-security-readiness.md).
+
+> **Corrected 2026-09-29.** Until then this paragraph said **136** routes showed no gate. The 2026-09-22 scan did
+> not know `requireFeatureEdit`, `requireRateVisibilitySession`, `requireAdminSession`, `requireFeatureEditAnyView`,
+> `requireRateVisibilityOrFeatureEdit`, `getToken` or `admitExternalCall`, so **115** gated routes read "— none
+> found": 107 call one of the five `src/lib/auth` helpers (each verified to import it from `@/lib/auth/`), 6 refuse a
+> request with no NextAuth `getToken`, and 2 admit only a per-client API key. It was already so at the walk commit
+> `6a776c7f`. Those 115 cells now name the helper.
+>
+> **The 21 that name no gate:** `/api/auth/session-status` (reads the token but answers `{ valid: false }` rather than
+> refusing), `/api/bank-update/lock-status`, `/api/bank-update/request-otp`, `/api/bank-update/verify-otp` (the public
+> [update-bank-info](../features/update-bank-info.md) flow), `/api/bonus-catalog/history`,
+> `/api/cron/sync-offboarded-from-sheet` (a 410 tombstone), `/api/employee-forgot-password`, `/api/employee-login`,
+> `/api/employee-rate-profiles/summary`, `/api/gift-address/owed`, `/api/gift-address/request-otp`,
+> `/api/gift-address/save`, `/api/gift-address/verify-otp`, `/api/hsl-bonus/period-summary`,
+> `/api/manager/member-monthly-pay`, `/api/onboarding/[token]`, `/api/onboarding/[token]/w8ben`,
+> `/api/onboarding/ip-assignment-preview`, `/api/presence/active`, `/api/presence/last-seen`,
+> `/api/secondary/hubstaff-projects`.
+>
+> **A helper in the file does not mean every verb is gated.** In 11 routes the helper guards the writes only and the
+> `GET` handler calls none (only the edge proxy's session): `/api/bonus-catalog`, `/api/bonus-catalog-applied`,
+> `/api/gift-catalog`, `/api/gift-payments`, `/api/gift-tracker-notes`, `/api/hsl-bonus/entries`,
+> `/api/hsl-bonus/period-status`, `/api/orphanage-budget-requests`, `/api/orphanages`,
+> `/api/pab-disputes/orphanage-visits`, `/api/payment-catalog/system-bonuses` (their cells say *GET: none in route*).
+> `/api/app-settings` is the same shape by key: its `GET` of an ordinary key is ungated in the route (§7).
 
 **Mentioned in** is a path-string match against `docs/features/` and this file — a mention is not a
 specification, and a `[param]` route matches its parent path. **85 of the 325 routes are mentioned in no
-feature doc and in no hand-written section here.**
+feature doc and in no hand-written section here** (2026-09-22; 82 cells of 335 read "no doc" on 2026-09-29, a count
+of cells — the matches were not re-run).
 
 | Route | Verbs | Gate | Mentioned in |
 |---|---|---|---|
 | `/api/accounting/documents` | GET | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/[id]` | GET, PATCH, DELETE | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
-| `/api/accounting/documents/coe` | POST | — **none found** | — **no doc** |
-| `/api/accounting/documents/coe/preview` | GET | — **none found** | — **no doc** |
+| `/api/accounting/documents/coe` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/accounting/documents/coe/preview` | GET | `requireFeatureEdit` | — **no doc** |
 | `/api/accounting/documents/coe/search` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/signature` | GET, PUT | `requireFeatureAccess` | *this file* |
 | `/api/accounting/documents/termination` | GET, POST | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/termination/[id]` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/termination/facts` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/termination/search` | GET | `requireFeatureAccess` | — **no doc** |
-| `/api/accounting/overview-snapshot` | POST | — **none found** | [audit-log](../features/audit-log.md) |
-| `/api/accounting/payout-extras` | GET | — **none found** | [accounting-total-payout](../features/accounting-total-payout.md) |
+| `/api/accounting/overview-snapshot` | POST | `requireRateVisibilitySession` | [audit-log](../features/audit-log.md) |
+| `/api/accounting/payout-extras` | GET | `requireRateVisibilitySession` | [accounting-total-payout](../features/accounting-total-payout.md) |
 | `/api/accounting/paystub` | GET | `requireFeatureAccess` | [cop-country-payees](../features/cop-country-payees.md) · [payment-dispatch](../features/payment-dispatch.md) |
-| `/api/accounting/sync-status` | GET | — **none found** | [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · *this file* |
-| `/api/accounting/transfers` | GET, POST | — **none found** | [department-transfers](../features/department-transfers.md) · *this file* |
-| `/api/add-employee` | POST | — **none found** | *this file* |
-| `/api/admin/anthropic-key` | GET, POST, DELETE | — **none found** | [admin-api-keys](../features/admin-api-keys.md) |
+| `/api/accounting/sync-status` | GET | `requireRateVisibilitySession` | [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · *this file* |
+| `/api/accounting/transfers` | GET, POST | `requireRateVisibilitySession` | [department-transfers](../features/department-transfers.md) · *this file* |
+| `/api/add-employee` | POST | `requireFeatureEdit` | *this file* |
+| `/api/admin/anthropic-key` | GET, POST, DELETE | `requireAdminSession` | [admin-api-keys](../features/admin-api-keys.md) |
 | `/api/admin/backfill-employee-ids` | POST | service-role only | *this file* |
-| `/api/admin/data-tables-status` | GET | — **none found** | — **no doc** |
+| `/api/admin/data-tables-status` | GET | `requireAdminSession` | — **no doc** |
 | `/api/admin/diagnostics` | GET | `requireElevatedSession` | [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) · [diagnostics-service-maps](../features/diagnostics-service-maps.md) · *this file* |
 | `/api/admin/diagnostics/cycle-performance` | GET | `requireElevatedSession` | [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) |
 | `/api/admin/diagnostics/hr-pipeline` | GET | `requireElevatedSession` | [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) |
-| `/api/admin/external-api-clients` | GET, POST | — **none found** | [admin-dashboard-cache](../features/admin-dashboard-cache.md) · [external-api-integrations](../features/external-api-integrations.md) · *this file* |
-| `/api/admin/external-api-clients/[id]` | PATCH | — **none found** | [admin-dashboard-cache](../features/admin-dashboard-cache.md) · [external-api-integrations](../features/external-api-integrations.md) · *this file* |
-| `/api/admin/external-api-clients/[id]/requests` | GET | — **none found** | — **no doc** |
-| `/api/admin/hsl-week-snapshot` | GET, POST | — **none found** | — **no doc** |
-| `/api/admin/monday-sync` | GET, POST | — **none found** | [monday-board-sync](../features/monday-board-sync.md) |
-| `/api/admin/penny-chat` | POST | — **none found** | [admin-penny-console](../features/admin-penny-console.md) · [admin-penny-tools](../features/admin-penny-tools.md) · *this file* |
+| `/api/admin/external-api-clients` | GET, POST | `requireAdminSession` | [admin-dashboard-cache](../features/admin-dashboard-cache.md) · [external-api-integrations](../features/external-api-integrations.md) · *this file* |
+| `/api/admin/external-api-clients/[id]` | PATCH | `requireAdminSession` | [admin-dashboard-cache](../features/admin-dashboard-cache.md) · [external-api-integrations](../features/external-api-integrations.md) · *this file* |
+| `/api/admin/external-api-clients/[id]/requests` | GET | `requireAdminSession` | — **no doc** |
+| `/api/admin/hsl-week-snapshot` | GET, POST | `requireAdminSession` | — **no doc** |
+| `/api/admin/monday-sync` | GET, POST | `requireAdminSession` | [monday-board-sync](../features/monday-board-sync.md) |
+| `/api/admin/penny-chat` | POST | `requireAdminSession` | [admin-penny-console](../features/admin-penny-console.md) · [admin-penny-tools](../features/admin-penny-tools.md) · *this file* |
 | `/api/admin/penny-chat/attachment` | GET | `requireFeatureAccess` | [admin-penny-console](../features/admin-penny-console.md) · *this file* |
-| `/api/admin/webhooks/automation` | GET, POST, PUT | — **none found** | [webhook-automations](../features/webhook-automations.md) |
-| `/api/admin/workspace-license-config` | POST | — **none found** | — **no doc** |
-| `/api/announcements` | GET, POST | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/announcements/[id]` | PATCH, DELETE | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/admin/webhooks/automation` | GET, POST, PUT | `requireAdminSession` | [webhook-automations](../features/webhook-automations.md) |
+| `/api/admin/workspace-license-config` | POST | `requireAdminSession` | — **no doc** |
+| `/api/announcements` | GET, POST | `getToken` (GET) · `requireFeatureEditAnyView` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/announcements/[id]` | PATCH, DELETE | `getToken` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/app-settings` | GET, POST | `requireElevatedSession` | [admin-api-keys](../features/admin-api-keys.md) · [ceo-assistant](../features/ceo-assistant.md) · *this file* |
 | `/api/audit-log` | GET, POST, DELETE | `requireElevatedSession` | [audit-log](../features/audit-log.md) · [payment-dispatch](../features/payment-dispatch.md) · *this file* |
 | `/api/auth/force-logout` | POST | `requireElevatedSession` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) · *this file* |
 | `/api/auth/session-status` | GET | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/avatar` | GET | `authorizeEmail` | *this file* |
-| `/api/bank-update/lock-status` | GET | — **none found** | — **no doc** |
-| `/api/bank-update/request-otp` | POST | — **none found** | — **no doc** |
-| `/api/bank-update/save` | POST | service-role only | [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |
-| `/api/bank-update/verify-otp` | POST | — **none found** | — **no doc** |
-| `/api/bonus-catalog` | GET, POST, DELETE | — **none found** | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) · *this file* |
-| `/api/bonus-catalog-applied` | GET, POST, DELETE | — **none found** | [kpi-scored-notification](../features/kpi-scored-notification.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `/api/bank-update/lock-status` | GET | — **none found** | [update-bank-info](../features/update-bank-info.md) |
+| `/api/bank-update/request-otp` | POST | — **none found** | [update-bank-info](../features/update-bank-info.md) |
+| `/api/bank-update/save` | POST | service-role only | [update-bank-info](../features/update-bank-info.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |
+| `/api/bank-update/verify-otp` | POST | — **none found** | [update-bank-info](../features/update-bank-info.md) |
+| `/api/bonus-catalog` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) · *this file* |
+| `/api/bonus-catalog-applied` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [kpi-scored-notification](../features/kpi-scored-notification.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/bonus-catalog/history` | GET | — **none found** | [bonus-catalog](../features/bonus-catalog.md) |
-| `/api/ceo/accounting-team` | GET | — **none found** | — **no doc** |
+| `/api/ceo/accounting-team` | GET | `requireRateVisibilitySession` | — **no doc** |
 | `/api/ceo/chat` | POST | `getServerSession` | [admin-api-keys](../features/admin-api-keys.md) · [audit-log](../features/audit-log.md) · *this file* |
 | `/api/ceo/chat/feedback` | POST | `getServerSession` | [audit-log](../features/audit-log.md) · *this file* |
-| `/api/ceo/financial-reports` | GET | — **none found** | — **no doc** |
-| `/api/ceo/overview-kpis` | GET | — **none found** | — **no doc** |
-| `/api/ceo/payments-live` | GET | — **none found** | — **no doc** |
+| `/api/ceo/financial-reports` | GET | `requireRateVisibilitySession` | — **no doc** |
+| `/api/ceo/overview-kpis` | GET | `requireRateVisibilitySession` | — **no doc** |
+| `/api/ceo/payments-live` | GET | `requireRateVisibilitySession` | — **no doc** |
 | `/api/ceo/reports/pdf` | POST | `getServerSession` | — **no doc** |
-| `/api/contractor/dispatch-queue` | GET | — **none found** | — **no doc** |
+| `/api/contractor/dispatch-queue` | GET | `requireRateVisibilityOrFeatureEdit` | — **no doc** |
 | `/api/contractor/invoices` | GET, POST, DELETE | `requireElevatedSession` | [employee-support-chat](../features/employee-support-chat.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/contractor/invoices/[id]` | GET, PATCH | `requireFeatureAccess` | [employee-support-chat](../features/employee-support-chat.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/contractor/profile` | GET, POST, PATCH | `authorizeEmail` | — **no doc** |
@@ -3089,20 +3232,20 @@ feature doc and in no hand-written section here.**
 | `/api/cron/sync-offboarded-from-sheet` | GET, POST | — **none found** | — **no doc** |
 | `/api/cron/sync-rates-from-sheet` | GET, POST | cron secret | [csv-imports](../features/csv-imports.md) · *this file* |
 | `/api/cron/sync-screening-from-sheet` | GET, POST | `requireElevatedSession` | — **no doc** |
-| `/api/current-cycle` | GET | — **none found** | — **no doc** |
-| `/api/delete-employee` | DELETE | — **none found** | *this file* |
+| `/api/current-cycle` | GET | `requireRateVisibilityOrFeatureEdit` | — **no doc** |
+| `/api/delete-employee` | DELETE | `requireFeatureEdit` | *this file* |
 | `/api/department-managers` | GET, POST, DELETE | `requireElevatedSession` | — **no doc** |
 | `/api/department-managers/by-department` | GET | `getServerSession` | — **no doc** |
 | `/api/department-transfers` | GET, POST | `getServerSession` | [department-transfers](../features/department-transfers.md) · [hsl-subdepartments](../features/hsl-subdepartments.md) · *this file* |
 | `/api/department-transfers/[id]` | PATCH, DELETE | `getServerSession` | [department-transfers](../features/department-transfers.md) · [hsl-subdepartments](../features/hsl-subdepartments.md) · *this file* |
 | `/api/departments` | GET | `requireElevatedSession` | [hsl-subdepartments](../features/hsl-subdepartments.md) · [onboarding-pay-plans](../features/onboarding-pay-plans.md) · *this file* |
-| `/api/dispatch-paystubs` | POST | — **none found** | [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
+| `/api/dispatch-paystubs` | POST | `requireFeatureEdit` | [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
 | `/api/employee-feature-permissions` | GET, POST | `requireElevatedSession` | [identity-resolution](../features/identity-resolution.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) · *this file* |
 | `/api/employee-forgot-password` | POST | — **none found** | — **no doc** |
 | `/api/employee-gift-receipts` | GET, PUT, DELETE | `requireFeatureAccess` | [gift-tracker-receipts](../features/gift-tracker-receipts.md) |
 | `/api/employee-gift-shipping` | GET, PUT | `requireFeatureAccess` | [audit-log](../features/audit-log.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · *this file* |
-| `/api/employee-gift-shipping/[id]` | PATCH, DELETE | — **none found** | [audit-log](../features/audit-log.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · *this file* |
-| `/api/employee-gift-shipping/[id]/decide` | PATCH | — **none found** | — **no doc** |
+| `/api/employee-gift-shipping/[id]` | PATCH, DELETE | `requireFeatureEdit` | [audit-log](../features/audit-log.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · *this file* |
+| `/api/employee-gift-shipping/[id]/decide` | PATCH | `requireFeatureEdit` | — **no doc** |
 | `/api/employee-hourly-rates` | GET | `authorizeEmail` | [bonus-catalog](../features/bonus-catalog.md) · [csv-imports](../features/csv-imports.md) · *this file* |
 | `/api/employee-hourly-rates-upload` | GET, POST | service-role only | [csv-imports](../features/csv-imports.md) · *this file* |
 | `/api/employee-ids` | GET | `authorizeEmail` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · *this file* |
@@ -3118,6 +3261,7 @@ feature doc and in no hand-written section here.**
 | `/api/employee-roles` | GET, POST, DELETE | `requireElevatedSession` | [ceo-assistant](../features/ceo-assistant.md) · [delete-authorization](../features/delete-authorization.md) |
 | `/api/employee-skill-sets` | GET, PUT | `authorizeEmail` | [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) |
 | `/api/employee/commendations` | GET | `getServerSession` | — **no doc** |
+| `/api/employee/current-paycycle` | GET | `getServerSession` | [employee-current-paycycle](../features/employee-current-paycycle.md) |
 | `/api/employee/documents` | GET, POST | `getServerSession` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/employee/documents/[id]` | GET, DELETE | `getServerSession` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/employee/documents/coe-preview` | GET | `getServerSession` | [documents-tab](../features/documents-tab.md) |
@@ -3130,23 +3274,23 @@ feature doc and in no hand-written section here.**
 | `/api/employee/support/chat` | GET, POST, DELETE | `authorizeEmail` | [employee-support-chat](../features/employee-support-chat.md) |
 | `/api/employee/support/chat/[id]/messages` | GET, POST | `authorizeEmail` | — **no doc** |
 | `/api/employees` | GET | `authorizeEmail` | [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-id-card](../features/employee-id-card.md) · *this file* |
-| `/api/external/mcp` | POST | — **none found** | [external-api-integrations](../features/external-api-integrations.md) · *this file* |
-| `/api/external/v1/global-master-list` | GET | — **none found** | [external-api-integrations](../features/external-api-integrations.md) · *this file* |
+| `/api/external/mcp` | POST | `admitExternalCall` (per-client API key) | [external-api-integrations](../features/external-api-integrations.md) · *this file* |
+| `/api/external/v1/global-master-list` | GET | `admitExternalCall` (per-client API key) | [external-api-integrations](../features/external-api-integrations.md) · *this file* |
 | `/api/fpu-attendance` | GET, POST | `authorizeEmail` | [fpu-groups-attendance](../features/fpu-groups-attendance.md) · *this file* |
 | `/api/fpu-enroll` | GET, POST | `authorizeEmail` | [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) · *this file* |
 | `/api/gift-address/owed` | POST | — **none found** | [gift-address-external-link](../features/gift-address-external-link.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) |
 | `/api/gift-address/request-otp` | POST | — **none found** | — **no doc** |
 | `/api/gift-address/save` | POST | — **none found** | — **no doc** |
 | `/api/gift-address/verify-otp` | POST | — **none found** | — **no doc** |
-| `/api/gift-catalog` | GET, PUT | — **none found** | — **no doc** |
+| `/api/gift-catalog` | GET, PUT | `requireFeatureEdit` · *GET: none in route* | — **no doc** |
 | `/api/gift-orders` | GET, POST | `requireFeatureAccess('hr','gift_tracker','view')` (GET) · `requireFeatureEdit('hr','gift_tracker')` (POST lock/reopen/delete) | [gift-tracker-orders](../features/gift-tracker-orders.md) |
-| `/api/gift-payments` | GET, PUT | — **none found** | — **no doc** |
+| `/api/gift-payments` | GET, PUT | `requireFeatureEdit` · *GET: none in route* | — **no doc** |
 | `/api/gift-tracker/recent-submissions` | GET | `requireFeatureAccess('hr','gift_tracker','view')` | [gift-address-external-link](../features/gift-address-external-link.md) |
-| `/api/gift-tracker-notes` | GET, PUT | — **none found** | — **no doc** |
+| `/api/gift-tracker-notes` | GET, PUT | `requireFeatureEdit` · *GET: none in route* | — **no doc** |
 | `/api/global-master-list` | GET, POST | service-role only | [csv-imports](../features/csv-imports.md) · *this file* |
 | `/api/global-master-list/names` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/global-master-list/people` | GET | `getServerSession` | — **no doc** |
-| `/api/hr/backfill-onboarding-notifications` | POST | — **none found** | [audit-log](../features/audit-log.md) |
+| `/api/hr/backfill-onboarding-notifications` | POST | `requireFeatureEdit` | [audit-log](../features/audit-log.md) |
 | `/api/hr/department-rates` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/hr/fpu-classes` | GET, POST, PATCH, DELETE | `requireFeatureAccess` | [fpu-enrollment](../features/fpu-enrollment.md) · [fpu-groups-attendance](../features/fpu-groups-attendance.md) · *this file* |
 | `/api/hr/fpu-classes/class-close` | POST | `requireFeatureAccess` | [fpu-groups-attendance](../features/fpu-groups-attendance.md) · *this file* |
@@ -3164,35 +3308,35 @@ feature doc and in no hand-written section here.**
 | `/api/hr/new-hire-checklist/recruiters` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/hr/new-hire-checklist/referrals` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/hr/new-hire-checklist/sources` | GET | `requireElevatedSession` | — **no doc** |
-| `/api/hr/offboard` | POST | — **none found** | [bonus-catalog](../features/bonus-catalog.md) · [identity-resolution](../features/identity-resolution.md) · *this file* |
-| `/api/hr/offboard-fire-webhook` | POST | — **none found** | — **no doc** |
+| `/api/hr/offboard` | POST | `requireFeatureEdit` | [bonus-catalog](../features/bonus-catalog.md) · [identity-resolution](../features/identity-resolution.md) · *this file* |
+| `/api/hr/offboard-fire-webhook` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/hr/offboard-history` | GET | `requireElevatedSession` | [identity-resolution](../features/identity-resolution.md) · [offboarding-automation](../features/offboarding-automation.md) |
-| `/api/hr/offboard-sheet-backfill` | POST | — **none found** | [offboarding-automation](../features/offboarding-automation.md) · *this file* |
-| `/api/hr/offboard-sheet-delete` | POST | — **none found** | — **no doc** |
-| `/api/hr/onboarding-bypass` | POST | — **none found** | [hsl-subdepartments](../features/hsl-subdepartments.md) · *this file* |
+| `/api/hr/offboard-sheet-backfill` | POST | `requireFeatureEdit` | [offboarding-automation](../features/offboarding-automation.md) · *this file* |
+| `/api/hr/offboard-sheet-delete` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/hr/onboarding-bypass` | POST | `requireFeatureEdit` | [hsl-subdepartments](../features/hsl-subdepartments.md) · *this file* |
 | `/api/hr/onboarding-submissions` | GET, POST | `requireElevatedSession` | [hsl-subdepartments](../features/hsl-subdepartments.md) · [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) · *this file* |
 | `/api/hr/onboarding-submissions/[id]` | GET, DELETE | `requireElevatedSession` | [hsl-subdepartments](../features/hsl-subdepartments.md) · [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) · *this file* |
-| `/api/hr/onboarding-submissions/[id]/send` | POST | — **none found** | [onboarding-pay-plans](../features/onboarding-pay-plans.md) |
-| `/api/hr/onboarding-submissions/[id]/set-work-email` | POST | — **none found** | [hsl-subdepartments](../features/hsl-subdepartments.md) · [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) · *this file* |
-| `/api/hr/onboarding-submissions/[id]/verify-work-email` | POST | — **none found** | [workspace-account-verify](../features/workspace-account-verify.md) |
-| `/api/hr/onboarding-submissions/[id]/workspace-status` | POST | — **none found** | [workspace-account-verify](../features/workspace-account-verify.md) |
+| `/api/hr/onboarding-submissions/[id]/send` | POST | `requireFeatureEdit` | [onboarding-pay-plans](../features/onboarding-pay-plans.md) |
+| `/api/hr/onboarding-submissions/[id]/set-work-email` | POST | `requireFeatureEdit` | [hsl-subdepartments](../features/hsl-subdepartments.md) · [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) · *this file* |
+| `/api/hr/onboarding-submissions/[id]/verify-work-email` | POST | `requireFeatureEdit` | [workspace-account-verify](../features/workspace-account-verify.md) |
+| `/api/hr/onboarding-submissions/[id]/workspace-status` | POST | `requireFeatureEdit` | [workspace-account-verify](../features/workspace-account-verify.md) |
 | `/api/hr/orientation-attendance` | GET | `requireFeatureAccess` | [hr-orientation-attendance](../features/hr-orientation-attendance.md) |
 | `/api/hr/pay-plans` | GET, POST | `requireFeatureAccess` | [onboarding-pay-plans](../features/onboarding-pay-plans.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/hr/pay-plans/[id]` | DELETE | — **none found** | [onboarding-pay-plans](../features/onboarding-pay-plans.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/hr/pay-plans/[id]` | DELETE | `requireFeatureEdit` | [onboarding-pay-plans](../features/onboarding-pay-plans.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/hr/pending-employees` | GET, POST | `requireElevatedSession` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/hr/pending-employees/[id]` | PATCH, DELETE | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/hr/pending-employees/[id]/promote` | POST | — **none found** | — **no doc** |
-| `/api/hr/pending-employees/[id]/retry-workspace` | POST | — **none found** | — **no doc** |
-| `/api/hr/pending-employees/[id]/unpromote` | POST | — **none found** | — **no doc** |
-| `/api/hr/pending-employees/bulk-promote` | POST | — **none found** | — **no doc** |
-| `/api/hr/pending-employees/bulk-unpromote` | POST | — **none found** | — **no doc** |
-| `/api/hr/reonboard` | POST | — **none found** | [csv-imports](../features/csv-imports.md) · [offboarding-automation](../features/offboarding-automation.md) |
+| `/api/hr/pending-employees/[id]` | PATCH, DELETE | `requireFeatureEdit` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/hr/pending-employees/[id]/promote` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/hr/pending-employees/[id]/retry-workspace` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/hr/pending-employees/[id]/unpromote` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/hr/pending-employees/bulk-promote` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/hr/pending-employees/bulk-unpromote` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/hr/reonboard` | POST | `requireFeatureEdit` | [csv-imports](../features/csv-imports.md) · [offboarding-automation](../features/offboarding-automation.md) |
 | `/api/hr/work-email/suggest` | POST | `requireElevatedSession` | [audit-log](../features/audit-log.md) · [workspace-account-verify](../features/workspace-account-verify.md) |
-| `/api/hr/workspace-account/verify` | POST | — **none found** | [audit-log](../features/audit-log.md) |
+| `/api/hr/workspace-account/verify` | POST | `requireFeatureEdit` | [audit-log](../features/audit-log.md) |
 | `/api/hr/workspace-license-info` | GET | `requireElevatedSession` | — **no doc** |
-| `/api/hsl-bonus/entries` | GET, POST, DELETE | — **none found** | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
-| `/api/hsl-bonus/period` | DELETE | — **none found** | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
-| `/api/hsl-bonus/period-status` | GET, POST | — **none found** | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) |
+| `/api/hsl-bonus/entries` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `/api/hsl-bonus/period` | DELETE | `requireFeatureEdit` | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `/api/hsl-bonus/period-status` | GET, POST | `requireFeatureEdit` · *GET: none in route* | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) |
 | `/api/hsl-bonus/period-summary` | GET | — **none found** | [pre-release-security-readiness](../features/pre-release-security-readiness.md) |
 | `/api/hsl-bonus/team-members` | GET | `getServerSession` | [hsl-subdepartments](../features/hsl-subdepartments.md) |
 | ↳ | | | **503 when `?dept=` names a branch it cannot resolve** (2026-09-22). DATA sub-teams live in `app_settings`, so an unreadable map makes a data key indistinguishable from a typo — and the reply would be a confident empty roster, i.e. "this team has nobody in it". Code teams still resolve and still answer. |
@@ -3201,18 +3345,19 @@ feature doc and in no hand-written section here.**
 | `/api/kpi-results` | GET | `authorizeEmail` | — **no doc** |
 | `/api/leave-requests` | GET, POST | `requireElevatedSession` | [delete-authorization](../features/delete-authorization.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
 | `/api/leave-requests/[id]` | PATCH, DELETE | `getServerSession` | [delete-authorization](../features/delete-authorization.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
-| `/api/manager/appointment-rankings` | GET | `getServerSession` | [manager-appointment-rankings](../features/manager-appointment-rankings.md) · [manager-my-team](../features/manager-my-team.md) |
-| `/api/manager/appointment-rankings/days` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-appointment-leaderboard](../features/manager-appointment-leaderboard.md) |
+| `/api/manager/appointment-rankings` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-appointment-rankings](../features/manager-appointment-rankings.md) · [manager-my-team](../features/manager-my-team.md) · *this file* |
+| `/api/manager/appointment-rankings/days` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-appointment-leaderboard](../features/manager-appointment-leaderboard.md) · *this file* |
 | `/api/manager/approver-candidates` | GET | `getServerSession` | [time-adjustment-requests](../features/time-adjustment-requests.md) |
 | `/api/manager/calltools-username` | PATCH | `getServerSession` | [onboarding-calltools-username](../features/onboarding-calltools-username.md) |
-| `/api/manager/deliverable-rankings` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-pm-rankings](../features/manager-pm-rankings.md) · [manager-my-team](../features/manager-my-team.md) |
-| ↳ | | | *(2026-09-26; every per-person KPI-bonus department since 2026-09-27)* KPI Rankings. Three one-row probes first (any row · appointments · SP → unavailable). Ranked by bonus pesos **server-side**; formulas and assignments are read to classify rows and never returned; the response carries KPI item counts + positions only, never `amount` (pinned by a serialization test). `?basis=daily` returns Hubstaff days + the per-day order. No email parameter. |
+| `/api/manager/deliverable-rankings` | GET | `getServerSession` (via `authorizeManagedDepartment`) | [manager-pm-rankings](../features/manager-pm-rankings.md) · [manager-hsl-kpi-rankings](../features/manager-hsl-kpi-rankings.md) · [manager-rankings-history](../features/manager-rankings-history.md) · [manager-my-team](../features/manager-my-team.md) · *this file* |
+| ↳ | | | *(2026-09-26; every per-person KPI-bonus department since 2026-09-27; HR / QC / Accounting team boards and `department=hsl:<key>` HSL sub-teams since 2026-09-28)* KPI Rankings. Three one-row probes first (any row · appointments · SP → unavailable). Ranked by bonus pesos **server-side** (HSL: the stored `calculated_bonus`, All bonuses only); formulas and assignments are read to classify rows and never returned; the response carries KPI item counts + positions only (`metrics[].team`, and `order.weeks` for the View modal), never `amount` (pinned by a serialization test). `?basis=daily` returns Hubstaff days + the per-day order. No email parameter. See § 22. |
 | `/api/manager/departed-members` | GET | `getServerSession` | *this file* |
 | `/api/manager/department-members` | GET | `getServerSession` | [identity-resolution](../features/identity-resolution.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
+| `/api/manager/kpi-insights` | GET | `getServerSession` | [kpi-calculator-insights](../features/kpi-calculator-insights.md) · *this file* |
 | `/api/manager/medals` | GET, POST | `getServerSession` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/manager/member-monthly-pay` | GET | — **none found** | [identity-resolution](../features/identity-resolution.md) · [pre-release-security-readiness](../features/pre-release-security-readiness.md) |
 | `/api/manager/member-notes` | GET, PUT | `getServerSession` | [manager-my-team](../features/manager-my-team.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/manager/member-rate-history` | GET | — **none found** | — **no doc** |
+| `/api/manager/member-rate-history` | GET | `requireRateVisibilitySession` | — **no doc** |
 | `/api/manager/orientation-history` | GET | `getServerSession` | [manager-orientation-attendance](../features/manager-orientation-attendance.md) |
 | `/api/manager/pending-hires` | GET | `getServerSession` | [manager-orientation-attendance](../features/manager-orientation-attendance.md) · [offboarding-automation](../features/offboarding-automation.md) |
 | `/api/manager/pending-hires/[id]/no-show` | POST | `getServerSession` | [offboarding-automation](../features/offboarding-automation.md) |
@@ -3224,8 +3369,8 @@ feature doc and in no hand-written section here.**
 | `/api/mesa-ledger` | GET | `requireElevatedSession` | [mesa](../features/mesa.md) |
 | `/api/mesa-notes` | GET, POST | `requireElevatedSession` | [mesa](../features/mesa.md) |
 | `/api/mesa-requests` | GET, POST | `requireElevatedSession` | [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) · *this file* |
-| `/api/mesa-requests/[id]` | PATCH, DELETE | — **none found** | [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) · *this file* |
-| `/api/mesa-requests/[id]/dispatch` | POST | — **none found** | [mesa](../features/mesa.md) · [urgent-payments](../features/urgent-payments.md) |
+| `/api/mesa-requests/[id]` | PATCH, DELETE | `requireFeatureEditAnyView` | [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) · *this file* |
+| `/api/mesa-requests/[id]/dispatch` | POST | `requireFeatureEdit` | [mesa](../features/mesa.md) · [urgent-payments](../features/urgent-payments.md) |
 | `/api/mesa-requests/[id]/receipts` | GET, POST, DELETE | `authorizeEmail` | [mesa](../features/mesa.md) |
 | `/api/offboarding-queue` | GET, POST, PATCH | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) |
 | `/api/offboarding-queue/[id]` | PATCH, DELETE | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) |
@@ -3234,17 +3379,17 @@ feature doc and in no hand-written section here.**
 | `/api/onboarding/[token]/gmail-surname` | POST | `requireElevatedSession` | [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) |
 | `/api/onboarding/[token]/w8ben` | POST | — **none found** | — **no doc** |
 | `/api/onboarding/ip-assignment-preview` | POST | — **none found** | [onboarding-ip-assignment](../features/onboarding-ip-assignment.md) · *this file* |
-| `/api/orphanage-budget-requests` | GET, POST | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/orphanage-budget-requests/[id]/decide` | PATCH | — **none found** | — **no doc** |
+| `/api/orphanage-budget-requests` | GET, POST | `requireFeatureEdit` · *GET: none in route* | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/orphanage-budget-requests/[id]/decide` | PATCH | `requireFeatureEdit` | — **no doc** |
 | `/api/orphanage-dispatches` | GET, POST | `requireFeatureAccess` | [paystub-dispatch](../features/paystub-dispatch.md) · [urgent-payments](../features/urgent-payments.md) |
 | `/api/orphanage-disputes` | GET | `getServerSession` | *this file* |
 | `/api/orphanage-interns` | GET, POST | `requireFeatureAccess` | [orphanage-interns](../features/orphanage-interns.md) · *this file* |
 | `/api/orphanage-interns/[id]` | GET, PATCH, DELETE | `requireFeatureAccess` | [orphanage-interns](../features/orphanage-interns.md) · *this file* |
-| `/api/orphanage-interns/[id]/rates` | POST | — **none found** | — **no doc** |
+| `/api/orphanage-interns/[id]/rates` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/orphanage-interns/hours` | GET, POST, DELETE | `requireFeatureAccess` | [orphanage-interns](../features/orphanage-interns.md) |
-| `/api/orphanage-interns/pay-weeks` | POST, DELETE | — **none found** | — **no doc** |
+| `/api/orphanage-interns/pay-weeks` | POST, DELETE | `requireFeatureEdit` | — **no doc** |
 | `/api/orphanage-interns/pay-weeks/config` | GET, POST | `requireFeatureAccess` | — **no doc** |
-| `/api/orphanage-interns/pay-weeks/decide` | PATCH | — **none found** | — **no doc** |
+| `/api/orphanage-interns/pay-weeks/decide` | PATCH | `requireFeatureEdit` | — **no doc** |
 | `/api/orphanage-interns/pay-weeks/inbox` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/orphanage-interns/pay-weeks/preview` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/orphanage-pay` | GET, POST, DELETE | `requireFeatureAccess` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · [orphanage-pab-coverage](../features/orphanage-pab-coverage.md) · *this file* |
@@ -3252,74 +3397,74 @@ feature doc and in no hand-written section here.**
 | `/api/orphanage-pay/oms/saves` | GET, POST | `requireFeatureAccess` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · *this file* |
 | `/api/orphanage-pay/oms/return` | GET, POST | `requireFeatureAccess` · `requireFeatureEdit` | [orphanage-oms-pull](../features/orphanage-oms-pull.md) · *this file* |
 | `/api/orphanage-vendor-invoices` | GET, POST | `requireFeatureAccess` | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
-| `/api/orphanage-vendor-invoices/[id]` | PATCH, DELETE | — **none found** | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
+| `/api/orphanage-vendor-invoices/[id]` | PATCH, DELETE | `requireFeatureEdit` | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
 | `/api/orphanage-vendors` | GET, POST | `requireFeatureAccess` | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
-| `/api/orphanage-vendors/[id]` | PATCH, DELETE | — **none found** | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
+| `/api/orphanage-vendors/[id]` | PATCH, DELETE | `requireFeatureEdit` | [third-party-vendors](../features/third-party-vendors.md) · *this file* |
 | `/api/orphanage-worker-payments` | GET, POST, PATCH, DELETE | `requireFeatureAccess` | — **no doc** |
-| `/api/orphanages` | GET, POST | — **none found** | [audit-log](../features/audit-log.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/orphanages/[id]` | PATCH, DELETE | — **none found** | [audit-log](../features/audit-log.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
-| `/api/orphanages/upload` | POST | — **none found** | [audit-log](../features/audit-log.md) |
+| `/api/orphanages` | GET, POST | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/orphanages/[id]` | PATCH, DELETE | `requireFeatureEdit` | [audit-log](../features/audit-log.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
+| `/api/orphanages/upload` | POST | `requireFeatureEdit` | [audit-log](../features/audit-log.md) |
 | `/api/pab-disputes` | GET, POST | `requireElevatedSession` | [delete-authorization](../features/delete-authorization.md) · *this file* |
 | `/api/pab-disputes/[id]` | PATCH, DELETE | `authorizeEmail` | [delete-authorization](../features/delete-authorization.md) · *this file* |
-| `/api/pab-disputes/orphanage-manager-submit` | POST | — **none found** | *this file* |
+| `/api/pab-disputes/orphanage-manager-submit` | POST | `requireFeatureEdit` | *this file* |
 | `/api/pab-disputes/orphanage-overlap` | GET | `authorizeEmail` | *this file* |
-| `/api/pab-disputes/orphanage-visits` | GET, POST | — **none found** | *this file* |
-| `/api/pab-disputes/orphanage-visits/[id]` | DELETE | — **none found** | *this file* |
+| `/api/pab-disputes/orphanage-visits` | GET, POST | `requireFeatureEdit` · *GET: none in route* | *this file* |
+| `/api/pab-disputes/orphanage-visits/[id]` | DELETE | `requireFeatureEdit` | *this file* |
 | `/api/pab-exclusions` | POST | `requireElevatedSession` | [pab-exclusions](../features/pab-exclusions.md) · [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
-| `/api/payment-catalog/banks` | GET, POST, PATCH | — **none found** | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) |
-| `/api/payment-catalog/banks/[key]/people` | GET | — **none found** | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) |
-| `/api/payment-catalog/departments` | GET, POST, PATCH | — **none found** | [payment-catalog-departments](../features/payment-catalog-departments.md) · *this file* |
-| `/api/payment-catalog/pay-processors` | GET, POST, PATCH | — **none found** | [payment-catalog-pay-processors](../features/payment-catalog-pay-processors.md) |
-| `/api/payment-catalog/pay-structures` | GET, POST, DELETE | — **none found** | [bonus-catalog](../features/bonus-catalog.md) · [payroll-readiness](../features/payroll-readiness.md) · *this file* |
+| `/api/payment-catalog/banks` | GET, POST, PATCH | `requireRateVisibilitySession` · `requireFeatureEdit` | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) |
+| `/api/payment-catalog/banks/[key]/people` | GET | `requireRateVisibilitySession` | [payment-catalog-current-banks](../features/payment-catalog-current-banks.md) |
+| `/api/payment-catalog/departments` | GET, POST, PATCH | `requireRateVisibilitySession` · `requireFeatureEdit` | [payment-catalog-departments](../features/payment-catalog-departments.md) · *this file* |
+| `/api/payment-catalog/pay-processors` | GET, POST, PATCH | `requireRateVisibilitySession` · `requireFeatureEdit` | [payment-catalog-pay-processors](../features/payment-catalog-pay-processors.md) |
+| `/api/payment-catalog/pay-structures` | GET, POST, DELETE | `requireRateVisibilitySession` · `requireFeatureEdit` | [bonus-catalog](../features/bonus-catalog.md) · [payroll-readiness](../features/payroll-readiness.md) · *this file* |
 | `/api/payment-catalog/roster` | GET | `requireRateVisibilitySession` | [payment-catalog-departments](../features/payment-catalog-departments.md) §2 · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) |
-| `/api/payment-catalog/system-bonuses` | GET, POST, DELETE | — **none found** | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) |
+| `/api/payment-catalog/system-bonuses` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) |
 | `/api/payment-dispatch/bank-override` | POST | service-role only | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches` | GET, POST | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [dispatch-paid-toast](../features/dispatch-paid-toast.md) · *this file* |
 | `/api/payment-dispatches/cycle-closeout` | GET, POST, DELETE | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches/recent-paid` | GET | `requireFeatureAccess` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
-| `/api/payment-dispatches/undo` | POST | — **none found** | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `/api/payment-dispatches/undo` | POST | `requireFeatureEdit` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches/undo-history` | GET | `requireElevatedSession` | [payment-dispatch](../features/payment-dispatch.md) |
-| `/api/payroll-current-pay` | GET | — **none found** | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
+| `/api/payroll-current-pay` | GET | `requireRateVisibilityOrFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/payroll-dispatch-lock` | GET, POST | `getServerSession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payment-dispatch](../features/payment-dispatch.md) · *this file* |
-| `/api/payroll-wizard/additions` | POST | — **none found** | [orphanage-pay-step](../features/orphanage-pay-step.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
-| `/api/payroll-wizard/audit` | GET | — **none found** | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
-| `/api/payroll-wizard/audit-week` | GET | — **none found** | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
-| `/api/payroll-wizard/audit/export` | GET | — **none found** | — **no doc** |
+| `/api/payroll-wizard/additions` | POST | `requireFeatureEdit` | [orphanage-pay-step](../features/orphanage-pay-step.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
+| `/api/payroll-wizard/audit` | GET | `requireRateVisibilityOrFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
+| `/api/payroll-wizard/audit-week` | GET | `requireRateVisibilityOrFeatureEdit` | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
+| `/api/payroll-wizard/audit/export` | GET | `requireRateVisibilityOrFeatureEdit` | — **no doc** |
 | `/api/payroll-wizard/bank-exemptions` | GET, POST, DELETE | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) |
 | `/api/payroll-wizard/manual-validation` | GET, PATCH | `requireFeatureAccess` | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
 | `/api/payroll-wizard/notes` | GET, POST, PATCH, DELETE | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |
-| `/api/payroll-wizard/notes/adjustment` | POST | — **none found** | — **no doc** |
+| `/api/payroll-wizard/notes/adjustment` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/payroll-wizard/notes/workers` | GET | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |
 | `/api/payroll-wizard/offboarded` | GET | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) · *this file* |
 | `/api/payroll-wizard/offboarded-roster` | GET | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) · *this file* |
 | `/api/payroll-wizard/first-hours-week` | GET | `requireFeatureAccess` | [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · *this file* |
 | `/api/payroll-wizard/pab-merge` | POST | `requireFeatureAccess` | [payroll-wizard-step-load](../features/payroll-wizard-step-load.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · *this file* |
-| `/api/payroll-wizard/pab-forgive-month` | POST | — **none found** | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
+| `/api/payroll-wizard/pab-forgive-month` | POST | `requireFeatureEdit` | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
 | `/api/payroll-wizard/rate-exemptions` | GET, POST, DELETE | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) |
 | `/api/payroll-wizard/readiness` | GET | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) |
-| `/api/payroll/hsl-transfers-bulk` | GET | — **none found** | [department-transfers](../features/department-transfers.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
-| `/api/payroll/rate-history-bulk` | GET | — **none found** | [department-transfers](../features/department-transfers.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · *this file* |
+| `/api/payroll/hsl-transfers-bulk` | GET | `requireRateVisibilitySession` | [department-transfers](../features/department-transfers.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
+| `/api/payroll/rate-history-bulk` | GET | `requireRateVisibilitySession` | [department-transfers](../features/department-transfers.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · *this file* |
 | `/api/payroll/settlement-currency` | POST | `getServerSession` | [bonus-catalog](../features/bonus-catalog.md) · [cop-country-payees](../features/cop-country-payees.md) |
 | `/api/paystub-dispatch-queue` | GET, POST | `requireFeatureAccess` | [mesa](../features/mesa.md) · [payment-dispatch](../features/payment-dispatch.md) · *this file* |
 | `/api/paystub-dispatch-queue/arrears` | GET | `requireFeatureAccess` | [payment-dispatch](../features/payment-dispatch.md) · [paystub-dispatch](../features/paystub-dispatch.md) · *this file* |
-| `/api/people` | GET | — **none found** | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · *this file* |
-| `/api/people/[email]` | GET | — **none found** | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · *this file* |
+| `/api/people` | GET | `requireRateVisibilitySession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · *this file* |
+| `/api/people/[email]` | GET | `requireRateVisibilitySession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · *this file* |
 | `/api/people/[email]/payroll` | GET | `requireRateVisibilitySession` | [people-payroll-history](../features/people-payroll-history.md) · [people-bank-search](../features/people-bank-search.md) · *this file* |
 | `/api/people/[email]/banking` | PATCH | service-role only | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payroll-readiness](../features/payroll-readiness.md) · *this file* |
-| `/api/people/[email]/profile` | PATCH | — **none found** | *this file* |
-| `/api/people/[email]/reveal-banking` | POST | — **none found** | [employee-profile](../features/employee-profile.md) · [people-bank-card](../features/people-bank-card.md) |
-| `/api/people/bank-changes` | GET | — **none found** | — **no doc** |
-| `/api/people/offboarded` | GET | — **none found** | [people-offboarded-pay](../features/people-offboarded-pay.md) |
-| `/api/people/pay` | POST | — **none found** | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
-| `/api/people/request-bank-info` | POST | — **none found** | — **no doc** |
+| `/api/people/[email]/profile` | PATCH | `requireFeatureEditAnyView` | *this file* |
+| `/api/people/[email]/reveal-banking` | POST | `requireRateVisibilitySession` | [employee-profile](../features/employee-profile.md) · [people-bank-card](../features/people-bank-card.md) |
+| `/api/people/bank-changes` | GET | `requireRateVisibilitySession` | — **no doc** |
+| `/api/people/offboarded` | GET | `requireRateVisibilitySession` | [people-offboarded-pay](../features/people-offboarded-pay.md) |
+| `/api/people/pay` | POST | `requireRateVisibilitySession` | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
+| `/api/people/request-bank-info` | POST | `requireFeatureEditAnyView` | — **no doc** |
 | `/api/people/special-transfers` | GET | `authorizeEmail` | [employee-dashboard-cache](../features/employee-dashboard-cache.md) |
-| `/api/people/stats` | GET | — **none found** | — **no doc** |
+| `/api/people/stats` | GET | `requireRateVisibilitySession` | — **no doc** |
 | `/api/presence/active` | GET | — **none found** | — **no doc** |
 | `/api/presence/heartbeat` | POST | `getServerSession` | [audit-log](../features/audit-log.md) · [employee-support-chat](../features/employee-support-chat.md) |
 | `/api/presence/last-seen` | GET | — **none found** | [accounting-cobrowse](../features/accounting-cobrowse.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) |
 | `/api/qc/assignments` | GET | `getServerSession` | [qc-scoring](../features/qc-scoring.md) · *this file* |
 | `/api/qc/compare-paste` | GET, PUT, DELETE | `requireFeatureAccess` | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [qc-scoring](../features/qc-scoring.md) · *this file* |
-| `/api/qc/lock` | POST | — **none found** | [payment-dispatch](../features/payment-dispatch.md) |
+| `/api/qc/lock` | POST | `requireFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/qc/review` | GET, POST | `getServerSession` | [payment-dispatch](../features/payment-dispatch.md) · [qc-scoring](../features/qc-scoring.md) |
 | `/api/qc/submissions` | GET, POST | `getServerSession` | [payment-dispatch](../features/payment-dispatch.md) · [qc-scoring](../features/qc-scoring.md) |
 | `/api/resignation-requests` | GET, POST | `requireElevatedSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) |
@@ -3332,31 +3477,31 @@ feature doc and in no hand-written section here.**
 | `/api/support/chat/queue` | GET, PATCH | `requireFeatureAccess` | — **no doc** |
 | `/api/support/tickets` | GET, PATCH | `requireFeatureAccess` | [employee-support](../features/employee-support.md) |
 | `/api/support/tickets/[id]/reply` | GET, POST | `requireFeatureAccess` | [employee-support](../features/employee-support.md) |
-| `/api/suspend-employee` | POST | — **none found** | — **no doc** |
-| `/api/swall/comments` | GET, POST | — **none found** | — **no doc** |
-| `/api/swall/comments/[id]` | DELETE | — **none found** | — **no doc** |
-| `/api/swall/posts` | GET, POST | — **none found** | — **no doc** |
-| `/api/swall/posts/[id]` | DELETE | — **none found** | — **no doc** |
-| `/api/swall/reactions` | POST | — **none found** | — **no doc** |
-| `/api/swall/upload` | POST | — **none found** | — **no doc** |
-| `/api/team-rankings` | GET | `getServerSession` | [employee-team-directory](../features/employee-team-directory.md) · [manager-my-team](../features/manager-my-team.md) |
+| `/api/suspend-employee` | POST | `requireFeatureEdit` | — **no doc** |
+| `/api/swall/comments` | GET, POST | `getToken` | — **no doc** |
+| `/api/swall/comments/[id]` | DELETE | `getToken` | — **no doc** |
+| `/api/swall/posts` | GET, POST | `getToken` (GET) · `requireFeatureEditAnyView` | — **no doc** |
+| `/api/swall/posts/[id]` | DELETE | `getToken` | — **no doc** |
+| `/api/swall/reactions` | POST | `getToken` | — **no doc** |
+| `/api/swall/upload` | POST | `requireFeatureEditAnyView` | — **no doc** |
+| `/api/team-rankings` | GET | `getServerSession` | [employee-team-directory](../features/employee-team-directory.md) · [manager-my-team](../features/manager-my-team.md) · *this file* |
 | `/api/team-roster` | GET | `getServerSession` | [employee-team-directory](../features/employee-team-directory.md) |
 | `/api/tickets` | GET, POST | `requireFeatureAccess` | [employee-support-chat](../features/employee-support-chat.md) · [employee-support](../features/employee-support.md) |
-| `/api/tickets/[id]` | PATCH, DELETE | — **none found** | [employee-support-chat](../features/employee-support-chat.md) · [employee-support](../features/employee-support.md) |
+| `/api/tickets/[id]` | PATCH, DELETE | `requireFeatureEditAnyView` | [employee-support-chat](../features/employee-support-chat.md) · [employee-support](../features/employee-support.md) |
 | `/api/tickets/[id]/comments` | GET, POST | `requireFeatureAccess` | [employee-support](../features/employee-support.md) |
 | `/api/tickets/[id]/events` | GET | `requireFeatureAccess` | [tickets-board](../features/tickets-board.md) |
 | `/api/tickets/members` | GET | `requireFeatureAccess` | [tickets-board](../features/tickets-board.md) |
 | `/api/time-adjustments` | GET, POST | `requireElevatedSession` | [employee-support](../features/employee-support.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) · *this file* |
 | `/api/time-adjustments/[id]` | PATCH, DELETE | `getServerSession` | [employee-support](../features/employee-support.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) · *this file* |
 | `/api/time-adjustments/second-approvals` | GET | `getServerSession` | [time-adjustment-requests](../features/time-adjustment-requests.md) |
-| `/api/time-adjustments/upload` | POST | — **none found** | [time-adjustment-requests](../features/time-adjustment-requests.md) · *this file* |
-| `/api/toggle-mesa-member` | POST | — **none found** | [fpu-enrollment](../features/fpu-enrollment.md) · [fpu-groups-attendance](../features/fpu-groups-attendance.md) · *this file* |
+| `/api/time-adjustments/upload` | POST | `getToken` | [time-adjustment-requests](../features/time-adjustment-requests.md) · *this file* |
+| `/api/toggle-mesa-member` | POST | `requireFeatureEditAnyView` | [fpu-enrollment](../features/fpu-enrollment.md) · [fpu-groups-attendance](../features/fpu-groups-attendance.md) · *this file* |
 | `/api/update-employee-ids` | POST | `authorizeEmail` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) · *this file* |
-| `/api/update-employee-profile` | POST | — **none found** | *this file* |
-| `/api/update-employee-rates` | POST | — **none found** | *this file* |
+| `/api/update-employee-profile` | POST | `requireFeatureEdit` | *this file* |
+| `/api/update-employee-rates` | POST | `requireFeatureEdit` | *this file* |
 | `/api/urgent-payments` | GET | `requireElevatedSession` | [payment-dispatch](../features/payment-dispatch.md) · [people-offboarded-pay](../features/people-offboarded-pay.md) |
 | `/api/urgent-payments/dispatches` | GET | `requireElevatedSession` | [payment-dispatch](../features/payment-dispatch.md) · [people-offboarded-pay](../features/people-offboarded-pay.md) |
-| `/api/urgent-payments/dispatches/undo` | POST | — **none found** | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
+| `/api/urgent-payments/dispatches/undo` | POST | `requireFeatureEdit` | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
 | `/api/urgent-payments/requests` | GET | `requireElevatedSession` | [urgent-payments](../features/urgent-payments.md) |
-| `/api/urgent-payments/requests/[id]` | DELETE | — **none found** | [urgent-payments](../features/urgent-payments.md) |
-| `/api/urgent-payments/requests/[id]/dispatch` | POST | — **none found** | [urgent-payments](../features/urgent-payments.md) |
+| `/api/urgent-payments/requests/[id]` | DELETE | `requireFeatureEdit` | [urgent-payments](../features/urgent-payments.md) |
+| `/api/urgent-payments/requests/[id]/dispatch` | POST | `requireFeatureEdit` | [urgent-payments](../features/urgent-payments.md) |

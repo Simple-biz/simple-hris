@@ -53,7 +53,7 @@ week's readiness at all.
 | Pure scorer (no I/O, unit-tested) | `src/lib/payroll/readiness-score.ts` (+ `readiness-score.test.ts`) |
 | Wizard setup checklist — pure derivation + marker keys (unit-tested) | `src/lib/payroll/wizard-setup-steps.ts` (+ `wizard-setup-steps.test.ts`) |
 | Wizard setup checklist — status pill + step icon (shared with the Overview card) | `src/components/accounting/wizard-setup-meta.ts` |
-| Per-week readiness snapshot cache (FAB ring · this pane · Overview card) | `src/lib/payroll/readiness-cache.ts` |
+| Per-week readiness snapshot cache (FAB ring · this pane · Overview card · greeting modal) | `src/lib/payroll/readiness-cache.ts` |
 | Week-scoped roster predicates (pure, unit-tested) | `src/lib/payroll/readiness-week-scope.ts` (+ `readiness-week-scope.test.ts`) |
 | No-Pay-Rate post-enrichment retry rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-retry.ts` (+ `readiness-rate-retry.test.ts`) |
 | No-Pay-Rate "Ignore" partition rule (pure, unit-tested) | `src/lib/payroll/readiness-rate-ignore.ts` (+ `readiness-rate-ignore.test.ts`) |

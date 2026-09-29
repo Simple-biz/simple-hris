@@ -350,6 +350,11 @@ Already audited and unchanged: Hubstaff upload / delete / rename / set current
 month / Ignore / exclusions, dispute decide / revoke, time adjustments,
 contractor decisions, manual validation, dispatch lock, Send to Payment Dispatch.
 
+**Send to OMS** (0fa0b89d, 2026-09-28, after this pass) writes
+`wizard.orphanage_oms_returned` once per send: push_id, the OMS table, week, count,
+total and up to 300 rows as sent ([orphanage-oms-pull.md](./orphanage-oms-pull.md)
+§ *Sending to OMS*).
+
 ## 8. Open
 
 - **`POST /api/import-daily-report` is a dead endpoint.** No component fetches

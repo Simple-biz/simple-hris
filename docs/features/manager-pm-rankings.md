@@ -18,7 +18,8 @@ top performing"*. Widened again on 2026-09-28 (session `77e1ce37`, ruling (b) on
 performance please add them"*. Plan: [2026-09-26-manager-pm-rankings.md](../superpowers/plans/2026-09-26-manager-pm-rankings.md).
 The doc keeps its first slug; the surface is no longer PM-only.
 It is a sibling of Lead Gen's [appointment leaderboard](./manager-appointment-leaderboard.md), and it
-renders **the same pane** and runs **the same `computeLeaderboard`**. Not pushed.
+renders **the same pane** and runs **the same `computeLeaderboard`**. Pushed (`origin/main` =
+`0fa0b89d`, reflog 2026-09-29).
 
 ## Key files
 
@@ -279,5 +280,5 @@ grant holders. `hasSpRankings` now needs **`SP` and `Ranking`** (the AI Team Bon
 (with `amount`, server-side), `bonus_catalog_bonuses` (`id, kind, formula`, server-side, never
 `amount`), `bonus_catalog_assignments` (`bonus_id, scope, department_key, shared_team`),
 `hsl_bonus_period_status`, `app_settings` (`payroll.dispatch_lock.%`), `active_employees`,
-`hubstaff_hours` (days, via `getDepartmentDaysWorked`). Committed locally.
-**Not pushed; not deployed.**
+`hubstaff_hours` (days, via `getDepartmentDaysWorked`). Pushed (`origin/main` = `0fa0b89d`, reflog
+2026-09-29); **not deployed.**

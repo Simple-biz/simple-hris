@@ -218,7 +218,10 @@ anything differently.
 and 200 randomized upload sets. `scripts/verify-pab-merge-identity.mts` (read-only) replays both
 paths on the live table and exits 0 only when `JSON.stringify` of the two results is equal, which
 checks key order as well as values. **Run 2026-09-26: `identical: true`**, 2,355 people × 221
-columns. Re-run it after any change to `pab-merge.ts`, the canonical-date resolvers, or
+columns. **Re-run 2026-09-27 04:56Z** (session `573ef18a`, on Kane's *"Run it please"*): exit 0, the
+same 2,355 × 221, repeat read identical, merge 608 → 207 ms. That was local code against
+production **before** the push, so it does not replace the post-deploy rerun, which is still owed
+(Sep 29 log item 262 (e)). Re-run it after any change to `pab-merge.ts`, the canonical-date resolvers, or
 `fetchHubstaffRowsBySourceFile`.
 
 **A skipped week is still skipped. That is deliberate, and it is OPEN.** Both paths drop an upload

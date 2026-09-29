@@ -588,6 +588,10 @@ What the row does, and the rules it carries over unchanged from the wizard panel
   has expired **keeps its place** in the strip and says so on stage — the count never
   shrinks silently; Refresh re-signs it. Escape and a backdrop click close the viewer
   only — the View modal under it stays open (the one-layer rule of the manager modal).
+  **Verified 2026-09-26 on a static replica only** (mocked `/api`, headless Chromium, light and
+  dark, 390px; `2aebfde3`). It has not been clicked through signed in (Sep 29 log item 258). The
+  Payroll Wizard, manager and employee viewers keep their older lightboxes. Moving them onto
+  `ProofLightbox` was offered and not answered (item 269).
 - **Delete** appears on `denied` / `manager_denied` rows only, for `DISPUTE_DELETE_ROLES`,
   and calls the existing `DELETE /api/time-adjustments/[id]`.
 - Rows sort **before disputes**: a time adjustment changes a pay figure, a dispute changes

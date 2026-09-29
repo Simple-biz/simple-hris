@@ -359,6 +359,9 @@ DeviceMetaData per 13720"*. `DeviceMetaData` and `13720` appear nowhere in this 
 the sibling projects on the Desktop, and the monday.com connector is unauthorised in a
 non-interactive session, so item 13720 could not be read. Stopped and asked rather than
 guessing at a metadata table's columns.
+**2026-09-28 (session `58f0adff`): not an HRIS item.** #13720 is Gridline's DeviceMetadata
+contract-columns ticket (`gridlineanalyticsv2.2`), merged as `fdad9f0` on 2026-08-26. Nothing is
+blocked here (Sep 29 log item 262 (n)).
 
 ### People roster export: account last-4 + bank last-updated · `edf0aa10` · M
 > *"People - Export Tab - Lets add the Account number's last 4 digits? and last updated this should go to PDF, CSV and XLSX"*

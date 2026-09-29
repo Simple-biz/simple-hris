@@ -136,8 +136,8 @@ at 60% opacity; there is no skeleton flash.
 
 ## Deploy notes
 
-**No migration.** No env vars and no n8n. New route `app/api/manager/kpi-insights`. PENDING: push +
-deploy (Kane). Verified: 27 unit tests, typecheck clean for these files, and the real rule run against
+**No migration.** No env vars and no n8n. New route `app/api/manager/kpi-insights`. Pushed
+(`origin/main` = `0fa0b89d`, reflog 2026-09-29). PENDING: deploy (Kane). Verified: 27 unit tests, typecheck clean for these files, and the real rule run against
 PROD by `scripts/verify-kpi-insights.ts` (09-20: ₱798,250 sent, 11 of 12 departments, top earner
 ₱53,750, PM Team). It was rendered and screenshotted in a local harness (light, dark, hover, tie,
 gap, narrow) with synthetic names. Kane has viewed it on the dev server (the avatar-ring fix, a

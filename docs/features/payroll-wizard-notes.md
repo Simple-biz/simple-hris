@@ -178,9 +178,12 @@ Notes:
   entry per week, so whichever reads first spares the others the query (it used
   to be fetched twice over). The helpers live in `src/lib/payroll/readiness-cache.ts`
   (moved out of this component unchanged), so all three share the 30s fresh window,
-  the 6h ceiling and the 4-week trim above. The ring still force-refetches when
+  the 6h ceiling and the 4-week trim above. The Accounting dashboard's **"Hi Kane"
+  greeting modal** (2026-09-26) reads through the same helpers, on the live-week
+  entry (`''`). The ring still force-refetches when
   the modal closes — an inline "Set rate"/"Set bank" fix may have just moved the
-  score. See [accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md).
+  score. See [accounting-overview-payroll-notes-card.md](./accounting-overview-payroll-notes-card.md)
+  and [payroll-cycle-greeting-modal.md](./payroll-cycle-greeting-modal.md).
 - Row-cache writes are driven off the saved-server-copy map, never off
   keystroke state, so a half-typed draft can't be what a later mount seeds from.
 - A cache-seeded snapshot never counts as a live payload for the 100% confetti —

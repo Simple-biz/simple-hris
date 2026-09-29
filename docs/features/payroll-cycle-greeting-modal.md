@@ -6,8 +6,8 @@ shows the **live** payroll cycle's Wizard Setup checklist (Payroll Wizard Steps 
 USD → PHP / COP conversion rates not updated for the cycle, or orphanage hours not synced. Each
 item has a **Go to Step N** button that opens the wizard on that step. Mounted by the Accounting
 shell (`src/App.tsx`). Built 2026-09-26 for Kane (audit item 234; blueprint answers in
-`docs/superpowers/plans/2026-09-26-payroll-cycle-greeting-modal.md`). Committed locally, **not
-pushed / not deployed**.
+`docs/superpowers/plans/2026-09-26-payroll-cycle-greeting-modal.md`). Pushed (`origin/main` =
+`0fa0b89d`, reflog 2026-09-29), **not deployed**.
 
 ## Key files
 
@@ -117,7 +117,8 @@ than clicking the wizard's own step rail:
 ## Deploy notes
 
 **No migration.** No new route, env var, grant or n8n import. Client-only, plus one new optional
-prop on `PayrollWizard`. **PENDING:** push, then a production click-through: the populated modal,
+prop on `PayrollWizard`. Pushed (`origin/main` = `0fa0b89d`, reflog 2026-09-29). **PENDING:** the
+deploy, then a production click-through: the populated modal,
 a view-only viewer (no Go buttons), a viewer without the wizard grant (never opens), a jump from a
 replayed week, and a jump while spectating. Also `next build`, skipped because a dev server was
 live on :3000.

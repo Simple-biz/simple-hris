@@ -457,12 +457,16 @@ its strongest form. The live week, 2026-09-20, had **no saved rows at all** on
 any of the five when the rules were deleted, and **no editable week carries a
 peso of exposure**. Intake had carried ₱558,450 of editable exposure. **The one
 open hole is the deploy gap.** Kane pushes, not the session. If a manager
-scores 2026-09-20 on the old bundle before the push, that week then carries
-code-rule pesos, and any row they touch after the deploy rescores at ₱0. Re-run
-`scripts/probe-hsl-hardcoded-columns.mts --dept <key>` for each of the five
-immediately before pushing (seven now, including `collections` and
-`post_hearing_prep`). **Deploy note, PENDING:** a non-zero "P from code rules" on
-an editable week is the stop sign. Audit item 246.
+scores 2026-09-20 on the old bundle before the deploy lands, that week then
+carries code-rule pesos, and any row they touch after the deploy rescores at ₱0.
+The check is `scripts/probe-hsl-hardcoded-columns.mts --dept <key>` for all
+seven (the five, plus `collections` and `post_hearing_prep`). It was meant to run
+immediately before the push. It ran at ~19:10Z on 2026-09-28, **three minutes
+AFTER** the 19:07:19Z push, and was clean on all seven (₱0 editable; the only
+live-week rows were Post-Hearing's 45 drafts, ₱0 from code). Re-run 2026-09-29
+13:30Z: **clean on all seven** (09-20 `ready`, ₱0 from code rules, ₱0 editable;
+Sep 29 log item 259). **Deploy note, PENDING until Kane confirms the deploy:** a
+non-zero "P from code rules" on an editable week is the stop sign. Audit item 246.
 
 **Deleted by Kane's ruling (b), even though the Library pays LESS** (Kane,
 2026-09-28, *"Both docs are stale!"*). Both were first hard-stopped as a money

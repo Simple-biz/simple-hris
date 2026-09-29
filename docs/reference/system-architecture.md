@@ -1,6 +1,6 @@
 # Simple HRIS: System Architecture
 
-> **Last verified 2026-09-10** against `main` (363 commits after the 2026-08-10 pass: every count below was recounted, every routing/auth claim re-read in the file it cites, and the sections that changed are dated inline). Symbol and file names are the durable references; the
+> **Last verified 2026-09-10** against `main` (363 commits after the 2026-08-10 pass: every count below was recounted, every routing/auth claim re-read in the file it cites, and the sections that changed are dated inline); the Repository Structure counts, cron auth, the public-surface rate limiter and `PUBLIC_PATHS`, decisions 3 and #14 re-verified 2026-09-29. Symbol and file names are the durable references; the
 > occasional `file:line` is a convenience for the very large files (`PayrollWizard.tsx`, `index.css`)
 > and will drift. Behavior that used to be true but no longer is lives in
 > [Retired & Superseded Behavior](#retired--superseded-behavior) rather than being deleted — check
@@ -58,8 +58,8 @@ simple-hris/
 │   ├── login/ auth-callback/    # Google SSO entry + NextAuth callback landing
 │   ├── accounting/ admin/ ceo/ contractor/ employee/ hr/ manager/
 │   │   orphanage/ payroll-clerk/ qc/ tickets/    # one route segment per dashboard
-│   ├── onboarding/ update-bank-info/            # public (unauthenticated) forms
-│   └── api/                     # 91 route groups / 290 route.ts handlers (server-side only)
+│   ├── onboarding/ update-bank-info/ update-gift-address/   # public (unauthenticated) forms
+│   └── api/                     # 97 route groups / 335 route.ts handlers (server-side only; recounted 2026-09-29)
 │       #   Original CRUD core: employees, employee-hourly-rates, employee-ids,
 │       #     employee-rate-profiles, hubstaff-hours, add/delete-employee,
 │       #     update-employee-rates, import-daily-report
@@ -81,12 +81,12 @@ simple-hris/
 │   ├── constants.ts             # Mock seed data (MOCK_USERS, MOCK_TIME_RECORDS, MOCK_PAYMENTS) —
 │   │                            #   still used as PayrollWizard initial state, not dead fixtures
 │   ├── index.css                # Global styles, Tailwind theme variables, font @import
-│   ├── hooks/                   # 29 shared hooks (+1 test) — usePagesVisibility, useDispatchLock,
+│   ├── hooks/                   # 33 shared hooks (+1 test; recounted 2026-09-29) — usePagesVisibility, useDispatchLock,
 │   │                            #   useWizardDispatchLock, useLiveRefresh, useResilientResource,
 │   │                            #   useDispatchPaidToasts, useEmployeeCachedState, useManagerCachedState, …
 │   │                            #   NB: useDispatchQueue is NOT here — see components/payroll-clerk/
 │   ├── data/                    # Static JSON lookups (mesa-email-aliases.json)
-│   ├── components/              # 28 subfolders, organized by dashboard + shared layer
+│   ├── components/              # 30 subfolders (recounted 2026-09-29), organized by dashboard + shared layer
 │   │   ├── *.tsx (top level)    # Sidebar, Overview, PayrollWizard, AppFooter,
 │   │   │                        #   ConnectionStatusBanner, LeaveRequestsPanel,
 │   │   │                        #   SystemSettings, SystemDiagnostics, ThemeProvider
@@ -96,7 +96,7 @@ simple-hris/
 │   │   └── common/ collab/ announcements/ swall/ notifications/
 │   │       presence/ audit/ rbac/ auth/                           # shared layer
 │   │                            # see docs/reference/components.md for the full per-dashboard reference
-│   └── lib/                     # 69 top-level entries / 646 files (451 modules + 195 node:test files beside them)
+│   └── lib/                     # 80 top-level entries / ~1,000 files (~632 modules + 368 node:test files beside them; recounted 2026-09-29 — 69 / 646 on 2026-09-10)
 │       ├── utils.ts             # cn() — clsx + tailwind-merge
 │       ├── hash.ts  date-only.ts  csv/  email/  name/  text/  images/  pdf/
 │       ├── auth/ rbac/          # route-access.ts, views.ts, feature-permissions.ts
@@ -107,7 +107,8 @@ simple-hris/
 │       ├── <one dir per dashboard>   # accounting/ admin/ ceo/ contractor/ employee/ hr/
 │       │                             #   manager/ orphanage/ qc/
 │       ├── google-sheets/ google-workspace/ monday/ anthropic/ webhooks/ notifications/
-│       └── supabase/            # 78 files — one module per table/domain, plus
+│       ├── oms/ external-api/   # OMS: config, the hours pull + saves, the Send-to-OMS write; external read API (REST + MCP, per-client keys)
+│       └── supabase/            # 97 files (84 modules + 13 tests, recounted 2026-09-29) — one module per table/domain, plus
 │                                #   client.ts / browser.ts / server.ts and
 │                                #   select-all-paged.ts (PostgREST 1000-row cap)
 │
@@ -120,10 +121,10 @@ simple-hris/
 │                                #   every non-trivial edit routes through docs/features/INDEX.md first
 ├── references/                  # Non-code source material and DB scripts
 │   ├── sql/{alter,create,fix,migrate,seed}/   # all hand-run SQL — there is no migration framework
-│   ├── n8n/                     # exported n8n workflow JSON (19 files)
+│   ├── n8n/                     # exported n8n workflow JSON (20 files, recounted 2026-09-29)
 │   ├── docs/                    # source PDFs / XLSX / pay-plan references
 │   └── data/ sound-tester/ webhook-testers/
-├── scripts/                     # 157 one-off + operational Node/tsx scripts
+├── scripts/                     # 234 one-off + operational Node/tsx scripts (recounted 2026-09-29)
 │   └── check-supabase.mjs       #   e.g. dev connectivity diagnostic
 ├── patches/                     # next-themes SSR hydration fix
 ├── public/                      # Static assets
@@ -132,7 +133,7 @@ simple-hris/
 └── .env.example                 # Most environment variables documented — see Environment Variables
 ```
 
-**Schema changes are manual.** There is no migration framework, no numbered-migration runner and no `supabase/migrations` directory. DDL lives as loose SQL under `references/sql/{create,alter,migrate,fix,seed}/` and is applied by hand or by a `scripts/apply-*.mjs` helper; individual feature docs track each one as PENDING until it has actually been run. `scripts/` is a 157-file ops surface (`apply-*` migration appliers, `audit-*` diagnostics, `backfill-*`, `cleanup-*`, one-off data surgery, PDF asset builders) and it runs against `.env.local`, which carries the **production** service-role key. Read a script before you run it. Because there is no applied-ledger, **every "PENDING" migration claim in docs or memory is a claim, not a fact** — `scripts/audit-pending-migrations.mts` probes the live database read-only and says which objects actually exist; run it before believing either answer (2026-09-10: 26 probed objects APPLIED, but it does not yet probe the 2026-09-08 Bonus Library history objects, which are NOT applied).
+**Schema changes are manual.** There is no migration framework, no numbered-migration runner and no `supabase/migrations` directory. DDL lives as loose SQL under `references/sql/{create,alter,migrate,fix,seed}/` and is applied by hand or by a `scripts/apply-*.mjs` helper; individual feature docs track each one as PENDING until it has actually been run. `scripts/` is a 234-file ops surface (157 on 2026-09-10) (`apply-*` migration appliers, `audit-*` diagnostics, `backfill-*`, `cleanup-*`, one-off data surgery, PDF asset builders) and it runs against `.env.local`, which carries the **production** service-role key. Read a script before you run it. Because there is no applied-ledger, **every "PENDING" migration claim in docs or memory is a claim, not a fact** — `scripts/audit-pending-migrations.mts` probes the live database read-only and says which objects actually exist; run it before believing either answer (2026-09-10: 26 probed objects APPLIED, but it does not yet probe the 2026-09-08 Bonus Library history objects, which are NOT applied).
 
 ---
 
@@ -162,7 +163,7 @@ After login, `app/login/page.tsx` resolves the user's roles via `GET /api/employ
 
 `admin` is keys-to-the-castle: it grants every view (`views.ts`) and is accepted on every role-gated route (`route-access.ts`), so it is implicit in every row above — the roles listed are the *non-admin* grants.
 
-Non-dashboard routes: `/login`, `/auth-callback`, `/onboarding/[token]` (hire flow) and `/update-bank-info` (OTP) — see [Two Perimeters](#two-perimeters-the-public-surface).
+Non-dashboard routes: `/login`, `/auth-callback`, `/onboarding/[token]` (hire flow), `/update-bank-info` (OTP) and `/update-gift-address` (OTP) — see [Two Perimeters](#two-perimeters-the-public-surface).
 
 Each dashboard is still an `activeTab`-driven SPA internally (the sidebar sets a tab string; the main area renders the matching view; no per-tab URL routing) — but the **dashboard itself is a real route**, and tabs are gated by roles plus a per-feature-permission overlay (`src/lib/rbac/feature-permissions.ts`). As of the 2026-06 overhaul that overlay is enforced across **every** role view — Accounting, HR, Manager, CEO, Contractor, Orphanage, QC and Tickets (the `FeatureViewKey` union) — and the API routes behind them, provisioned from the Admin Dashboard. The Employee portal is the exception: it is gated by the separate admin-controlled Pages-visibility overlay (`src/lib/pages/visibility.ts`), not by feature permissions. See [features/rbac-feature-permissions.md](../features/rbac-feature-permissions.md). Every shell resolves its viewer from `?email=` (validated, normalized, cached in `sessionStorage[SESSION_EMAIL_KEY]`).
 
@@ -189,9 +190,10 @@ Never gate a privileged surface from inside a `'use client'` component: it reads
 Besides the JWT-gated HRIS there is a public, tokenized surface that never sees a NextAuth session:
 
 - `/onboarding/[token]` + `/api/onboarding/*` — a new hire's invite token is the only credential.
-- `/update-bank-info` + `/api/bank-update/*` — email OTP.
+- `/update-bank-info` + `/api/bank-update/*` — email OTP ([update-bank-info.md](../features/update-bank-info.md)).
+- `/update-gift-address` + `/api/gift-address/*` — email OTP (the tenure-gift delivery address).
 
-Both are protected in `proxy.ts` by an in-memory sliding-window rate limiter that returns **429**, not by `getToken()`. `PUBLIC_PATHS` is `['/login', '/update-bank-info']` and `PUBLIC_PREFIXES` is `['/api/auth/']`. When `BANK_UPDATE_PUBLIC_HOST` is set, requests on that hostname are hard-isolated: only the bank-update page and its API are served, every other API 404s and every other page redirects to the form, so `/login` and the dashboards never appear on the public domain.
+All three are protected in `proxy.ts` by an in-memory **fixed-window** rate limiter (`rateLimited()`, `proxy.ts:56-80`: one counter per bucket, method and IP, reset when its window ends — not a sliding window, although the comment at `proxy.ts:27` calls it one) that returns **429**, not by `getToken()`. `PUBLIC_PATHS` is `['/login', '/update-bank-info', '/update-gift-address']` (`proxy.ts:163-167`) and `PUBLIC_PREFIXES` is `['/api/auth/']`. *(Corrected 2026-09-29: this said "sliding-window" and listed two public paths.)* When `BANK_UPDATE_PUBLIC_HOST` is set, requests on that hostname are hard-isolated: only the bank-update page and its API are served, every other API 404s and every other page redirects to the form, so `/login` and the dashboards never appear on the public domain. `GIFT_ADDRESS_PUBLIC_HOST` does the same for the gift-address page and `/api/gift-address/*` (`proxy.ts:209-230`).
 
 ---
 
@@ -231,7 +233,7 @@ Several flows also write **back** to the sheet — `src/lib/google-sheets/` hold
 
 `app/api/cron/*` holds eight route folders: **six scheduled jobs**, one authenticated-but-unscheduled endpoint, and one tombstone. Scheduled: four Google-Sheet mirrors (`sync-master-from-sheet`, `sync-rates-from-sheet`, `sync-hsl-from-sheet`, `sync-screening-from-sheet`), `apply-scheduled-transfers` and `process-scheduled-deletions`. **`sync-hubstaff-week` has had no scheduler since 2026-08-20** — Kane retired the weekly Hubstaff auto-sync; do **not** re-import its n8n workflow or add a Vercel cron. The endpoint and `runHubstaffWeeklySync()` stay because the wizard's manual "Sync from Hubstaff" path shares that code, so **the weekly hours load is a manual action** — assume a week did *not* load itself ([[hubstaff-weekly-auto-sync]] memory, `features/hubstaff-weekly-auto-sync.md`). The eighth, `sync-offboarded-from-sheet`, is kept only as a **410 tombstone** (retired 2026-08-07) — it is the one folder that does not import `cron-auth`, because it does nothing.
 
-The seven authenticated endpoints carry no session — `proxy.ts` admits them only on `Authorization: Bearer $CRON_SECRET` (**fail-closed if the var is unset**) and each handler re-verifies via `src/lib/auth/cron-auth.ts` (an unscheduled endpoint is not an open one).
+The seven authenticated endpoints are reachable **two ways** *(corrected 2026-09-29 — this said they "carry no session" and that `proxy.ts` admits them "only" on the secret)*. A sessionless caller gets past `proxy.ts` only with `Authorization: Bearer $CRON_SECRET` (**fail-closed if the var is unset**, `proxy.ts:243-252`); any other request goes through the normal SSO gate, and every one of the seven handlers also accepts an **elevated session** — the manual Sync buttons — through `cronSessionElevated()` / `cronSessionAuthz()` in `src/lib/auth/cron-auth.ts` (`sync-screening-from-sheet` calls `requireElevatedSession()` directly) — an unscheduled endpoint is not an open one. Since 2026-09-28 the master and HSL syncs record a manual run under the person who clicked (`syncRunActor`, `src/lib/audit/sync-actor.ts`; `details.trigger: "manual" | "cron"`); only the scheduled run is recorded as the system.
 
 `vercel.json` schedules only the two deletion/transfer jobs. The four sheet syncs are fired by **n8n Schedule Triggers on purpose** (DST-aware), so a job missing from `vercel.json` is not dead — check n8n. When the Hubstaff pull *is* run (manually), it executes the wizard's whole ingest pipeline (`src/lib/hubstaff/run-weekly-sync.ts`: hours batch, `payroll.available` notify, MESA deposits, `disbursement_records` seeding). See [features/hubstaff-weekly-auto-sync.md](../features/hubstaff-weekly-auto-sync.md).
 
@@ -245,7 +247,7 @@ The **20** live slugs are registered in `src/components/admin/AdminWebhooks.tsx`
 
 `manager_suspend` / `manager_reactivate` back the Manager → My Team Suspend and Reactivation buttons (`src/lib/hr/offboard-webhooks.ts` exports the slug constants; `app/api/manager/temp-pause/route.ts` fires them).
 
-Matching workflow JSONs live in `references/n8n/` (19 files) and **must be imported into n8n before a new slug does anything** — a slug with no imported workflow fails silently from the app's point of view.
+Matching workflow JSONs live in `references/n8n/` (20 files, recounted 2026-09-29) and **must be imported into n8n before a new slug does anything** — a slug with no imported workflow fails silently from the app's point of view.
 
 ---
 
@@ -426,7 +428,7 @@ The app behaves like a SPA (tab-based nav, no page reloads) and all interactive 
 The Supabase tables use human-readable column names with spaces (`"Work Email"`, `"Total worked"`, `"Regular Rate"`). All queries quote these names via PostgREST. Lib functions build normalized key indexes (`normFieldKey()`) to handle both space and underscore variants during merges.
 
 **3. PostgREST caps every read at 1,000 rows**
-`db.max-rows=1000` is set on this project, and it truncates **silently** — no error, and an explicit `.range(0, 99999)` does not defeat it. The active roster passed 1,000 people in July 2026, so *any* "read the whole table/view" call must go through `selectAllPaged()` (`src/lib/supabase/select-all-paged.ts`): build the query inside the closure, apply the handed `.range(from, to)`, and add a stable `.order()` so pages don't shear. The 2026-07-30 audit found 16 un-paged readers silently dropping the roster's tail — missing payroll notifications, truncated team rosters, wrong HSL week models, understated outstanding-pay reports, and a work-email suggester that could re-mint taken addresses. See [audits/audit-2026-07-30-session-log.md](../audits/audit-2026-07-30-session-log.md).
+`db.max-rows=1000` is set on this project, and it truncates **silently** — no error, and an explicit `.range(0, 99999)` does not defeat it. The active roster passed 1,000 people in July 2026, so *any* "read the whole table/view" call must go through `selectAllPaged()` (`src/lib/supabase/select-all-paged.ts`): build the query inside the closure, apply the handed `.range(from, to)`, and add a stable `.order()` so pages don't shear. The 2026-07-30 audit found 16 un-paged readers silently dropping the roster's tail — missing payroll notifications, truncated team rosters, wrong HSL week models, understated outstanding-pay reports, and a work-email suggester that could re-mint taken addresses. See [audits/audit-2026-07-30-session-log.md](../audits/audit-2026-07-30-session-log.md). **The filter has a ceiling too** *(2026-09-28, Sep 25 log item 244; re-verified 2026-09-29)*: every PostgREST filter rides in the request URL, and this project's Supabase front refuses one past ~16 KB (`fetch failed`, then `400`, then `414`) while the request body carries any size — so a write can land and the filter-built delete after it fail. Never send an unbounded `in` / `not.in` list: compute the set in process and send it through `inFilterLists` (`src/lib/supabase/in-list-chunks.ts`). Paging is a per-query fact, not a per-file one — the readers still open on 2026-09-29 are listed in [data-sources.md](./data-sources.md) § the 1000-row cap.
 
 **4. Integer seconds for hours arithmetic**
 All Hubstaff hour values are converted to integer seconds before any arithmetic. This eliminates floating-point errors in overtime calculation (e.g. `7:59:59` vs `8:00:00`). The display layer divides back to decimals.
@@ -495,7 +497,7 @@ Password columns on `employee_hourly_rates`: `password_hash`, `previous_password
 **14. One notification table, one audit spine**
 All in-app notifications are rows in `employee_notifications`, keyed only by recipient email. `src/lib/notifications/notification-views.ts` maps each `type` (42 of them: `onboarding.submitted`, `transfer.*`, `offboarding.*`, `resignation.*`, `rate.change`, `dispute.*`, `time_adjustment.*`, `bank_info.requested`, `people.banking.*`, `payroll.processing_*`, …) to the dashboard(s) it is actionable from, and **that map is what drives the per-view unread badges in ViewSwitcher** — add a new type there or its count surfaces nowhere. Delivery surfaces: `src/components/notifications/`, `useEmployeeNotificationsUnread`, `useNotificationCountsByView`, `useNotificationChime`.
 
-Separately, privileged mutations write an `audit_log` row through `insertAuditLog()` (`src/lib/supabase/audit-log.ts`). **Since 2026-09-09 the registry, not the type union, is the contract**: `src/lib/audit/registry.ts` maps every action-name prefix to a family + the dashboards it belongs to, and the Admin panel's filter/badges and Admin Penny's `search_audit_log` are *generated* from it; `registry.test.ts` source-scans every `insertAuditLog` call site and **fails the build** on an action with no family (the `AuditAction` union still exists but `action` accepts `AuditAction | string`, so the test is what enforces it). The actor is always `auditFrom(request, authz)` / the session — **never a body field**; destructive paths audit **first**; and there is no wholesale clear, only a dated retention purge with a 90-day floor. Governing doc: `features/audit-log.md`.
+Separately, privileged mutations write an `audit_log` row through `insertAuditLog()` (`src/lib/supabase/audit-log.ts`). **Since 2026-09-09 the registry, not the type union, is the contract**: `src/lib/audit/registry.ts` maps every action-name prefix to a family + the dashboards it belongs to, and the Admin panel's filter/badges and Admin Penny's `search_audit_log` are *generated* from it; `registry.test.ts` source-scans every `insertAuditLog` call site and **fails the build** on an action with no family (the `AuditAction` union still exists but `action` accepts `AuditAction | string`, so the test is what enforces it). The actor is always `auditFrom(request, authz)` / the session — **never a body field**; destructive paths audit **first**; and there is no wholesale clear, only a dated retention purge with a 90-day floor. Governing doc: `features/audit-log.md`. *(Re-verified 2026-09-29.)* "Never a body field" held everywhere only from **2026-09-28**: until then `csv.upload` took the Hubstaff upload form's `uploaded_by`, `pab_dispute.submitted` fell back to the body's `created_by` and then to the employee, and every manual master / HSL sheet sync was recorded as "GSheets Sync" / "System". A differing client value is now kept only as `*_claim`, and `src/lib/audit/actor-from-gate.test.ts` pins the Hubstaff paths. The same day `POST /api/app-settings` began auditing every value change **by key** as `app_settings.changed` (exempt only `payroll.wizard.final_pay.*` and `hubstaff_daily_breakdown`, `APP_SETTING_AUDIT_EXEMPT` in `src/lib/audit/app-settings-change.ts`).
 
 **15. Admin dashboard: Global Master List; app-wide presence + live Ping**
 The Admin sidebar's old **Employees** tab is gone — replaced by a **Global Master List** tab (`src/components/admin/AdminGlobalMasterList.tsx`; `systemNav` id `global-master-list`). Presence was widened from a simple online roster into a per-person location feed: `PresenceProvider` (`src/components/presence/PresenceProvider.tsx`) broadcasts each client's `path` (which dashboard), `tab` (which in-dashboard tab) and `active` (whether the HRIS tab is focused — away vs present) on the app-wide `hris-presence` Realtime **Presence** channel. Dashboard shells publish their current tab label via `usePublishPresenceTab(label)`; viewers read the full roster via `usePresenceDetails()`, so the Global Master List can show e.g. "HR Dashboard · Onboarding" next to an online person.

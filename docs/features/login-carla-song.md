@@ -40,11 +40,17 @@ lead-in. Loudness-normalized to **−14 LUFS**, with a 0.3s anti-click fade-in a
 deliberately **no baked fade-out** (the player owns the 26→30s fade; a baked one would
 double-fade).
 
-> **Repo hygiene:** only the 40s clip is committed. The full purchased track and the
+> **Repo hygiene:** only the 40s clip should be committed. The full purchased track and the
 > alternate cuts in `public/sounds/carla-song-candidates/` (`A-final-chorus-163s` — the
-> installed one, `B-chorus2-111s`, `C-chorus1-56s`) are **untracked and must stay out of
+> installed one, `B-chorus2-111s`, `C-chorus1-56s`) **must stay untracked and out of
 > the repo**. To switch cuts, copy a candidate over `carla-song.mp3` and commit that file
 > only.
+>
+> **The repo is out of compliance with that rule — they are tracked today** (item 175,
+> measured 2026-09-29 with `git ls-files public/sounds`): the full track
+> `public/sounds/ANRI - I Can't Stop The Loneliness.mp3` and all three candidates were
+> committed by `69073939` (2026-07-30). No code reads any of them. The rule stands; see
+> [start-processing-cue.md](./start-processing-cue.md) § *The asset* for the sibling case.
 
 ## Toast performance note
 

@@ -450,10 +450,10 @@ Every sync (success OR failure) writes a row to `audit_log` with:
 | `csv.rates.upload` | `employee_hourly_rates` | `file, rows, inserted, updated, unique_employees, skipped_no_work_email, skipped_no_rate, upload_id` |
 | `csv.rates.sync` | `employee_hourly_rates` | adds the same `source: 'google-sheet'` payload as master |
 | `csv.rates.sync.error` | `employee_hourly_rates` | `error: <message>` |
-| `csv.upload` | `hubstaff_hours` | `file, rows, upload_id` |
+| `csv.upload` | `hubstaff_hours` | `file, rows, upload_id` (+ `uploaded_by_claim` when the upload form's `uploaded_by` differs from the session) |
 | `csv.delete` | `hubstaff_hours` | `file, rows_deleted` |
 
-Every entry includes `user_name`, `user_role`, `ip_address`, and `created_at`. Sync entries use the synthetic system user `{ name: 'GSheets Sync', role: 'System' }`; CSV uploads use `{ name: 'Fran M', role: 'Senior Admin' }`.
+Every entry includes `user_name`, `user_role`, `ip_address`, and `created_at`. **The actor is the session** (2026-09-28, [audit-log.md](audit-log.md) §7b). A CSV upload names the signed-in uploader; the Hubstaff upload form's `uploaded_by` survives only as `details.uploaded_by_claim` when it differs (`app/api/hubstaff-hours/route.ts`). A sheet sync (`sync-master-from-sheet`, `sync-hsl-from-sheet`) names the clicker with `trigger: "manual"`; only the scheduled run is the synthetic system user `{ name: 'GSheets Sync', role: 'System' }`, with `trigger: "cron"` (`src/lib/audit/sync-actor.ts`). The old `{ name: 'Fran M', role: 'Senior Admin' }` upload actor is gone.
 
 ---
 

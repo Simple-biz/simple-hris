@@ -130,7 +130,17 @@ the taken-address set from four sources: `global_master_list` (active rows,
 including both Alternate Work Email columns), `employee_ids`, `employee_roles`
 (non-revoked), and in-flight `hr_pending_employees` (`pending_work_email` /
 `ready`). Off-boarded master rows are **recyclable** (per HR) and are not
-reserved.
+reserved. **OPEN: same-department recycling cannot promote** (Sep 25 log item 242,
+Kane's call).
+
+The three whole-table sources (`global_master_list`, `employee_ids`,
+`employee_roles`) are read through `selectAllPaged` on a total order, and **every
+read throws on an error** (2026-09-25, item 227). `employee_ids` had been one capped
+read (1,000 of 2,072 addresses), which left **3** addresses held only there
+mintable again, and a failed read used to be skipped, which shrank the set with no
+signal. All three callers (Suggest, Set work email, the Gmail-surname step) turn
+the throw into a 500. The in-flight `hr_pending_employees` read is status-filtered
+and throws the same way.
 
 The fix makes recycling **consistent across tables**: it tracks
 `activeEmails` vs `offboardedEmails` from the master list, computes

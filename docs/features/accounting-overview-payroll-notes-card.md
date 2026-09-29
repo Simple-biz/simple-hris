@@ -1,6 +1,7 @@
 # Accounting Overview — "Payroll Notes" card (Steps 1–8)
 
-> **Status:** Built 2026-09-26, committed locally, **not pushed / not deployed**. No migration,
+> **Status:** Built 2026-09-26, pushed (`origin/main` = `0fa0b89d`, reflog 2026-09-29), **not
+> deployed**. No migration,
 > no route change, no new grant.
 > Replaces the **New hires** and **Attrition** cards in the Overview's attention row.
 
@@ -87,13 +88,16 @@ carousel pattern: a 5-second announcement loop would be noise.
 - **Source:** `GET /api/payroll-wizard/readiness[?source_file=]`, the same route and the same
   `payroll_wizard` **view** grant the pane uses. Only `readiness.wizardSetup` is rendered.
 - **Week:** `setupSourceFile` is the Overview's **cycle selection**. A specific upload uses that
-  file. All Time and the default (latest) send **no** `source_file`, so the server uses its live
-  `is_current` week and the card's week tag says which one that is. It comes from the selection,
+  file, and so does the **default**: the Overview seeds its selection to the newest file in its list
+  (`sourceFiles[0]`, `Overview.tsx:2585-2587` and `:3077`), so a first landing reads that filename's
+  readiness entry. Only **All Time** (or a cleared selection) sends **no** `source_file`, and then
+  the server uses its live `is_current` week and the card's week tag says which one that is. It comes from the selection,
   not from `activeSourceFile`, because a failed Hubstaff-hours fetch nulls `activeSourceFile`, and
   that must not move this card to another week.
 - **Cache:** the **same per-week entry** as the FAB's score ring and the Readiness pane
   (`TAB_CACHE_KEYS.payrollReadiness`), through `src/lib/payroll/readiness-cache.ts`. That is the
-  FAB's former private helpers, moved unchanged, so all three readers share one 30s fresh window,
+  FAB's former private helpers, moved unchanged, so all four readers (the FAB ring, the Readiness
+  pane, this card, and the dashboard's greeting modal on the live-week entry `''`) share one 30s fresh window,
   one 6h ceiling and one 4-week trim. On mount, or when the week changes, the card paints the
   cached snapshot and then revalidates, unless the snapshot is under 30s old
   ([payroll-wizard-notes.md:119](./payroll-wizard-notes.md)). The key is on
