@@ -2227,3 +2227,45 @@ into S29 (label and group). `verify-one.mts` read back all 41 rows: **32 Done / 
 Actual SP = Est SP and a Completed Date of Sep 21–23; **9 Pending Deploy / 52 SP** with no Actual SP
 and no date. All 41 are in the Sprint 29 group with the Sprint 29 label. 0 mismatches. Sprint 28
 now holds no open HRIS row. The epic relation is still unset on the pass-33 rows, and a full reconcile owns it.
+
+## Pass 35 — 2026-09-25 · STAGED, never applied, folded into pass 36
+
+A status pass over the 13 open HRIS rows. Two rows had lost their blocker. The Gift Tracker
+Recently filled alert row closed on Kane's word and on delivered alerts. The pay-document reissue
+row closed once `paystub_issues` was applied with RLS on (item 226). Both got an external Completed
+Date of 2026-09-25, inside S29. Hash `47f9f0a49887` was never approved, and it is minted for
+2026-09-25, so it can no longer bind. Both rows are carried unchanged into pass 36.
+
+## Pass 36 — 2026-09-29 · the withheld week + the S29 → S30 rollover (STAGED, NOTHING WRITTEN)
+
+Kane: *"update our monday board based on what work we have done that is withheld"*, then *"move
+unfinished task from 29 to 30 we have a new sprint"*. **The budget was dead all day.** The first
+read-only call (12:41:39Z) returned `DAILY_LIMIT_EXCEEDED`, reset 00:00Z 09-30. So no review hash
+exists, and Sprint 30's group id, label index and window are UNREAD.
+
+- **Withheld:** `217544cd..0fa0b89d`, 127 commits, all pushed. Clustered by file overlap, 79 commits
+  make **52 rows / 170 SP**. The other 48 are named in `pass.mts` and add up to 127 by script.
+  - **48 rows are Pending Deploy in S29.** They wait for Kane to say which he has looked at in prod.
+  - **1 is Done on use:** the blueprint skill (pass 17's dev-tooling rule).
+  - **3 are marked ROLLS TO S30**, because their remaining step lies ahead:
+    - `support.closed`: the CHECK widen is not applied.
+    - The Missing Bank Info n8n re-paste.
+    - Send to OMS: **In Progress**, because the panel button was never added and `OMS_RETURN_TABLE` is unset.
+- **Rollover:** `scripts/tmp-move-s29-open.mts` moves the **10 open S29 rows / 49 SP**. Every blocker
+  was re-measured read-only 2026-09-29, and all are unchanged since 09-26. It **refuses (exit 2) until
+  S30 is mirrored** and the plan rows say S30.
+- **The code-complete rows stay in S29, on purpose.** Once S30 opens (assumed Tue Sep 29), S29's
+  attribution is Sep 15–28. A Pending Deploy row's Done date is its commit date, so filing it in S30
+  would put that date outside its sprint. This is pass 32's rule.
+- **Selfcheck FAILs on one row until S30's window is mirrored.** The blueprint row's 09-26 date has
+  no sprint to belong to yet. This is correct fail-closed behaviour, and nothing was loosened to hide it.
+  A runtime-only simulation with S30 = Sep 29 → passes 54/54.
+
+**Owed after the reset, about 270 calls, which is more than one UTC day's budget:**
+1. `tmp-probe-s30.mts` (2 calls) reads S30's group id, label index and title.
+2. Mirror all four maps, and flip the 13 rows to S30.
+3. Run `review.mts` and give Kane the hash.
+4. `apply.mts --apply --only-new --approve <hash>`, then the mover `--apply`, then `verify-one` on
+   each row.
+
+Open item 255.
