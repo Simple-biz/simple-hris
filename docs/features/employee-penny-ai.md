@@ -27,7 +27,7 @@ fork. Commit: see `git log --oneline -- docs/features/employee-penny-ai.md`.
 | How-to guides | `src/lib/penny/employee-guides.ts` (pure) |
 | Quota math | `src/lib/penny/employee-quota.ts` (pure, client-safe) |
 | Quota ledger | `src/lib/penny/employee-usage-db.ts` (`server-only`) |
-| Table | `references/sql/create/2026-08-19_penny_employee_usage.sql` |
+| Table | `references/sql/create/2026-08-19_penny_employee_usage.sql` · RLS: `references/sql/alter/2026-09-29_enable_rls_advisor_tables.sql` · `scripts/apply-rls-advisor-tables.mts --verify` |
 | Tests | `src/lib/anthropic/employee-tools.test.ts` · `src/lib/penny/employee-quota.test.ts` · `src/lib/penny/employee-faq.test.ts` (greeting + mount guards) |
 
 Siblings: [ceo-assistant.md](./ceo-assistant.md) (the original, and the only Penny doc
@@ -451,6 +451,14 @@ Ten questions per **Asia/Manila calendar day** (Kane, 2026-08-19). Manila is a f
 meter.** There is no counter column: a read-modify-write counter loses an update when
 two tabs send at once, and that lost update is a free prompt. Row counting cannot drift
 from what happened.
+
+**The ledger is service-role only: RLS on, zero policies. Never add a policy.** A meter
+that anyone can delete from is not a meter. From 2026-08-19 to 2026-09-29 the table
+had RLS **off**, and the public anon key (it ships in the browser bundle) held
+SELECT, INSERT, UPDATE and DELETE on it. So anyone could read all 184 rows, and could
+delete any account's rows to refund its allowance, which also removed the ceiling on
+Anthropic spend. Closed 2026-09-29 17:18Z. The anon key now reads 0 rows, and the
+service key still reads all 184 (Sep 29 log item 281).
 
 It is **not** kept in `audit_log`, even though Penny also audits there. The audit log is
 truncatable by admins, and a truncation would silently refund the whole company's daily

@@ -29,8 +29,17 @@
 -- the trail but must never be counted against the employee they were viewing.
 -- Any "how many has X used" query therefore keys on SESSION_EMAIL, never subject.
 --
--- Access is enforced at the API layer (app/api/employee/penny-chat) — no RLS,
--- same as the payroll wizard's tables. Nothing outside src/lib/penny reads it.
+-- Access is enforced at the API layer (app/api/employee/penny-chat), and row
+-- level security is ON with ZERO policies, so only the service role reaches the
+-- table. Nothing outside src/lib/penny reads it, and that module is
+-- service-role only. NEVER add a policy.
+--
+-- This file shipped WITHOUT the ENABLE line (2026-08-19 → 2026-09-29), and
+-- Supabase's default grants gave the public anon key SELECT, INSERT, UPDATE and
+-- DELETE. Because the row count IS the allowance, an anon DELETE refunded
+-- anyone's allowance. Closed 2026-09-29 by
+-- references/sql/alter/2026-09-29_enable_rls_advisor_tables.sql. The line
+-- below keeps a fresh environment from repeating it.
 --
 -- Run in the Supabase SQL editor, or via
 --   node scripts/apply-penny-employee-usage.mjs --apply
@@ -72,6 +81,9 @@ CREATE INDEX IF NOT EXISTS penny_employee_usage_session_day_idx
 -- Secondary: reading one person's whole Penny history (support questions).
 CREATE INDEX IF NOT EXISTS penny_employee_usage_subject_idx
   ON public.penny_employee_usage (lower(subject_email), asked_at DESC);
+
+-- Service role only. Zero policies, on purpose.
+ALTER TABLE public.penny_employee_usage ENABLE ROW LEVEL SECURITY;
 
 COMMENT ON TABLE public.penny_employee_usage IS
   'Prompt ledger for Employee Penny AI. One row per prompt; the COUNT of non-refunded rows for (session_email, Manila day) IS the daily allowance meter (limit 10). Reserved before the model call and stamped refunded_at when a turn produced no answer. session_email = who is charged, subject_email = whose data was answered about (they differ only for an elevated ?email= viewer, who is exempt from the cap). Never count by subject_email.';

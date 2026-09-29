@@ -1,0 +1,45 @@
+-- Fix: Supabase Advisor "RLS Disabled in Public" (ERROR x3), 2026-09-29
+-- ---------------------------------------------------------------------------
+-- Kane, 2026-09-29: "can you connect to supabase and close these for me please
+-- turn on RLS for public".
+--
+-- These were the only three tables in `public` with row level security OFF.
+-- Neither create script had an ENABLE line, and a new table in `public` gets
+-- Supabase's default grants: anon and authenticated hold SELECT, INSERT,
+-- UPDATE and DELETE. Measured live, read-only, 2026-09-29 before this ran:
+--
+--     table                              rows   anon key over PostgREST
+--     penny_employee_usage                184   reads all 184 (HTTP 200)
+--     bonus_catalog_bonus_history          62   reads all 62
+--     bonus_catalog_assignment_history     83   reads all 83
+--
+-- and has_table_privilege() = true for anon on all four verbs, on all three.
+-- The key is NEXT_PUBLIC_, so it ships in every browser bundle. The worst of it:
+-- the row count of penny_employee_usage IS Employee Penny's daily allowance,
+-- so an anon DELETE refunded anyone's allowance, and with it the ceiling on
+-- Anthropic spend.
+--
+-- Fix: RLS ON with ZERO policies = service role only. That is the house
+-- pattern (paystub_issues, gift_orders, the twelve payroll tables). Every
+-- reader and writer of these three tables uses the service-role client, which
+-- has BYPASSRLS, so the app is unaffected:
+--   src/lib/penny/employee-usage-db.ts   (the only module that touches the ledger)
+--   src/lib/supabase/bonus-catalog-db.ts (the only module that touches either history table)
+--
+-- NEVER ADD A POLICY to any of the three without first moving that reader off
+-- the anon key. A policy re-opens the table to whichever role it names.
+--
+-- No row is touched. Idempotent: ENABLE on a table that already has it is a
+-- no-op. No BEGIN/COMMIT here: the apply script wraps it, and a COMMIT inside
+-- this file would make its dry run commit.
+--
+--   node --import tsx scripts/apply-rls-advisor-tables.mts           # rehearse, then ROLL BACK
+--   node --import tsx scripts/apply-rls-advisor-tables.mts --apply   # COMMIT
+--   node --import tsx scripts/apply-rls-advisor-tables.mts --verify  # re-check only
+--
+-- REVERT (re-opens all three to the public key; only if a reader broke):
+--   ALTER TABLE public.<table> DISABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.penny_employee_usage             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bonus_catalog_bonus_history      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bonus_catalog_assignment_history ENABLE ROW LEVEL SECURITY;

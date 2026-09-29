@@ -69,6 +69,15 @@ create table if not exists public.bonus_catalog_assignment_history (
   created_at       timestamptz  not null default now()
 );
 
+-- ── Service role only: RLS on, ZERO policies ─────────────────────────────────
+-- Missing from this file until 2026-09-29. Both tables sat open to the public
+-- anon key (SELECT, INSERT, UPDATE, DELETE via Supabase's default grants) until
+-- references/sql/alter/2026-09-29_enable_rls_advisor_tables.sql closed them.
+-- Every reader and writer is src/lib/supabase/bonus-catalog-db.ts, on the
+-- service role. NEVER add a policy.
+alter table public.bonus_catalog_bonus_history      enable row level security;
+alter table public.bonus_catalog_assignment_history enable row level security;
+
 create index if not exists bonus_catalog_assignment_history_bonus_idx
   on public.bonus_catalog_assignment_history (bonus_id, created_at desc);
 create index if not exists bonus_catalog_assignment_history_assignment_idx

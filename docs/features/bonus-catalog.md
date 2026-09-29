@@ -1269,6 +1269,15 @@ it does not reprice anything. If that ever changes it is a money change: pull
   `exclusions_changed` / `shared_team_changed`, with scope, department, person,
   `excluded_before` / `excluded_after`, `shared_team`, `effective_from`, `created_by`.
 
+**Both history tables are service-role only: RLS on, zero policies. Never add a
+policy.** Every reader and writer is `bonus-catalog-db.ts` on the service role. The
+create SQL shipped without the ENABLE line, so from 2026-09-11 to 2026-09-29 the
+public anon key could read, insert, update and delete both tables (62 and 83 rows).
+A forged row would have shown up as a fake version or assignment change in the
+History panel. Closed 2026-09-29 17:18Z by
+`references/sql/alter/2026-09-29_enable_rls_advisor_tables.sql`. Re-check with
+`node --import tsx scripts/apply-rls-advisor-tables.mts --verify` (Sep 29 log item 281).
+
 ### Rules
 
 - **A version is minted only when a TRACKED field changed.** Tracked =
