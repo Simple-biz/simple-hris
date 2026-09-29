@@ -16,6 +16,7 @@ change so money never rings there.
 | --- | --- |
 | The hook — unread set → chime + toast | `src/hooks/useNotificationChime.ts` |
 | The toast body (teal, single stable id, `+N` badge) | `src/components/notifications/NotificationToast.tsx` |
+| "Just announced" page signal (`notification:arrived`) | `src/lib/notifications/notification-arrived.ts` (+ `.test.ts`) |
 | Type → dashboard map + per-view exclusion | `src/lib/notifications/notification-views.ts` |
 | The rules above, pinned | `src/lib/notifications/notification-views.test.ts` |
 | Server-side view filter + feature gating | `app/api/employee-notifications/route.ts` |
@@ -72,6 +73,22 @@ Hence `notif-chime-hw:<email>:<view>`. The legacy unscoped key
 absent, so introducing the scope did not re-ring everyone's existing backlog on
 first load. Leave that fallback in place; removing it costs every user one
 replayed alert.
+
+## The alert tells the page what it announced (2026-09-29)
+
+Each time the hook announces a batch it also dispatches `notification:arrived` on
+`window`, detail `{ view, types }` — the types of exactly the rows it just toasted.
+A surface showing the number a notification is about subscribes with
+`subscribeNotificationTypes([...types], refetch)` and refetches **on the toast**,
+instead of on a timer of its own that drifts up to 30s from the chime's. The first
+subscribers are the Employee Overview's KPI Bonus card and the KPI Results tab
+(`kpi-scored-notification.md` § The figure moves with the toast).
+
+It fires only for what this tab actually announced, so it inherits the rules above:
+the view scope decides which types can appear, and the shared high-water mark means a
+second browser tab that did not toast does not hear it either — a subscriber still
+owes its own focus/poll refresh. It is a hint to refetch, never data: subscribers read
+nothing from the detail but the type.
 
 ## HR's gift alert is scoped by GRANT, not by the map alone (2026-09-22)
 

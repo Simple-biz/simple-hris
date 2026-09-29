@@ -44,6 +44,7 @@ import {
 import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { KpiResultPeriod } from '@/lib/supabase/employee-kpi-results';
+import { KPI_SCORED_NOTIFICATION, subscribeNotificationTypes } from '@/lib/notifications/notification-arrived';
 import {
   resolveSystemBonuses,
   isDeptEligible,
@@ -621,24 +622,58 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
    * `KpiResultPeriod` (type-only import, erased at build) so a field-name drift
    * is a compile error, not a silent ₱0 — reading `period_start` off the
    * camelCase payload was exactly how the first version shipped broken.
+   *
+   * REFETCHED, not read once. It used to load on mount only, and the shell keeps
+   * tabs mounted, so a "KPI Bonus Scored" toast landed while this card kept the
+   * old figure until F5. It now refetches on the chime's `kpi.scored`
+   * announcement (the toast itself), on focus / tab return, and on a 30s
+   * visible-tab beat for changes that never notify. Stamped with the email it was
+   * read for, because a failed refresh keeps the last good periods — a ₱0 here
+   * reads as "no bonus" and drops the take-home estimate — and a kept copy must
+   * never paint for a different viewer.
    */
-  const [kpiPeriods, setKpiPeriods] = useState<{ periodStart: string; total: number }[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/kpi-results?email=${encodeURIComponent(email)}`, { cache: 'no-store' });
-        const json = (await res.json()) as { periods?: KpiResultPeriod[] };
-        if (cancelled) return;
-        setKpiPeriods(
-          (json.periods ?? []).map((p) => ({ periodStart: p.periodStart, total: Number(p.total ?? 0) })),
-        );
-      } catch {
-        if (!cancelled) setKpiPeriods([]);
-      }
-    })();
-    return () => { cancelled = true; };
+  const [kpiRead, setKpiRead] = useState<{ email: string; periods: { periodStart: string; total: number }[] } | null>(null);
+  const kpiPeriods = useMemo(
+    () => (kpiRead && kpiRead.email === email ? kpiRead.periods : []),
+    [kpiRead, email],
+  );
+  // Several triggers can overlap; only the newest request may write, so an
+  // older read resolving late never overwrites the figure the toast announced.
+  const kpiSeqRef = useRef(0);
+  const fetchKpiPeriods = useCallback(async (signal: AbortSignal) => {
+    const seq = ++kpiSeqRef.current;
+    try {
+      const res = await fetch(`/api/kpi-results?email=${encodeURIComponent(email)}`, { cache: 'no-store', signal });
+      const json = (await res.json()) as { periods?: KpiResultPeriod[]; error?: string | null };
+      if (signal.aborted || seq !== kpiSeqRef.current) return;
+      // The route answers 200 with `error` set and `periods: []` when a read
+      // fails — that is a failed read, not "no bonus".
+      if (!res.ok || json.error) return;
+      setKpiRead({
+        email,
+        periods: (json.periods ?? []).map((p) => ({ periodStart: p.periodStart, total: Number(p.total ?? 0) })),
+      });
+    } catch {
+      // Network / abort: keep the last good periods; the next beat retries.
+    }
   }, [email]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const refetch = () => { void fetchKpiPeriods(ctrl.signal); };
+    const refetchIfVisible = () => { if (!document.hidden) refetch(); };
+    refetch();
+    const unsubscribe = subscribeNotificationTypes([KPI_SCORED_NOTIFICATION], refetch);
+    window.addEventListener('focus', refetch);
+    document.addEventListener('visibilitychange', refetchIfVisible);
+    const id = window.setInterval(refetchIfVisible, 30_000);
+    return () => {
+      ctrl.abort();
+      unsubscribe();
+      window.removeEventListener('focus', refetch);
+      document.removeEventListener('visibilitychange', refetchIfVisible);
+      window.clearInterval(id);
+    };
+  }, [fetchKpiPeriods]);
   const fetchPayrollFinal = useCallback(async (signal?: AbortSignal) => {
     if (!selectedFile || selectedFile === '__all__') { setPayrollFinal(null); return; }
     try {

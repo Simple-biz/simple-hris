@@ -3,8 +3,10 @@
 When a manager publishes a dept-week's KPI scores (Mark Ready / Lock), or a bonus
 change lands on a week that is already published, every affected employee gets a
 `kpi.scored` notification carrying the peso amount — a bell + toast on the Employee
-dashboard (top-right), a Trophy card in their notifications panel, and the KPI
-Results tab refreshes within the same ~30s beat. Shipped 2026-08-17.
+dashboard (top-right), a Trophy card in their notifications panel, and **the figures
+refetch on that toast**: the Overview's KPI Bonus card and the KPI Results tab both
+listen for the chime's announcement (§ The figure moves with the toast). Shipped
+2026-08-17; the toast-driven refetch 2026-09-29.
 
 ## Key files
 | Piece | File |
@@ -16,7 +18,9 @@ Results tab refreshes within the same ~30s beat. Shipped 2026-08-17.
 | View mapping (`employee`) | `src/lib/notifications/notification-views.ts` |
 | Toast + bell mount | `src/components/employee/EmployeeApp.tsx` (`useNotificationChime`, view `employee`) |
 | Panel card (Trophy) | `src/components/notifications/NotificationsPanel.tsx` |
-| Employee tab refresh | `src/components/employee/EmployeeKpiResults.tsx` (30s visible-tab poll) |
+| "Just announced" signal (chime → page) | `src/lib/notifications/notification-arrived.ts` (+ `.test.ts`) |
+| Overview KPI Bonus card refetch | `src/components/employee/EmployeeDashboard.tsx` (`fetchKpiPeriods`) |
+| Employee tab refresh | `src/components/employee/EmployeeKpiResults.tsx` (announcement + 30s visible-tab poll + focus) |
 | DDL + apply script | `references/sql/alter/2026-08-17_add_kpi_scored_notification_type.sql` · `scripts/apply-kpi-scored-notification-type.mjs` |
 
 ## The de-dupe key is the AMOUNT, never "already notified"
@@ -90,11 +94,54 @@ future failure by making the notify fatal**.
   save that follows does. A delete-with-no-resave is a known quiet path.
 - **Toast latency up to ~30s**: `postgres_changes` never delivers to the anon
   browser client on RLS-guarded tables, so the chime's 30s poll is the real
-  transport; the KPI Results tab polls on the same 30s beat (visible tab only).
+  transport. The figures follow the toast, not their own timer (next section).
+- **A second browser tab may not move with the toast.** The chime's high-water
+  mark is shared through `localStorage`, so whichever tab polls first announces
+  and the other stays silent — its figures then catch up on focus, tab return or
+  the 30s beat. That is the chime's once-per-notification rule, not this feature.
+- **A week the wizard already published shows the wizard's figure.**
+  `kpiBonusAmount` prefers the published snapshot's `otherBonuses` outright, so a
+  KPI change announced after Accounting published that week's final does not
+  move the card until the wizard re-publishes — the published figure is the one
+  that will be paid.
 - **Off-roster scorees are counted `skipped`, not notified** — a bonus row whose
   email resolves to no `active_employees` login has nowhere to land (same rule as
   `payroll-available.ts`; a transiently missing person — master-list sync race —
   misses the notification).
+
+## The figure moves with the toast *(2026-09-29)*
+
+Reported by Kane: *"takes a very long while before it updates the KPI Bonus in the
+dashboard — the notification goes first but the values need to be refreshed."* The
+Overview's KPI Bonus card read `/api/kpi-results` **once, on mount**, and the employee
+shell only hides inactive tabs — so it never refetched until F5. The KPI Results tab
+did poll, but a poll cannot close this either: its 30s timer and the chime's 30s timer
+are independent and drift up to 30s apart, which is exactly "the notification goes
+first".
+
+So the transport is now the toast itself. When `useNotificationChime` announces new
+notifications it dispatches `notification:arrived` on `window` carrying their types;
+`subscribeNotificationTypes(['kpi.scored'], …)` refetches the Overview card and the KPI
+Results tab on it. Both also refetch on focus / tab return and on a 30s visible-tab
+beat, for the changes that never notify (a week outside the current-cycle floor, a
+failed insert, a second browser tab).
+
+Two rules came with the Overview's refetch, and both are money rules:
+
+- **A failed refresh keeps the last good periods.** `/api/kpi-results` answers `200`
+  with `error` set and `periods: []` when a read fails; the old code painted that as
+  ₱0, which hides the card and drops the take-home estimate. Once the card refetches,
+  that would flicker to ₱0 on any transient failure. The KPI Results tab had the same
+  fault in its 200 arm (it blanked painted periods — against
+  `employee-dashboard-cache.md`'s header-strip rule) and now keeps them too.
+- **A kept copy never paints for a different viewer.** The Overview's periods are
+  stamped with the email they were read for and derived to `[]` for any other, and
+  every request carries a sequence number so an older read resolving late never
+  overwrites the figure the toast announced.
+
+The client module mirrors the type string (`kpi-scored.ts` imports the service-role
+client and cannot ship to the browser); a test pins the mirror equal to
+`KPI_SCORED_TYPE`.
 
 ## Employee dashboard now has ears
 

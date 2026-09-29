@@ -26,6 +26,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { formatPeso } from '@/lib/hsl-bonus/schema';
 import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
+import { KPI_SCORED_NOTIFICATION, subscribeNotificationTypes } from '@/lib/notifications/notification-arrived';
 
 interface KpiResultItem {
   label: string;
@@ -201,10 +202,14 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadedOnce = useRef(false);
+  // Focus, poll, Realtime, the chime's announcement and Refresh can overlap;
+  // only the newest request may write, so a stale read never lands last.
+  const seqRef = useRef(0);
   const loading = !settled && periods.length === 0;
 
   const fetchResults = useCallback(
     async (signal?: AbortSignal) => {
+      const seq = ++seqRef.current;
       if (loadedOnce.current) setRefreshing(true);
       try {
         const res = await fetch(
@@ -212,17 +217,23 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
           { cache: 'no-store', signal },
         );
         const json = (await res.json()) as { periods?: KpiResultPeriod[]; error?: string | null };
-        if (signal?.aborted) return;
+        if (signal?.aborted || seq !== seqRef.current) return;
         if (!res.ok) {
           setError(json.error ?? `Request failed (${res.status})`);
+        } else if (json.error) {
+          // The route answers 200 + `error` + `periods: []` on a failed read.
+          // Keep what is painted; the header strip reports the failure.
+          setError(json.error);
         } else {
-          setError(json.error ?? null);
+          setError(null);
           setPeriods(json.periods ?? []);
         }
       } catch (e) {
-        if (!signal?.aborted) setError(e instanceof Error ? e.message : 'Failed to load KPI results');
+        if (!signal?.aborted && seq === seqRef.current) {
+          setError(e instanceof Error ? e.message : 'Failed to load KPI results');
+        }
       } finally {
-        if (!signal?.aborted) {
+        if (!signal?.aborted && seq === seqRef.current) {
           setSettled(true);
           setRefreshing(false);
           loadedOnce.current = true;
@@ -247,15 +258,23 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
   // Polling fallback: the postgres_changes subscription below never delivers
   // for the anon browser client on RLS-guarded tables (the same reason
   // dispatch live-sync moved to Broadcast), so without this the tab only
-  // refreshed on window focus. 30s matches useNotificationChime's poll — the
-  // "your bonus was scored" toast and this tab update within the same beat.
-  // Skipped while the tab is hidden; the focus refetch covers the return.
+  // refreshed on window focus. This beat catches changes that never notify;
+  // it is NOT what keeps the tab level with the toast — two independent 30s
+  // timers drift up to 30s apart. Skipped while the tab is hidden; the focus
+  // refetch covers the return.
   useEffect(() => {
     const id = window.setInterval(() => {
       if (!document.hidden) void fetchResults();
     }, 30_000);
     return () => window.clearInterval(id);
   }, [fetchResults]);
+
+  // The toast itself: the chime announces each new `kpi.scored` as it shows
+  // it, so the figure moves with the "KPI Bonus Scored" toast, not after it.
+  useEffect(
+    () => subscribeNotificationTypes([KPI_SCORED_NOTIFICATION], () => void fetchResults()),
+    [fetchResults],
+  );
 
   // Realtime: a manager marking a week ready / applying bonuses refetches live.
   useEffect(() => {

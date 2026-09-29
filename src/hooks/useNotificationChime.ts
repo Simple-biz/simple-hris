@@ -4,6 +4,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { toast } from 'sonner';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { renderNotificationToast } from '@/components/notifications/NotificationToast';
+import { announceNotificationsArrived } from '@/lib/notifications/notification-arrived';
 import type { AppView } from '@/lib/rbac/views';
 
 /** Stable id so repeated alerts replace one another — only ever one toast. */
@@ -203,6 +204,14 @@ export function useNotificationChime(
       } catch {
         /* ignore */
       }
+
+      // Tell the page what just landed, so a surface showing the number the
+      // notification is about (the Employee Overview's KPI Bonus card) refetches
+      // on this toast rather than on its own timer — or never.
+      announceNotificationsArrived({
+        view: view ?? null,
+        types: fresh.map((n) => n.type).filter((t): t is string => typeof t === 'string'),
+      });
 
       // Toast the newest fresh notification; note how many more arrived with it.
       // A stable id + top-right position keeps it to a single themed toast.
