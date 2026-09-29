@@ -8908,7 +8908,9 @@ export default function PayrollWizard({
 
   const orphanagePasteParse = useMemo<OrphanagePasteParse>(() => {
     const tokenized = tokenizeOrphanagePaste(orphanagePaste);
-    const resolved = resolveOrphanageHourRows(tokenized.rows, orphanageResolveCtx);
+    // The paste ADDS a person's repeated lines and prices the total once (Kane 2026-09-29);
+    // the OMS door below keeps the default `refuse` — its Save keys one result per OMS row.
+    const resolved = resolveOrphanageHourRows(tokenized.rows, orphanageResolveCtx, { repeats: 'combine' });
     return { ok: resolved.ok, errors: mergeOrphanageErrors(tokenized.errors, resolved.errors) };
   }, [orphanagePaste, orphanageResolveCtx]);
 
@@ -18205,7 +18207,7 @@ export default function PayrollWizard({
                           </button>
                         )}
                       </CardTitle>
-                      <CardDescription>One row per person: Pay week, Work email, Hours (tab-separated).</CardDescription>
+                      <CardDescription>Pay week, Work email, Hours (tab-separated). A person on two or more rows has their hours added together.</CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-3">
                       <textarea
@@ -18291,6 +18293,14 @@ export default function PayrollWizard({
                                         </td>
                                         <td className="px-3 py-2 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400" data-label="Hours">
                                           {r.hours.toFixed(2)}
+                                          {r.combinedFrom && (
+                                            <div
+                                              className="text-[10px] font-normal text-zinc-500 dark:text-zinc-400"
+                                              title={r.combinedFrom.map((p) => `L${p.line}: ${p.hours.toFixed(2)} h`).join('\n')}
+                                            >
+                                              {r.combinedFrom.length} rows · {r.combinedFrom.map((p) => p.hours.toFixed(2)).join(' + ')}
+                                            </div>
+                                          )}
                                           {r.otH > 0 && (
                                             <div className="text-[10px] font-normal text-amber-600 dark:text-amber-400">{r.regH.toFixed(2)} reg + {r.otH.toFixed(2)} OT</div>
                                           )}

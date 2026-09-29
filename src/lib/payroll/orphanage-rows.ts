@@ -15,12 +15,16 @@
  * hours on what the person already worked this pay week against the 40h cap, honouring
  * the global and per-department OT switches. OMS never says which hours are overtime.
  *
+ * The doors differ in ONE thing, what a person's second line means (2026-09-29): the
+ * paste ADDS it (`repeats: 'combine'` — summed, then priced once), OMS refuses it as a
+ * duplicate (`'refuse'`, the default). See {@link OrphanageRepeatPolicy}.
+ *
  * Doc: docs/features/orphanage-pay-step.md · docs/features/orphanage-oms-pull.md
  */
 
 import { normEmail } from '@/lib/email/norm-email';
 
-import { priceOrphanageHours } from './orphanage-pay-pricing';
+import { priceOrphanageHours, type OrphanagePriceOk } from './orphanage-pay-pricing';
 
 /** One candidate row before matching: where it came from is irrelevant here. */
 export interface OrphanageHourRow {
@@ -80,6 +84,12 @@ export interface OrphanageResolvedOk {
   regH: number;
   otH: number;
   amount: number;
+  /**
+   * Set only when this person's hours were ADDED from more than one source line
+   * (`repeats: 'combine'`, the paste door): each line and its hours, in source order.
+   * `hours` above is their sum and the amount prices that sum ONCE. Absent ⇒ one line.
+   */
+  combinedFrom?: readonly { line: number; hours: number }[];
 }
 
 export interface OrphanageResolvedErr {
@@ -131,13 +141,32 @@ export function tokenizeOrphanagePaste(text: string): { rows: OrphanageHourRow[]
 }
 
 /**
+ * What a second line for a person who is already in the list means.
+ *
+ * - `refuse`  — the second line is skipped as a duplicate. The OMS door: its Save keys
+ *               ONE result per OMS row (`oms-save.ts`), and a repeat there is a fix in OMS
+ *               (orphanage-oms-pull.md § Skipped rows). The default, and byte-for-byte the
+ *               loop that has always run.
+ * - `combine` — the lines' hours are ADDED and the total is priced ONCE (Kane 2026-09-29,
+ *               the paste door: *"if there are two line items just add them both and
+ *               calculate properly"*).
+ */
+export type OrphanageRepeatPolicy = 'refuse' | 'combine';
+
+/**
  * Match each row to an Additions row and price it. Refusals are reported per row and
- * never block the rest; a row we cannot price is not worth a smaller number.
+ * never block other people; a row we cannot price is not worth a smaller number.
  */
 export function resolveOrphanageHourRows(
   rows: readonly OrphanageHourRow[],
   ctx: OrphanageResolveContext,
+  opts: { repeats: OrphanageRepeatPolicy } = { repeats: 'refuse' },
 ): OrphanageResolveResult {
+  return opts.repeats === 'combine' ? resolveCombiningRepeats(rows, ctx) : resolveRefusingRepeats(rows, ctx);
+}
+
+/** `refuse`: one pass, a person's second line is a duplicate once their first has priced. */
+function resolveRefusingRepeats(rows: readonly OrphanageHourRow[], ctx: OrphanageResolveContext): OrphanageResolveResult {
   const ok: OrphanageResolvedOk[] = [];
   const errors: OrphanageResolvedErr[] = [];
   const seenKeys = new Set<string>();
@@ -150,25 +179,13 @@ export function resolveOrphanageHourRows(
       continue;
     }
 
-    const hoursRaw = typeof r.hours === 'number' ? String(r.hours) : r.hours.trim();
-    const hours = Number(hoursRaw.replace(/,/g, ''));
-    if (hoursRaw === '' || !Number.isFinite(hours) || hours < 0) {
+    const { hoursRaw, hours } = parseHours(r.hours);
+    if (hours === null) {
       errors.push({ line: r.line, email: emailRaw, reason: `Invalid hours: "${hoursRaw}"` });
       continue;
     }
 
-    // Resolve the email → an Additions row. Direct hit first, then bridge through the
-    // master list (alternate / personal / Hubstaff-email mismatches).
-    let row = ctx.rowByEmail.get(emKey) ?? null;
-    if (!row) {
-      const aliases = ctx.masterAliasesFor(emKey);
-      if (aliases) {
-        for (const c of aliases) {
-          const hit = ctx.rowByEmail.get(c);
-          if (hit) { row = hit; break; }
-        }
-      }
-    }
+    const row = resolveTarget(emKey, ctx);
     if (!row) {
       errors.push({ line: r.line, email: emailRaw, reason: 'No employee in this pay period matches that work email' });
       continue;
@@ -180,43 +197,174 @@ export function resolveOrphanageHourRows(
       continue;
     }
 
-    // PHP regular rate. Prefer the row's computed rate; fall back to the rates index.
-    const rate: number | null = row.regularRate ?? ctx.regularRateFallback(row.email, emKey);
-
-    // All the arithmetic lives in `orphanage-pay-pricing.ts`. It owns the 40h cap, the
-    // sheet's 2dp-hours rounding, and the rule this step exists to protect: orphanage
-    // OT prices at the FULL 1.5× rate, never the weekly 0.5× differential. It REFUSES
-    // a row it cannot price rather than returning a smaller number.
-    const priced = priceOrphanageHours({
-      hours,
-      regularRatePhp: rate,
-      storedOtRatePhp: row.otRate,
-      isHslSheetForm: row.isHslSheetForm,
-      workedRegularHours: row.workedRegularHours,
-      overtimeEnabled: ctx.overtimeEnabledFor(row.deptKey),
-    });
+    const priced = priceForTarget(row, hours, emKey, ctx);
     if (!priced.ok) {
       errors.push({ line: r.line, email: emailRaw, reason: priced.reason });
       continue;
     }
 
     seenKeys.add(row.email);
-    ok.push({
-      line: r.line,
-      payWeek: r.payWeek,
-      emailKey: row.email,
-      matchedEmail: emKey,
-      name: row.name || row.email,
-      hours: priced.hours,
-      rate: priced.rate,
-      otRate: priced.otRate,
-      regH: priced.regH,
-      otH: priced.otH,
-      amount: priced.amount,
-    });
+    ok.push(resolvedOk({ line: r.line, payWeek: r.payWeek, emKey }, row, priced));
   }
 
   return { ok, errors };
+}
+
+/** One line after matching, before pricing. */
+interface MatchedLine {
+  line: number;
+  payWeek: string;
+  emailRaw: string;
+  emKey: string;
+  /** Null when the hours cell was invalid — the line already carries its error. */
+  hours: number | null;
+}
+
+/**
+ * `combine`: "properly" means the hours are summed BEFORE pricing. The 40h cap is
+ * consumed once by the person's total, never once per line — pricing each line against
+ * the same worked hours would pay the regular capacity twice. And a person is priced
+ * from ALL their lines or not at all: if any line is refused (bad hours), the others are
+ * held with a reason, because locking in the good line alone pays less than the sheet
+ * and a later re-paste of just the fixed line would REPLACE that amount, not add to it.
+ */
+function resolveCombiningRepeats(rows: readonly OrphanageHourRow[], ctx: OrphanageResolveContext): OrphanageResolveResult {
+  const errors: OrphanageResolvedErr[] = [];
+  // Keyed on the Additions row's literal `.email`, so two addresses (or two casings) of
+  // one person land together. Insertion order = first appearance, so `ok` keeps source order.
+  const groups = new Map<string, { target: OrphanageRowTarget; lines: MatchedLine[]; refused: number[] }>();
+
+  for (const r of rows) {
+    const emailRaw = r.email.trim();
+    const emKey = normEmail(emailRaw);
+    if (!emKey) {
+      errors.push({ line: r.line, email: emailRaw, reason: 'Missing or invalid email' });
+      continue;
+    }
+
+    const { hoursRaw, hours } = parseHours(r.hours);
+    // A bad hours cell is reported, and the line is STILL matched so it can hold the
+    // person's other lines instead of letting them pay short.
+    if (hours === null) errors.push({ line: r.line, email: emailRaw, reason: `Invalid hours: "${hoursRaw}"` });
+
+    const target = resolveTarget(emKey, ctx);
+    if (!target) {
+      if (hours !== null) {
+        errors.push({ line: r.line, email: emailRaw, reason: 'No employee in this pay period matches that work email' });
+      }
+      continue;
+    }
+
+    const matched: MatchedLine = { line: r.line, payWeek: r.payWeek, emailRaw, emKey, hours };
+    const group = groups.get(target.email);
+    if (group) {
+      group.lines.push(matched);
+      if (hours === null) group.refused.push(r.line);
+    } else {
+      groups.set(target.email, { target, lines: [matched], refused: hours === null ? [r.line] : [] });
+    }
+  }
+
+  const ok: OrphanageResolvedOk[] = [];
+  for (const { target, lines, refused } of groups.values()) {
+    if (refused.length > 0) {
+      const which = refused.map((l) => `L${l}`).join(', ');
+      for (const l of lines) {
+        if (l.hours === null) continue; // already reported with its own reason
+        errors.push({
+          line: l.line,
+          email: l.emailRaw,
+          reason: `Held — this person's ${which} was skipped, so none of their hours are locked in. Fix it and paste again`,
+        });
+      }
+      continue;
+    }
+
+    const parts = lines.map((l) => ({ line: l.line, hours: l.hours as number }));
+    // One line: its hours untouched. Several: summed, then de-noised at 6dp exactly as
+    // `priceOrphanageHours` de-noises its own float subtraction (2.1 + 3.2 ≠ 5.3 in IEEE).
+    const hours = parts.length === 1
+      ? parts[0].hours
+      : Math.round(parts.reduce((s, p) => s + p.hours, 0) * 1e6) / 1e6;
+
+    const first = lines[0];
+    const priced = priceForTarget(target, hours, first.emKey, ctx);
+    if (!priced.ok) {
+      // Every line that did not become money is listed — the clerk sees each one.
+      for (const l of lines) errors.push({ line: l.line, email: l.emailRaw, reason: priced.reason });
+      continue;
+    }
+
+    const payWeek = parts.length === 1
+      ? first.payWeek
+      : [...new Set(lines.map((l) => l.payWeek.trim()).filter(Boolean))].join(', ');
+    ok.push({
+      ...resolvedOk({ line: first.line, payWeek, emKey: first.emKey }, target, priced),
+      ...(parts.length > 1 ? { combinedFrom: parts } : {}),
+    });
+  }
+
+  return { ok, errors: errors.sort((a, b) => a.line - b.line) };
+}
+
+/** The hours cell, with the paste's `"1,234.5"` tolerance. `hours` null ⇒ invalid. */
+function parseHours(raw: string | number): { hoursRaw: string; hours: number | null } {
+  const hoursRaw = typeof raw === 'number' ? String(raw) : raw.trim();
+  const hours = Number(hoursRaw.replace(/,/g, ''));
+  return { hoursRaw, hours: hoursRaw === '' || !Number.isFinite(hours) || hours < 0 ? null : hours };
+}
+
+/** Email → an Additions row. Direct hit first, then bridge through the master list
+ *  (alternate / personal / Hubstaff-email mismatches). */
+function resolveTarget(emKey: string, ctx: OrphanageResolveContext): OrphanageRowTarget | null {
+  const direct = ctx.rowByEmail.get(emKey);
+  if (direct) return direct;
+  const aliases = ctx.masterAliasesFor(emKey);
+  if (aliases) {
+    for (const c of aliases) {
+      const hit = ctx.rowByEmail.get(c);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+function priceForTarget(target: OrphanageRowTarget, hours: number, emKey: string, ctx: OrphanageResolveContext) {
+  // PHP regular rate. Prefer the row's computed rate; fall back to the rates index.
+  const rate: number | null = target.regularRate ?? ctx.regularRateFallback(target.email, emKey);
+
+  // All the arithmetic lives in `orphanage-pay-pricing.ts`. It owns the 40h cap, the
+  // sheet's 2dp-hours rounding, and the rule this step exists to protect: orphanage
+  // OT prices at the FULL 1.5× rate, never the weekly 0.5× differential. It REFUSES
+  // a row it cannot price rather than returning a smaller number.
+  return priceOrphanageHours({
+    hours,
+    regularRatePhp: rate,
+    storedOtRatePhp: target.otRate,
+    isHslSheetForm: target.isHslSheetForm,
+    workedRegularHours: target.workedRegularHours,
+    overtimeEnabled: ctx.overtimeEnabledFor(target.deptKey),
+  });
+}
+
+function resolvedOk(
+  src: { line: number; payWeek: string; emKey: string },
+  target: OrphanageRowTarget,
+  priced: OrphanagePriceOk,
+): OrphanageResolvedOk {
+  return {
+    line: src.line,
+    payWeek: src.payWeek,
+    emailKey: target.email,
+    matchedEmail: src.emKey,
+    name: target.name || target.email,
+    hours: priced.hours,
+    rate: priced.rate,
+    otRate: priced.otRate,
+    regH: priced.regH,
+    otH: priced.otH,
+    amount: priced.amount,
+  };
 }
 
 /** Merge tokenizer errors with resolver errors in source order — one skipped list. */

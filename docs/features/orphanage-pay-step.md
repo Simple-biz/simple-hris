@@ -26,6 +26,27 @@ The pay-week column is **informational only**: every matched row applies to the 
 being edited. Matching is by work email, case-insensitive, bridged through the master
 list so an alternate / personal / Hubstaff address still finds the person's row.
 
+### A person on more than one pasted line (2026-09-29)
+
+Kane: *"if there are two line items just add them both and calculate properly"*. Until
+this date a person's second pasted line was **skipped as a duplicate**. Now the paste door
+resolves with `repeats: 'combine'` (`resolveOrphanageHourRows`, `orphanage-rows.ts`):
+
+| Rule | Why |
+|---|---|
+| Lines are grouped by the **Additions row they resolve to**, so two casings or two addresses (work + personal alias) of one person add together | The Orphanage column holds one value per person, keyed on that row's `.email` |
+| The hours are **summed first, then priced ONCE** by `priceOrphanageHours` | "Properly": the 40h cap is consumed once by the total. Pricing each line against the same worked hours would hand out the regular capacity twice and pay OT hours at the regular rate. Test: two lines of 10 + 5.5 price identically to one line of 15.5 |
+| The sum is de-noised at **6dp** (2.1 + 3.2 = 5.3, not 5.300000000000001); a single line's hours are untouched | Same de-noise the pricing module uses on its own subtraction |
+| **One bad line holds the whole person.** If any of their lines has invalid hours, their other lines are skipped as *"Held — this person's L3 was skipped…"* and nothing of theirs locks in | Paying the good line alone is a smaller number than the sheet's. A later re-paste of just the fixed line would **replace** the amount (lock-in writes `next[email] = amount`), not add to it, so the partial amount would become the whole amount |
+| A combined person who cannot be priced (no rate, OT rate below regular) lists **every** one of their lines in the skipped list | The clerk sees each line that did not become money |
+| The preview shows the parts under the hours (`2 rows · 10.00 + 5.50`); the record stores the **total** hours and distinct pay-week labels joined `", "` | One `orphanage_pay` row per person per `source_file`, as before, so reconcile and Re-price read the total and agree with the lock-in |
+
+Lock-in is still one amount per person, and it **replaces** anything already locked in for
+them this period. The combining happens inside one paste; it does not add a new paste to a
+previous lock-in. **The OMS door does not combine.** It keeps `refuse` (the default), because
+its Save stores one resolution per OMS row (`oms-save.ts` keys by line) — see
+[orphanage-oms-pull.md § Skipped rows](./orphanage-oms-pull.md#skipped-rows-are-never-written).
+
 ## The pricing rule
 
 **One implementation:** `src/lib/payroll/orphanage-pay-pricing.ts`

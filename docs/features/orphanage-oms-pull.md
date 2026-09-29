@@ -142,6 +142,16 @@ the Switch is disabled and LIVE cannot be reached.
 An OMS row that does not match a person in this period, repeats a person, or cannot be
 priced (no rate, an OT rate below regular) lands in the amber **skipped** list with its
 reason and is written in **no** mode. The fix is in OMS or the rates, then pull again.
+
+**Repeats are where the two doors differ (2026-09-29).** The paste door now ADDS a person's
+repeated lines and prices the total once (`repeats: 'combine'`, Kane: *"if there are two line
+items just add them both"*,
+[orphanage-pay-step.md § A person on more than one pasted line](./orphanage-pay-step.md#a-person-on-more-than-one-pasted-line-2026-09-29)).
+This door still calls the resolver with the default `refuse`, so the rule above is unchanged.
+The reason is that `buildOmsSavePayload` maps ONE resolution to each OMS row by `line`, and a
+combined result would leave the second row with neither a match nor a skip reason. Test:
+`orphanage-rows.test.ts` "OMS door (default `refuse`)". Making OMS combine too needs a
+decision from Kane and a change to the Save's row grain.
 `orphanage_pay` gains no `source` column for this: provenance lives in the audit row
 above. If "which weeks came from OMS" ever needs to be queryable, that is a migration.
 
