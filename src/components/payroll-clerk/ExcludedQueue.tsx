@@ -174,7 +174,7 @@ function avatarColors(seed: string) {
   const palettes = [
     'from-zinc-400 to-zinc-600',
     'from-orange-400 to-rose-500',
-    'from-violet-500 to-fuchsia-500',
+    'from-lime-500 to-green-600',
     'from-sky-500 to-blue-600',
     'from-emerald-500 to-teal-500',
     'from-amber-500 to-orange-500',

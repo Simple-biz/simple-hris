@@ -420,7 +420,7 @@ function avatarColors(seed: string) {
   // Deterministic gradient picker based on the row id so a row keeps its colour.
   const palettes = [
     'from-orange-400 to-rose-500',
-    'from-violet-500 to-fuchsia-500',
+    'from-lime-500 to-green-600',
     'from-sky-500 to-blue-600',
     'from-emerald-500 to-teal-500',
     'from-amber-500 to-orange-500',
