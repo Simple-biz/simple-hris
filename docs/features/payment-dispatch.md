@@ -22,7 +22,7 @@ This document covers the entire Payment Dispatch feature: the UI Lenny uses, the
 Carla's meeting (see `MEETING-WITH-CARLA.MD`) defined the payroll-clerk role and the dispatch flow. Highlights:
 
 - Lenny's job is to **send money**, not calculate it. She sees a streamlined view with **only name, email, and amount** per row, grouped by payment processor.
-- After sending, she **manually logs**: arrival date (adjustable), transaction ID, bank used, date sent. No automation — that's the boss's preference.
+- After sending, she **manually logs**: arrival date (adjustable), transaction ID, bank used, date sent. No automation — that's the boss's preference. **One exception, Kane 2026-09-29:** a payee under **US$15.00** is held at **Threshold** by the app itself when the live week loads — no money moves, so there is nothing for her to log, and she was keying ~20 of these by hand every week (§3.5.1). Every *payment* is still logged by hand.
 - Once she clicks **Start processing**, employees should not be able to file disputes. The button gates the dispute UI live across all open employee dashboards.
 - Each pay cycle should keep a memory of who was paid (per-cycle log of dispatches).
 
@@ -253,7 +253,7 @@ Sticky column header on desktop (`hidden md:grid`); on mobile each row collapses
 | USD / PHP / COP Value | One column each. The row's headline currency (USD, or native COP on the COP tab) renders strong; the others are muted reference lines — the same weighting the old stacked "Current pay" cell had. `—` where that currency doesn't apply: `amountCOP` is only populated for COP-paid people and COP-country payees, so the COP column stays empty for everyone else. The bonus chip (`incl. ₱x bonus`) hangs under PHP. |
 | From Bank | SEND-FROM rail (Bank Preferred): pill with processor accent dot + label, the `Wires → Wise · under ₱7k` reroute note, and the `x1xxx` wire suffix in mono-amber when present |
 | To Recipient Bank | RECEIVING end, from `resolveMarkPaidDefaults(row)` — the same resolver the Mark Paid dialog pre-fills, so the column can never disagree with the dialog. Bank/wallet label, account number or wallet email/tag (click to copy), plus the account holder when it differs from the payee. Amber "Not on file" / "No account" when there's nothing to send to. |
-| TXN ID | Reference logged against this recipient this cycle (click to copy), else `—`. Normally empty in a pending queue — the id is keyed in at Mark Paid — but a `not_paid` / `threshold` dispatch leaves the person payable, so that attempt's reference travels with them. Sourced from `paidRecords` on the All tab and the `txnRecords` prop on the USD/COP tabs (which deliberately hide the Pending/Paid tab strip). |
+| TXN ID | Reference logged against this recipient this cycle (click to copy), else `—`. Normally empty in a pending queue — the id is keyed in at Mark Paid — but a `not_paid` dispatch leaves the person payable, so that attempt's reference travels with them. (A `threshold` marker takes the person OUT of pending — §3.5 — so it only reaches this column once that marker is cleared.) Sourced from `paidRecords` on the All tab and the `txnRecords` prop on the USD/COP tabs (which deliberately hide the Pending/Paid tab strip). |
 | Department | Contractor chip + department pill |
 | Hours | Total hrs on top, OT hours underneath (amber when > 0) |
 | Action | "View" (opens the pay stub — see §3.4.1), an eye icon for payment details, then the "Mark paid" gradient button (emerald → teal, fixed-width column for alignment) |
@@ -401,7 +401,8 @@ Modal organised into two field groups (`MarkPaidDialog.tsx`):
 - **Status** — pill segmented control: `Paid` (default) · `Not Paid` · `Threshold` · `Problem`. Determines whether the row counts toward the hero "Paid" stat and whether the recipient stays in the pending queue:
   - `Paid` removes them (money moved).
   - `Problem` also removes them — a flagged person is held out of pending and lives in the **Problem** tab until someone clicks **Clear** there (which deletes the marker via `/api/payment-dispatches/undo` and returns them to pending). They stay in the Dispatch Progress denominator while flagged, so the strip can't read "everyone paid" with money still stuck.
-  - `Not Paid` and `Threshold` leave the person available for retry in pending.
+  - `Threshold` also removes them — a deliberate hold under the payout minimum. They live in the **Threshold** tab, stay in the Dispatch Progress denominator as owed (`heldCount`), and are named on the close-out's unpaid list with reason `threshold` ([cycle-closeout.md](./cycle-closeout.md)). **Clear** there deletes the marker and returns them to pending. *(Corrected 2026-09-29: until then this line said Threshold "leaves the person available for retry in pending". The code has locked Threshold out of pending since before that date — `useDispatchQueue`'s `lockedEmails`, and the dialog's own copy says "they leave the pending queue". Kane confirmed the code is right.)*
+  - `Not Paid` alone leaves the person available for retry in pending: it means "not sent yet", not "don't send".
   - Exception: a **contractor invoice** logged `Problem` stays payable. `POST /api/payment-dispatches` only claims an invoice on `Paid`, and the marker row deliberately carries no `contractor_invoice_id`, so there's nothing to filter that invoice on.
 - **Note** — optional free-text textarea for context (e.g. "bank rejected, retrying tomorrow"). Stored in `payment_dispatches.note`.
 
@@ -419,6 +420,87 @@ The pre-fills follow Carla's per-processor spec:
 | Wires | bank=raw "Bank Preferred" (e.g. "x1161") · acct=blank · holder=name · SWIFT input shown |
 
 On confirm: POST to `/api/payment-dispatches` with all 4 send fields + 4 recipient banking fields, optimistic remove from queue, refresh on success, rollback on failure.
+
+#### 3.5.1 Auto-Threshold — anything under US$15.00 (2026-09-29)
+
+Kane: *"Anything under 15 USD should automatically be flagged as Threshold after the Payment
+Dispatch loads the data it will pop up that how many are Threshold."* He ruled the same session
+that this overrides §1's "no automation" line for this one outcome.
+
+**Why it exists.** By 2026-09-29 clerks had logged **124** Threshold markers by hand, each one
+through the full Mark Paid dialog with a placeholder txn (`0` / `1`) and the rail as "bank used".
+**97 of them were under $15.** So the rule automates what was already the practice, and it writes the
+**same marker**. What a Threshold *means* is unchanged: out of pending, into the Threshold tab,
+still owed on the progress strip, `threshold` on the close-out.
+
+**The rule.** A pending row is held when it is an **employee** row (never a contractor invoice)
+**priced by the Payroll Wizard** (`valuesSource` `snapshot` or `lock`) **and** its USD amount is a
+finite number **strictly under 15.00**. Exactly $15.00 is paid. Zero and negative weeks are held,
+as clerks already held them. `null` / unpriced is **unknown, never "small"**, and is left alone. A
+COP-paid person is judged on the same USD figure. One rule, `src/lib/payroll/auto-threshold.ts`,
+used by both the page (to propose rows) and the route (to re-validate them).
+
+**Never on a recomputed amount.** A `recomputed` row is priced by `computeCurrentPay`, which leaves
+out Adj., Orphanage, KPI/dept bonuses and MESA (§4.2.2), so a ₱500 recompute can be a ₱5,000 week.
+Holding someone's pay on a figure the wizard never produced is the failure §4.2.2 exists to prevent.
+
+**When it runs.** Once per **network** load of the **live** week (`useDispatchQueue().freshAt`),
+never off the session-cache paint the screen shows first (that paint also reads `loading: false`
+and can carry last hour's amounts). The live week only: a past week is history. Only while the
+wizard has the week **locked**, and only for a viewer with **edit** on Payment Dispatch (the same
+gate as Mark Paid). A view-only load writes nothing and shows nothing.
+
+**What it writes.** `POST /api/payment-dispatches/auto-threshold` writes one `payment_dispatches`
+row per person, all in **one INSERT** (all or none): `status: 'threshold'`, `transaction_id: ''`
+(nothing was sent, so no reference — the same honest blank Kolan/HiGlobe rows store),
+`bank_used: 'Not sent'` (NOT NULL; no bank was used), `sent_date` = today in Manila, the auto note,
+and `created_by: "<clerk> (auto-threshold)"`, so the Threshold tab, the CSV's *Logged By* and the
+Undo history (`actorLabel`) never show the rule's write as the clerk's own. The
+`disbursement_records` trigger mirrors it to `threshold` like any marker. One awaited
+`payment.auto_threshold` audit event per person (per-row fallback), then the usual `queue-changed`
+Broadcast, so every open screen drops them.
+
+**Once per person per week, and a Clear sticks.** The route skips anyone with **any** dispatch row
+this week (paid, a marker, or a Not Paid attempt — a human already acted). It also skips anyone
+whose Threshold was **cleared** this week (`payment.undone` with `original_status: 'threshold'`,
+read by `details->cycle->>source_file`) and anyone the rule already held this week. Without the
+cleared check, a clerk who clears a $14 person to pay them would watch the next reload re-hold
+them, forever. This covers a Clear of a hand-logged Threshold too: a person a human un-held is
+never re-held automatically. **To pay someone under $15: Clear them in the Threshold tab, then Mark
+Paid.** 43 people under $15 were paid anyway before this rule, about one a week lately, so this
+path is real.
+
+**Two clerks at once.** The run holds a per-week lock, `app_settings`
+`dispatch.auto_threshold_run.<file>`: the INSERT is the claim, deleted after, taken over once it is
+older than 60 s. The loser gets `busy` and writes nothing, and the winner's broadcast reloads its
+screen. The claim holds only the actor and a timestamp. **The once-per-week memory is kept in
+`audit_log`, not `app_settings`,** because ordinary `app_settings` keys are readable by any
+signed-in user (memory `app-settings-final-pay-readable-by-every-employee`), and a list of who is
+paid under $15 does not belong there.
+
+**Fails closed.** If the live week, the wizard lock, this week's dispatches, or the audit ledger
+can't be read, the route writes nothing and returns 500. The page toasts "They're still in
+Pending", so a failure leaves the queue exactly as it was before this rule existed.
+
+**The notice.** When the run settles, `AutoThresholdNotice` opens: **"N payees are at
+Threshold"**. N is `heldCount`, the progress strip's own number (manual and auto holds, one head
+per person, Problem wins), never a second tally. Below it: "Anything under US$15.00 is held this
+week, not sent", how many were flagged just now, and a list of every hold with an **Auto** /
+**Manual** chip. **Review Threshold tab** opens All pending's Threshold view (`ProcessorQueue`
+`viewRequest`). It opens **once per sign-in per week**
+(`TAB_CACHE_KEYS.dispatchThresholdNoticeShown`), and **again whenever a run holds somebody new**. It
+never opens when nobody is held.
+
+**Deliberately not covered.** The Excluded tab (those rows aren't payable in the first place) ·
+Urgent one-offs · contractor invoices · the standalone `/payroll-clerk` shell (reserved, §2), which
+shows the markers but doesn't run the rule. The ₱7k Wires → Wise reroute (§12.3.1) is independent
+and still decides the rail for everyone the rule doesn't hold.
+
+Pinned by `src/lib/payroll/auto-threshold.test.ts`: the $15.00 boundary, unknown ≠ small,
+wizard-priced employees only, the server's re-validation, Clear-sticks, the lock's staleness, the
+actor tag round-tripping through `actorLabel`, and the audit action resolving to the `payment.`
+family (the registry's source scan can't see it, because the route builds the action from a
+constant).
 
 ### 3.6 Sent payments history
 
@@ -810,6 +892,7 @@ column of its own (§12.3.1).
 | `/api/payroll-current-pay` | GET | Returns the `CurrentPayResult` from `computeCurrentPay()` |
 | `/api/payment-dispatches` | GET | Lists dispatches, optionally filtered by `?cycle_id=` |
 | `/api/payment-dispatches` | POST | Inserts a new dispatch row + writes audit-log entry `payment.dispatched`. When `status='paid'` and the Payroll Wizard staged a paystub for this `(cycle_source_file, recipient_email)`, also fires that **one** person's paystub email via `forwardPaystubDispatch` (best-effort — never fails the payment) and returns `{ paystub: { staged, sent, error } }` so the client can toast sent / failed / not-staged. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. **Double-pay guard (2026-09-03):** before the claim/insert, a `paid` **employee** body is checked against existing `paid` rows for the same person in the same cycle — `cycle_source_file` first, `cycle_id` as the fallback (arrears legs carry `cycle_id: null`) — and refused with **409 `{ code: 'already_paid', error, existing: { id, created_by, created_at, transaction_id } }`**. `not_paid` / `threshold` / `problem` bodies and contractor settlements are never refused (the invoice claim owns those). If the prior-payments read itself fails the route returns 500 and logs nothing — it fails closed. Both Mark Paid clients treat the 409 as *settled*: an info toast naming the first payer, the row is NOT restored to Pending, and `refresh()` reconciles. Pure decision + tests: `src/lib/payroll/dispatch-duplicate-guard.ts`. See [paystub-dispatch.md](./paystub-dispatch.md). |
+| `/api/payment-dispatches/auto-threshold` | POST | Holds every pending payee under US$15.00 at Threshold — one INSERT, live + locked week only, once per person per week. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. See §3.5.1 and api-reference.md. |
 | `/api/payroll-dispatch-lock` | GET | Returns `{ locked, lockedAt, lockedBy }` |
 | `/api/payroll-dispatch-lock` | POST | Toggles the lock — body: `{ locked: boolean }` — writes audit-log entry `payroll.dispatch.locked` / `payroll.dispatch.unlocked` with snapshotted operator + timestamp |
 | `/api/employee-hourly-rates` | GET | Existing route, now also returns the 8 new payment-dispatch fields |
@@ -953,7 +1036,7 @@ Builds a `QueueRow[]` via `buildQueueFromRates()` from `mock-queue.ts` (filename
 It then reads the two wizard carriers (the staged stage + the published snapshot) and
 prices every row through them — see [§4.2.2](#422-which-figures-the-queue-actually-shows).
 
-Returns `{ rows, excluded, paid, period, fxRate, wizardReady, loading, error, contractorError, contractorAdvisory, valuesWarning, refresh }`. The `refresh()` callback re-pulls everything; called after Mark paid succeeds.
+Returns `{ rows, excluded, paid, period, fxRate, wizardReady, loading, error, freshAt, contractorError, contractorAdvisory, valuesWarning, refresh }`. The `refresh()` callback re-pulls everything; called after Mark paid succeeds. `freshAt` is the `Date.now()` of the last clean **network** load in this mount and is `null` while only the session cache is painted. The auto-Threshold rule (§3.5.1) keys on it, because a cache paint also reads `loading: false`.
 
 #### 5.1.1 Live sync across open screens (2026-08-11)
 
@@ -1314,6 +1397,8 @@ src/components/payroll-clerk/
   AnimatedNumber.tsx            — spring counter
   mock-queue.ts                 — types, processor metadata, builders
   useDispatchQueue.ts           — queue + dispatches hook
+  useAutoThreshold.ts           — runs the under-US$15 Threshold rule after a fresh live-week load (§3.5.1)
+  AutoThresholdNotice.tsx       — "N payees are at Threshold" modal (§3.5.1)
 
 src/components/employee/
   PayrollLockBanner.tsx         — global locked banner with animations
@@ -1328,6 +1413,7 @@ src/hooks/
 ```
 src/lib/
   payroll/current-pay.ts                         — server-side pay calculator
+  payroll/auto-threshold.ts                      — the under-US$15 Threshold rule: candidates, server re-validation, once-per-week plan (§3.5.1)
   payroll/disbursement-reports.ts                — disbursement_records aggregator, read by CEO Financial Reports / overview KPIs / Penny / urgent buckets (added 2026-04-28; see §6.5.5)
   supabase/payment-dispatches.ts                 — CRUD helpers
   supabase/payroll-dispatch-lock.ts              — get/set helpers
@@ -1340,6 +1426,7 @@ src/lib/
 app/api/
   payroll-current-pay/route.ts
   payment-dispatches/route.ts
+  payment-dispatches/auto-threshold/route.ts   — §3.5.1
   payroll-dispatch-lock/route.ts
 ```
 

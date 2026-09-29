@@ -76,6 +76,10 @@ import {
   type UnpaidAmountSource,
 } from '@/lib/payroll/cycle-close-report-export';
 import { useDispatchQueue } from './useDispatchQueue';
+import { useAutoThreshold } from './useAutoThreshold';
+import AutoThresholdNotice, { type ThresholdNoticePerson } from './AutoThresholdNotice';
+import { isAutoThresholdRecord } from '@/lib/payroll/auto-threshold';
+import { TAB_CACHE_KEYS, getTabCache, setTabCache } from '@/lib/accounting/tab-cache';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -267,6 +271,7 @@ export default function PayrollDispatch() {
     wizardReady,
     loading,
     error,
+    freshAt,
     contractorError,
     contractorAdvisory,
     valuesWarning,
@@ -637,6 +642,59 @@ export default function PayrollDispatch() {
       heldEmails: held,
     };
   }, [paid, paidRows]);
+
+  // ── Auto-Threshold (Kane 2026-09-29) ────────────────────────────────────────
+  // Everyone pending under US$15.00 is held at Threshold once the LIVE week has
+  // loaded from the network, then a notice says how many are at Threshold. The
+  // rows handed over are `fetched`, not `pending`: `pending` is copied in a layout
+  // effect and is one render behind the load that set `freshAt`. The server
+  // re-validates every row and is the rule's authority (auto-threshold.ts).
+  const autoThresholdRun = useAutoThreshold({
+    enabled: !viewingPastWeek && wizardReady && !error,
+    freshAt,
+    period,
+    pending: fetched,
+    refresh,
+  });
+  const [thresholdNoticeOpen, setThresholdNoticeOpen] = useState(false);
+  const [thresholdNoticeFlaggedNow, setThresholdNoticeFlaggedNow] = useState(0);
+  const [thresholdNoticeWarning, setThresholdNoticeWarning] = useState<string | null>(null);
+  const [queueViewRequest, setQueueViewRequest] = useState<{ view: 'threshold'; nonce: number } | null>(null);
+  const handledThresholdRunRef = useRef<number | null>(null);
+  useEffect(() => {
+    const runForWeek = autoThresholdRun;
+    if (!runForWeek || runForWeek.sourceFile !== period.sourceFile) return;
+    if (handledThresholdRunRef.current === runForWeek.seq) return;
+    handledThresholdRunRef.current = runForWeek.seq;
+    const shownKey = TAB_CACHE_KEYS.dispatchThresholdNoticeShown(runForWeek.sourceFile);
+    const heldSomeoneNew = runForWeek.flagged.length > 0;
+    // Once per sign-in per week — unless this run just held somebody new.
+    if (!heldSomeoneNew && (heldCount === 0 || getTabCache<boolean>(shownKey) === true)) return;
+    setTabCache(shownKey, true);
+    setThresholdNoticeFlaggedNow(runForWeek.flagged.length);
+    setThresholdNoticeWarning(runForWeek.warning);
+    setThresholdNoticeOpen(true);
+  }, [autoThresholdRun, period.sourceFile, heldCount]);
+  /** Every Threshold hold this week, newest marker per person — the notice's list. */
+  const thresholdNoticePeople = useMemo((): ThresholdNoticePerson[] => {
+    const seen = new Set<string>();
+    const out: ThresholdNoticePerson[] = [];
+    for (const p of paid) {
+      if (p.status !== 'threshold') continue;
+      const email = p.recipient_email.trim().toLowerCase();
+      if (!heldEmails.has(email) || seen.has(email)) continue;
+      seen.add(email);
+      out.push({
+        email,
+        name: p.recipient_name,
+        amountUSD: p.amount_usd,
+        amountPHP: p.amount_php,
+        processorLabel: PROCESSORS.find((x) => x.id === p.processor)?.label ?? p.processor,
+        auto: isAutoThresholdRecord(p),
+      });
+    }
+    return out.sort((a, b) => (a.amountUSD ?? 0) - (b.amountUSD ?? 0));
+  }, [paid, heldEmails]);
   usePaymentsLivePublisher({
     enabled:
       !viewingPastWeek && wizardReady && hydrated && !loading && Boolean(period.sourceFile),
@@ -1282,6 +1340,8 @@ export default function PayrollDispatch() {
         // tab stays scoped to its own dispatches.
         paidRecords={activeTab === 'all' ? paid : paidByProcessor[activeTab]}
         deptByEmail={deptByEmail}
+        // The Threshold notice's "Review" lands on All pending's Threshold view.
+        viewRequest={activeTab === 'all' ? queueViewRequest : null}
         // One-off payments (People tab "Pay") render inside the bucket of the
         // recipient's server-resolved rail — pending cards above the worksheet,
         // this week's dispatched one-offs above the log views. They are NOT
@@ -2103,6 +2163,19 @@ export default function PayrollDispatch() {
       <StartProcessingBroadcastModal
         announcement={startAnnouncement}
         onDismiss={dismissStartAnnouncement}
+      />
+      <AutoThresholdNotice
+        open={thresholdNoticeOpen}
+        heldCount={heldCount}
+        flaggedNowCount={thresholdNoticeFlaggedNow}
+        people={thresholdNoticePeople}
+        warning={thresholdNoticeWarning}
+        onClose={() => setThresholdNoticeOpen(false)}
+        onReview={() => {
+          setThresholdNoticeOpen(false);
+          setActiveTab('all');
+          setQueueViewRequest({ view: 'threshold', nonce: Date.now() });
+        }}
       />
       <LockToggleConfirmDialog
         open={confirmingLockToggle}

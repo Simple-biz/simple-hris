@@ -93,60 +93,86 @@ export async function insertPaymentDispatch(
 
   const { data, error } = await supabase
     .from("payment_dispatches")
-    .insert({
-      cycle_id: input.cycle_id ?? null,
-      cycle_period_start: input.cycle_period_start ?? null,
-      cycle_period_end: input.cycle_period_end ?? null,
-      cycle_source_file: input.cycle_source_file ?? null,
-      recipient_email: input.recipient_email,
-      recipient_name: input.recipient_name ?? null,
-      processor: input.processor,
-      bank_preferred_raw: input.bank_preferred_raw ?? null,
-      recipient_preferred_bank: input.recipient_preferred_bank ?? null,
-      recipient_account_number: input.recipient_account_number ?? null,
-      recipient_account_holder: input.recipient_account_holder ?? null,
-      recipient_swift_code: input.recipient_swift_code ?? null,
-      amount_usd: input.amount_usd ?? null,
-      amount_php: input.amount_php ?? null,
-      amount_cop: input.amount_cop ?? null,
-      transaction_id: input.transaction_id,
-      bank_used: input.bank_used,
-      sent_date: input.sent_date,
-      arrival_date: input.arrival_date ?? null,
-      status: input.status ?? "paid",
-      note: input.note ?? null,
-      // Named ONLY for a contractor payment. PostgREST rejects a payload that
-      // mentions an unknown column (PGRST204, from its schema cache) before the
-      // row is ever written, so naming these unconditionally would 500 EVERY
-      // insert — employee Mark Paid, MESA disbursements and urgent one-offs all
-      // route through this one function — until
-      // references/sql/alter/add_contractor_dispatch_link.sql is applied.
-      // Omitting them is semantically identical for employees: payee_type
-      // defaults to 'employee' in the DB.
-      ...(input.payee_type === "contractor"
-        ? {
-            payee_type: "contractor",
-            contractor_invoice_id: input.contractor_invoice_id ?? null,
-          }
-        : {}),
-      // Named ONLY when a system bonus is actually present — same PGRST204
-      // reasoning as payee_type above, applied to
-      // add_system_bonus_to_payment_dispatches.sql: naming these unconditionally
-      // would 500 EVERY dispatch insert until that migration is applied, since
-      // most weeks carry no bonus and would otherwise never exercise this path.
-      ...(input.system_bonus_php != null
-        ? {
-            system_bonus_php: input.system_bonus_php,
-            system_bonus_label: input.system_bonus_label ?? null,
-          }
-        : {}),
-      created_by: input.created_by ?? null,
-    })
+    .insert(toInsertRow(input))
     .select("*")
     .single();
 
   if (error) return { row: null, error: error.message };
   return { row: data as PaymentDispatchRow, error: null };
+}
+
+/**
+ * Many dispatch rows in ONE INSERT statement — all land or none do. Used by the
+ * auto-Threshold rule (`/api/payment-dispatches/auto-threshold`), which holds a
+ * week's under-$15 payees in one write so a failure can never leave half of
+ * them held. Same column mapping as {@link insertPaymentDispatch}.
+ */
+export async function insertPaymentDispatchBatch(
+  inputs: InsertPaymentDispatchInput[],
+): Promise<{ rows: PaymentDispatchRow[]; error: string | null }> {
+  if (inputs.length === 0) return { rows: [], error: null };
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { rows: [], error: "Supabase client unavailable" };
+
+  const { data, error } = await supabase
+    .from("payment_dispatches")
+    .insert(inputs.map(toInsertRow))
+    .select("*");
+
+  if (error) return { rows: [], error: error.message };
+  return { rows: (data ?? []) as PaymentDispatchRow[], error: null };
+}
+
+function toInsertRow(input: InsertPaymentDispatchInput): Record<string, unknown> {
+  return {
+    cycle_id: input.cycle_id ?? null,
+    cycle_period_start: input.cycle_period_start ?? null,
+    cycle_period_end: input.cycle_period_end ?? null,
+    cycle_source_file: input.cycle_source_file ?? null,
+    recipient_email: input.recipient_email,
+    recipient_name: input.recipient_name ?? null,
+    processor: input.processor,
+    bank_preferred_raw: input.bank_preferred_raw ?? null,
+    recipient_preferred_bank: input.recipient_preferred_bank ?? null,
+    recipient_account_number: input.recipient_account_number ?? null,
+    recipient_account_holder: input.recipient_account_holder ?? null,
+    recipient_swift_code: input.recipient_swift_code ?? null,
+    amount_usd: input.amount_usd ?? null,
+    amount_php: input.amount_php ?? null,
+    amount_cop: input.amount_cop ?? null,
+    transaction_id: input.transaction_id,
+    bank_used: input.bank_used,
+    sent_date: input.sent_date,
+    arrival_date: input.arrival_date ?? null,
+    status: input.status ?? "paid",
+    note: input.note ?? null,
+    // Named ONLY for a contractor payment. PostgREST rejects a payload that
+    // mentions an unknown column (PGRST204, from its schema cache) before the
+    // row is ever written, so naming these unconditionally would 500 EVERY
+    // insert — employee Mark Paid, MESA disbursements and urgent one-offs all
+    // route through this one function — until
+    // references/sql/alter/add_contractor_dispatch_link.sql is applied.
+    // Omitting them is semantically identical for employees: payee_type
+    // defaults to 'employee' in the DB.
+    ...(input.payee_type === "contractor"
+      ? {
+          payee_type: "contractor",
+          contractor_invoice_id: input.contractor_invoice_id ?? null,
+        }
+      : {}),
+    // Named ONLY when a system bonus is actually present — same PGRST204
+    // reasoning as payee_type above, applied to
+    // add_system_bonus_to_payment_dispatches.sql: naming these unconditionally
+    // would 500 EVERY dispatch insert until that migration is applied, since
+    // most weeks carry no bonus and would otherwise never exercise this path.
+    ...(input.system_bonus_php != null
+      ? {
+          system_bonus_php: input.system_bonus_php,
+          system_bonus_label: input.system_bonus_label ?? null,
+        }
+      : {}),
+    created_by: input.created_by ?? null,
+  };
 }
 
 export async function listPaymentDispatches(params: {

@@ -486,6 +486,13 @@ export const TAB_CACHE_KEYS = {
    */
   cycleGreetingShown: 'shell:cycle-greeting-shown',
   /**
+   * Payment Dispatch's "N payees are at Threshold" notice has opened for this
+   * week this session (value `true`). Same lifetime as
+   * {@link TAB_CACHE_KEYS.cycleGreetingShown}: once per sign-in, per week. A run
+   * that holds somebody NEW opens it again regardless — see AutoThresholdNotice.
+   */
+  dispatchThresholdNoticeShown: (sourceFile: string) => `dispatch:threshold-notice-shown:${sourceFile}`,
+  /**
    * Accounting -> Documents signing queue (`AccountingDocuments`).
    *
    * A SHARED APPROVAL QUEUE: seed-and-always-revalidate, NEVER the skip flag.

@@ -1360,7 +1360,7 @@ Audit log: `pab_dispute.withdrawn` with `source: "admin_orphanage_roster"`.
 
 ## 11. Payment Dispatches
 
-The Payment Dispatch feature exposes three endpoints under `/api/payment-dispatches/`. See [PAYMENT_DISPATCH.md](../features/payment-dispatch.md) for the broader feature context.
+Three routes under `/api/payment-dispatches/` are documented in detail below (the list/log `GET`, Mark Paid's `POST`, and `auto-threshold`), plus the global dispatch lock. The prefix carries more routes than these — `undo`, `undo-history`, `recent-paid`, `cycle-closeout` — each listed with its gate in the [Route index](#route-index--every-appapiroutets-in-the-tree). See [PAYMENT_DISPATCH.md](../features/payment-dispatch.md) for the broader feature context.
 
 ### `GET /api/payment-dispatches`
 
@@ -1456,6 +1456,32 @@ Side effects:
 
 **Tables**: `payment_dispatches`, `disbursement_records` (via trigger), `paystub_dispatch_queue` (read staged row + stamp sent/error), `audit_log`
 **Service Role**: Required (writes).
+
+### `POST /api/payment-dispatches/auto-threshold`
+
+*Added 2026-09-29.* Holds every pending payee under **US$15.00** at **Threshold** — Kane's rule, run by Payment Dispatch right after a fresh live-week load. Writes the same `threshold` marker a clerk logs from Mark Paid. Full rules: [payment-dispatch.md § 3.5.1](../features/payment-dispatch.md#351-auto-threshold--anything-under-us1500-2026-09-29).
+
+**Gate**: `requireFeatureEdit('accounting', 'payment_dispatch')` — the same gate as Mark Paid. A view-only load gets a 403 and writes nothing.
+
+**Body**
+```json
+{ "cycle_id": "<uuid>", "cycle_source_file": "<file>.csv", "cycle_period_start": "2026-09-20", "cycle_period_end": "2026-09-26",
+  "rows": [{ "recipient_email": "ana@simple.biz", "recipient_name": "Ana", "processor": "hurupay", "bank_preferred_raw": "hurupay",
+             "amount_usd": 3.25, "amount_php": 190.5, "amount_cop": null, "values_source": "lock" }] }
+```
+
+**Refuses rather than guesses:**
+- `409` if the file/id is not the `is_current` upload, or if `payroll.dispatch_lock.<file>` is not locked.
+- Every row re-validated by `parseAutoThresholdCandidate`: known rail, `values_source` ∈ `snapshot`/`lock` (never a recomputed figure), finite `amount_usd` strictly `< 15`. Anything else is counted in `rejected` and ignored. At most 500 rows.
+- Skips anyone with **any** `payment_dispatches` row this week (by file or cycle id), anyone whose Threshold was **cleared** this week (`payment.undone` with `original_status: 'threshold'`), and anyone the rule already held this week (`payment.auto_threshold`). Once per person per week.
+- One run per week at a time: `app_settings` key `dispatch.auto_threshold_run.<file>` is INSERTed as the claim (actor + timestamp only, no payee data), deleted after, taken over after 60 s. A second caller gets `200 { busy: true }` and writes nothing.
+- Any read it cannot make → `500`, nothing written.
+
+**Writes** one INSERT for all markers (all or none): `status: 'threshold'`, `transaction_id: ''`, `bank_used: 'Not sent'`, `sent_date` = today (Manila), the auto note, `created_by: "<clerk> (auto-threshold)"`. Then one awaited `payment.auto_threshold` audit event per person (per-row fallback), `pulsePaymentsLive()`, and a `queue-changed` Broadcast.
+
+**Response** `{ flagged: [{ email, name, processor, amountUSD, amountPHP }], skipped: { already_dispatched, cleared, already_auto, duplicate }, rejected, busy?, warning?, error }`.
+
+**Tables**: `payment_dispatches` (R, C), `disbursement_records` (via trigger), `hubstaff_uploads` (R), `app_settings` (R; run lock C/D), `audit_log` (R, C)
 
 ### `GET /api/payroll-dispatch-lock` & `POST /api/payroll-dispatch-lock`
 
@@ -3420,6 +3446,7 @@ of cells — the matches were not re-run).
 | `/api/payment-catalog/system-bonuses` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) |
 | `/api/payment-dispatch/bank-override` | POST | service-role only | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches` | GET, POST | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [dispatch-paid-toast](../features/dispatch-paid-toast.md) · *this file* |
+| `/api/payment-dispatches/auto-threshold` | POST | `requireFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) §3.5.1 · *this file* |
 | `/api/payment-dispatches/cycle-closeout` | GET, POST, DELETE | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches/recent-paid` | GET | `requireFeatureAccess` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
 | `/api/payment-dispatches/undo` | POST | `requireFeatureEdit` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [payment-dispatch](../features/payment-dispatch.md) |

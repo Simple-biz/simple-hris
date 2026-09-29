@@ -192,6 +192,11 @@ interface ProcessorQueueProps {
    * `departmentName`, a dispatch record does not.
    */
   deptByEmail: Record<string, string>;
+  /**
+   * Open a sub-view from outside — the auto-Threshold notice's "Review" button.
+   * Applied once per `nonce`, and only where the tab strip exists (`paidRecords`).
+   */
+  viewRequest?: { view: 'pending' | PaymentDispatchStatus; nonce: number } | null;
 }
 
 /** Sentinel filter value for rows with no known department (real names can't
@@ -433,7 +438,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail, renderExtras }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail, renderExtras, viewRequest }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   // '' = all departments; NO_DEPT = rows without a department; else exact name.
@@ -445,6 +450,12 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
   // `paidRecords` is provided; the tab strip is hidden otherwise.
   const [view, setView] = useState<QueueView>('pending');
   const hasPaidView = paidRecords != null;
+  const appliedViewNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (!viewRequest || !hasPaidView || appliedViewNonce.current === viewRequest.nonce) return;
+    appliedViewNonce.current = viewRequest.nonce;
+    setView(viewRequest.view);
+  }, [viewRequest, hasPaidView]);
   // One count per dispatch outcome, from the records handed to this scope.
   const statusCounts = useMemo(() => {
     const c: Record<PaymentDispatchStatus, number> = { paid: 0, not_paid: 0, threshold: 0, problem: 0 };

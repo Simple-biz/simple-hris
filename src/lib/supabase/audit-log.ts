@@ -46,6 +46,9 @@ export type AuditAction =
   // Undo / "Clear problem" — the dispatch row is DELETED, so the audit event
   // carries the full snapshot of the payment (who, value, cycle, original payer).
   | 'payment.undone'
+  // The under-US$15 rule held someone at Threshold on a page load — a marker,
+  // no money moved. Also the rule's once-per-week memory (auto-threshold.ts).
+  | 'payment.auto_threshold'
   | 'paystubs.dispatched'
   // External bank-info self-update (public /update-bank-info link)
   | 'bank_update.otp_requested'

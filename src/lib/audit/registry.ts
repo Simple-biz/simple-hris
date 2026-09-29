@@ -119,7 +119,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'payment.',
     surfaces: ['payroll', 'accounting'],
     label: 'Payment dispatch',
-    note: 'dispatched, undone (undo DELETES the dispatch row, so the event carries the full payment snapshot)',
+    note: 'dispatched, undone (undo DELETES the dispatch row, so the event carries the full payment snapshot), auto_threshold (the under-US$15 rule held a payee at Threshold on a page load — a marker, no money moved)',
   },
   {
     match: 'payment_cycle.',

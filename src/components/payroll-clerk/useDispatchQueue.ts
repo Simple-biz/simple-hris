@@ -136,6 +136,14 @@ interface DispatchQueueState {
   loading: boolean;
   error: string | null;
   /**
+   * `Date.now()` of the last load that came back from the NETWORK clean, in this
+   * mount. `null` while the screen only shows the in-session cache (which paints
+   * with `loading: false`) or after a failed load. Anything that WRITES off the
+   * queue — the auto-Threshold rule — keys on this, never on `!loading`, because
+   * a cached queue can carry last hour's amounts.
+   */
+  freshAt: number | null;
+  /**
    * A contractor-side failure (missing migration, failed read, aborted fetch).
    * The employee queue is unaffected — but contractor invoices are silently
    * absent, so the UI must say so rather than looking healthy and empty.
@@ -198,6 +206,8 @@ function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
     wizardReady: cached?.wizardReady ?? true,
     loading: cached === undefined,
     error: null,
+    // A cache paint is never fresh — see DispatchQueueState.freshAt.
+    freshAt: null,
     contractorError: null,
     contractorAdvisory: null,
     // Cached: a warm repaint must not drop a "these aren't the wizard's amounts"
@@ -1120,6 +1130,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         wizardReady: result.wizardReady,
         loading: false,
         error: result.error,
+        freshAt: result.error ? null : Date.now(),
         contractorError: result.contractorError,
         contractorAdvisory: result.contractorAdvisory,
         valuesWarning: result.valuesWarning,
@@ -1144,6 +1155,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         wizardReady: true,
         loading: false,
         error: e instanceof Error ? e.message : 'Failed to load dispatch queue',
+        freshAt: null,
         contractorError: null,
         contractorAdvisory: null,
         valuesWarning: null,
