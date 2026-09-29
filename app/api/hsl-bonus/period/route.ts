@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { announceKpiStatusChange } from '@/lib/kpi-live-server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
@@ -108,6 +109,10 @@ export async function DELETE(req: NextRequest) {
   if (statusRes.error) {
     return NextResponse.json({ error: statusRes.error.message }, { status: 500 });
   }
+
+  // The status row is gone with the entries, so this is a STATUS change (to no
+  // status) — announced unconditionally; a published week just left every view.
+  after(announceKpiStatusChange({ department: dept, periodStart: period_start, status: null }));
 
   return NextResponse.json({
     entries_deleted: entriesRes.data?.length ?? 0,

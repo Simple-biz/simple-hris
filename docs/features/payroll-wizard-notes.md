@@ -153,6 +153,17 @@ token and a background-mode guard, mirroring the Readiness pane's. The closed
 FAB's score ring deliberately keeps NO always-on channel of its own — the
 subscriptions live inside the open modal panes only.
 
+**KPI changes reach Readiness by Broadcast, not by that Realtime binding
+(2026-09-29).** Measured read-only that day: the anon browser reads **0** rows of
+`hsl_bonus_period_status`, `bonus_catalog_applied` and `hsl_bonus_entries`, so the
+pane's `postgres_changes` on them has never delivered — an emerald dot there means a
+SUBSCRIBED socket, not a delivered KPI change, and the 30s poll was the real
+coverage. The KPI write routes now broadcast `kpi-bonus-sync` and the pane re-reads
+on it in background mode, so a manager's Mark Ready / reopen moves the KPI
+Submissions tab in about a second. The Accounting Overview's Payroll Notes card
+re-reads on the same message (its floor is 120s). The closed ring is still off it,
+by the rule above. See [kpi-live-refresh.md](./kpi-live-refresh.md).
+
 The Offboarded pane also gained a **search box and a department filter**
 (2026-08-18), mirroring the Bank Info pane's: `matchesQuery` over
 name/emails/department/off-board reason, a per-department dropdown with counts

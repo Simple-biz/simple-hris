@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
+import { useKpiLive } from "@/hooks/useKpiLive";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -3294,6 +3295,10 @@ function PayrollReadinessGlance({
     onRefresh: () => void load({ background: true }),
     onStatusChange: (s) => setRtLive(s === "live"),
   });
+  // The three KPI tables above never deliver to the anon browser; a manager's
+  // Mark Ready / reopen reaches this pane by server Broadcast instead. Same
+  // background load — a dropped re-read never blanks the pane.
+  useKpiLive({ onChange: () => void load({ background: true }) });
 
   // Filter the three people lists live (name / email / dept / status). Computed
   // BEFORE the loading/error early-returns and made null-safe, so the paging

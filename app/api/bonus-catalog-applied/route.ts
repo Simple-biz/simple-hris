@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
+import { announceKpiBonusChange } from '@/lib/kpi-live-server';
 import {
   listApplied,
   saveDeptPeriodApplied,
@@ -93,6 +94,10 @@ export async function POST(request: Request) {
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
 
+  // Live: every open dashboard showing this dept-week re-reads — only if the
+  // week is already ready/locked (a draft autosave announces nothing).
+  after(announceKpiBonusChange([{ department: body.department, periodStart: body.period_start }]));
+
   // This POST is also the KPI Calculator's autosave path, so it fires on every
   // score save — the notify helper makes that safe: it returns immediately
   // unless the dept-week is ALREADY ready/locked, and then notifies only people
@@ -132,5 +137,7 @@ export async function DELETE(request: Request) {
   }
   const { error } = await deleteAppliedPeriod(dept, periodStart);
   if (error) return NextResponse.json({ error }, { status: 500 });
+  // A published week just lost its bonuses — every open view re-reads.
+  after(announceKpiBonusChange([{ department: dept, periodStart }]));
   return NextResponse.json({ error: null });
 }

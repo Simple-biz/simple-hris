@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useKpiLive } from '@/hooks/useKpiLive';
+import { KPI_LIVE_EMPLOYEE_SPREAD_MS } from '@/lib/kpi-live';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
 import {
   Loader2,
@@ -1296,6 +1298,8 @@ export default function EmployeeProfile({
   const [paycycleLoading, setPaycycleLoading] = useState(false);
   const [paycycleError, setPaycycleError] = useState<string | null>(null);
   const paycycleVisible = activeTab === 'compensation' && activeCompensationSection === 'currentPaycycle';
+  /** The mounted poll's `load`, so the KPI live channel re-reads through it. */
+  const paycycleLoadRef = useRef<(() => Promise<void>) | null>(null);
 
   useEffect(() => {
     if (!paycycleVisible) return;
@@ -1327,11 +1331,13 @@ export default function EmployeeProfile({
     };
 
     void load();
+    paycycleLoadRef.current = load;
     const id = window.setInterval(() => void load(), 60_000);
     const onFocus = () => void load();
     window.addEventListener('focus', onFocus);
     return () => {
       cancelled = true;
+      paycycleLoadRef.current = null;
       window.clearInterval(id);
       window.removeEventListener('focus', onFocus);
     };
@@ -1340,6 +1346,13 @@ export default function EmployeeProfile({
     // the interval on every successful poll.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paycycleVisible]);
+  // "KPI bonuses credited" moves when a manager marks the week ready / reopens
+  // it, not on the next 60s tick. Only while the section is on screen, like the poll.
+  useKpiLive({
+    onChange: () => void paycycleLoadRef.current?.(),
+    enabled: paycycleVisible,
+    spreadMs: KPI_LIVE_EMPLOYEE_SPREAD_MS,
+  });
 
   // Reset the pager when the LIST ITSELF changes — the cached rows being
   // replaced by live ones, a refetch that adds this week's statement, a shorter

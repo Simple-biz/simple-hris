@@ -95,10 +95,12 @@ future failure by making the notify fatal**.
 - **Toast latency up to ~30s**: `postgres_changes` never delivers to the anon
   browser client on RLS-guarded tables, so the chime's 30s poll is the real
   transport. The figures follow the toast, not their own timer (next section).
-- **A second browser tab may not move with the toast.** The chime's high-water
-  mark is shared through `localStorage`, so whichever tab polls first announces
-  and the other stays silent — its figures then catch up on focus, tab return or
-  the 30s beat. That is the chime's once-per-notification rule, not this feature.
+- **A second browser tab gets no toast, but its figures still move.** The chime's
+  high-water mark is shared through `localStorage`, so whichever tab polls first
+  announces and the other stays silent — that is the chime's once-per-notification
+  rule. Since 2026-09-29 the figures do not depend on the toast: the route that
+  wrote the week also broadcasts `kpi-bonus-sync`, which every open tab hears
+  ([kpi-live-refresh.md](./kpi-live-refresh.md)).
 - **A week the wizard already published shows the wizard's figure.**
   `kpiBonusAmount` prefers the published snapshot's `otherBonuses` outright, so a
   KPI change announced after Accounting published that week's final does not
@@ -125,6 +127,11 @@ notifications it dispatches `notification:arrived` on `window` carrying their ty
 Results tab on it. Both also refetch on focus / tab return and on a 30s visible-tab
 beat, for the changes that never notify (a week outside the current-cycle floor, a
 failed insert, a second browser tab).
+
+**The same day this grew into every dashboard** ([kpi-live-refresh.md](./kpi-live-refresh.md)):
+the KPI write routes broadcast `kpi-bonus-sync` from the server, and both employee
+surfaces re-read on it too — which also covers the one change that never sends a toast,
+a **reopen** (the week leaves the employee's view with no notification).
 
 Two rules came with the Overview's refetch, and both are money rules:
 

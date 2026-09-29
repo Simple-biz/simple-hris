@@ -115,6 +115,7 @@ import {
 } from '@/lib/hubstaff/current-upload';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useKpiLive } from '@/hooks/useKpiLive';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
 import KpiInsightCards from './KpiInsightCards';
 import { isSundayIso } from '@/lib/manager/kpi-insights';
@@ -2115,6 +2116,13 @@ export default function DeptBonusCalculator({
     onRefresh: refreshAll,
     channel: 'dept-bonus-calc-live',
     enabled: catalogLoaded && visibleDeptKeys.length > 0,
+  });
+  // The binding above never fires for the anon browser; the route that wrote
+  // the status / published bonus broadcasts instead. Same `refreshAll`, so a
+  // dirty or saving dept is still skipped. QC scores its own staging tables.
+  useKpiLive({
+    onChange: () => void refreshAll(),
+    enabled: !isQc && catalogLoaded && visibleDeptKeys.length > 0,
   });
 
   // First-load gate: the catalog plus every visible dept's applied rows must be

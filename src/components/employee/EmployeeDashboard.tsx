@@ -45,6 +45,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { KpiResultPeriod } from '@/lib/supabase/employee-kpi-results';
 import { KPI_SCORED_NOTIFICATION, subscribeNotificationTypes } from '@/lib/notifications/notification-arrived';
+import { useKpiLive } from '@/hooks/useKpiLive';
+import { KPI_LIVE_EMPLOYEE_SPREAD_MS } from '@/lib/kpi-live';
 import {
   resolveSystemBonuses,
   isDeptEligible,
@@ -657,8 +659,20 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       // Network / abort: keep the last good periods; the next beat retries.
     }
   }, [email]);
+  // The effect's controller, so the live channel's re-read is cancelled with it.
+  const kpiCtrlRef = useRef<AbortController | null>(null);
+  // Mark Ready / Lock / reopen anywhere → re-read (a reopen takes the week OUT,
+  // and never sends a toast). Spread, because the topic reaches every open tab.
+  useKpiLive({
+    onChange: () => {
+      const ctrl = kpiCtrlRef.current;
+      if (ctrl && !ctrl.signal.aborted) void fetchKpiPeriods(ctrl.signal);
+    },
+    spreadMs: KPI_LIVE_EMPLOYEE_SPREAD_MS,
+  });
   useEffect(() => {
     const ctrl = new AbortController();
+    kpiCtrlRef.current = ctrl;
     const refetch = () => { void fetchKpiPeriods(ctrl.signal); };
     const refetchIfVisible = () => { if (!document.hidden) refetch(); };
     refetch();

@@ -659,6 +659,11 @@ tab (2026-08-03) — `hubstaff_uploads`, `orphanage_pay`, `payroll_wizard_notes`
 markers) — plus a 30s poll. Read access = the accounting `payroll_wizard` view
 grant (same as the notes board); the inline actions additionally require the
 edit grant (`canEdit`), and the write APIs enforce their own grants.
+**Measured 2026-09-29: the Realtime half never delivers for the three KPI tables**
+(anon reads 0 of 337 / 18,969 / 7,118 rows) — the 30s poll was what moved the KPI
+rows. They now also move on the server Broadcast `kpi-bonus-sync` that every KPI
+write route sends, in the same background mode
+([kpi-live-refresh.md](./kpi-live-refresh.md)).
 
 ### 100% confetti celebration (2026-07-27)
 

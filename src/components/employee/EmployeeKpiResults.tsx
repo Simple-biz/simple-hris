@@ -27,6 +27,8 @@ import { formatPeso } from '@/lib/hsl-bonus/schema';
 import { useEmployeeCachedState } from '@/hooks/useEmployeeCachedState';
 import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { KPI_SCORED_NOTIFICATION, subscribeNotificationTypes } from '@/lib/notifications/notification-arrived';
+import { useKpiLive } from '@/hooks/useKpiLive';
+import { KPI_LIVE_EMPLOYEE_SPREAD_MS } from '@/lib/kpi-live';
 
 interface KpiResultItem {
   label: string;
@@ -275,6 +277,10 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
     () => subscribeNotificationTypes([KPI_SCORED_NOTIFICATION], () => void fetchResults()),
     [fetchResults],
   );
+
+  // Mark Ready / Lock / reopen anywhere → re-read within ~2s (server Broadcast).
+  // The postgres_changes channel below never delivers to the anon browser.
+  useKpiLive({ onChange: () => void fetchResults(), spreadMs: KPI_LIVE_EMPLOYEE_SPREAD_MS });
 
   // Realtime: a manager marking a week ready / applying bonuses refetches live.
   useEffect(() => {

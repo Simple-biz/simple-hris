@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, ArrowRight, CheckCircle2, Lock, RefreshCw, StickyNote } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useKpiLive } from '@/hooks/useKpiLive';
 import { ATTENTION_PALETTE, type AttentionTone } from '@/components/accounting/hero-stat-row';
 import { SETUP_STATUS_PILL, SETUP_STEP_ICON } from '@/components/accounting/wizard-setup-meta';
 import type { PayrollReadiness } from '@/lib/payroll/payroll-readiness';
@@ -170,6 +171,10 @@ export default function PayrollNotesSetupCard({
       window.removeEventListener('focus', onReturn);
     };
   }, [load, fault]);
+
+  // A manager's Mark Ready / reopen moves the "KPI bonuses" step now, not on the
+  // next 120s tick. `load` keeps what is painted on a failed pull.
+  useKpiLive({ onChange: () => void load(), enabled: fault !== 'denied' });
 
   // ── Spotlight rotation ────────────────────────────────────────────────────
   const setup = snap?.readiness.wizardSetup ?? null;

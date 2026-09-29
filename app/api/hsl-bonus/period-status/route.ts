@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
+import { announceKpiStatusChange } from '@/lib/kpi-live-server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
@@ -71,6 +72,25 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Every open dashboard showing this dept-week re-reads now (Kane, 2026-09-29:
+  // "make sure the KPI Bonus when locked are real time in all dashboards").
+  // Reopen too — it takes the week OUT of every view. From the row the database
+  // wrote, not the unvalidated body; `after()` so the send outlives the response.
+  const written = data as { department?: string; period_start?: string; status?: string } | null;
+  if (
+    written?.department &&
+    written.period_start &&
+    (written.status === 'draft' || written.status === 'ready' || written.status === 'locked')
+  ) {
+    after(
+      announceKpiStatusChange({
+        department: written.department,
+        periodStart: written.period_start,
+        status: written.status,
+      }),
+    );
+  }
 
   // The week just became (or stayed) visible to employees → tell everyone whose
   // KPI bonus total changed since their last kpi.scored notification. The

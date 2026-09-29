@@ -43,6 +43,7 @@ import { useKpiCacheIdentity } from '@/hooks/useKpiCacheIdentity';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import type { PayrollDispatchLockState } from '@/lib/supabase/payroll-dispatch-lock';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useKpiLive } from '@/hooks/useKpiLive';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import {
   OffboardedStrip,
@@ -1254,6 +1255,10 @@ function HslBonusCalculatorForWeek({
     channel: 'hsl-bonus-calc-live',
     enabled: visibleDepts.length > 0,
   });
+  // The binding above never fires for the anon browser; the route that wrote
+  // the status / published entry broadcasts instead. Same `refreshAll`, so a
+  // dirty or saving branch is still skipped.
+  useKpiLive({ onChange: () => void refreshAll(), enabled: visibleDepts.length > 0 });
 
   // Pin the KPI week to the Hubstaff batch accounting is dispatching — the
   // Initialized (is_current) upload, NOT merely the newest file. The public

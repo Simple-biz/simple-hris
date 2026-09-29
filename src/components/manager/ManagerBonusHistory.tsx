@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
 import { useManagerCachedState } from '@/hooks/useManagerCachedState';
+import { useKpiLive } from '@/hooks/useKpiLive';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarDays,
@@ -294,14 +295,16 @@ export default function ManagerBonusHistory({
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
 
   const fetchSummary = useMemo(() => {
-    return async (showSpinner: boolean) => {
+    /** `live` = a KPI broadcast re-read: no button spinner, no cleared error, and
+     *  anything short of a clean read keeps the table already on screen. */
+    return async (showSpinner: boolean, live = false) => {
       if (visibleHslDepts.length === 0 && visibleCatalogDepts.length === 0) {
         setPayloads(EMPTY_BONUS_HISTORY_PAYLOADS);
         setSettled(true);
         return;
       }
-      if (!showSpinner) setRefreshing(true);
-      setError(null);
+      if (!showSpinner && !live) setRefreshing(true);
+      if (!live) setError(null);
       try {
         const [hslRes, catRes, statusRes] = await Promise.all([
           visibleHslDepts.length > 0
@@ -322,14 +325,16 @@ export default function ManagerBonusHistory({
           status: statusRes ? ((await statusRes.json()) as BonusHistoryPayloads['status']) : null,
         };
         const reported = next.hsl?.error || next.catalog?.error || null;
+        if (live && (reported || [hslRes, catRes, statusRes].some((res) => res && !res.ok))) return;
         if (reported) setError(reported);
         setPayloads(next);
         setSettled(true);
       } catch (e) {
+        if (live) return;
         setError(e instanceof Error ? e.message : 'Failed to load history');
         setSettled(true);
       } finally {
-        if (!showSpinner) setRefreshing(false);
+        if (!showSpinner && !live) setRefreshing(false);
       }
     };
     // `setPayloads` is a stable useCallback from the cached-state hook.
@@ -339,6 +344,10 @@ export default function ManagerBonusHistory({
   useEffect(() => {
     void fetchSummary(true);
   }, [fetchSummary]);
+
+  // Ready / Locked / Draft tiles and row statuses move when any manager marks a
+  // week ready or reopens it — not only on this tab's mount or Refresh.
+  useKpiLive({ onChange: () => void fetchSummary(false, true) });
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => {

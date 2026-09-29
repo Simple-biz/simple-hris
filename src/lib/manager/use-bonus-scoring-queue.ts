@@ -22,7 +22,8 @@
 // scripts/audit-kpi-key-drift.mts), which is why nothing is computed until the
 // live week resolves.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useKpiLive } from '@/hooks/useKpiLive';
 import {
   HSL_DEPTS,
   HSL_DEPT_KEYS,
@@ -326,6 +327,10 @@ export function useBonusScoringQueue({
   /** Whether the fetch below has answered at least once in this page load. */
   const [settled, setSettled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Bumped when a KPI week is marked ready / reopened anywhere (`kpi-bonus-sync`). */
+  const [liveKey, setLiveKey] = useState(0);
+  /** The live week a bump was issued for — that run is BACKGROUND. */
+  const liveBgRef = useRef<string | null>(null);
 
   const items = useMemo(() => {
     if (!hasDepts || summaries === null) return EMPTY;
@@ -359,9 +364,14 @@ export function useBonusScoringQueue({
       return;
     }
     const weekStart = liveWeekStart;
+    // A live re-read of the SAME week keeps what is painted unless every read it
+    // needs came back: a partial failure would flip a Submitted dept to
+    // "unscored", which is a wrong answer, not a stale one.
+    const background = liveBgRef.current !== null && liveBgRef.current === weekStart;
+    liveBgRef.current = null;
 
     let cancelled = false;
-    setError(null);
+    if (!background) setError(null);
 
     (async () => {
       const [hslSummary, weekStatus, applied, catalog] = await Promise.all([
@@ -385,6 +395,13 @@ export function useBonusScoringQueue({
           : Promise.resolve(null),
       ]);
       if (cancelled) return;
+      if (
+        background &&
+        ((hslDepts.length > 0 && !hslSummary) ||
+          (catalogDepts.length > 0 && (!weekStatus || !applied)))
+      ) {
+        return;
+      }
 
       // RAW in, RAW cached. `buildBonusScoringItems` below turns these into the
       // rendered rows on both the seeded and the fetched path, so the two cannot
@@ -410,7 +427,18 @@ export function useBonusScoringQueue({
     };
     // hslKey / catalogKey stand in for the (stable-content) dept arrays.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, hasDepts, weeksLoaded, liveWeekStart, hslKey, catalogKey]);
+  }, [ready, hasDepts, weeksLoaded, liveWeekStart, hslKey, catalogKey, liveKey]);
+
+  // Mark Ready / reopen anywhere → the queue's Draft / Submitted chips move now,
+  // not on the next visit (server Broadcast; see `useKpiLive`).
+  useKpiLive({
+    onChange: () => {
+      if (!liveWeekStart) return;
+      liveBgRef.current = liveWeekStart;
+      setLiveKey((k) => k + 1);
+    },
+    enabled: ready && hasDepts && !!liveWeekStart,
+  });
 
   const outstanding = useMemo(() => items.filter((i) => isOutstanding(i.state)).length, [items]);
 

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useKpiLive } from '@/hooks/useKpiLive';
 import { resolveFirstName } from '@/lib/name/first-name';
 import { toast } from 'sonner';
 import AppFooter from '@/components/AppFooter';
@@ -2277,6 +2278,21 @@ function CallToolsUsernameCell({
   );
 }
 
+/** The deliverable board's stored shape, from a clean API answer. One mapping for
+ *  the department-switch read and the live re-read, so they cannot diverge. */
+function toDeliverablePayload(j: Partial<DeliverableRankingsPayload>): DeliverableRankingsPayload {
+  return {
+    available: !!j.available,
+    currentWeekStart: j.currentWeekStart ?? '',
+    weeks: j.weeks ?? [],
+    metrics: j.metrics ?? [],
+    skippedRows: j.skippedRows ?? 0,
+    order: j.order ?? null,
+    error: null,
+    ...(j.allOnly === true ? { allOnly: true } : {}),
+  };
+}
+
 function TeamPanelInner({
   members,
   teamGate,
@@ -2997,16 +3013,7 @@ function TeamPanelInner({
           setDeliv(null);
           setDelivError(j.error);
         } else {
-          setDeliv({
-            available: !!j.available,
-            currentWeekStart: j.currentWeekStart ?? '',
-            weeks: j.weeks ?? [],
-            metrics: j.metrics ?? [],
-            skippedRows: j.skippedRows ?? 0,
-            order: j.order ?? null,
-            error: null,
-            ...(j.allOnly === true ? { allOnly: true } : {}),
-          });
+          setDeliv(toDeliverablePayload(j));
           setDelivError(null);
         }
         setDelivFor(activeDeptLabel);
@@ -3021,6 +3028,50 @@ function TeamPanelInner({
       cancelled = true;
     };
   }, [activeDeptLabel, delivDept, setDeliv]);
+
+  // Live (Kane, 2026-09-29: KPI "real time in all dashboards"): a Mark Ready /
+  // reopen anywhere re-reads the three boards for the department ON SCREEN —
+  // quietly. No week-stepper reset (that belongs to a DEPARTMENT change, above),
+  // and anything short of a clean read keeps what is painted. The department is
+  // re-checked when each read lands: the cached-state setters are keyed by the
+  // CURRENT department, so a late answer must never be written under another's key.
+  const [rankingsLiveKey, setRankingsLiveKey] = useState(0);
+  const liveDeptRef = useRef({ label: activeDeptLabel, deliv: delivDept });
+  liveDeptRef.current = { label: activeDeptLabel, deliv: delivDept };
+  useKpiLive({ onChange: () => setRankingsLiveKey((k) => k + 1), enabled: !!activeDeptLabel });
+  useEffect(() => {
+    if (rankingsLiveKey === 0) return;
+    const { label, deliv: delivKey } = liveDeptRef.current;
+    if (!label) return;
+    let cancelled = false;
+    const stillHere = () => !cancelled && liveDeptRef.current.label === label;
+    const quiet = <T,>(url: string, apply: (j: T) => void) => {
+      fetch(url, { cache: 'no-store' })
+        .then(async (res) => {
+          const j = (await res.json()) as T & { error?: string | null };
+          if (!res.ok || j.error) throw new Error(j.error || `HTTP ${res.status}`);
+          if (stillHere()) apply(j);
+        })
+        .catch((e: unknown) => console.warn('[rankings] live re-read failed — keeping the board', url, e));
+    };
+    quiet<{ weeks?: TeamRankingWeek[] }>(
+      `/api/team-rankings?department=${encodeURIComponent(label)}&view=manager`,
+      (j) => setSpRankings({ weeks: j.weeks ?? [] }),
+    );
+    quiet<{ available?: boolean; weeks?: AppointmentWeek[] }>(
+      `/api/manager/appointment-rankings?department=${encodeURIComponent(label)}`,
+      (j) => setAppt({ available: !!j.available, weeks: j.weeks ?? [] }),
+    );
+    quiet<Partial<DeliverableRankingsPayload>>(
+      `/api/manager/deliverable-rankings?department=${encodeURIComponent(delivKey)}`,
+      (j) => setDeliv(toDeliverablePayload(j)),
+    );
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on the bump only: the department-switch reads above own every other trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rankingsLiveKey]);
   // An HSL board ranks the whole HSL family, never just the sub-team's placement: a
   // branch's scorers sit on many sub-teams (Medical Records: 47 of 64 placed in SSD,
   // measured 2026-09-28). The server ranks the same family roster.

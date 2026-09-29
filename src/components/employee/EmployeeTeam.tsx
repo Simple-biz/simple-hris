@@ -32,6 +32,8 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { useKpiLive } from '@/hooks/useKpiLive';
+import { KPI_LIVE_EMPLOYEE_SPREAD_MS } from '@/lib/kpi-live';
 import { normEmail } from '@/lib/email/norm-email';
 import { useOnlineEmails } from '@/components/presence/PresenceProvider';
 import { SkillBlock, TeamAvatar, formatLastSeen } from '@/components/team/team-ui';
@@ -400,7 +402,11 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
     };
   }, [deptLabel]);
 
-  /* Weekly rankings. Same stable key — one fetch per department, not per visit. */
+  /* Weekly rankings. Same stable key — one fetch per department, not per visit —
+     plus a re-read when a manager marks a week ready / reopens it (a week only
+     ranks once it is published). A failed read keeps the weeks already painted. */
+  const [rankingsLiveKey, setRankingsLiveKey] = useState(0);
+  useKpiLive({ onChange: () => setRankingsLiveKey((k) => k + 1), spreadMs: KPI_LIVE_EMPLOYEE_SPREAD_MS });
   useEffect(() => {
     let cancelled = false;
     setRankingsError(null);
@@ -408,7 +414,10 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
       .then((r) => r.json())
       .then((j: { weeks?: TeamRankingWeek[]; error?: string | null }) => {
         if (cancelled) return;
-        if (j.error) setRankingsError(j.error);
+        if (j.error) {
+          setRankingsError(j.error);
+          return;
+        }
         setRankingWeeks(j.weeks ?? NO_RANKING_WEEKS);
       })
       .catch((e) => {
@@ -420,7 +429,7 @@ export default function EmployeeTeam({ employeeEmail, department }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [deptLabel]);
+  }, [deptLabel, rankingsLiveKey]);
 
   /* Slow-tick last-seen refresh so "Last seen 1m ago" creeps forward. */
   const rosterEmailsKey = useMemo(

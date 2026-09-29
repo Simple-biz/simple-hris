@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
+import { announceKpiBonusChange } from '@/lib/kpi-live-server';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
@@ -74,6 +75,12 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Live: re-read on every open dashboard, for each dept-week in the batch that
+  // is already ready/locked (a draft autosave announces nothing).
+  after(
+    announceKpiBonusChange(body.entries.map((e) => ({ department: e.department, periodStart: e.period_start }))),
+  );
+
   // Entry saves are the HSL autosave path — safe for the same reason as
   // bonus-catalog-applied: the notify helper exits on draft weeks and diffs
   // per person on published ones. One call per dept-week in the batch
@@ -139,6 +146,8 @@ export async function DELETE(req: NextRequest) {
     .eq('employee_email', email);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  after(announceKpiBonusChange([{ department: dept, periodStart: period_start }]));
 
   void insertAuditLog({
     ...auditFrom(req, authz),

@@ -283,7 +283,7 @@ import {
   slugifyDeptKey,
   type DepartmentRegistryEntry,
 } from '@/lib/departments/registry';
-import { isFinalPayrollWeekOfMonth, relateMonthlyPeriodToWeek, type MonthlyPeriodRelation } from '@/lib/payroll/bonus-cadence';
+import { relateMonthlyPeriodToWeek, type MonthlyPeriodRelation } from '@/lib/payroll/bonus-cadence';
 import {
   buildSharedEmailOwners,
   attributeKpiRows,
@@ -331,7 +331,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { hslDeptAutoDispatches, type DeptConfig } from '@/lib/hsl-bonus/schema';
-import { managerWeekAmount } from '@/lib/hsl-bonus/manager-week-amount';
+import {
+  fetchManagerKpi,
+  fetchHslKpi,
+  hslPayableSet,
+  hslPerEmployeeDepts,
+  sameJson,
+  wizardKpiLiveAllowed,
+} from '@/lib/payroll/wizard-kpi-load';
+import { useKpiLive } from '@/hooks/useKpiLive';
+import type { KpiLivePayload } from '@/lib/kpi-live';
 import { hslBranchConfigs, hslBranchKeys } from '@/lib/hsl-bonus/data-branch';
 import { useBuiltinSubsState } from '@/lib/departments/use-builtin-subs';
 import { builtinSubsFor } from '@/lib/departments/builtin-subs';
@@ -2580,7 +2589,9 @@ export default function PayrollWizard({
   }[]>([]);
   const [hslStepLoading, setHslStepLoading] = useState(false);
   const [hslStepError, setHslStepError] = useState<string | null>(null);
-  const [hslRefreshKey, setHslRefreshKey] = useState(0);
+  /** Bumped by the KPI live refresh; that run of the step loader is background. */
+  const [hslStepLiveKey, setHslStepLiveKey] = useState(0);
+  const hslStepBackgroundRef = useRef<{ week: string | null } | null>(null);
   // Active HSL sub-department in the wizard HSL tab rail ('all' = every HSL employee).
   const [activeHslDept, setActiveHslDept] = useState<string>('all');
   // lower(email) → HSL sub-department key, from the hsl_team_members roster. Powers
@@ -3124,6 +3135,11 @@ export default function PayrollWizard({
   const [cycleFxLoadedFor, setCycleFxLoadedFor] = useState<string | null>(null);
   const [cycleFxFailedFor, setCycleFxFailedFor] = useState<string | null>(null);
 
+  // Bumped by each WEEK-switch load below. The same-week live refresh captures
+  // them and discards its result if a foreground load started meanwhile.
+  const managerKpiGenRef = useRef(0);
+  const hslKpiGenRef = useRef(0);
+
   useEffect(() => {
     let cancelled = false;
     // Blank the previous week's amounts BEFORE awaiting anything. Without this the
@@ -3141,87 +3157,13 @@ export default function PayrollWizard({
     setManagerBonusRaw({});
     setManagerBonusRowsRaw({});
     setManagerBonusByDeptRaw({});
+    managerKpiGenRef.current += 1;
     (async () => {
       try {
-        const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
-        const statusJson = (await statusRes.json()) as {
-          rows?: { department: string; period_start: string; period_end: string; status: string }[];
-        };
-        // Paying a week is not the same question as offering a card for it, so this
-        // reads the payment-side set — every current card PLUS every retired one.
-        // Keyed off MANAGER_BONUS_DEPT_KEYS, the 2026-08-10 card retirement would
-        // have silently stopped paying `sales` / `smm` / `smm_freelancer` rows that
-        // were already applied, replay included. See WIZARD_PAYABLE_KPI_DEPT_KEYS.
-        const managerKeys = WIZARD_PAYABLE_KPI_DEPT_KEYS;
-        // When the Hubstaff week is known, pin to that week.
-        // Otherwise take the latest ready/locked per department (locked beats ready).
-        const chosen = new Map<string, { period_start: string; status: string }>();
-        for (const row of statusJson.rows ?? []) {
-          if (!managerKeys.has(row.department)) continue;
-          if (row.status !== 'ready' && row.status !== 'locked') continue;
-          if (hubstaffWeekStart) {
-            if (row.period_start !== hubstaffWeekStart) continue;
-            const cur = chosen.get(row.department);
-            if (!cur || (cur.status !== 'locked' && row.status === 'locked')) {
-              chosen.set(row.department, { period_start: row.period_start, status: row.status });
-            }
-          } else {
-            const cur = chosen.get(row.department);
-            if (
-              !cur ||
-              row.period_start > cur.period_start ||
-              (row.period_start === cur.period_start && row.status === 'locked')
-            ) {
-              chosen.set(row.department, { period_start: row.period_start, status: row.status });
-            }
-          }
-        }
-        if (cancelled) return;
-
-        const meta: Record<string, { period_start: string; status: string }> = {};
-        const raw: Record<string, number> = {};
-        const byDept: Record<string, Record<string, number>> = {};
-        const rowsByEmail: Record<string, AppliedKpiRow[]> = {};
-        await Promise.all(
-          Array.from(chosen.entries()).map(async ([dept, info]) => {
-            meta[dept] = info;
-            // Amounts come from the catalog-applied table; an employee may have
-            // several applied bonuses in the week, so sum them per email — and
-            // keep a per-department tally so the KPI Sub. hover can show the source
-            // (a transferred person can have a KPI in two departments).
-            const res = await fetch(
-              `/api/bonus-catalog-applied?dept=${dept}&period_start=${info.period_start}`,
-              { cache: 'no-store' },
-            );
-            const json = (await res.json()) as {
-              rows?: {
-                employee_email: string;
-                employee_name?: string | null;
-                amount: number | string | null;
-                cadence?: 'weekly' | 'monthly' | null;
-              }[];
-            };
-            // Monthly bonuses pay once per month, on the LAST payroll week of the
-            // month (mirrors PAB). Only sum them into that final week's paycheck —
-            // a backstop even though the KPI Calculator already prevents a monthly
-            // bonus from being applied outside the final week.
-            const isFinalWeekOfMonth = isFinalPayrollWeekOfMonth(info.period_start);
-            for (const r of json.rows ?? []) {
-              const em = (r.employee_email ?? '').toLowerCase();
-              if (!em) continue;
-              if (r.cadence === 'monthly' && !isFinalWeekOfMonth) continue;
-              const amt = r.amount == null ? 0 : Number(r.amount);
-              raw[em] = Math.round((raw[em] ?? 0) + amt);
-              const bucket = (byDept[em] ??= {});
-              bucket[dept] = Math.round((bucket[dept] ?? 0) + amt);
-              (rowsByEmail[em] ??= []).push({
-                dept,
-                name: (r.employee_name ?? '').trim() || null,
-                amount: amt,
-              });
-            }
-          }),
-        );
+        // One computation shared with the same-week live refresh below
+        // (`wizard-kpi-load.ts`); it THROWS on a failed read, so a 500 can no
+        // longer be read as "no submissions" and marked loaded.
+        const { meta, raw, rowsByEmail, byDept } = await fetchManagerKpi(hubstaffWeekStart);
         if (cancelled) return;
         setManagerBonusMeta(meta);
         setManagerBonusRaw(raw);
@@ -3251,6 +3193,7 @@ export default function PayrollWizard({
   useEffect(() => {
     let cancelled = false;
     setHslKpiLoading(true);
+    hslKpiGenRef.current += 1;
     // This loader already refused to KEEP a stale other-week amount on failure;
     // it still showed one for the width of the fetch after a week switch. Clear
     // synchronously, before the first await, for the same reason as the manager
@@ -3272,7 +3215,6 @@ export default function PayrollWizard({
           }
           return;
         }
-        const isFinalWeek = isFinalPayrollWeekOfMonth(hubstaffWeekStart);
         // The sub-department map is a PAY INPUT here, so an unread one is unknown,
         // never empty. Degrading to the code teams would drop every DATA branch's
         // bonus with no error anywhere — the silent underpay this loader's other
@@ -3293,101 +3235,20 @@ export default function PayrollWizard({
         // once-a-month share pays in the week its period is keyed to (pinned below),
         // summed with the person's weekly amounts (Carla, 2026-09-08). Other monthly
         // depts (collections / healthcare TL / collections TL) stay manual via Adjustment.
-        const payableSet = new Set<string>(
-          hslAllBranchKeys.filter((k) => {
-            const cfg = hslBranchCfgs[k];
-            return !!cfg && hslDeptAutoDispatches(cfg);
-          }),
-        );
-        const statusRes = await fetch('/api/hsl-bonus/period-status', { cache: 'no-store' });
-        const statusJson = (await statusRes.json()) as {
-          rows?: { department: string; period_start: string; period_end: string; status: 'draft' | 'ready' | 'locked' }[];
-        };
-        if (cancelled) return;
-
-        // Pin every weekly dept to the processed Hubstaff week; locked beats ready.
-        const chosen = new Map<string, { period_start: string; period_end: string; status: 'ready' | 'locked' }>();
-        for (const row of statusJson.rows ?? []) {
-          if (!payableSet.has(row.department)) continue;
-          if (row.status !== 'ready' && row.status !== 'locked') continue;
-          if (row.period_start !== hubstaffWeekStart) continue;
-          const cur = chosen.get(row.department);
-          if (!cur || (cur.status !== 'locked' && row.status === 'locked')) {
-            chosen.set(row.department, {
-              period_start: row.period_start,
-              period_end: row.period_end,
-              status: row.status,
-            });
-          }
-        }
-
-        if (chosen.size === 0) {
-          if (!cancelled) {
-            setHslKpiPeriod(null);
-            setHslKpiAmounts({});
-            // Genuinely nothing ready/locked for this week — a KNOWN empty, unlike
-            // the failure branch below. Publishing may proceed.
-            setHslKpiLoaded({ week: hubstaffWeekStart });
-          }
-          return;
-        }
-
-        // Fetch each chosen dept-week's entries and sum per employee. SSD is
-        // included here, so this fully replaces the old SSD-only amount (no double
-        // count). For the Managers dept, recompute from kpi_data so monthly-cadence
-        // components (e.g. Gyd's ₱25k) only count in the final payroll week.
-        const amounts: Record<string, number> = {};
-        await Promise.all(
-          Array.from(chosen.entries()).map(async ([dept, info]) => {
-            const res = await fetch(
-              `/api/hsl-bonus/entries?dept=${dept}&period_start=${info.period_start}`,
-              { cache: 'no-store' },
-            );
-            const json = (await res.json()) as {
-              rows?: { employee_email: string; calculated_bonus: number; kpi_data?: Record<string, unknown> }[];
-            };
-            const perEmployee = hslBranchCfgs[dept]?.perEmployee;
-            for (const e of json.rows ?? []) {
-              const em = (e.employee_email ?? '').toLowerCase();
-              if (!em || em === '__dept_meta__') continue;
-              let amt: number;
-              if (perEmployee) {
-                // Managers Weekly used to be RECOMPUTED from scratch here, which
-                // silently discarded everything `calculated_bonus` carried that
-                // `spec.components` does not define — as of 2026-09-22 that is a
-                // Bonus Library bonus on `hsl:hsl_managers`, scored on the card and
-                // dropped at pay time. Start from the stored figure like every other
-                // branch and withhold ONLY the monthly components this week cannot
-                // pay (`manager-week-amount.ts`).
-                const r = managerWeekAmount({
-                  storedBonus: e.calculated_bonus,
-                  email: em,
-                  kpiData: (e.kpi_data ?? {}) as Record<string, number | boolean>,
-                  periodStart: info.period_start,
-                  isFinalWeek,
-                });
-                if (r.inconsistent) {
-                  console.error(
-                    `[hslKpi] ${dept}/${em}: stored bonus ₱${e.calculated_bonus} is below its own monthly components (₱${r.monthlyWithheld}) — paying ₱0 rather than a negative`,
-                  );
-                }
-                amt = r.amount;
-              } else {
-                amt = Math.round(e.calculated_bonus ?? 0);
-              }
-              amounts[em] = Math.round((amounts[em] ?? 0) + amt);
-            }
-          }),
-        );
-        if (cancelled) return;
-
-        const picks = Array.from(chosen.values());
-        setHslKpiAmounts(amounts);
-        setHslKpiPeriod({
-          period_start: hubstaffWeekStart,
-          period_end: picks.find((p) => p.period_end)?.period_end ?? '',
-          status: picks.every((p) => p.status === 'locked') ? 'locked' : 'ready',
+        const payableSet = hslPayableSet(hslAllBranchKeys, hslBranchCfgs);
+        // One computation shared with the same-week live refresh below
+        // (`wizard-kpi-load.ts`); it THROWS on a failed read — the catch keeps
+        // `hslKpiLoaded` null, which holds the final-pay publisher.
+        const { amounts, period } = await fetchHslKpi({
+          week: hubstaffWeekStart,
+          payableSet,
+          perEmployeeDepts: hslPerEmployeeDepts(hslAllBranchKeys, hslBranchCfgs),
         });
+        if (cancelled) return;
+        // `period: null` = genuinely nothing ready/locked for this week — a KNOWN
+        // empty, unlike the failure branch below. Publishing may proceed.
+        setHslKpiAmounts(amounts);
+        setHslKpiPeriod(period);
         setHslKpiLoaded({ week: hubstaffWeekStart });
       } catch {
         // On failure, clear rather than keep a possibly-stale other-week amount.
@@ -3405,7 +3266,125 @@ export default function PayrollWizard({
     return () => {
       cancelled = true;
     };
-  }, [hubstaffWeekStart, hslRefreshKey, hslSubsStatus, hslAllBranchKeys, hslBranchCfgs]);
+  }, [hubstaffWeekStart, hslSubsStatus, hslAllBranchKeys, hslBranchCfgs]);
+
+  // ── KPI live refresh (`kpi-bonus-sync`): SAME week, BACKGROUND, never blanks ──
+  // Kane 2026-09-29: "make sure that the KPI Bonus when locked are real time in all
+  // dashboards". The two loaders above run on a WEEK switch and blank first, so one
+  // week's KPI can never publish into another week's snapshot. A manager's Mark
+  // Ready / reopen on the week already on screen must not blank the columns or the
+  // publish gate: it re-reads through the same functions and swaps the maps in only
+  // on success, only for the week still on screen, only if no week-switch load
+  // started meanwhile, and only when they differ. A failed re-read keeps what is
+  // loaded — which is exactly what the wizard showed before it was live.
+  //
+  // NEVER once the cycle's values are locked for Payment Dispatch, while Start
+  // Processing holds the payroll lock, or in a replayed week — the rule
+  // `pullNotesAdjustments` already follows: nothing drifts in silently mid-payout.
+  // A change that arrives then is SAID (a toast naming the fix), not applied, and
+  // the first moment the cycle is editable again catches up once.
+  const kpiLiveAllowed = wizardKpiLiveAllowed({
+    isReplay,
+    processingLocked: lockState.locked,
+    valuesLockLoading: dispatchValuesLock.loading,
+    valuesLocked: dispatchValuesLock.state.locked,
+  });
+  const kpiLiveSnapshot = {
+    allowed: kpiLiveAllowed,
+    valuesLocked: dispatchValuesLock.state.locked,
+    week: hubstaffWeekStart,
+    step: currentStep,
+    managerLoaded: managerBonusLoaded,
+    hslLoaded: hslKpiLoaded,
+    hslSubsStatus,
+    hslAllBranchKeys,
+    hslBranchCfgs,
+    managerRaw: managerBonusRaw,
+    managerRows: managerBonusRowsRaw,
+    hslAmounts: hslKpiAmounts,
+    hslPeriod: hslKpiPeriod,
+  };
+  const kpiLiveRef = useRef(kpiLiveSnapshot);
+  kpiLiveRef.current = kpiLiveSnapshot;
+  const managerLiveSeqRef = useRef(0);
+  const hslLiveSeqRef = useRef(0);
+
+  const refreshKpiLive = useCallback(async (payload: KpiLivePayload | null) => {
+    const snap = kpiLiveRef.current;
+    if (!snap.allowed) {
+      // Said, not applied: the values Payment Dispatch may be paying from stay put.
+      if (payload && snap.valuesLocked && snap.week && payload.periodStart === snap.week) {
+        toast.info('A KPI week for this cycle just changed', {
+          id: 'wizard-kpi-live-locked',
+          description:
+            'This cycle is locked for Payment Dispatch, so the new KPI figures were not pulled in. Unlock it in the Validation step to update them.',
+        });
+      }
+      return;
+    }
+    const week = snap.week;
+    // Display-only HSL tab cards re-read quietly (monthly periods are scoped by
+    // month, so no week filter here).
+    if (snap.step === 5) {
+      hslStepBackgroundRef.current = { week };
+      setHslStepLiveKey((k) => k + 1);
+    }
+    // A message for another week cannot move this cycle's pay.
+    if (payload && week && payload.periodStart !== week) return;
+
+    const tasks: Promise<void>[] = [];
+    if (kpiAmountsMatchWeek(snap.managerLoaded, week)) {
+      const gen = managerKpiGenRef.current;
+      const seq = ++managerLiveSeqRef.current;
+      tasks.push(
+        fetchManagerKpi(week).then(
+          (r) => {
+            const now = kpiLiveRef.current;
+            if (seq !== managerLiveSeqRef.current || gen !== managerKpiGenRef.current) return;
+            if (!now.allowed || now.week !== week) return;
+            if (sameJson(r.raw, now.managerRaw) && sameJson(r.rowsByEmail, now.managerRows)) return;
+            setManagerBonusMeta(r.meta);
+            setManagerBonusRaw(r.raw);
+            setManagerBonusRowsRaw(r.rowsByEmail);
+            setManagerBonusByDeptRaw(r.byDept);
+          },
+          (e) => console.warn('[managerBonus] live refresh failed — keeping the loaded amounts', e),
+        ),
+      );
+    }
+    if (week && snap.hslSubsStatus === 'ready' && kpiAmountsMatchWeek(snap.hslLoaded, week)) {
+      const gen = hslKpiGenRef.current;
+      const seq = ++hslLiveSeqRef.current;
+      tasks.push(
+        fetchHslKpi({
+          week,
+          payableSet: hslPayableSet(snap.hslAllBranchKeys, snap.hslBranchCfgs),
+          perEmployeeDepts: hslPerEmployeeDepts(snap.hslAllBranchKeys, snap.hslBranchCfgs),
+        }).then(
+          (r) => {
+            const now = kpiLiveRef.current;
+            if (seq !== hslLiveSeqRef.current || gen !== hslKpiGenRef.current) return;
+            if (!now.allowed || now.week !== week) return;
+            if (sameJson(r.amounts, now.hslAmounts) && sameJson(r.period, now.hslPeriod)) return;
+            setHslKpiAmounts(r.amounts);
+            setHslKpiPeriod(r.period);
+          },
+          (e) => console.warn('[hslKpi] live refresh failed — keeping the loaded amounts', e),
+        ),
+      );
+    }
+    await Promise.all(tasks);
+  }, []);
+
+  useKpiLive({ onChange: (p) => void refreshKpiLive(p) });
+
+  // The cycle became editable again (Unlock, processing stopped): catch up once.
+  const kpiLiveWasAllowedRef = useRef(kpiLiveAllowed);
+  useEffect(() => {
+    const was = kpiLiveWasAllowedRef.current;
+    kpiLiveWasAllowedRef.current = kpiLiveAllowed;
+    if (kpiLiveAllowed && !was) void refreshKpiLive(null);
+  }, [kpiLiveAllowed, refreshKpiLive]);
 
   // ── Overtime settings from System Settings ──────────────────────────────────
   const [otGlobalSuspended, setOtGlobalSuspended] = useState(false);
@@ -5575,19 +5554,11 @@ export default function PayrollWizard({
     [pabMonthRange.start, hslWeekModelCutover],
   );
 
-  // Real-time: when a manager marks a dept ready/unready, update accounting's view live.
-  useEffect(() => {
-    if (currentStep !== 5) return;
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) return;
-    const channel = supabase
-      .channel('payroll-wizard-hsl-status')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'hsl_bonus_period_status' }, () => {
-        setHslRefreshKey((k) => k + 1);
-      })
-      .subscribe();
-    return () => { void supabase.removeChannel(channel); };
-  }, [currentStep]);
+  // Real-time for the HSL tab cards rides `kpi-bonus-sync` (the KPI live block
+  // above bumps `hslStepLiveKey` in BACKGROUND mode). The `postgres_changes`
+  // binding that used to sit here never fired: anon reads 0 of the table's rows
+  // (measured 2026-09-29), and had it ever woken it would have re-run the
+  // blanking KPI loader with no values-lock check.
 
   // ── HSL (the Additions step's HSL section): load all dept KPI bonus entries on step entry.
   // Gated on the STEP, deliberately not on `activeAdditionsSection === 'hsl'`. The step's
@@ -5597,8 +5568,15 @@ export default function PayrollWizard({
   useEffect(() => {
     if (currentStep !== 5) return;
     let cancelled = false;
-    setHslStepLoading(true);
-    setHslStepError(null);
+    // A live KPI bump re-reads behind the cards already on screen: no load line,
+    // no cleared error until it succeeds, and a failure keeps the cards.
+    const bg = hslStepBackgroundRef.current;
+    hslStepBackgroundRef.current = null;
+    const background = bg !== null && bg.week === hubstaffWeekStart;
+    if (!background) {
+      setHslStepLoading(true);
+      setHslStepError(null);
+    }
     // Code teams AND data sub-teams — a data branch's period must be recognised
     // here too, or its card and rail entry vanish (2026-09-22).
     const hslKeys = new Set<string>(hslAllBranchKeys);
@@ -5693,9 +5671,13 @@ export default function PayrollWizard({
         if (cancelled) return;
         periods.sort((a, b) => a.department.localeCompare(b.department));
         setHslStepPeriods(periods);
+        if (background) setHslStepError(null);
       } catch (e) {
-        if (!cancelled) setHslStepError(e instanceof Error ? e.message : 'Failed to load HSL bonus data');
+        if (cancelled) return;
+        if (background) console.warn('[hslStep] live refresh failed — keeping the cards', e);
+        else setHslStepError(e instanceof Error ? e.message : 'Failed to load HSL bonus data');
       } finally {
+        // Also ends a foreground load that a live bump cancelled mid-flight.
         if (!cancelled) setHslStepLoading(false);
       }
     })();
@@ -5704,7 +5686,7 @@ export default function PayrollWizard({
     // and scopes monthly ones by its month. Omitted before, so switching the week
     // selector while sitting on this step never reloaded: every card, weekly ones
     // included, stayed on the previously-viewed week until the step was re-entered.
-  }, [currentStep, hslRefreshKey, hubstaffWeekStart, hslAllBranchKeys, hslBranchCfgs]);
+  }, [currentStep, hslStepLiveKey, hubstaffWeekStart, hslAllBranchKeys, hslBranchCfgs]);
 
   // Fetch all contractor invoices when on step 6 (Contractors)
   useEffect(() => {
