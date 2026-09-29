@@ -115,6 +115,81 @@ export async function upsertGiftReceipt(
   return { row: data as EmployeeGiftReceiptRow, error: null };
 }
 
+/** One (person, milestone) assertion, or null when nobody has stated anything. */
+export async function getGiftReceipt(args: {
+  workEmail: string;
+  milestoneIndex: number;
+}): Promise<{ row: EmployeeGiftReceiptRow | null; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, error: 'Supabase client unavailable' };
+
+  const { data, error } = await supabase
+    .from('employee_gift_receipts')
+    .select(SELECT_COLS)
+    .eq('work_email', args.workEmail.trim().toLowerCase())
+    .eq('milestone_index', args.milestoneIndex)
+    .maybeSingle();
+
+  if (error) return { row: null, error: error.message };
+  return { row: (data as EmployeeGiftReceiptRow | null) ?? null, error: null };
+}
+
+/**
+ * Record one assertion ONLY IF the row is still in the state the caller read —
+ * the app's write path (the importer keeps `upsertGiftReceipt`).
+ *
+ *   expectReceived undefined → INSERT; a unique violation means somebody else
+ *                              recorded it in between → `conflict`.
+ *   expectReceived boolean   → UPDATE … WHERE received = expectReceived; no row
+ *                              updated means it changed in between → `conflict`.
+ *
+ * Without this, the route's "received cannot become owed" check is a read
+ * followed by an unconditional upsert, and a Received landing between the two
+ * would be overwritten with owed.
+ */
+export async function writeGiftReceiptIfUnchanged(
+  input: UpsertGiftReceiptInput & { expectReceived: boolean | undefined },
+): Promise<{ row: EmployeeGiftReceiptRow | null; conflict: boolean; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, conflict: false, error: 'Supabase client unavailable' };
+
+  const workEmail = input.work_email.trim().toLowerCase();
+  const values = {
+    received: input.received,
+    source: input.source,
+    source_file: input.source_file ?? null,
+    source_milestone_date: input.source_milestone_date ?? null,
+    note: input.note ?? '',
+    recorded_by: input.recorded_by,
+    recorded_at: new Date().toISOString(),
+  };
+
+  if (input.expectReceived === undefined) {
+    const { data, error } = await supabase
+      .from('employee_gift_receipts')
+      .insert({ work_email: workEmail, milestone_index: input.milestone_index, ...values })
+      .select(SELECT_COLS)
+      .single();
+    if (error) {
+      if (error.code === '23505') return { row: null, conflict: true, error: null };
+      return { row: null, conflict: false, error: error.message };
+    }
+    return { row: data as EmployeeGiftReceiptRow, conflict: false, error: null };
+  }
+
+  const { data, error } = await supabase
+    .from('employee_gift_receipts')
+    .update(values)
+    .eq('work_email', workEmail)
+    .eq('milestone_index', input.milestone_index)
+    .eq('received', input.expectReceived)
+    .select(SELECT_COLS)
+    .maybeSingle();
+  if (error) return { row: null, conflict: false, error: error.message };
+  if (!data) return { row: null, conflict: true, error: null };
+  return { row: data as EmployeeGiftReceiptRow, conflict: false, error: null };
+}
+
 /**
  * Withdraw an assertion entirely, returning the (person, milestone) to UNKNOWN.
  *
@@ -125,18 +200,20 @@ export async function upsertGiftReceipt(
 export async function deleteGiftReceipt(args: {
   workEmail: string;
   milestoneIndex: number;
+  /** Delete only while the row still says this — the state the reason was written about. */
+  expectReceived?: boolean;
 }): Promise<{ row: EmployeeGiftReceiptRow | null; error: string | null }> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { row: null, error: 'Supabase client unavailable' };
 
   // Return the deleted row so the caller can snapshot it into the audit trail.
-  const { data, error } = await supabase
+  let q = supabase
     .from('employee_gift_receipts')
     .delete()
     .eq('work_email', args.workEmail.trim().toLowerCase())
-    .eq('milestone_index', args.milestoneIndex)
-    .select(SELECT_COLS)
-    .maybeSingle();
+    .eq('milestone_index', args.milestoneIndex);
+  if (args.expectReceived !== undefined) q = q.eq('received', args.expectReceived);
+  const { data, error } = await q.select(SELECT_COLS).maybeSingle();
 
   if (error) return { row: null, error: error.message };
   return { row: (data as EmployeeGiftReceiptRow | null) ?? null, error: null };

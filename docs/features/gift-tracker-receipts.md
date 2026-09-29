@@ -26,6 +26,7 @@ the person maintaining the sheet was chased.
 | Sheet backfill | `scripts/backfill-gift-receipts.mts` |
 | Submissions wipe | `scripts/drop-gift-shipping-submissions.mts` |
 | State logic (shared) | `src/lib/gift-tracker/receipts.ts` + `receipts.test.ts` |
+| Write guards (buttons, flip, self, reason) | `src/lib/gift-tracker/receipt-guards.ts` + `receipt-guards.test.ts` |
 | Sheet parser | `src/lib/gift-tracker/receipt-import.ts` + `receipt-import.test.ts` |
 | Data access | `src/lib/supabase/employee-gift-receipts.ts` |
 | Route | `app/api/employee-gift-receipts/route.ts` |
@@ -165,19 +166,75 @@ standing rule that off-roster submitters are appended flagged.
 
 ## Recording fulfilment from the app
 
-Gift Tracker → Roster → expand a person. Each reached milestone carries
-**Received · Not yet · Clear**.
+Gift Tracker → Roster → expand a person. Each reached milestone can be stated
+**Received**, **Not yet** or **Clear**.
 
-Three buttons, not a two-state toggle, because there are three statements.
-"Clear" withdraws the assertion and returns the milestone to `unknown` — *"we
-should not have said anything"* and *"they did not get it"* are different claims,
-and only the second one puts a named person on the owed list. Collapsing the
-third into the absence of the other two would leave no way to undo a mistake
-without asserting its opposite.
+Three statements, not a two-state toggle. "Clear" withdraws the assertion and
+returns the milestone to `unknown` — *"we should not have said anything"* and
+*"they did not get it"* are different claims, and only the second one puts a
+named person on the owed list. Collapsing the third into the absence of the other
+two would leave no way to undo a mistake without asserting its opposite.
+
+### Which buttons a milestone offers (2026-09-29)
+
+Carla, looking at a milestone that showed all three at once: *"Whatever the result
+is it should cancel the other … if 'received' 'Not yet' should disappear. 'clear'
+can stay"*, and *"I hate how easy it is to undo … you can just undo yourself every
+month and get a new shirt."* One definition, `receiptActionsFor` in
+`src/lib/gift-tracker/receipt-guards.ts` (+ test):
+
+| State | Offered |
+| --- | --- |
+| Not recorded | Received · Not yet |
+| Owed | Received · Clear |
+| Received | **Clear only** |
+| Not due | Received (an early receipt is a stated fact; nothing is owed before it is due) |
+
+The button for the state a milestone is **already in** is never shown — the chip
+says it. **Owed keeps Received** because owed → received is how a debt gets paid;
+making it go through Clear would write *"we should not have said anything"* about a
+debt that was real.
+
+**The server enforces all of it, not just the buttons** (`app/api/employee-gift-receipts/route.ts`):
+
+- **Received → owed is refused (409, `withdraw_first`).** The only way back from
+  received is Clear.
+- **Clear needs a written reason** — at least 8 characters after trimming, at most
+  500, never truncated (400 otherwise). It goes into the `gift_receipt.withdrawn`
+  audit entry beside the deleted row. The UI asks for it inline before it sends
+  anything.
+- **Nobody records or clears their OWN gift (403).** Staff with Gift Tracker edit
+  are employees too, and a statement about what the company owes you is not yours
+  to make — the same reason the employee card can never write. "Own" is every
+  address the actor is known by: session and effective email, the master row's
+  work, personal and both alternate emails, plus `expandWorkEmailAliases`. **It
+  fails closed**: if the master row cannot be read the write is refused (503).
+  The alias expansion can only add refusals, never remove one. The roster hides
+  the buttons on your own row, but the route is what stops it.
+- **Re-stating the current state writes nothing** (200, `unchanged: true`). An
+  upsert would re-stamp `source` / `recorded_by` / `recorded_at` and turn a
+  `sheet_import` row into an `hris` one, erasing where the statement came from.
+- **Both writes only go through if the row still says what the caller read.** PUT
+  inserts when there was no row (a unique violation → 409) or updates
+  `WHERE received = <what was read>` (0 rows → 409). DELETE takes
+  `expect_received` and deletes only while the row still says it. So a reason
+  written about "owed" can never delete a "received" that somebody recorded a
+  moment later, and a Received cannot be overwritten with owed between the check
+  and the write. A DELETE that removes nothing is a 409, not a success.
+- `gift_receipt.recorded` now carries `previous_row`, the statement it replaced
+  (null when nobody had said anything), because owed → received overwrites it.
+
+**Received is not connected to Orders.** Clicking Received does not check for an
+invoice, and locking an order records nothing here. Carla asked on 2026-09-29
+whether Received should *"only happen when they are ordered in cart"*. That was
+held for Kane, not built: see session log 2026-09-29 item 283. The same item
+records the remaining repeat-gift path, which is in Orders: Reopen or Delete, then
+lock the same gift again.
 
 The local map updates **only after the server accepts the write**. An optimistic
 flip would show a gift as delivered on a failed request, on the very screen HR
-reads to decide whether to ship one.
+reads to decide whether to ship one. A refused Clear keeps the confirm open with
+the reason still typed.
 
 ## The employee's own view — and the label that was lying
 
@@ -443,7 +500,9 @@ removing the transition entirely would make the swap read as a flicker.
 ## Authorization and audit
 
 `route-access.ts` gates pages, not APIs, so this route enforces its own:
-`view` on `(hr, gift_tracker)` to read, `edit` for every write.
+`view` on `(hr, gift_tracker)` to read, `edit` for every write. **The grant alone
+is not enough:** no one may write their own gift record (403), whatever their
+grant, admins included (§ *Which buttons a milestone offers*).
 
 **The actor is the session, never the body** — `recorded_by` comes from the
 resolved `AuthzOk`. Six gift/orphanage routes previously read an actor off the
@@ -457,8 +516,8 @@ Audit family `gift_receipt.` (registered in `src/lib/audit/registry.ts`):
 
 | Action | When |
 | --- | --- |
-| `gift_receipt.recorded` | a staff member states a gift was / was not given |
-| `gift_receipt.withdrawn` | an assertion is removed — **details carry the deleted row**, because nothing else records it was ever made |
+| `gift_receipt.recorded` | a staff member states a gift was / was not given — details carry `previous_row`, the statement it replaced |
+| `gift_receipt.withdrawn` | an assertion is removed — **details carry the deleted row and the required `reason`**, because nothing else records it was ever made or why it was taken back |
 | `gift_receipt.imported` | the sheet backfill |
 
 It is deliberately separate from `employee_gift_shipping.*`, which is address

@@ -45,6 +45,11 @@ import {
   type GiftMilestoneReceipt,
   type GiftPersonReceiptSummary,
 } from '@/lib/gift-tracker/receipts';
+import {
+  isOwnGiftRecord,
+  MIN_WITHDRAW_REASON,
+  receiptActionsFor,
+} from '@/lib/gift-tracker/receipt-guards';
 import { CheckCircle2, Truck, Lock, Pencil, Trash2, Undo2, Shirt, HelpCircle, PackageCheck, PackageX } from 'lucide-react';
 import {
   Dialog,
@@ -908,37 +913,51 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
    * Deliberately distinct from recording "not received": "we should not have
    * said anything" and "they did not get it" are different claims, and only the
    * second one puts a named person on the owed list.
+   *
+   * Needs a written reason, and sends the state the user was looking at — the
+   * server deletes only while the row still says that. Returns whether it
+   * cleared, so the inline confirm stays open (reason intact) on a refusal.
    */
-  const clearReceipt = useCallback(async (workEmail: string, milestoneIndex: number) => {
-    const busyKey = `${workEmail}#${milestoneIndex}`;
-    setSavingReceipt(busyKey);
-    try {
-      const res = await fetch('/api/employee-gift-receipts', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_email: workEmail, milestone_index: milestoneIndex }),
-      });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
-      // The cached copies describe the PRE-write world now. Drop them so a
-      // later remount re-pulls instead of repainting a gift as still owed
-      // right after it was recorded as received.
-      clearOrphanageTabCachePrefix(GK.giftPrefix);
-      setReceiptsByWorkEmail((prev) => {
-        const next = new Map(prev);
-        const inner = new Map(next.get(workEmail) ?? []);
-        inner.delete(milestoneIndex);
-        if (inner.size === 0) next.delete(workEmail);
-        else next.set(workEmail, inner);
-        return next;
-      });
-      toast.success(`${milestoneIndex * 6}-month gift is back to "not recorded".`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not clear the record');
-    } finally {
-      setSavingReceipt(null);
-    }
-  }, []);
+  const clearReceipt = useCallback(
+    async (workEmail: string, milestoneIndex: number, expectReceived: boolean, reason: string) => {
+      const busyKey = `${workEmail}#${milestoneIndex}`;
+      setSavingReceipt(busyKey);
+      try {
+        const res = await fetch('/api/employee-gift-receipts', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            work_email: workEmail,
+            milestone_index: milestoneIndex,
+            expect_received: expectReceived,
+            reason,
+          }),
+        });
+        const json = (await res.json()) as { error?: string };
+        if (!res.ok || json.error) throw new Error(json.error ?? `Request failed (${res.status})`);
+        // The cached copies describe the PRE-write world now. Drop them so a
+        // later remount re-pulls instead of repainting a gift as still owed
+        // right after it was recorded as received.
+        clearOrphanageTabCachePrefix(GK.giftPrefix);
+        setReceiptsByWorkEmail((prev) => {
+          const next = new Map(prev);
+          const inner = new Map(next.get(workEmail) ?? []);
+          inner.delete(milestoneIndex);
+          if (inner.size === 0) next.delete(workEmail);
+          else next.set(workEmail, inner);
+          return next;
+        });
+        toast.success(`${milestoneIndex * 6}-month gift is back to "not recorded".`);
+        return true;
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not clear the record');
+        return false;
+      } finally {
+        setSavingReceipt(null);
+      }
+    },
+    [],
+  );
 
   const noteValue = useCallback(
     (key: string) => {
@@ -1552,10 +1571,22 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
                           onSetReceipt={(milestoneIndex, received) =>
                             void setReceipt(row.receiptKey, milestoneIndex, received)
                           }
-                          onClearReceipt={(milestoneIndex) =>
-                            void clearReceipt(row.receiptKey, milestoneIndex)
+                          onClearReceipt={(milestoneIndex, expectReceived, reason) =>
+                            clearReceipt(row.receiptKey, milestoneIndex, expectReceived, reason)
                           }
                           savingReceipt={savingReceipt}
+                          // Mirrors the route's refusal so the buttons are not
+                          // offered on your own gift; the server is the guard.
+                          isOwnRecord={
+                            !!viewerEmail &&
+                            [
+                              row.receiptKey,
+                              row.workEmail,
+                              row.source.personal_email,
+                              row.source.alternate_work_email,
+                              row.source.alternate_work_email_2,
+                            ].some((e) => !!e && isOwnGiftRecord(e, [viewerEmail]))
+                          }
                         />
                       );
                     })}
@@ -1839,6 +1870,7 @@ function RowItem({
   onSetReceipt,
   onClearReceipt,
   savingReceipt,
+  isOwnRecord,
 }: {
   row: Row;
   isOpen: boolean;
@@ -1856,9 +1888,12 @@ function RowItem({
   onEditShipping: (sub: EmployeeGiftShippingRow) => void;
   onDeleteShipping: (sub: EmployeeGiftShippingRow) => void;
   onSetReceipt: (milestoneIndex: number, received: boolean) => void;
-  onClearReceipt: (milestoneIndex: number) => void;
+  /** Resolves true once the server cleared it; false keeps the confirm open. */
+  onClearReceipt: (milestoneIndex: number, expectReceived: boolean, reason: string) => Promise<boolean>;
   /** "<workEmail>#<milestoneIndex>" currently being written, or null. */
   savingReceipt: string | null;
+  /** The viewer's own gift — no record buttons (the route refuses it anyway). */
+  isOwnRecord: boolean;
 }) {
   return (
     <>
@@ -1957,7 +1992,10 @@ function RowItem({
                             busy={savingReceipt === `${row.receiptKey}#${m.milestoneIndex}`}
                             anyBusy={savingReceipt !== null}
                             onSet={(received) => onSetReceipt(m.milestoneIndex, received)}
-                            onClear={() => onClearReceipt(m.milestoneIndex)}
+                            onClear={(reason) =>
+                              onClearReceipt(m.milestoneIndex, m.state === 'received', reason)
+                            }
+                            isOwn={isOwnRecord}
                           />
                         ))}
                       </ol>
@@ -1965,6 +2003,7 @@ function RowItem({
                     <p className="px-1 text-[10.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
                       &ldquo;Not recorded&rdquo; means nobody has said either way — it is not the
                       same as a gift that was missed.
+                      {isOwnRecord && ' This is your own gift record, so someone else records it.'}
                     </p>
                   </div>
 
@@ -2262,9 +2301,13 @@ function ReceiptSummaryCell({ summary }: { summary: GiftPersonReceiptSummary }) 
  * One milestone in the expanded history, with the controls that record whether
  * the gift was given.
  *
- * Three buttons, not a two-state toggle: "received", "not received" and "clear"
- * are three different statements, and folding the third into the absence of the
+ * Three statements, not a two-state toggle: "received", "not received" and
+ * "clear" are different claims, and folding the third into the absence of the
  * other two would leave no way to undo a mistake without asserting its opposite.
+ *
+ * Which ones are OFFERED depends on the state (`receiptActionsFor`, Carla
+ * 2026-09-29): the current state's button is never shown, a received gift
+ * offers only Clear, and Clear asks for a reason before it does anything.
  */
 function MilestoneReceiptItem({
   milestone,
@@ -2273,17 +2316,23 @@ function MilestoneReceiptItem({
   anyBusy,
   onSet,
   onClear,
+  isOwn,
 }: {
   milestone: GiftMilestoneReceipt;
   index: number;
   busy: boolean;
   anyBusy: boolean;
   onSet: (received: boolean) => void;
-  onClear: () => void;
+  /** Resolves true once cleared; false keeps the confirm (and the reason) open. */
+  onClear: (reason: string) => Promise<boolean>;
+  isOwn: boolean;
 }) {
   const tone = RECEIPT_TONES[milestone.state];
   const { Icon } = tone;
-  const recorded = milestone.state === 'received' || milestone.state === 'owed';
+  const actions = receiptActionsFor(milestone.state);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearReason, setClearReason] = useState('');
+  const reasonOk = clearReason.trim().replace(/\s+/g, ' ').length >= MIN_WITHDRAW_REASON;
   return (
     <motion.li
       initial={{ x: -10, opacity: 0 }}
@@ -2327,51 +2376,106 @@ function MilestoneReceiptItem({
               Recorded early
             </Badge>
           )}
-          <div data-readonly-allow className="ml-auto flex items-center gap-1">
-            {busy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={anyBusy || milestone.state === 'received'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSet(true);
-                  }}
-                  className="rounded border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-800/70 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-                >
-                  Received
-                </button>
-                <button
-                  type="button"
-                  disabled={anyBusy || milestone.state === 'owed'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSet(false);
-                  }}
-                  className="rounded border border-rose-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-rose-700 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-rose-800/70 dark:text-rose-300 dark:hover:bg-rose-950/40"
-                >
-                  Not yet
-                </button>
-                {recorded && (
-                  <button
-                    type="button"
-                    disabled={anyBusy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onClear();
-                    }}
-                    title="Withdraw the record — back to not recorded"
-                    className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900/60"
-                  >
-                    Clear
-                  </button>
-                )}
-              </>
-            )}
-          </div>
+          {!isOwn && (
+            <div data-readonly-allow className="ml-auto flex items-center gap-1">
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+              ) : (
+                <>
+                  {actions.received && (
+                    <button
+                      type="button"
+                      disabled={anyBusy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSet(true);
+                      }}
+                      className="rounded border border-emerald-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-emerald-800/70 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                    >
+                      Received
+                    </button>
+                  )}
+                  {actions.notYet && (
+                    <button
+                      type="button"
+                      disabled={anyBusy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSet(false);
+                      }}
+                      className="rounded border border-rose-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-rose-700 transition-colors hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-rose-800/70 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                    >
+                      Not yet
+                    </button>
+                  )}
+                  {actions.clear && (
+                    <button
+                      type="button"
+                      disabled={anyBusy || confirmingClear}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setClearReason('');
+                        setConfirmingClear(true);
+                      }}
+                      title="Withdraw the record — back to not recorded (asks for a reason)"
+                      className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10.5px] font-semibold text-zinc-500 transition-colors hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900/60"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
+        {confirmingClear && actions.clear && !isOwn && (
+          <div
+            data-readonly-allow
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col gap-1.5 rounded-md border border-zinc-300 bg-zinc-50 p-2 dark:border-zinc-700 dark:bg-zinc-900/60"
+          >
+            <span className="text-[11px] leading-snug text-zinc-700 dark:text-zinc-300">
+              Clear the {milestone.label} record? It goes back to <strong>Not recorded</strong>
+              {milestone.state === 'received'
+                ? ' and no longer shows as received.'
+                : ' and drops off the We owe list.'}{' '}
+              Your name and reason go in the audit log.
+            </span>
+            <Input
+              value={clearReason}
+              onChange={(e) => setClearReason(e.target.value)}
+              placeholder={`Reason (required, at least ${MIN_WITHDRAW_REASON} characters)`}
+              maxLength={500}
+              autoFocus
+              className="h-7 text-xs"
+            />
+            <div className="flex justify-end gap-1.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                disabled={busy}
+                onClick={() => setConfirmingClear(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 bg-zinc-800 text-xs text-white hover:bg-zinc-900 dark:bg-zinc-200 dark:text-zinc-900 dark:hover:bg-white"
+                disabled={anyBusy || !reasonOk}
+                onClick={async () => {
+                  if (await onClear(clearReason)) {
+                    setConfirmingClear(false);
+                    setClearReason('');
+                  }
+                }}
+              >
+                {busy && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                Clear record
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </motion.li>
   );
