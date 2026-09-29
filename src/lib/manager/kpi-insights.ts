@@ -1,10 +1,14 @@
 /**
- * Manager → KPI Calculator → Departments: the three insight cards above the grid.
- * Doc: `docs/features/kpi-calculator-insights.md`.
+ * Manager → KPI Calculator → Departments AND → HSL Branches: the three insight
+ * cards above each grid. Doc: `docs/features/kpi-calculator-insights.md`.
  *
- * Pure. The route (`app/api/manager/kpi-insights/route.ts`) reads the rows and
- * hands them here; the component draws what comes back. Nothing in this file
- * reads a clock, a session or a table, so every rule below is unit-tested.
+ * Pure. The routes (`app/api/manager/kpi-insights/route.ts` for Departments,
+ * `…/kpi-insights/hsl/route.ts` for HSL) read the rows and hand them here; the
+ * component draws what comes back. The two calculators differ only in the scope
+ * gate and in which table holds the money — `bonus_catalog_applied.amount` or
+ * `hsl_bonus_entries.calculated_bonus`, each the stored PHP the Payroll Wizard
+ * pays. Nothing in this file reads a clock, a session or a table, so every rule
+ * below is unit-tested.
  *
  * Three rules carry the feature, and each one has a wrong reading that looks fine:
  *
@@ -25,6 +29,7 @@ import { MANAGER_BONUS_DEPT_KEYS, isKpiCalculatorDeptKey } from '@/lib/payroll/d
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import { normEmail } from '@/lib/email/norm-email';
+import { HSL_DEPTS, HSL_DEPT_KEYS, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 
 /** How many Sunday weeks the trend and the department averages cover. */
 export const INSIGHT_WEEKS = 12;
@@ -114,6 +119,53 @@ export function scopeInsightDeptKeys(requested: readonly string[], scope: Insigh
   return out;
 }
 
+/** Is `key` an HSL branch that SCORES — a code team that is not roster-only
+ *  (`noKpi`), or a data sub-team stored under HSL right now? A data key that
+ *  collides with a code key is the code team (`hslBranchConfigs` drops the data
+ *  copy), so a `noKpi` team cannot be reopened through one. */
+function isLiveScoringHslBranch(key: string, dataBranchKeys: ReadonlySet<string>): boolean {
+  if ((HSL_DEPT_KEYS as readonly string[]).includes(key)) return !HSL_DEPTS[key as HslDeptKey].noKpi;
+  return dataBranchKeys.has(key);
+}
+
+/**
+ * The requested HSL branch keys this caller may read, in request order, deduped:
+ * the HSL Branches calculator's own gate, re-derived on the server.
+ *
+ * That calculator lists a branch only on an EXPLICIT `hsl:<key>` grant
+ * (`canAccessHslDept(managed, k, false)` in `ManagerApp`). An elevated or admin
+ * role does not unlock it, and neither does the parent HSL assignment, so there
+ * is no elevated arm here, unlike {@link scopeInsightDeptKeys}. A granted key must
+ * also be a live scoring branch. A retired key (`case_manager`) or an unknown one
+ * resolves nothing, even with the grant still on file, and a roster-only `noKpi`
+ * team has no bonus to average.
+ */
+export function scopeHslInsightBranchKeys(
+  requested: readonly string[],
+  managed: readonly string[],
+  dataBranchKeys: readonly string[],
+): string[] {
+  const data = new Set(dataBranchKeys);
+  const allowed = new Set<string>();
+  for (const raw of managed) {
+    // `canAccessHslDept` compares lowercased; so does this.
+    const m = (raw ?? '').trim().toLowerCase();
+    if (!m.startsWith('hsl:')) continue;
+    const key = m.slice(4);
+    if (DEPT_KEY.test(key) && isLiveScoringHslBranch(key, data)) allowed.add(key);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of requested) {
+    const k = (raw ?? '').trim();
+    if (!DEPT_KEY.test(k) || seen.has(k) || !allowed.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+    if (out.length >= MAX_INSIGHT_DEPTS) break;
+  }
+  return out;
+}
+
 // -- Aggregation ---------------------------------------------------------------
 
 export interface InsightAppliedRow {
@@ -139,7 +191,11 @@ export interface TrendWeek {
   sent: number;
   /** PHP saved in dept-weeks that are still draft (or have no status row). */
   pending: number;
+  /** Departments whose week is ready/locked — including a ready week with no
+   *  saved rows (a ₱0 submission). */
   sentDepts: number;
+  /** Departments with saved rows that are not sent. The rest of the set, neither
+   *  sent nor pending, has not been scored at all. */
   pendingDepts: number;
   /** Distinct people with a non-zero sent total. */
   sentPeople: number;
@@ -271,14 +327,19 @@ export function buildKpiInsights(input: {
     let pendingDepts = 0;
     const paid = new Map<string, number>();
     for (const d of input.depts) {
+      const sent = sentKeys.has(`${d}::${w}`);
+      // Sent is the STATUS. A ready status over zero saved rows is a submission
+      // of ₱0, counted as sent here exactly as the averages below count it —
+      // never as "not scored at all". It adds nothing to `sent` and does not
+      // make the week `measured`: a point still needs a saved row.
+      if (sent) sentDepts += 1;
       const people = cells.get(`${d}::${w}`);
       if (!people || people.size === 0) continue;
       measured = true;
       let deptC = 0;
       for (const p of people.values()) deptC += p.c;
-      if (sentKeys.has(`${d}::${w}`)) {
+      if (sent) {
         sentC += deptC;
-        sentDepts += 1;
         for (const [who, p] of people) paid.set(who, (paid.get(who) ?? 0) + p.c);
       } else {
         pendingC += deptC;

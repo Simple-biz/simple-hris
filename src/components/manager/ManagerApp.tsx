@@ -978,6 +978,7 @@ export default function ManagerApp() {
                           kpiFocus?.kind === 'hsl' ? (kpiFocus.key as HslDeptKey) : undefined
                         }
                         offerUpcomingWeek
+                        showInsights
                       />
                     )}
                     {active === 'dept' && deptVisible && (

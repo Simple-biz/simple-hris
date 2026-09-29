@@ -8,7 +8,7 @@ REST API endpoint documentation. Base URL: `http://localhost:3000` (development)
 > It said *"complete documentation for all REST API endpoints"* until that count was taken. 41 of the 206 appear in **no doc at all**;
 > the other 165 are described in a feature doc but never reached this index. Entire families are missing — `/api/hsl-bonus`,
 > `/api/support`, `/api/orphanage-interns`, `/api/swall`, `/api/presence`, `/api/screening` have **zero** mentions here.
-> **That is now fixed for the index question: § *Route index* at the foot of this file lists all 335** (325 when it was generated on 2026-09-22).
+> **That is now fixed for the index question: § *Route index* at the foot of this file lists all 335** (325 when it was generated on 2026-09-22; **337** on 2026-09-29 after two later routes, both listed there).
 > An endpoint absent from **that table** does not exist; an endpoint absent from the hand-written sections above is
 > merely **unspecified**. The two are different claims and only the first is safe to act on.
 > Session log item 146; [[reference-docs-rot-silently]].
@@ -3142,14 +3142,34 @@ carries PESOS** (PHP `bonus_catalog_applied.amount`, summed in centavos) and the
 these managers already see on the calculator grid and in Bonus History, unlike the My Team rankings above. Reads are paged
 (`src/lib/supabase/kpi-insights-db.ts`). `500` with `error` on a failed read.
 
+### `GET /api/manager/kpi-insights/hsl?depts=a,b,c&week=<sunday>` *(2026-09-29)*
+
+The same three cards above Manager → KPI Calculator → **HSL Branches**: the branch spotlight, the week's top earner and
+the weekly total sent to Accounting. Same response shape, same `buildKpiInsights`, same `401` / `403` / `400`.
+
+**Scope is the HSL calculator's own, and narrower**: only an explicit `hsl:<key>` row in `department_managers` opens a
+branch (`scopeHslInsightBranchKeys`, mirroring `canAccessHslDept(managed, k, false)` in `ManagerApp`). There is **no
+elevated arm**: an elevated caller without the grant reads nothing, and neither the parent HSL assignment nor a bare key
+opens a branch. A granted key must also be a live scoring branch: a code team that is not `noKpi`, or a data sub-team
+stored in `app_settings['payment_catalog.departments.builtin_subs']` under `hogan_smith_law`. That list is read strictly,
+so a failed read is a `500`, never "no data branches". A retired key (`case_manager`) resolves nothing, even with its
+grant still on file.
+
+**Money** is `hsl_bonus_entries.calculated_bonus` (summed in centavos): the figure on every row of the HSL grid.
+**"Sent"** is the same `hsl_bonus_period_status` `ready` / `locked`; HSL branch-weeks and catalog dept-weeks share that
+table; none of the 14 HSL code keys is a Departments-calculator key (`MANAGER_BONUS_DEPT_KEYS`, checked 2026-09-29). Reads are paged per week, in parallel
+(`readHslInsightEntries`). See [kpi-calculator-insights](../features/kpi-calculator-insights.md) § HSL Branches.
+
 ---
 
 ## Route index — every `app/api/**/route.ts` in the tree
 
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
-sending-bank approval gate). Later commits have added rows since: **335 route files on 2026-09-29**
-(`git ls-files 'app/api/**/route.ts'`), and this table lists all 335 — the last two missing,
+sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
+lists all 337. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+(`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
+(`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
 rest of this file documents 119 of them by hand, so for years an endpoint's absence here could not be
 told apart from an endpoint that does not exist. **A route missing from this table is a route that
@@ -3380,6 +3400,7 @@ of cells — the matches were not re-run).
 | `/api/manager/departed-members` | GET | `getServerSession` | *this file* |
 | `/api/manager/department-members` | GET | `getServerSession` | [identity-resolution](../features/identity-resolution.md) · [manager-dashboard-cache](../features/manager-dashboard-cache.md) · *this file* |
 | `/api/manager/kpi-insights` | GET | `getServerSession` | [kpi-calculator-insights](../features/kpi-calculator-insights.md) · *this file* |
+| `/api/manager/kpi-insights/hsl` | GET | `getServerSession` | [kpi-calculator-insights](../features/kpi-calculator-insights.md) · *this file* |
 | `/api/manager/medals` | GET, POST | `getServerSession` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/manager/member-monthly-pay` | GET | — **none found** | [identity-resolution](../features/identity-resolution.md) · [pre-release-security-readiness](../features/pre-release-security-readiness.md) |
 | `/api/manager/member-notes` | GET, PUT | `getServerSession` | [manager-my-team](../features/manager-my-team.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |

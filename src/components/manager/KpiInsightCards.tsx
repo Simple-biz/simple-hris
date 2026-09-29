@@ -1,13 +1,18 @@
 'use client';
 
-// Manager → KPI Calculator → Departments: the three insight cards above the grid.
-// Doc: docs/features/kpi-calculator-insights.md. Data: GET /api/manager/kpi-insights.
+// Manager → KPI Calculator → Departments AND → HSL Branches: the three insight
+// cards above each grid. Doc: docs/features/kpi-calculator-insights.md.
+// Data: GET /api/manager/kpi-insights (Departments) · …/kpi-insights/hsl (HSL).
 //
 //   [ Department spotlight ][ Top earner ][ Sent to Accounting ── trend ───── ]
 //
-// Read-only. Every figure is PESOS — the stored PHP `amount` the Payroll Wizard
-// pays — for the same reason the grid's cards are (Kane, 2026-09-08: native
-// settlement figures belong inside the calculator, not the chrome).
+// Read-only. Every figure is PESOS — the stored PHP the Payroll Wizard pays
+// (`bonus_catalog_applied.amount`, `hsl_bonus_entries.calculated_bonus`) — for
+// the same reason the grid's cards are (Kane, 2026-09-08: native settlement
+// figures belong inside the calculator, not the chrome). The two calculators get
+// the same cards; only the endpoint, the cache surface, the colours and the word
+// for a row differ ("a shared shape is worth copying; a wrong label is not",
+// hsl-kpi-calculator-2026-07.md § One header).
 //
 // A cached payload PAINTS and never decides (kpi-cache.ts): the cards always
 // refetch, and a refetch holds the previous render at reduced opacity rather than
@@ -50,7 +55,37 @@ import {
   type TopEarner,
   type TrendWeek,
 } from '@/lib/manager/kpi-insights';
-import { KPI_CACHE_KEYS, getKpiCache, setKpiCache } from '@/lib/manager/kpi-cache';
+import { KPI_CACHE_KEYS, getKpiCache, setKpiCache, type KpiCacheSurface } from '@/lib/manager/kpi-cache';
+
+/** Which calculator the cards sit on. */
+export type KpiInsightCalculator = 'dept' | 'hsl';
+
+const CALCULATORS: Record<
+  KpiInsightCalculator,
+  {
+    endpoint: string;
+    surface: KpiCacheSurface;
+    /** What one row of that calculator is called. */
+    noun: { one: string; many: string; One: string; Many: string };
+  }
+> = {
+  dept: {
+    endpoint: '/api/manager/kpi-insights',
+    surface: 'dept-manager',
+    noun: { one: 'department', many: 'departments', One: 'Department', Many: 'Departments' },
+  },
+  hsl: {
+    endpoint: '/api/manager/kpi-insights/hsl',
+    surface: 'hsl',
+    noun: { one: 'branch', many: 'branches', One: 'Branch', Many: 'Branches' },
+  },
+};
+
+/** The noun and colour resolver every card reads, set once by the container. */
+const CardsContext = React.createContext<{
+  noun: (typeof CALCULATORS)[KpiInsightCalculator]['noun'];
+  colorFor: (key: string) => string;
+}>({ noun: CALCULATORS.dept.noun, colorFor: catalogDeptColor });
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 /** The spotlight's dwell per department. */
@@ -215,6 +250,7 @@ function DeptSpotlightCard({
   onRetry: () => void;
 }) {
   const reduce = !!useReducedMotion();
+  const { noun, colorFor } = React.useContext(CardsContext);
   // Highest average first, so the rotation reads as a ranking; a department that
   // sent nothing in the window still gets its turn, last.
   const ranked = useMemo(
@@ -261,12 +297,12 @@ function DeptSpotlightCard({
   });
 
   const cur = ranked[idx];
-  const color = cur ? catalogDeptColor(cur.dept) : '#71717a';
+  const color = cur ? colorFor(cur.dept) : '#71717a';
   const max = cur ? Math.max(0, ...cur.series.map((v) => v ?? 0)) : 0;
 
   return (
     <CardShell
-      eyebrow="Department spotlight"
+      eyebrow={`${noun.One} spotlight`}
       icon={<Sparkles className="h-3 w-3" />}
       dim={dim}
       right={
@@ -274,7 +310,7 @@ function DeptSpotlightCard({
           <div className="flex items-center gap-0.5">
             <button
               type="button"
-              aria-label="Previous department"
+              aria-label={`Previous ${noun.one}`}
               onClick={() => go(idx - 1, -1)}
               className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
             >
@@ -282,7 +318,7 @@ function DeptSpotlightCard({
             </button>
             <button
               type="button"
-              aria-label="Next department"
+              aria-label={`Next ${noun.one}`}
               onClick={() => go(idx + 1, 1)}
               className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-900 dark:hover:text-zinc-200"
             >
@@ -302,13 +338,13 @@ function DeptSpotlightCard({
           <Skeleton className="mt-auto h-10 w-full" />
         </div>
       ) : !cur ? (
-        <p className="flex flex-1 items-center text-xs text-zinc-500">No departments to show.</p>
+        <p className="flex flex-1 items-center text-xs text-zinc-500">No {noun.many} to show.</p>
       ) : (
         <div
           className="flex min-h-0 flex-1 flex-col"
           role="group"
           aria-roledescription="carousel"
-          aria-label="Average bonus per week, one department at a time"
+          aria-label={`Average bonus per week, one ${noun.one} at a time`}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
           onFocus={() => setFocused(true)}
@@ -397,7 +433,7 @@ function DeptSpotlightCard({
           </div>
 
           {ranked.length > 1 && (
-            <div className="mt-3 flex items-center gap-1" role="tablist" aria-label="Departments">
+            <div className="mt-3 flex items-center gap-1" role="tablist" aria-label={noun.Many}>
               {ranked.map((d, i) => {
                 const active = i === idx;
                 return (
@@ -423,7 +459,7 @@ function DeptSpotlightCard({
                         <motion.span
                           className="absolute inset-0 origin-left rounded-full"
                           style={{
-                            backgroundColor: catalogDeptColor(d.dept),
+                            backgroundColor: colorFor(d.dept),
                             // Paused (hover, focus, hidden tab) freezes it where it is.
                             scaleX: reduce ? 1 : progress,
                           }}
@@ -469,6 +505,7 @@ function TopEarnerCard({
   onRetry: () => void;
 }) {
   const reduce = !!useReducedMotion();
+  const { noun, colorFor } = React.useContext(CardsContext);
   // A tie is common — a flat common bonus ties a whole department — so the card
   // draws one of the tied people at random, and Shuffle draws another. The draw
   // is re-rolled only when the pool itself changes, never on a re-render.
@@ -486,7 +523,7 @@ function TopEarnerCard({
     setOverride({ pool: poolKey, pick: next });
   };
   const person = top[Math.min(pick, Math.max(0, top.length - 1))];
-  const color = person ? catalogDeptColor(person.depts[0] ?? '') : '#71717a';
+  const color = person ? colorFor(person.depts[0] ?? '') : '#71717a';
 
   return (
     <CardShell
@@ -548,7 +585,7 @@ function TopEarnerCard({
                   <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-zinc-500">
                     {person.depts.map((d) => (
                       <span key={d} className="inline-flex items-center gap-1">
-                        <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: catalogDeptColor(d) }} />
+                        <span aria-hidden className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: colorFor(d) }} />
                         {formatDeptLabel(labelFor(d))}
                       </span>
                     ))}
@@ -568,7 +605,7 @@ function TopEarnerCard({
                 ) : (
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-700 ring-1 ring-zinc-200 dark:bg-zinc-800/60 dark:text-zinc-300 dark:ring-zinc-700"
-                    title="At least one of their departments hasn't been sent to Accounting for this week"
+                    title={`At least one of their ${noun.many} hasn't been sent to Accounting for this week`}
                   >
                     <Clock className="h-3 w-3" aria-hidden /> Projected
                   </span>
@@ -660,6 +697,7 @@ function KpiSentTrendChart({
   height?: number;
 }) {
   const reduce = !!useReducedMotion();
+  const { noun } = React.useContext(CardsContext);
   const [wrapRef, width] = useMeasuredWidth();
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [active, setActive] = useState<number | null>(null);
@@ -1029,7 +1067,7 @@ function KpiSentTrendChart({
           <tr>
             <th scope="col">Week</th>
             <th scope="col">Sent</th>
-            <th scope="col">Departments sent</th>
+            <th scope="col">{noun.Many} sent</th>
             <th scope="col">Still in draft</th>
           </tr>
         </thead>
@@ -1051,6 +1089,7 @@ function KpiSentTrendChart({
 }
 
 function TipBody({ week, deptCount, delta }: { week: TrendWeek; deptCount: number; delta: number | null }) {
+  const { noun } = React.useContext(CardsContext);
   const waiting = deptCount - week.sentDepts;
   return (
     <>
@@ -1067,7 +1106,7 @@ function TipBody({ week, deptCount, delta }: { week: TrendWeek; deptCount: numbe
       </div>
       <div className="mt-1 text-[10px] leading-snug text-zinc-500">
         <span className="block">
-          {week.sentDepts} of {deptCount} departments sent · {week.sentPeople.toLocaleString('en-US')} people
+          {week.sentDepts} of {deptCount} {noun.many} sent · {week.sentPeople.toLocaleString('en-US')} people
         </span>
         {week.pending > 0 && <span className="block">{compactPeso(week.pending)} saved, still in draft</span>}
         {waiting - week.pendingDepts > 0 && (
@@ -1158,17 +1197,26 @@ function TrendCard({
 // -- Container ---------------------------------------------------------------------
 
 export default function KpiInsightCards({
+  calculator = 'dept',
   depts,
   week,
   labelFor,
+  colorFor = catalogDeptColor,
   liveKey,
   refreshing,
 }: {
-  /** The grid's department keys. The server re-checks every one against the session. */
+  /** Which calculator's grid the cards sit on: picks the endpoint, the cache
+   *  surface and the word for a row. Departments by default. */
+  calculator?: KpiInsightCalculator;
+  /** The grid's department (or HSL branch) keys. The server re-checks every one
+   *  against the session. */
   depts: string[];
   /** The week picker's week — a Sunday. Drives the top earner only. */
   week: string;
   labelFor: (key: string) => string;
+  /** A row's colour, as its grid row paints it. Defaults to the catalog
+   *  department colour; the HSL grid passes each branch's own. */
+  colorFor?: (key: string) => string;
   /** Changes whenever the grid's live figures move (a save, a Mark Ready). Refetches
    *  after {@link LIVE_REFETCH_DEBOUNCE_MS} of quiet. */
   liveKey: string;
@@ -1176,8 +1224,10 @@ export default function KpiInsightCards({
   refreshing: boolean;
 }) {
   const reduce = useReducedMotion();
+  const { endpoint, surface, noun } = CALCULATORS[calculator];
+  const cards = useMemo(() => ({ noun, colorFor }), [noun, colorFor]);
   const deptsKey = [...depts].sort().join(',');
-  const cacheKey = KPI_CACHE_KEYS.insights('dept-manager', week, depts);
+  const cacheKey = KPI_CACHE_KEYS.insights(surface, week, depts);
   const [data, setData] = useState<KpiInsightsResponse | null>(() => getKpiCache<KpiInsightsResponse>(cacheKey) ?? null);
   const [dataKey, setDataKey] = useState(cacheKey);
   const [inFlight, setInFlight] = useState(false);
@@ -1199,13 +1249,13 @@ export default function KpiInsightCards({
     setInFlight(true);
     try {
       const qs = new URLSearchParams({ depts: deptsKey, week });
-      const res = await fetch(`/api/manager/kpi-insights?${qs.toString()}`, { cache: 'no-store', signal: ctrl.signal });
+      const res = await fetch(`${endpoint}?${qs.toString()}`, { cache: 'no-store', signal: ctrl.signal });
       const json = (await res.json()) as KpiInsightsResponse;
       if (ctrl.signal.aborted) return;
       if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
       setData(json);
       setFailed(false);
-      setKpiCache(KPI_CACHE_KEYS.insights('dept-manager', week, depts), json);
+      setKpiCache(KPI_CACHE_KEYS.insights(surface, week, depts), json);
     } catch (e) {
       if (ctrl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
       setFailed(true);
@@ -1217,7 +1267,7 @@ export default function KpiInsightCards({
     }
     // `depts` rides in on `deptsKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deptsKey, week]);
+  }, [deptsKey, week, endpoint, surface]);
 
   // Week / department set → fetch now.
   useEffect(() => {
@@ -1250,45 +1300,47 @@ export default function KpiInsightCards({
   const retry = () => void load();
 
   return (
-    <motion.div
-      className="grid grid-cols-1 gap-3 px-4 pt-5 sm:px-6 md:grid-cols-2 xl:grid-cols-4"
-      initial={reduce ? false : 'hidden'}
-      animate="show"
-      variants={{ show: { transition: { staggerChildren: 0.07, delayChildren: 0.02 } } }}
-      aria-label="KPI bonus insights"
-    >
-      <DeptSpotlightCard
-        depts={insights?.depts ?? []}
-        weeks={insights?.weeks ?? []}
-        labelFor={labelFor}
-        loading={loading || (!insights && !failed)}
-        failed={failed && !insights}
-        dim={dim}
-        onRetry={retry}
-      />
-      <TopEarnerCard
-        top={insights?.spotlight.top ?? []}
-        tiedCount={insights?.spotlight.tiedCount ?? 0}
-        peoplePaid={insights?.spotlight.peoplePaid ?? 0}
-        weekTotal={insights?.spotlight.weekTotal ?? 0}
-        runnerUpAmount={insights?.spotlight.runnerUpAmount ?? 0}
-        week={week}
-        labelFor={labelFor}
-        loading={loading || (!insights && !failed)}
-        failed={failed && !insights}
-        dim={dim}
-        onRetry={retry}
-      />
-      <TrendCard
-        className="md:col-span-2"
-        weeks={insights?.weeks ?? []}
-        deptCount={data?.depts.length ?? depts.length}
-        selectedWeek={week}
-        loading={loading || (!insights && !failed)}
-        failed={failed && !insights}
-        dim={dim}
-        onRetry={retry}
-      />
-    </motion.div>
+    <CardsContext.Provider value={cards}>
+      <motion.div
+        className="grid grid-cols-1 gap-3 px-4 pt-5 sm:px-6 md:grid-cols-2 xl:grid-cols-4"
+        initial={reduce ? false : 'hidden'}
+        animate="show"
+        variants={{ show: { transition: { staggerChildren: 0.07, delayChildren: 0.02 } } }}
+        aria-label="KPI bonus insights"
+      >
+        <DeptSpotlightCard
+          depts={insights?.depts ?? []}
+          weeks={insights?.weeks ?? []}
+          labelFor={labelFor}
+          loading={loading || (!insights && !failed)}
+          failed={failed && !insights}
+          dim={dim}
+          onRetry={retry}
+        />
+        <TopEarnerCard
+          top={insights?.spotlight.top ?? []}
+          tiedCount={insights?.spotlight.tiedCount ?? 0}
+          peoplePaid={insights?.spotlight.peoplePaid ?? 0}
+          weekTotal={insights?.spotlight.weekTotal ?? 0}
+          runnerUpAmount={insights?.spotlight.runnerUpAmount ?? 0}
+          week={week}
+          labelFor={labelFor}
+          loading={loading || (!insights && !failed)}
+          failed={failed && !insights}
+          dim={dim}
+          onRetry={retry}
+        />
+        <TrendCard
+          className="md:col-span-2"
+          weeks={insights?.weeks ?? []}
+          deptCount={data?.depts.length ?? depts.length}
+          selectedWeek={week}
+          loading={loading || (!insights && !failed)}
+          failed={failed && !insights}
+          dim={dim}
+          onRetry={retry}
+        />
+      </motion.div>
+    </CardsContext.Provider>
   );
 }

@@ -32,6 +32,8 @@ import {
 import { nextPayWeek, upcomingWeekFor, weekEndFromStart, type PayWeek } from '@/lib/hubstaff/use-pay-weeks';
 import HslBonusReadyPreview from './HslBonusReadyPreview';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
+import KpiInsightCards from './KpiInsightCards';
+import { isSundayIso } from '@/lib/manager/kpi-insights';
 import { kpiCalculatorRevealed } from '@/lib/manager/kpi-calculator-reveal';
 import {
   KPI_CACHE_KEYS,
@@ -624,6 +626,13 @@ interface HslBonusCalculatorProps {
    * Readiness "fix it from here" modal is about the live week and stays pinned.
    */
   offerUpcomingWeek?: boolean;
+  /**
+   * Top the branch grid with the three insight cards the Departments calculator
+   * has (branch spotlight, top earner, Sent to Accounting trend —
+   * `kpi-calculator-insights.md` § HSL Branches). Only the manager's own KPI tab
+   * passes it; the Readiness modal is a fix-it surface and stays bare.
+   */
+  showInsights?: boolean;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -661,6 +670,7 @@ function HslBonusCalculatorForWeek({
   submissionSource,
   ahead,
   onAheadChange,
+  showInsights = false,
 }: HslBonusCalculatorProps & {
   /** Score the week AFTER the live batch. Fixed for this instance's life. */
   ahead: boolean;
@@ -1675,6 +1685,13 @@ function HslBonusCalculatorForWeek({
     [deptState, visibleDepts],
   );
 
+  /** The branches the insight cards cover: every visible branch that scores. A
+   *  roster-only `noKpi` team has no bonus to average, and the server refuses it
+   *  anyway (`scopeHslInsightBranchKeys`). */
+  const insightBranches = useMemo(() => visibleDepts.filter((k) => !cfgOf(k).noKpi), [visibleDepts, cfgOf]);
+  const insightLabel = useCallback((k: string) => cfgOf(k).name, [cfgOf]);
+  const insightColor = useCallback((k: string) => cfgOf(k).color, [cfgOf]);
+
   const multiDept = visibleDepts.length > 1;
 
   // If the active filter points at a dept that's no longer visible, fall back.
@@ -2047,6 +2064,23 @@ function HslBonusCalculatorForWeek({
         detail="Mark ready and unready are paused until processing is complete."
         dismissible={false}
       />
+
+      {/* Insight cards — the Departments calculator's three, in the same slot:
+          read-only, below the banner, above the grid. Held until the week is a
+          real Sunday (the local-clock seed is Monday-anchored and no row is filed
+          under it). `liveKey` moves when a figure on the grid does, and the cards
+          refetch once the burst settles. */}
+      {showInsights && isSundayIso(weekStart) && insightBranches.length > 0 && (
+        <KpiInsightCards
+          calculator="hsl"
+          depts={insightBranches}
+          week={weekStart}
+          labelFor={insightLabel}
+          colorFor={insightColor}
+          liveKey={`${readyBranches}:${Math.round(grandTotal)}`}
+          refreshing={refreshing}
+        />
+      )}
 
       {/* Branches. A manager with one branch gets the scoring surface directly —
           a one-row list you have to click through would be pure ceremony. Anyone

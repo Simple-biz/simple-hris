@@ -1400,3 +1400,23 @@ above.
 **Neither figure prints until the week resolves;** both render a skeleton. A count
 beside a week picker that does not move with the week is a lie, and `0` is a claim
 ("nobody is offboarded") where the skeleton is an admission.
+
+## Insight cards above the branch grid *(2026-09-29)*
+
+Kane: *"KPI Calculator - HSL Branch - this should have the KPI Cards similar to other departments
+please."* The Departments calculator's three read-only cards (branch spotlight, top earner, Sent to
+Accounting trend) now sit above the branch grid, in the same slot: below the payroll-lock banner,
+above the rows. Only the manager's own KPI tab mounts them (`showInsights`). The Readiness "fix it
+from here" modal does not. The rules live in
+[kpi-calculator-insights.md § HSL Branches](./kpi-calculator-insights.md#hsl-branches-2026-09-29).
+The three that touch this calculator:
+
+- **Money is the stored `calculated_bonus`**, the figure on every grid row. Managers Weekly is the
+  one branch the Wizard recomputes rather than pays as stored (§Specs are DATED). The cards show
+  what the grid shows.
+- **Scope is this calculator's own gate, re-derived on the server**: an explicit `hsl:<key>` grant,
+  no elevated arm, live scoring branches only. The roster-only `noKpi` teams (Executive Guest
+  Services, Executive Assistants) are left off the cards. They have no bonus to average.
+- **Nothing on the scoring path changed.** No autosave, Mark Ready, lock or dispatch code was
+  touched. The cards refetch 4 s after the grid's ready count or Total stops moving, and when the
+  toolbar Refresh ends.

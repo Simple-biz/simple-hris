@@ -1,4 +1,4 @@
-# KPI Calculator insight cards — department spotlight, top earner, sent-to-Accounting trend
+# KPI Calculator insight cards — department spotlight, top earner, sent-to-Accounting trend (Departments and HSL Branches)
 
 Three read-only cards above the department grid on **Manager → KPI Calculator → Departments**
 (the "My Departments" landing). From left to right: a **department spotlight** that rotates through
@@ -10,17 +10,22 @@ should have a spotlight of each department and their Average bonus per week - an
 has a Spotlight of a random Employee that has the biggest bonus. And the last card should be longer
 … a line graph on the Total Bonuses that were sent to accounting each week make the animation smooth"*.
 
+**The HSL Branches calculator got the same three cards on 2026-09-29** (Kane: *"KPI Calculator - HSL
+Branch - this should have the KPI Cards similar to other departments please"*). Every rule on this
+page holds there. What differs (the gate, the money column, the word "branch") is in
+[§ HSL Branches](#hsl-branches-2026-09-29).
+
 ## Key files
 
 | Piece | File |
 | --- | --- |
-| Rules (pure): scope, aggregation, curve, axis | `src/lib/manager/kpi-insights.ts` (+ `kpi-insights.test.ts`) |
-| Reads (paged, server-only) | `src/lib/supabase/kpi-insights-db.ts` |
-| Route | `app/api/manager/kpi-insights/route.ts` — `GET ?depts=a,b&week=YYYY-MM-DD` |
-| Cards + chart | `src/components/manager/KpiInsightCards.tsx` |
-| Mount | `DeptBonusCalculator.tsx`, behind the `showInsights` prop. Only `ManagerApp.tsx` passes it |
-| Paint cache | `KPI_CACHE_KEYS.insights(surface, week, depts)` in `src/lib/manager/kpi-cache.ts` |
-| PROD check (read-only) | `npx tsx scripts/verify-kpi-insights.ts [week]` |
+| Rules (pure): scope, aggregation, curve, axis | `src/lib/manager/kpi-insights.ts` (+ `kpi-insights.test.ts`) — HSL scope is `scopeHslInsightBranchKeys` |
+| Reads (paged, server-only) | `src/lib/supabase/kpi-insights-db.ts` — HSL money is `readHslInsightEntries` |
+| Route | `app/api/manager/kpi-insights/route.ts` — `GET ?depts=a,b&week=YYYY-MM-DD` · HSL: `app/api/manager/kpi-insights/hsl/route.ts`, same params |
+| Cards + chart | `src/components/manager/KpiInsightCards.tsx` — `calculator` (`'dept'` · `'hsl'`) picks endpoint, cache surface and noun; `colorFor` the row colour |
+| Mount | `DeptBonusCalculator.tsx` and `HslBonusCalculator.tsx`, each behind a `showInsights` prop. Only `ManagerApp.tsx` passes it |
+| Paint cache | `KPI_CACHE_KEYS.insights(surface, week, depts)` in `src/lib/manager/kpi-cache.ts` (`dept-manager` · `hsl`) |
+| PROD check (read-only) | `npx tsx scripts/verify-kpi-insights.ts [--hsl] [week]` |
 
 ## "Sent to Accounting" is a STATUS, never a save
 
@@ -61,6 +66,14 @@ calculator, the same rule the grid's cards follow.
   An older week that one department never sent is a settled record, so it stays solid and the
   tooltip names the gap. The first build hollowed every week with a missing department, and 9 of 12
   points came out hollow.
+- **"N of M sent" counts the STATUS, including a ready week with no saved rows** (2026-09-29).
+  That is a ₱0 submission. It adds nothing to the line and still makes no point, but the
+  department HAS sent, exactly as the spotlight average counts it. The first build counted a
+  department as sent only when it had rows, so HSL's Healthcare Team Lead (Ready over zero rows in all 8 of its
+  weeks) and SSD's off-weeks read *"not scored at all"* on every week they submitted:
+  **10 of 13** on 2026-09-20, **12 of 13** after. The Departments figures did not change in the
+  current window (measured before and after, byte-identical). The tooltip's *"not scored at all"*
+  is now only a department with no rows and no sent status.
 - **Colour was measured.** The series is `#059669` on light and `#12a574` on dark, and both pass the
   dataviz validator (lightness band, chroma, ≥3:1). `#10b981` fails the dark lightness band. Labels
   use text ink. The only direct labels are the newest week and the peak.
@@ -126,6 +139,60 @@ A single week of `bonus_catalog_applied` already crosses PostgREST's 1,000-row c
 nobody paid. The one unpaged read is the `.limit(1)` latest-sent-week probe, and a test pins that
 it is the only one. `summarizeApplied` is un-paged and capped today (item 244(f)); do not reuse it.
 
+## HSL Branches *(2026-09-29)*
+
+The same component (`calculator="hsl"`), the same `buildKpiInsights` and the same rules, over the
+HSL branch grid. Mounted in the Departments slot: below the payroll-lock banner, above the grid. The
+header stays the shared header. Three things differ, and each is deliberate.
+
+- **The money is `hsl_bonus_entries.calculated_bonus`.** It is the figure on every row of the HSL
+  grid and in its Total pill, and the stored amount the Wizard's `hslKpiAmounts` pays
+  (`hsl-kpi-calculator-2026-07.md` §Dispatch wiring). **One exception is left as it is:** the Wizard
+  RECOMPUTES Managers Weekly (`hsl_managers`) from `kpi_data` against the spec dated to the week
+  (§Specs are DATED) instead of paying the stored value. The cards show the stored figure, as the
+  grid does. The two agree unless a spec version was edited in place, and that is the thing the
+  dated-spec rule forbids.
+- **The gate is the HSL calculator's own, and narrower** (`scopeHslInsightBranchKeys`). Only an
+  explicit `hsl:<key>` grant opens a branch. That mirrors `canAccessHslDept(managed, k, false)`,
+  the check `ManagerApp` makes before it shows the HSL calculator at all. There is **no elevated
+  arm**: an elevated caller with no HSL grant never sees this calculator, so the route gives them
+  nothing either. The Departments route's elevated arm must not be borrowed (a source pin forbids
+  `scopeInsightDeptKeys` in the HSL route). A granted key must also be a **live scoring branch**:
+  - a code team that is not `noKpi`. Executive Guest Services and Executive Assistants are
+    roster-only, have no bonus to average, and have been Ready at ₱0 every week since 2026-08-30;
+  - or a data sub-team stored under HSL right now. The sub-team list is read **strictly**, so a
+    failed read is a 500. Treating it as "no data branches" would drop a branch's money from the
+    total and draw a dip nobody paid;
+  - a retired key (`case_manager`, which still holds 50 people's rows) or an unknown key resolves
+    nothing, even with its grant still on file (INDEX, HSL sub-departments).
+
+  The client sends its visible branches minus `noKpi`, and the server re-checks every one.
+- **The word is "branch"**: *Branch spotlight*, *N of M branches sent*. The shape is shared; the
+  label is not (`hsl-kpi-calculator-2026-07.md` § One header). Each branch keeps its own colour
+  (`cfg.color`, the colour bar on its grid row); a data branch is slate, like its row.
+
+**Measured on PROD, read-only, 2026-09-29** (`verify-kpi-insights.ts --hsl`, every branch
+granted): 13 branches, 12 weeks through 2026-09-20, 6,119 entry rows, 125 status rows, **2.1 s**.
+The weekly total runs ₱701k–₱1.14M. The 2026-07-05 week has ₱4,500 sent and ₱199,000 still in draft,
+because Filing, Intake and Medical Records have rows under it and no status (Filing's are in audit
+item 155's reopen exposure). The top branch is Intake Specialist at ₱308,786 per week sent. On
+2026-09-20 the top earner has ₱16,000 (Intake), highest of 288 people. **87 person-weeks since mid-June
+were paid on more than one branch**, which is what the SUM rule is for. Every `period_start` in the
+window is a Sunday. The monthly branches are keyed on a Sunday week like the rest, and the one
+non-Sunday key (`2026-07-01`, SSD and Collections, from before the re-keying) is outside the window.
+
+**How the monthly branches read, and why they were not special-cased.** "Average ÷ weeks sent" is
+applied verbatim. SSD Medical Records (monthly) marks off-weeks Ready at ₱0, so its figure,
+₱30,171 per week over 7 weeks sent, is the average across those ₱0 weeks. That is a true weekly
+average of what it sent. Collections is monthly in config, but in practice it scores and sends every
+week (9 of 12). Healthcare Team Lead sent ₱0 in each of the 8 weeks it sent, and ranks last with "₱0.00 / week".
+
+**Known, not fixed:** Healthcare Specialist is a data sub-team with no Bonus Library assignment. It
+has never saved a row or a status, so the newest week reads *12 of 13 sent* and stays hollow. That is
+true (nothing has been scored there), so nothing hides it. Filtering on `dataBranchHasWork` needs the
+calculator's best-effort catalog read, and a failed read would silently drop a scored data branch
+from the totals.
+
 ## Refresh
 
 The card fetches on mount and whenever the week or the department set changes. It fetches **4 s
@@ -136,7 +203,15 @@ at 60% opacity; there is no skeleton flash.
 
 ## Deploy notes
 
-**No migration.** No env vars and no n8n. New route `app/api/manager/kpi-insights`. Pushed
+**HSL Branches (2026-09-29): no migration, no env vars, no n8n.** New route
+`app/api/manager/kpi-insights/hsl`. It reads `department_managers`, `app_settings` (the stored
+sub-team map), `hsl_bonus_period_status` and `hsl_bonus_entries`, all server-side. **NOT pushed.
+PENDING: push + deploy (Kane).** Verified: 37 unit tests (9 new for the HSL scope and route pins, 1
+for the status count), typecheck clean for these files, and the real rule over PROD rows by
+`verify-kpi-insights.ts --hsl`. The dev server answered `401` to an anonymous call on the new route.
+**Not rendered in a browser and not clicked through signed in as an HSL manager.**
+
+**Departments (2026-09-28): no migration.** No env vars and no n8n. New route `app/api/manager/kpi-insights`. Pushed
 (`origin/main` = `0fa0b89d`, reflog 2026-09-29). PENDING: deploy (Kane). Verified: 27 unit tests, typecheck clean for these files, and the real rule run against
 PROD by `scripts/verify-kpi-insights.ts` (09-20: ₱798,250 sent, 11 of 12 departments, top earner
 ₱53,750, PM Team). It was rendered and screenshotted in a local harness (light, dark, hover, tie,

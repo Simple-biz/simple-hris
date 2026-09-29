@@ -1,21 +1,31 @@
 /**
  * READ-ONLY: run the REAL insight rule (`buildKpiInsights`) over LIVE rows and
  * print the three cards as text. The route's reads are `server-only`, so the
- * same projections are replicated here — the aggregation is imported, never
- * re-implemented. Nothing is written. No names or emails are printed.
+ * same projections are replicated here — the aggregation and the scope rule are
+ * imported, never re-implemented. Nothing is written. No names or emails are
+ * printed.
  *
- *   npx tsx scripts/verify-kpi-insights.ts [YYYY-MM-DD selected week]
+ *   npx tsx scripts/verify-kpi-insights.ts [YYYY-MM-DD selected week]        Departments
+ *   npx tsx scripts/verify-kpi-insights.ts --hsl [YYYY-MM-DD selected week]  HSL Branches
+ *
+ * `--hsl` scopes as a manager granted EVERY branch (`hsl:<key>` for each code
+ * team and each stored data sub-team), so it prints the widest view the HSL
+ * route can return.
  */
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import {
   buildKpiInsights,
   trendWindow,
+  scopeHslInsightBranchKeys,
   scopeInsightDeptKeys,
   type InsightAppliedRow,
   type InsightStatusRow,
 } from '@/lib/manager/kpi-insights';
 import { MANAGER_BONUS_DEPT_KEYS } from '@/lib/payroll/department-bonus';
+import { HSL_DEPT_KEYS } from '@/lib/hsl-bonus/schema';
+import { BUILTIN_SUBS_SETTING_KEY } from '@/lib/departments/builtin-subs';
+import { HSL_BUILTIN_KEY } from '@/lib/departments/registry';
 import { manilaTodayIso, sundayOf } from '@/lib/payroll/manila-week';
 
 dotenv.config({ path: 'c:/Users/Kane/Desktop/simple-hris/.env' });
@@ -36,9 +46,30 @@ async function paged<T>(build: (from: number, to: number) => PromiseLike<{ data:
 
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const HSL = process.argv.includes('--hsl');
+const ARG_WEEK = process.argv.slice(2).find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a));
+
+/** Every stored HSL data sub-team key (the route reads the same setting). */
+async function hslDataBranchKeys(): Promise<string[]> {
+  const { data, error } = await sb.from('app_settings').select('value').eq('key', BUILTIN_SUBS_SETTING_KEY).maybeSingle();
+  if (error) throw new Error(error.message);
+  const raw = (data as { value?: string } | null)?.value;
+  if (!raw) return [];
+  const map = JSON.parse(raw) as Record<string, { key?: string }[]>;
+  return (map[HSL_BUILTIN_KEY] ?? []).map((s) => (s.key ?? '').trim().toLowerCase()).filter(Boolean);
+}
+
 async function main() {
   const t0 = Date.now();
-  const depts = scopeInsightDeptKeys([...MANAGER_BONUS_DEPT_KEYS], { kind: 'elevated' });
+  let depts: string[];
+  if (HSL) {
+    const data = await hslDataBranchKeys();
+    const all = [...HSL_DEPT_KEYS, ...data];
+    depts = scopeHslInsightBranchKeys(all, all.map((k) => `hsl:${k}`), data);
+    console.log(`HSL data sub-teams stored: ${data.join(', ') || 'none'}`);
+  } else {
+    depts = scopeInsightDeptKeys([...MANAGER_BONUS_DEPT_KEYS], { kind: 'elevated' });
+  }
   const { data: latest, error: le } = await sb
     .from('hsl_bonus_period_status')
     .select('period_start')
@@ -49,7 +80,7 @@ async function main() {
     .limit(1);
   if (le) throw new Error(le.message);
   const through = sundayOf((latest?.[0] as { period_start: string }).period_start);
-  const selected = process.argv[2] ?? through;
+  const selected = ARG_WEEK ?? through;
   const weeks = trendWindow(through);
   const readWeeks = Array.from(new Set([...weeks, selected]));
   const [statuses, appliedByWeek] = await Promise.all([
@@ -58,9 +89,13 @@ async function main() {
     ),
     Promise.all(
       readWeeks.map((w) =>
-        paged<InsightAppliedRow>((f, t) =>
-          sb.from('bonus_catalog_applied').select('department, period_start, employee_email, employee_name, amount').in('department', depts).eq('period_start', w).order('id').range(f, t),
-        ),
+        HSL
+          ? paged<Omit<InsightAppliedRow, 'amount'> & { calculated_bonus: number | string | null }>((f, t) =>
+              sb.from('hsl_bonus_entries').select('department, period_start, employee_email, employee_name, calculated_bonus').in('department', depts).eq('period_start', w).order('id').range(f, t),
+            ).then((rows) => rows.map(({ calculated_bonus, ...rest }) => ({ ...rest, amount: calculated_bonus })))
+          : paged<InsightAppliedRow>((f, t) =>
+              sb.from('bonus_catalog_applied').select('department, period_start, employee_email, employee_name, amount').in('department', depts).eq('period_start', w).order('id').range(f, t),
+            ),
       ),
     ),
   ]);

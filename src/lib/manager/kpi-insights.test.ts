@@ -11,6 +11,7 @@ import {
   isSundayIso,
   monotonePath,
   niceTicks,
+  scopeHslInsightBranchKeys,
   scopeInsightDeptKeys,
   toRuns,
   trendWindow,
@@ -99,6 +100,70 @@ describe('scopeInsightDeptKeys — the server re-checks the grid', () => {
   });
 });
 
+describe('scopeHslInsightBranchKeys — the HSL calculator gate, re-derived on the server', () => {
+  it('reads only the branches the caller holds an explicit hsl:<key> grant for', () => {
+    const got = scopeHslInsightBranchKeys(
+      ['medical_records', 'intake_specialist', 'callback_team'],
+      ['hsl:medical_records', 'hsl:callback_team', 'PM Team'],
+      [],
+    );
+    assert.deepEqual(got, ['medical_records', 'callback_team']);
+  });
+
+  it('matches grants case-insensitively, as canAccessHslDept does', () => {
+    assert.deepEqual(scopeHslInsightBranchKeys(['attestation'], [' HSL:Attestation '], []), ['attestation']);
+  });
+
+  it('has no elevated arm: no grant, no branch — the parent HSL assignment and a bare key open nothing', () => {
+    const all = ['medical_records', 'intake_specialist', 'hsl_managers'];
+    assert.deepEqual(scopeHslInsightBranchKeys(all, [], []), []);
+    assert.deepEqual(scopeHslInsightBranchKeys(all, ['Hogan Smith Law', 'HSL', 'hsl', 'hogan_smith_law'], []), []);
+    assert.deepEqual(scopeHslInsightBranchKeys(all, ['medical_records', 'Intake Specialist'], []), []);
+  });
+
+  it('a roster-only noKpi team is refused even when granted — it has no bonus to average', () => {
+    const got = scopeHslInsightBranchKeys(
+      ['executive_guest_services', 'executive_assistants', 'medical_records'],
+      ['hsl:executive_guest_services', 'hsl:executive_assistants', 'hsl:medical_records'],
+      [],
+    );
+    assert.deepEqual(got, ['medical_records']);
+  });
+
+  it('a RETIRED or unknown branch resolves nothing, even with the grant still on file', () => {
+    // `case_manager` (singular) was superseded by `case_managers` on 2026-07-17
+    // and still holds 50 people's rows.
+    const got = scopeHslInsightBranchKeys(['case_manager', 'made_up'], ['hsl:case_manager', 'hsl:made_up'], []);
+    assert.deepEqual(got, []);
+  });
+
+  it('a DATA sub-team is admitted only while it is stored under HSL', () => {
+    const managed = ['hsl:healthcare_specialist'];
+    assert.deepEqual(scopeHslInsightBranchKeys(['healthcare_specialist'], managed, ['healthcare_specialist']), [
+      'healthcare_specialist',
+    ]);
+    assert.deepEqual(scopeHslInsightBranchKeys(['healthcare_specialist'], managed, []), []);
+  });
+
+  it('a data key that collides with a noKpi code team does not reopen it (the code config wins)', () => {
+    const got = scopeHslInsightBranchKeys(
+      ['executive_guest_services'],
+      ['hsl:executive_guest_services'],
+      ['executive_guest_services'],
+    );
+    assert.deepEqual(got, []);
+  });
+
+  it('never opens a Departments-calculator key, and dedupes / refuses malformed keys', () => {
+    const got = scopeHslInsightBranchKeys(
+      ['pm_team', 'care_team', 'care_team', 'CARE_TEAM', "care_team'--"],
+      ['hsl:care_team', 'PM Team', 'hsl:pm_team'],
+      [],
+    );
+    assert.deepEqual(got, ['care_team']);
+  });
+});
+
 describe('buildKpiInsights — sent is a STATUS, not a save', () => {
   const weeks = [W1, W2, W3];
   const depts = ['pm_team', 'edit'];
@@ -150,6 +215,29 @@ describe('buildKpiInsights — sent is a STATUS, not a save', () => {
     const applied = Array.from({ length: 30 }, (_, i) => row('pm_team', W3, `p${i}@x.com`, '0.10'));
     const out = buildKpiInsights({ weeks, depts, selectedWeek: W3, applied, statuses: [st('pm_team', W3, 'locked')] });
     assert.equal(out.weeks[2]!.sent, 3);
+  });
+
+  it('a ready week with NO saved rows counts as sent (₱0) in the trend, as it does in the averages', () => {
+    // HSL, measured 2026-09-29: Healthcare Team Lead and SSD's off-weeks are
+    // Ready over zero rows every week. Counting sent by rows read them as "not
+    // scored at all" and held the newest point hollow forever.
+    const out = buildKpiInsights({
+      weeks,
+      depts: ['pm_team', 'edit', 'qc'],
+      selectedWeek: W3,
+      applied: [row('pm_team', W3, 'a@x.com', 1000)],
+      statuses: [st('pm_team', W3, 'ready'), st('edit', W3, 'ready'), st('edit', W2, 'ready')],
+    });
+    const w3 = out.weeks[2]!;
+    assert.equal(w3.sentDepts, 2, 'pm_team with rows + edit at ₱0');
+    assert.equal(w3.pendingDepts, 0);
+    assert.equal(w3.sent, 1000, 'a ₱0 submission adds nothing');
+    assert.equal(3 - w3.sentDepts - w3.pendingDepts, 1, 'only qc is unscored');
+    // No saved row anywhere that week → still NO point, whatever was sent.
+    assert.equal(out.weeks[1]!.measured, false);
+    assert.equal(out.weeks[1]!.sentDepts, 1);
+    const edit = out.depts.find((d) => d.dept === 'edit')!;
+    assert.equal(edit.weeksSent, 2, 'the averages already counted it');
   });
 });
 
@@ -333,6 +421,21 @@ describe('source pins', () => {
     assert.match(route, /listDepartmentsForManager\(sessionEmail\)/);
     assert.match(route, /scopeInsightDeptKeys\(/);
     assert.doesNotMatch(route, /searchParams\.get\('(elevated|scope|email)'\)/);
+  });
+
+  it('the HSL route resolves scope from the SESSION and the stored sub-teams, never from a client flag', () => {
+    const hsl = readFileSync(path.join(root, 'app/api/manager/kpi-insights/hsl/route.ts'), 'utf8');
+    assert.match(hsl, /getServerSession\(authOptions\)/);
+    assert.match(hsl, /listDepartmentsForManager\(sessionEmail\)/);
+    assert.match(hsl, /scopeHslInsightBranchKeys\(requested, managed, dataBranchKeys\)/);
+    // The Departments scope admits every calculator dept for an elevated caller;
+    // the HSL calculator has no such arm, so its route must not borrow it.
+    assert.doesNotMatch(hsl, /scopeInsightDeptKeys/);
+    assert.doesNotMatch(hsl, /searchParams\.get\('(elevated|scope|email)'\)/);
+    // A failed sub-team read is a 500, never "no data branches".
+    assert.match(hsl, /catch \(e\) \{\s*return empty\(/);
+    assert.match(hsl, /readHslInsightEntries\(/);
+    assert.doesNotMatch(hsl, /readInsightApplied\(/);
   });
 
   it('every multi-row read is paged (PostgREST truncates at 1000)', () => {
