@@ -5248,6 +5248,10 @@ export default function DeptBonusCalculator({
               : 'My Departments'
         }
         cards={Math.max(visibleDeptKeys.length, isElevated ? 6 : 1)}
+        // The insight row's own gate, minus the Sunday check: before the week
+        // resolves `weekStart` is the Monday-anchored seed, and the reveal waits
+        // on the resolved week anyway.
+        insights={showInsights && !isQc}
       />
     );
   }

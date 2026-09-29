@@ -579,6 +579,22 @@ Payroll Readiness modal loads. The view switch is drawn as real chrome rather
 than a shimmer block, because it has nothing to load and is usable the instant
 the calculator mounts.
 
+**Both variants reserve the insight-card row** *(2026-09-29)*. `insights` paints
+`KpiInsightCardsSkeleton` between the header and the grid. It uses the same grid
+constant, the same `CardShell` and the same per-card loading bodies as
+`KpiInsightCards` on its first fetch, so the two cannot drift. The row is over
+200px tall (`min-h-[208px]` per card). Before this, every manager's calculator
+revealed with the whole grid dropping by that much. Each calculator passes the
+cards' own gate minus the Sunday check: `showInsights && !isQc` (Departments),
+`showInsights && insightBranches.length > 0` (HSL). The Sunday check is left out
+because the skeleton paints while `weekStart` is still the Monday-anchored seed.
+The reveal waits on the resolved week anyway. **Known shift:** on a `weekError`
+reveal the week never becomes a Sunday, so the reserved row does not fill. The
+rose alert lands in the header at the same moment, so that page moves anyway.
+
+The Departments skeleton also draws the search box when there is only one
+department. The live bar always shows it, because it finds people as well.
+
 **Not verified in the real app:** the overlay and the redesigned surface were
 checked against Playwright-stubbed API routes at 390 / 820 / 920 / 1180 / 1440px
 in both themes, not against production data or a real manager session.

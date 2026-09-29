@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { AppWindow, ChevronRight, Maximize2, PanelRight, RefreshCw, Search } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { KpiInsightCardsSkeleton } from './KpiInsightCards';
 
 type Variant = 'departments' | 'hsl';
 
@@ -26,12 +27,18 @@ type Variant = 'departments' | 'hsl';
  * miss — the skeleton would reserve the wrong height and the page would jump on
  * load. The column count has to match the live one too, or the placeholder
  * reserves N rows where the data lands in N/2.
+ *
+ * `insights` reserves the insight-card row that sits between the header and the
+ * grid (`KpiInsightCards`). It is over 200px tall, so leaving it out dropped the
+ * whole grid when the calculator revealed. Pass it exactly where the calculator
+ * will mount the cards: a reserved row that never fills is the same jump upward.
  */
 export default function KpiCalculatorLoading({
   variant = 'departments',
   title = 'My Departments',
   cards = 4,
   teamSplit = false,
+  insights = false,
   calculatorSwitch,
 }: {
   variant?: Variant;
@@ -41,6 +48,8 @@ export default function KpiCalculatorLoading({
    *  workspace is far taller than a plain roster, so the placeholder has to be
    *  too — this is the shape the Payroll Readiness modal loads. */
   teamSplit?: boolean;
+  /** The calculator will paint the insight cards above its grid. */
+  insights?: boolean;
   /** The HSL-Branches / Departments navigation, drawn REAL rather than as a
    *  shimmer. It has nothing to load, and since it moved inside the calculators'
    *  toolbars it would otherwise be unreachable for the whole first load —
@@ -49,17 +58,29 @@ export default function KpiCalculatorLoading({
 }) {
   const count = Math.min(Math.max(cards, 1), 8);
   return variant === 'hsl' ? (
-    <HslSkeleton title={title} count={count} teamSplit={teamSplit} calculatorSwitch={calculatorSwitch} />
+    <HslSkeleton
+      title={title}
+      count={count}
+      teamSplit={teamSplit}
+      insights={insights}
+      calculatorSwitch={calculatorSwitch}
+    />
   ) : (
-    <DeptSkeleton title={title} count={count} single={count <= 1} calculatorSwitch={calculatorSwitch} />
+    <DeptSkeleton
+      title={title}
+      count={count}
+      single={count <= 1}
+      insights={insights}
+      calculatorSwitch={calculatorSwitch}
+    />
   );
 }
 
 // -- Departments variant -------------------------------------------------------
 
 function DeptSkeleton({
-  title, count, single, calculatorSwitch,
-}: { title: string; count: number; single: boolean; calculatorSwitch?: ReactNode }) {
+  title, count, single, insights, calculatorSwitch,
+}: { title: string; count: number; single: boolean; insights: boolean; calculatorSwitch?: ReactNode }) {
   return (
     <div className="flex min-h-0 flex-col" aria-busy="true" aria-label="Loading KPI Calculator">
       {/* Header + controls. Mirrors the live sticky header, which is now the
@@ -93,18 +114,18 @@ function DeptSkeleton({
           </div>
         </div>
 
-        {/* Calculator switch + this screen's search */}
+        {/* Calculator switch + this screen's search. The live search shows
+            even with one department (it finds PEOPLE too), so this does. */}
         <div className="flex flex-wrap items-center gap-2">
           {calculatorSwitch}
-          {!single && (
-            <div className="relative w-full max-w-[260px]">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-300" aria-hidden />
-              <Skeleton className="h-8 w-full rounded-md" />
-            </div>
-          )}
+          <div className="relative w-full max-w-[260px]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 z-10 h-3.5 w-3.5 -translate-y-1/2 text-zinc-300 dark:text-zinc-600" aria-hidden />
+            <Skeleton className="h-8 w-full rounded-md" />
+          </div>
         </div>
       </div>
 
+      {insights && <KpiInsightCardsSkeleton calculator="dept" />}
 
       {/* Department cards */}
       <div
@@ -164,8 +185,8 @@ function ViewSwitchGhost() {
 }
 
 function HslSkeleton({
-  title, count, teamSplit, calculatorSwitch,
-}: { title: string; count: number; teamSplit: boolean; calculatorSwitch?: ReactNode }) {
+  title, count, teamSplit, insights, calculatorSwitch,
+}: { title: string; count: number; teamSplit: boolean; insights: boolean; calculatorSwitch?: ReactNode }) {
   const multi = count > 1;
   return (
     <div
@@ -215,6 +236,8 @@ function HslSkeleton({
           </div>
         )}
       </div>
+
+      {insights && <KpiInsightCardsSkeleton calculator="hsl" />}
 
       {/* Branches. Mirrors the live split exactly: several branches are two
           columns of rows, one branch is the scoring block itself. Getting this

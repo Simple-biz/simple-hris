@@ -1872,6 +1872,10 @@ function HslBonusCalculatorForWeek({
           visibleDepts.length === 1 &&
           cfgOf(visibleDepts[0]!).rules[0]?.type === 'team_split'
         }
+        // The insight row's own gate, minus the Sunday check: before the week
+        // resolves `weekStart` is the Monday-anchored seed, and `booted` waits
+        // on the resolved week anyway.
+        insights={showInsights && insightBranches.length > 0}
       />
     );
   }

@@ -93,6 +93,9 @@ const ROTATE_MS = 5200;
 /** A live-figure change (a save, a Mark Ready) refetches after this quiet spell —
  *  the calculator autosaves on a 1 s debounce, and one read per burst is plenty. */
 const LIVE_REFETCH_DEBOUNCE_MS = 4000;
+/** The row's grid. One constant so the calculator skeleton's placeholder row
+ *  ({@link KpiInsightCardsSkeleton}) cannot drift from the row that replaces it. */
+const INSIGHT_GRID = 'grid grid-cols-1 gap-3 px-4 pt-5 sm:px-6 md:grid-cols-2 xl:grid-cols-4';
 
 // -- Formatting ------------------------------------------------------------------
 
@@ -230,6 +233,44 @@ function CardError({ onRetry }: { onRetry: () => void }) {
   );
 }
 
+// Each card's first-load body. Shared with `KpiInsightCardsSkeleton`, so the
+// calculator skeleton and a card waiting on its first fetch are the same shape.
+
+function SpotlightLoading() {
+  return (
+    <div className="flex flex-1 flex-col gap-3">
+      <Skeleton className="h-4 w-32" />
+      <Skeleton className="h-7 w-40" />
+      <Skeleton className="h-3 w-48" />
+      <Skeleton className="mt-auto h-10 w-full" />
+    </div>
+  );
+}
+
+function TopEarnerLoading() {
+  return (
+    <div className="flex flex-1 flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-11 w-11 rounded-full" />
+        <div className="flex flex-col gap-1.5">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-3 w-20" />
+        </div>
+      </div>
+      <Skeleton className="h-7 w-36" />
+    </div>
+  );
+}
+
+function TrendLoading() {
+  return (
+    <div className="flex flex-1 flex-col gap-3">
+      <Skeleton className="h-6 w-40" />
+      <Skeleton className="h-[120px] w-full" />
+    </div>
+  );
+}
+
 // -- 1 · Department spotlight -------------------------------------------------------
 
 function DeptSpotlightCard({
@@ -331,12 +372,7 @@ function DeptSpotlightCard({
       {failed && ranked.length === 0 ? (
         <CardError onRetry={onRetry} />
       ) : loading && ranked.length === 0 ? (
-        <div className="flex flex-1 flex-col gap-3">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-7 w-40" />
-          <Skeleton className="h-3 w-48" />
-          <Skeleton className="mt-auto h-10 w-full" />
-        </div>
+        <SpotlightLoading />
       ) : !cur ? (
         <p className="flex flex-1 items-center text-xs text-zinc-500">No {noun.many} to show.</p>
       ) : (
@@ -535,16 +571,7 @@ function TopEarnerCard({
       {failed && !person ? (
         <CardError onRetry={onRetry} />
       ) : loading && !person ? (
-        <div className="flex flex-1 flex-col gap-3">
-          <div className="flex items-center gap-3">
-            <Skeleton className="h-11 w-11 rounded-full" />
-            <div className="flex flex-col gap-1.5">
-              <Skeleton className="h-4 w-32" />
-              <Skeleton className="h-3 w-20" />
-            </div>
-          </div>
-          <Skeleton className="h-7 w-36" />
-        </div>
+        <TopEarnerLoading />
       ) : !person ? (
         <p className="flex flex-1 items-center text-xs text-zinc-500">No bonuses saved for this week yet.</p>
       ) : (
@@ -1160,10 +1187,7 @@ function TrendCard({
       {failed && measured.length === 0 ? (
         <CardError onRetry={onRetry} />
       ) : loading && weeks.length === 0 ? (
-        <div className="flex flex-1 flex-col gap-3">
-          <Skeleton className="h-6 w-40" />
-          <Skeleton className="h-[120px] w-full" />
-        </div>
+        <TrendLoading />
       ) : measured.length === 0 ? (
         <p className="flex flex-1 items-center text-xs text-zinc-500">Nothing has been sent to Accounting yet.</p>
       ) : (
@@ -1191,6 +1215,42 @@ function TrendCard({
         </>
       )}
     </CardShell>
+  );
+}
+
+// -- Calculator skeleton -----------------------------------------------------------
+
+/**
+ * The row as it looks on its first fetch, for `KpiCalculatorLoading`. Same grid,
+ * same shells, same loading bodies, so the calculator's placeholder reserves the
+ * row's height and the grid under it does not drop when the calculator reveals.
+ * The top earner's "week of" shimmers in its slot: the week is not resolved yet.
+ * Render it wherever the calculator will mount
+ * the real cards, and nowhere else: a reserved row that never fills is the same
+ * jump in the other direction.
+ */
+export function KpiInsightCardsSkeleton({ calculator = 'dept' }: { calculator?: KpiInsightCalculator }) {
+  const { noun } = CALCULATORS[calculator];
+  return (
+    <div className={INSIGHT_GRID}>
+      <CardShell eyebrow={`${noun.One} spotlight`} icon={<Sparkles className="h-3 w-3" />}>
+        <SpotlightLoading />
+      </CardShell>
+      <CardShell
+        eyebrow="Top earner"
+        icon={<Trophy className="h-3 w-3" />}
+        right={<Skeleton className="h-2.5 w-20" />}
+      >
+        <TopEarnerLoading />
+      </CardShell>
+      <CardShell
+        className="md:col-span-2"
+        eyebrow="Sent to Accounting · weekly"
+        icon={<TrendingUp className="h-3 w-3" />}
+      >
+        <TrendLoading />
+      </CardShell>
+    </div>
   );
 }
 
@@ -1302,7 +1362,7 @@ export default function KpiInsightCards({
   return (
     <CardsContext.Provider value={cards}>
       <motion.div
-        className="grid grid-cols-1 gap-3 px-4 pt-5 sm:px-6 md:grid-cols-2 xl:grid-cols-4"
+        className={INSIGHT_GRID}
         initial={reduce ? false : 'hidden'}
         animate="show"
         variants={{ show: { transition: { staggerChildren: 0.07, delayChildren: 0.02 } } }}

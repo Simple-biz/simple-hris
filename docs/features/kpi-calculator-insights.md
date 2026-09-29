@@ -201,12 +201,18 @@ because the calculator autosaves on a 1 s debounce), and **immediately** when th
 finishes. The cached payload paints first. While a refetch is in flight the previous render is held
 at 60% opacity; there is no skeleton flash.
 
+**First paint.** Before the calculator reveals, its own skeleton (`KpiCalculatorLoading`,
+`insights` prop) already holds this row as `KpiInsightCardsSkeleton`. That export shares the grid
+constant, the card shell and each card's loading body with the live component, so the grid below
+does not drop when the calculator reveals (2026-09-29). Any change to a card's first-load shape goes
+in `SpotlightLoading` / `TopEarnerLoading` / `TrendLoading`. Never fork it into the skeleton.
+
 ## Deploy notes
 
 **HSL Branches (2026-09-29): no migration, no env vars, no n8n.** New route
 `app/api/manager/kpi-insights/hsl`. It reads `department_managers`, `app_settings` (the stored
-sub-team map), `hsl_bonus_period_status` and `hsl_bonus_entries`, all server-side. **NOT pushed.
-PENDING: push + deploy (Kane).** Verified: 37 unit tests (9 new for the HSL scope and route pins, 1
+sub-team map), `hsl_bonus_period_status` and `hsl_bonus_entries`, all server-side. Pushed
+(`origin/main` = `3f2f1ea5`, checked 2026-09-29). **PENDING: deploy (Kane).** Verified: 37 unit tests (9 new for the HSL scope and route pins, 1
 for the status count), typecheck clean for these files, and the real rule over PROD rows by
 `verify-kpi-insights.ts --hsl`. The dev server answered `401` to an anonymous call on the new route.
 **Not rendered in a browser and not clicked through signed in as an HSL manager.**
