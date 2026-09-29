@@ -14,9 +14,11 @@ entry and one audit-log line, which is why it is written down now.
 
 One sound, shared by the two surfaces that have a **Start Processing** button:
 the Payroll Wizard and Payment Dispatch. Same action, same cue — deliberately.
-Since 2026-09-15 that cue is SpongeBob's *Jellyfish Jam*, and since 2026-09-25 it
-is the **whole song** (2:31). Kane: *"it needs to play the whole song unless the
-modal is being closed."* Until then every run was cut at 12s.
+Since 2026-09-15 that cue is SpongeBob's *Jellyfish Jam*. **Since 2026-09-29 a run
+is the song's first minute, faded out over its last 5s** (55s → 60s). Kane: *"should
+just be 1 minute please and fade it out."* From 2026-09-25 to 2026-09-29 it played
+the whole song (2:31) (Kane: *"it needs to play the whole song unless the modal is
+being closed"*), and before that every run was cut at 12s.
 
 `playStagePrepped()` / `holdStagePrepped()` / `releaseStagePrepped()` /
 `stopStagePrepped()` drive a run; `prefetchStagePrepped()` warms the bytes;
@@ -34,7 +36,8 @@ loading or audible. Call sites never touch the AudioContext.
    guard is `if (!lockState.locked)` at the click, on both surfaces.
 4. **Confirm HOLDS, cancel KILLS.** The modal closes ~2s after confirm
    (`minShow` = 1600ms), and the cue is required to outlive it. Kane
-   2026-09-15: *"for at least 10 seconds"*; 2026-09-25: *"the whole song"*. So
+   2026-09-15: *"for at least 10 seconds"*; 2026-09-25: *"the whole song"*;
+   2026-09-29: *"just 1 minute … and fade it out"* (invariant 5). So
    confirming calls `holdStagePrepped()`, after which `stopStagePrepped()` is a
    no-op for that run. Dismissing the modal never reaches the confirm handler,
    so the run stays unheld and the existing close effect fades it out in 450ms.
@@ -50,22 +53,27 @@ loading or audible. Call sites never touch the AudioContext.
    so the run goes back to its pre-confirm state: Cancel kills it, a retried
    Confirm holds it again. Without this a failed Start would play the whole
    song, unstoppable, for a processing run that never began.
-5. **Every run is bounded both ways, held or not, and between the bounds it is
-   the whole clip** (Kane 2026-09-25). `stagePreppedRunSeconds(clip)` = `clip`
-   clamped to [`STAGE_PREPPED_MIN_SECONDS` = 12, `STAGE_PREPPED_MAX_SECONDS` =
-   180]. A clip **shorter** than the floor LOOPS up to it, so re-trimming the
-   asset cannot silently drop the cue below the 10s Kane asked for on
-   2026-09-15. A clip **longer** than the ceiling is faded at it, so a held run
-   can never become ten minutes of music behind the UI. The installed track
-   (151.5s) sits between them and plays in full, ending on its own; the 1.2s
-   fade tail applies only when the run CUTS the audio (loop boundary or
-   ceiling). Both ends are enforced by the constants plus a scheduled
-   `src.stop()`, not by a caller remembering to stop. **What changed on
-   2026-09-25:** the ceiling was 12s and is now 180s, by Kane's ruling on Open
-   item 174 Q1. A held operator run now plays 2:31 with **no stop control** once
-   the confirm dialog has closed (Open item 208).
+5. **Every run is bounded both ways, held or not: never under 12s, never over
+   ONE MINUTE, and a cut at the minute FADES OUT** (Kane 2026-09-29: *"should
+   just be 1 minute please and fade it out"*). `stagePreppedRunSeconds(clip)` =
+   `clip` clamped to [`STAGE_PREPPED_MIN_SECONDS` = 12,
+   `STAGE_PREPPED_MAX_SECONDS` = 60]. A clip **shorter** than the floor LOOPS up
+   to it, so re-trimming the asset cannot silently drop the cue below the 10s
+   Kane asked for on 2026-09-15. A clip **longer** than the ceiling fades out
+   over its last `STAGE_PREPPED_FADE_OUT_SECONDS` = 5s and stops at the ceiling,
+   so a held run can never become minutes of music behind the UI. The installed
+   track (151.5s) is longer, so **every run is 60s, fading 55s → 60s**.
+   `stagePreppedFadeSeconds(clip)` decides the fade: 5s for a ceiling cut, a
+   1.2s ramp at a loop boundary, 0 for a clip that fits between the bounds and
+   ends on its own; never more than half the run. Both ends are enforced by the
+   constants plus a scheduled `src.stop()`, not by a caller remembering to stop,
+   and a test pins the 60s ceiling and the 5s fade. **History:** the ceiling was
+   12s until 2026-09-25, then 180s (whole song, Kane's ruling on Open item 174
+   Q1), then 60s from 2026-09-29 by Kane's direct instruction. A held operator
+   run still has **no stop control** once the confirm dialog has closed (Open
+   item 208), but now for 60s rather than 2:31.
    **The decoded buffer is never cached**, because the whole song is ~53MB of
-   PCM. Only the compressed bytes (1.2MB) are cached; each run decodes its own
+   PCM (the engine decodes the whole file even though a run plays one minute). Only the compressed bytes (1.2MB) are cached; each run decodes its own
    copy (~0.25s) and releases it when it ends.
 6. **Never `withCtx`-queued.** `withCtx` defers a cue to the next gesture; music
    must never ambush someone on an unrelated later click. A locked context is
@@ -115,8 +123,9 @@ committed.
 
 To swap the song: replace `public/sounds/jellyfish-jam.mp3` (within the tested
 budget), or change `STAGE_PREPPED_SRC`. It plays for its own length between
-`STAGE_PREPPED_MIN_SECONDS` and `STAGE_PREPPED_MAX_SECONDS`. Check that
-invariant 5 still reads true and that the ceiling does not cut the new song.
+`STAGE_PREPPED_MIN_SECONDS` and `STAGE_PREPPED_MAX_SECONDS`. A song longer
+than the 60s ceiling is cut there with the 5s fade-out, so its opening minute is
+what people hear. Check that invariant 5 still reads true for the new song.
 **Since 2026-09-28 the file is shared:** Carla's Jellyfish Jam bubble
 ([carla-jellyfish-bubble.md](./carla-jellyfish-bubble.md)) plays the same
 `jellyfish-jam.mp3`. Replacing the file changes both. To swap only this cue,
@@ -165,7 +174,7 @@ Start, every **other** open Payroll Wizard and Payment Dispatch pops
     passed **and** `isStagePreppedActive()` is false. It can neither close
     mid-song nor sit in front of silence; an untapped tab or a missing asset
     still gets exactly the old 12s. `START_MODAL_MAX_MS` (window + ceiling + 10s
-    = 202s) is the hard stop, so a lost `ended` event can never strand it. The
+    = 82s since the 60s ceiling of 2026-09-29; 202s before) is the hard stop, so a lost `ended` event can never strand it. The
     engine notifies at the END of each transition, never inside one, so a
     re-trigger never flickers "inactive" at the modal.
 14. **The operator never sees it.** The channel is `broadcast: { self: false }`,
@@ -173,7 +182,7 @@ Start, every **other** open Payroll Wizard and Payment Dispatch pops
     sender anyway, because a second tab of the same person is a different client
     that `self: false` does not cover.
 15. **Dismissible, and dismissing STOPS the song** (Kane, Q3), the same contract
-    Cancel already has. **It stays up for the whole song** (Kane 2026-09-25:
+    Cancel already has. **It stays up for as long as the song plays**, 60s since 2026-09-29 (Kane 2026-09-25:
     *"it needs to play the whole song unless the modal is being closed"*).
     Before that date it auto-closed at 12s so it would not sit on top of the
     oversee/follow mirror; now a spectator who wants the mirror back closes it,

@@ -156,8 +156,10 @@ export function playPaymentConfirmed(): void {
  * cue for the same action). Plays the Kane-supplied recording at
  * `public/sounds/jellyfish-jam.mp3` (replaced `truckstart.mp3` 2026-09-15, which
  * had replaced the synthesized Lamborghini V12). Since 2026-09-25 that file is
- * the WHOLE song (Kane: "it needs to play the whole song"), re-encoded small so
- * it downloads fast, and warmed by `prefetchStagePrepped()` before anyone clicks.
+ * the whole song, re-encoded small so it downloads fast, and warmed by
+ * `prefetchStagePrepped()` before anyone clicks. Since 2026-09-29 a run plays its
+ * first minute and fades out (Kane: "should just be 1 minute please and fade it
+ * out"); the file itself is untouched because Carla's bubble plays all of it.
  * If the asset is missing or fails to decode the cue is a silent no-op.
  *
  * Fired from the Start Processing CLICK — as the confirm modal OPENS, not from
@@ -170,26 +172,27 @@ export function playPaymentConfirmed(): void {
  * is required to outlive it:
  *   play() — the button opened the modal. CANCELLING the modal kills the cue.
  *   hold() — the operator CONFIRMED. The run is protected from stopStagePrepped
- *            and plays the whole song.
+ *            and plays its full minute.
  * Every run is still bounded — looped up to STAGE_PREPPED_MIN_SECONDS, faded at
  * STAGE_PREPPED_MAX_SECONDS — so "protected" can never mean "unbounded".
  * ──────────────────────────────────────────────────────────────────────────── */
 
 const STAGE_PREPPED_VOLUME = 0.7;
 const STAGE_PREPPED_SRC = '/sounds/jellyfish-jam.mp3';
-// Ramp the tail down when the run CUTS the audio (a loop boundary or the
-// ceiling) instead of letting it stop cold. A song that ends on its own keeps
-// its real ending. Clamped to half the run so a short window never fades from
-// the very start.
-const STAGE_PREPPED_FADE_TAIL = 1.2;
+// Short ramp where a LOOPING clip is cut at the floor, so it never stops cold.
+const STAGE_PREPPED_LOOP_FADE = 1.2;
+// The fade-out where the CEILING cuts a longer song (Kane 2026-09-29: "should
+// just be 1 minute please and fade it out"). The installed 2:31 track fades
+// from 55s to silence at 60s.
+export const STAGE_PREPPED_FADE_OUT_SECONDS = 5;
 // FLOOR, in seconds. A clip SHORTER than this LOOPS up to it, so re-trimming the
 // asset can never quietly drop the cue below the >= 10s Kane asked for
 // (2026-09-15).
 export const STAGE_PREPPED_MIN_SECONDS = 12;
-// CEILING, in seconds. The whole song plays (Kane 2026-09-25) — the installed
-// track is 2:31 — but a held run is still bounded: swap in a ten-minute file and
-// it is faded here, never minutes more of music behind the UI.
-export const STAGE_PREPPED_MAX_SECONDS = 180;
+// CEILING, in seconds. Kane 2026-09-29: one minute, then fade out. The installed
+// track is 2:31, so every run is cut here. It was 180 (whole song) from
+// 2026-09-25 to 2026-09-29, and 12 before that.
+export const STAGE_PREPPED_MAX_SECONDS = 60;
 
 /**
  * How long a run lasts for a clip of `clipSeconds`: the whole clip, looped up to
@@ -198,6 +201,19 @@ export const STAGE_PREPPED_MAX_SECONDS = 180;
 export function stagePreppedRunSeconds(clipSeconds: number): number {
   if (!Number.isFinite(clipSeconds) || clipSeconds <= 0) return STAGE_PREPPED_MIN_SECONDS;
   return Math.min(STAGE_PREPPED_MAX_SECONDS, Math.max(STAGE_PREPPED_MIN_SECONDS, clipSeconds));
+}
+
+/**
+ * How long the run's closing fade lasts for a clip of `clipSeconds`: the full
+ * fade-out when the ceiling cuts the song, a short ramp at a loop boundary, and
+ * 0 for a clip that ends on its own inside the bounds. Never more than half the
+ * run, so a short window never fades from the very start.
+ */
+export function stagePreppedFadeSeconds(clipSeconds: number): number {
+  const seconds = stagePreppedRunSeconds(clipSeconds);
+  const clip = Number.isFinite(clipSeconds) && clipSeconds > 0 ? clipSeconds : 0;
+  const fade = clip > seconds ? STAGE_PREPPED_FADE_OUT_SECONDS : clip < seconds ? STAGE_PREPPED_LOOP_FADE : 0;
+  return Math.min(fade, seconds / 2);
 }
 
 /**
@@ -302,8 +318,8 @@ function killEngine(fade: number): void {
 // decoded invalidates that in-flight run, so a slow first load can never start
 // playing after the modal has already closed.
 let stagePreppedGen = 0;
-// Set by `holdStagePrepped()` when the operator CONFIRMS. A held run plays the
-// whole song and ignores `stopStagePrepped()`, because the modal closes ~2s
+// Set by `holdStagePrepped()` when the operator CONFIRMS. A held run plays its
+// full minute and ignores `stopStagePrepped()`, because the modal closes ~2s
 // after confirm and the cue has to outlive it. An UNHELD run (modal opened,
 // then cancelled) is still killed by it, exactly as before.
 let stagePreppedHeld = false;
@@ -317,8 +333,8 @@ let stagePreppedLoading = false;
 /**
  * Is a cue run in flight — still loading, or audible? The peer modal stays open
  * for exactly as long as this is true (Kane 2026-09-25: "play the whole song
- * unless the modal is being closed"), so it can never close mid-song or sit on
- * after the song has ended.
+ * unless the modal is being closed"; the run is one minute since 2026-09-29), so
+ * it can never close mid-song or sit on after the song has ended.
  */
 export function isStagePreppedActive(): boolean {
   return engineRun !== null || stagePreppedLoading;
@@ -378,19 +394,19 @@ export function playStagePrepped(): void {
     master.gain.value = STAGE_PREPPED_VOLUME;
     master.connect(c.destination);
 
-    // The run is the whole clip, bounded both ways (`stagePreppedRunSeconds`):
-    // a clip shorter than the floor loops up to it (the >=10s floor survives a
-    // re-trim), a clip longer than the ceiling is faded at it (a held run can
-    // never become ten minutes of music behind the UI). Only a run that CUTS
-    // the audio gets the fade tail — the installed song ends on its own.
+    // The run is the clip bounded both ways (`stagePreppedRunSeconds`): a clip
+    // shorter than the floor loops up to it (the >=10s floor survives a
+    // re-trim), a clip longer than the ceiling fades out at it — the installed
+    // 2:31 song fades 55s → 60s (Kane 2026-09-29). A clip that ends on its own
+    // inside the bounds keeps its real ending (`stagePreppedFadeSeconds` = 0).
     // killEngine's cancelAndHoldAtTime overrides all of this cleanly when an
     // UNHELD run is cancelled mid-play.
     const now = c.currentTime;
     const clip = buf.duration;
     const seconds = stagePreppedRunSeconds(clip);
     const loops = clip < seconds;
-    if (loops || clip > seconds) {
-      const fade = Math.min(STAGE_PREPPED_FADE_TAIL, seconds / 2);
+    const fade = stagePreppedFadeSeconds(clip);
+    if (fade > 0) {
       master.gain.setValueAtTime(STAGE_PREPPED_VOLUME, now + seconds - fade);
       master.gain.linearRampToValueAtTime(0, now + seconds);
     }
@@ -419,7 +435,7 @@ export function playStagePrepped(): void {
     };
     src.start();
     // Hard stop at the boundary. A cut run is already faded to 0 by then and a
-    // whole-song run has already ended, so this is silent — it exists so a
+    // clip inside the bounds has already ended, so this is silent — it exists so a
     // looping clip is bounded by the schedule, not by whoever remembers to stop.
     src.stop(now + seconds + 0.05);
     notifyStagePrepped();
@@ -429,7 +445,7 @@ export function playStagePrepped(): void {
 /**
  * Promote the running cue to HELD — call this when the operator CONFIRMS Start.
  * From here `stopStagePrepped()` is a no-op for this run, so the cue survives
- * the modal closing and plays the whole song. A later `playStagePrepped()` still
+ * the modal closing and plays its full minute. A later `playStagePrepped()` still
  * cuts it off (no layering), `releaseStagePrepped()` undoes it, and nothing here
  * is unbounded.
  */
@@ -461,8 +477,8 @@ export function stopStagePrepped(fadeMs = 450): void {
  * Undo `holdStagePrepped()` — call when the confirmed Start FAILED. The confirm
  * dialog stays open on a failure, so the run goes back to exactly its pre-confirm
  * state: Cancel kills it, a retried Confirm holds it again. Without this a
- * failed Start would leave the whole song playing, unstoppable, for a
- * processing run that never began.
+ * failed Start would leave the song playing, unstoppable, for a processing run
+ * that never began.
  */
 export function releaseStagePrepped(): void {
   stagePreppedHeld = false;

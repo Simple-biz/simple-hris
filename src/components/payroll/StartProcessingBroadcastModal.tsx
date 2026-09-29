@@ -15,8 +15,9 @@
  * Rules:
  *   - DISMISSIBLE (Kane, Q3), and dismissing STOPS the song, the same contract
  *     the operator's Cancel already has.
- *   - Stays up for the WHOLE song (Kane 2026-09-25: "it needs to play the whole
- *     song unless the modal is being closed"). It closes on its own only when
+ *   - Stays up for as long as the song plays (Kane 2026-09-25: "it needs to play
+ *     the whole song unless the modal is being closed"; one minute with a fade
+ *     since 2026-09-29). It closes on its own only when
  *     the 12s window has passed AND the cue has stopped (`shouldCloseStartModal`),
  *     with a hard ceiling (`START_MODAL_MAX_MS`) so it can never be stranded
  *     over the oversee/follow mirror.

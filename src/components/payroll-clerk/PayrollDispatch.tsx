@@ -1438,7 +1438,7 @@ export default function PayrollDispatch() {
       !goingLocked && downloadReportOn && !viewingPastWeek && Boolean(period.sourceFile);
     // The cue is already playing — it started on the Start Processing click, as
     // the modal opened. Confirming HOLDS it so it outlives the modal and plays
-    // the whole song; cancelling never reaches here, so a dismissed modal still
+    // its full minute; cancelling never reaches here, so a dismissed modal still
     // ends in silence. Start only. Same contract as the Payroll Wizard.
     if (goingLocked) holdStagePrepped();
     // Everyone else with dispatch or the wizard open gets the modal + the cue.
@@ -1626,7 +1626,7 @@ export default function PayrollDispatch() {
     } catch (e) {
       // The Start failed and the confirm dialog is still open: hand the song
       // back to its pre-confirm state, so Cancel silences it and a retried
-      // Confirm holds it again — never a whole song for a run that never began.
+      // Confirm holds it again — never a full minute for a run that never began.
       if (goingLocked) releaseStagePrepped();
       // On failure, still let the scene settle a beat before showing the error.
       await minShow.catch(() => {});

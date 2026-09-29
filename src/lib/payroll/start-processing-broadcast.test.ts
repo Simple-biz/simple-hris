@@ -16,8 +16,10 @@ import {
 } from './start-processing-broadcast';
 import { DISPATCH_SYNC_TOPIC, PAID_TOAST_TOPIC } from './dispatch-paid-toast';
 import {
+  STAGE_PREPPED_FADE_OUT_SECONDS,
   STAGE_PREPPED_MAX_SECONDS,
   STAGE_PREPPED_MIN_SECONDS,
+  stagePreppedFadeSeconds,
   stagePreppedRunSeconds,
 } from '@/lib/sound/ping-chime';
 
@@ -107,19 +109,37 @@ test('the modal hard ceiling outlasts the longest possible run, and is finite', 
   assert.ok(START_MODAL_MAX_MS <= 5 * 60 * 1000, 'the modal can never become a five-minute overlay');
 });
 
-test('a run is the whole song — looped up to the floor, faded at the ceiling', () => {
-  // The installed track is 2:31: it plays in full.
-  assert.equal(stagePreppedRunSeconds(151.51), 151.51);
+test('a run is one minute — looped up to the floor, faded out at the ceiling', () => {
+  // Kane 2026-09-29: "should just be 1 minute please and fade it out."
+  assert.equal(STAGE_PREPPED_MAX_SECONDS, 60);
+  // The installed track is 2:31, so it is cut at exactly one minute.
+  assert.equal(stagePreppedRunSeconds(151.51), 60);
   // A re-trimmed clip can never drop below the >= 10s Kane asked for 2026-09-15.
   assert.ok(STAGE_PREPPED_MIN_SECONDS >= 10);
   assert.equal(stagePreppedRunSeconds(5), STAGE_PREPPED_MIN_SECONDS);
+  // A clip that fits inside the bounds plays whole.
+  assert.equal(stagePreppedRunSeconds(45), 45);
   // A swapped-in ten-minute file is still bounded — "held" never means "unbounded".
   assert.equal(stagePreppedRunSeconds(600), STAGE_PREPPED_MAX_SECONDS);
-  assert.ok(STAGE_PREPPED_MAX_SECONDS >= 152, 'the ceiling must not cut the installed song');
   // An unreadable duration gets the floor, not zero and not infinity.
   assert.equal(stagePreppedRunSeconds(Number.NaN), STAGE_PREPPED_MIN_SECONDS);
   assert.equal(stagePreppedRunSeconds(0), STAGE_PREPPED_MIN_SECONDS);
   assert.equal(stagePreppedRunSeconds(Number.POSITIVE_INFINITY), STAGE_PREPPED_MIN_SECONDS);
+});
+
+test('the ceiling cut FADES OUT; a clip ending on its own is never faded', () => {
+  // The installed song fades out over the last 5s of its minute (55s → 60s).
+  assert.equal(stagePreppedFadeSeconds(151.51), STAGE_PREPPED_FADE_OUT_SECONDS);
+  assert.ok(STAGE_PREPPED_FADE_OUT_SECONDS >= 3, 'a fade-out is audible, not a click-guard');
+  assert.ok(STAGE_PREPPED_FADE_OUT_SECONDS <= STAGE_PREPPED_MAX_SECONDS / 2);
+  assert.equal(stagePreppedFadeSeconds(600), STAGE_PREPPED_FADE_OUT_SECONDS);
+  // A clip inside the bounds keeps its real ending.
+  assert.equal(stagePreppedFadeSeconds(45), 0);
+  assert.equal(stagePreppedFadeSeconds(STAGE_PREPPED_MAX_SECONDS), 0);
+  // A looping clip gets a short ramp, never more than half the run.
+  const loopFade = stagePreppedFadeSeconds(5);
+  assert.ok(loopFade > 0 && loopFade <= STAGE_PREPPED_MIN_SECONDS / 2);
+  assert.ok(Number.isFinite(stagePreppedFadeSeconds(Number.NaN)));
 });
 
 test('the served song stays small — the engine needs every byte before it can play', () => {

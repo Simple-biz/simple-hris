@@ -62,7 +62,7 @@ time, hidden tabs and the time the bubble or player is up all earn nothing.
 1. **Audio starts ONLY from `playCarlaJam()`, i.e. from her click.** A tick never plays; a test
    pins that `carla-jam.ts` has exactly one `.play()` call, inside `playCarlaJam`. This is the
    Start Processing cue's "music never ambushes an unrelated click" rule
-   (`start-processing-cue.md:70`) applied here: the bubble *offers*, it never plays on its own.
+   (`start-processing-cue.md:78`) applied here: the bubble *offers*, it never plays on its own.
 2. **A hard navigation brings a playing song back PAUSED** at its position (`restoredJamPhase`).
    A fresh document has no user gesture, so the browser would refuse autoplay anyway. A paused
    player that resumes silently would still break rule 1. The clock and a pending bubble survive
@@ -79,7 +79,7 @@ time, hidden tabs and the time the bubble or player is up all earn nothing.
    dropped so the next bubble retries from scratch. A network blip heals on the next offer, and a
    missing asset costs a bubble that vanishes when pressed, never an error.
 5. `HTMLAudioElement`, not Web Audio: pause and resume are native, and the whole song is never
-   decoded to ~53MB of PCM (`start-processing-cue.md:67`).
+   decoded to ~53MB of PCM (`start-processing-cue.md:75`).
 
 ## The asset is shared with the Start Processing cue
 

@@ -35,7 +35,8 @@ export const START_PROCESSING_EVENT = 'start';
  * the whole song plays (2:31), so the two were SPLIT rather than stretched: a
  * 2:31 cutoff would let a tab that reconnects two and a half minutes late start
  * the song from the top, which breaks his own 2026-09-15 ruling *"if they are
- * late they shouldnt hear it."* The cutoff stays 12s. The modal now closes when
+ * late they shouldnt hear it."* The cutoff stays 12s — and stays 12s now that the run
+ * is one minute (Kane 2026-09-29). The modal now closes when
  * BOTH this window has passed AND the song has stopped (`shouldCloseStartModal`),
  * so it can neither close mid-song nor sit on in front of silence.
  */

@@ -11846,7 +11846,7 @@ export default function PayrollWizard({
     const goingLocked = !lockState.locked;
     // The cue is already playing — it started on the Start Processing click, as
     // the modal opened. Confirming HOLDS it, so it survives the modal closing
-    // ~2s from now and plays the whole song (Kane 2026-09-25). Cancelling
+    // ~2s from now and plays its full minute (Kane 2026-09-29). Cancelling
     // instead of confirming never reaches here, which is exactly how a
     // dismissed modal still ends in silence. Start only.
     if (goingLocked) holdStagePrepped();
@@ -11890,7 +11890,7 @@ export default function PayrollWizard({
     } catch (e) {
       // The Start failed and the confirm dialog is still open: hand the song
       // back to its pre-confirm state, so Cancel silences it and a retried
-      // Confirm holds it again — never a whole song for a run that never began.
+      // Confirm holds it again — never a full minute for a run that never began.
       if (goingLocked) releaseStagePrepped();
       toast.error(e instanceof Error ? e.message : 'Could not update lock');
     } finally {
