@@ -12,7 +12,6 @@ import {
   ClipboardCheck,
   Calculator,
   ArrowRightLeft,
-  History,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -36,7 +35,7 @@ import { useViewerProfilePhoto } from '@/hooks/useViewerProfilePhoto';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 
-export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'scheduling' | 'transfers' | 'announcements' | 's-wall' | 'hsl-bonus' | 'bonus-history' | 'notifications';
+export type ManagerTab = 'overview' | 'time-adjustments' | 'leaves' | 'team' | 'scheduling' | 'transfers' | 'announcements' | 's-wall' | 'hsl-bonus' | 'notifications';
 
 interface ManagerSidebarProps {
   activeTab: ManagerTab;
@@ -220,11 +219,11 @@ export default function ManagerSidebar({
             </button>}
           </nav>
 
-          {(can('hsl-bonus') || can('bonus-history')) && (
+          {can('hsl-bonus') && (
             <div className="my-5 mx-2.5 h-px bg-gradient-to-r from-transparent via-blue-200/60 to-transparent dark:via-blue-900/40" />
           )}
 
-          {(can('hsl-bonus') || can('bonus-history')) && (
+          {can('hsl-bonus') && (
             <p className={cn('mb-1.5 px-2.5 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[#a1a1aa] sb-collapse-fade')}>
               Bonuses
             </p>
@@ -232,7 +231,6 @@ export default function ManagerSidebar({
           <nav className="flex flex-col gap-px">
             {can('hsl-bonus') &&
               navBtn('hsl-bonus', 'KPI Calculator', Calculator, undefined, lockState.locked)}
-            {can('bonus-history') && navBtn('bonus-history', 'Bonus History', History)}
             {can('notifications') && navBtn(
               'notifications',
               'Notifications',

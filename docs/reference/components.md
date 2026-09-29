@@ -1334,7 +1334,7 @@ The **public, no-SSO onboarding form** new hires complete; auth is the random UR
 
 ## Manager Dashboard (`src/components/manager/`)
 
-A blue-accented client SPA shell with sidebar nav, server-scoped team roster, dual KPI/bonus calculators (HSL + general departments), bonus history, and per-member profile/pay drill-down. All bonus persistence shares one Supabase-backed API surface (`/api/hsl-bonus/*`) keyed by `(department, period_start)`, reusing the `hsl_bonus_entries` / `hsl_bonus_period_status` tables even for non-HSL departments.
+A blue-accented client SPA shell with sidebar nav, server-scoped team roster, dual KPI/bonus calculators (HSL + general departments), and per-member profile/pay drill-down. All bonus persistence shares one Supabase-backed API surface (`/api/hsl-bonus/*`) keyed by `(department, period_start)`, reusing the `hsl_bonus_entries` / `hsl_bonus_period_status` tables even for non-HSL departments.
 
 ### `app/manager/page.tsx`
 
@@ -1344,7 +1344,7 @@ Route shell; `<Suspense>`-wraps `<ManagerApp />`. No server gating here -- acces
 
 Top-level client shell -- resolves viewer, gates access, loads the department-scoped roster, routes 9 tabs (~5,050 lines on 2026-09-29, ~2000 when this was written; also defines `Overview`, `TeamPanel`, `TimeAdjustments`, announcement/S-Wall wrappers, `ActiveNowButton`, `StatTile`). **Access gate:** `GET /api/employee-roles?email=`; lacking `manager`/`admin` -> `router.replace('/employee')`. **Team roster:** `GET /api/manager/department-members` returns `{ rows, scope: 'elevated'|'department', departments }`. The server scopes the roster: explicit `department_managers` assignments win even for elevated users; full org roster only when elevated AND no assignments; empty when a plain manager has no assignments. Rows are decorated with `hsl_role`/`hsl_hourly_rate` (from `active_hsl_agents`) and `regular_rate`/`ot_rate`/`mesa_member` (from `employee_hourly_rates`). Pending-leaves badge from `GET /api/leave-requests?scope=all`.
 
-Tabs (`ManagerTab`): `overview`, `time-adjustments` (`ManagerTimeAdjustments` — live as of 2026-06-02), `leaves` (`LeaveRequestsPanel`), `team`, `announcements`, `s-wall`, `hsl-bonus` (the KPI Calculator -- renders `HslBonusCalculator` and/or `DeptBonusCalculator` based on `hslVisible`/`deptVisible`), `bonus-history`, `notifications`.
+Tabs (`ManagerTab`): `overview`, `time-adjustments` (`ManagerTimeAdjustments` — live as of 2026-06-02), `leaves` (`LeaveRequestsPanel`), `team`, `announcements`, `s-wall`, `hsl-bonus` (the KPI Calculator -- renders `HslBonusCalculator` and/or `DeptBonusCalculator` based on `hslVisible`/`deptVisible`), `notifications`. (`bonus-history` was retired on 2026-09-29.)
 
 **`ManagerTimeAdjustments`** (defined inline in `ManagerApp.tsx`, replaced the placeholder stub 2026-06-02, redesigned 2026-06-02): fetches from `GET /api/manager/time-adjustments` on every `activeTab` change (no date restriction). **Width** is constrained to `max-w-2xl`. **Visual style:** smoked glass — `bg-white/6 backdrop-blur-xl border border-white/10` cards on a dark background; text uses `text-white/{opacity}` tiers; Approve/Decline buttons are translucent glass pills (`bg-emerald-500/20 ring-emerald-500/30`); actioned rows use `bg-white/4` with a small colored status dot.
 
@@ -1360,7 +1360,7 @@ The sidebar pending-approval badge (`pendingApprovals`) is updated by a `useEffe
 
 ### `src/components/manager/ManagerSidebar.tsx`
 
-Fixed/translate-in sidebar. Two groups: **Workspace** (Overview, Time adjustments [badge `pendingApprovals`], Leaves [badge `pendingLeaves`], My team, Announcements, S-Wall [violet]) and **Bonuses** (KPI Calculator -> `hsl-bonus`, Bonus History, Notifications). Note the label/route mismatch: the **"KPI Calculator"** item routes to the `hsl-bonus` tab. Notifications red dot when `useDispatchLock().state.locked`. Footer: avatar, `ViewSwitcher`, theme toggle, Sign Out.
+Fixed/translate-in sidebar. Two groups: **Workspace** (Overview, Time adjustments [badge `pendingApprovals`], Leaves [badge `pendingLeaves`], My team, Announcements, S-Wall [violet]) and **Bonuses** (KPI Calculator -> `hsl-bonus`, Notifications). Note the label/route mismatch: the **"KPI Calculator"** item routes to the `hsl-bonus` tab. Notifications red dot when `useDispatchLock().state.locked`. Footer: avatar, `ViewSwitcher`, theme toggle, Sign Out.
 
 ### `src/components/manager/HslBonusCalculator.tsx`
 
@@ -1378,15 +1378,11 @@ Per-dept `loadDept` fetches in parallel: `GET /api/hsl-bonus/entries?dept=&perio
 
 ### `src/components/manager/HslBonusReadyPreview.tsx`
 
-Read-only modal showing a ready/locked HSL period's scored entries; opened from the calculator's "View" and from Bonus History. Renders dept header (status pill), employee table (SSD sub-team dot column when `dept.key==='ssd_medical_records'`), and a note that it auto-syncs to Accounting -> PayrollWizard -> Additions. Footer "Reopen for edits" only renders when `status==='ready'` AND `onReopen` is provided (History omits it). No fetching -- entries are passed in.
+Read-only modal showing a ready/locked HSL period's scored entries; opened from the calculator's "View". Renders dept header (status pill), employee table (SSD sub-team dot column when `dept.key==='ssd_medical_records'`), and a note that it auto-syncs to Accounting -> PayrollWizard -> Additions. Footer "Reopen for edits" only renders when `status==='ready'` AND `onReopen` is provided. No fetching -- entries are passed in.
 
 ### `src/components/manager/HslBonusEditModal.tsx`
 
 Full editor for any HSL period (reuses the calculator's table primitives); lets a manager re-score and re-submit a past/ready/locked week. On open, `GET /api/hsl-bonus/entries`. SSD sub-team pct/records/rfc reset to empty (not persisted) with an amber re-enter warning. Actions: **Save (back to draft)** (`POST /api/hsl-bonus/entries` then flip to `draft` so accounting never sees mid-edit state), **Save & Mark Ready**, **Delete week** (`DELETE /api/hsl-bonus/period`). `isLocked` is hardcoded `false`.
-
-### `src/components/manager/ManagerBonusHistory.tsx`
-
-Past-KPI-weeks browser (HSL depts only). `GET /api/hsl-bonus/period-summary?depts=<csv>` -> `SummaryRow[]`. Stat strip (Total/Locked/Ready/Drafts), dept + status filter chips, row list with relative "updated Xm ago" and `locked by <user>`. Each row has **View** (`GET /api/hsl-bonus/entries` -> read-only `HslBonusReadyPreview`) and **Delete** (`DELETE /api/hsl-bonus/period`).
 
 ### `src/components/manager/DeptBonusCalculator.tsx`
 
@@ -2222,7 +2218,6 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/manager/KpiCalculatorLoading.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
 | `src/components/manager/KpiInsightCards.tsx` | component | *this file* · [kpi-calculator-insights](../features/kpi-calculator-insights.md) |
 | `src/components/manager/ManagerApp.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
-| `src/components/manager/ManagerBonusHistory.tsx` | component | *this file* · [hsl-subdepartments](../features/hsl-subdepartments.md) · [payment-catalog-departments](../features/payment-catalog-departments.md) |
 | `src/components/manager/ManagerMemberDialog.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) · [manager-my-team](../features/manager-my-team.md) |
 | `src/components/manager/ManagerMemberHoursMini.tsx` | component | *this file* · [identity-resolution](../features/identity-resolution.md) · [manager-my-team](../features/manager-my-team.md) |
 | `src/components/manager/ManagerOffboardQueueDialog.tsx` | component | — **no doc** |

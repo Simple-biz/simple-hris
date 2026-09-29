@@ -83,7 +83,7 @@ Reasons for the shape:
 | Payroll Clerk  | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | `SidebarLogoHeader`, tile `from-zinc-700 to-zinc-900` (`PayrollClerkSidebar.tsx:149`) — was "Lowercase `s` tile" until 2026-07-04, d13d5372 |
 | Admin          | Editorial zinc | `bg-white` / `dark:bg-zinc-950`     | `bg-[#18181b] text-white`                                               | `SidebarLogoHeader`, tile `from-zinc-700 to-zinc-900` (`AdminSidebar.tsx:197`) — was "Lowercase `s` tile + "Admin" caption" until 2026-07-04, d13d5372 |
 | CEO            | Yellow / amber (tinted editorial) | `bg-gradient-to-b from-white via-yellow-50/30 to-white` / `dark:from-black dark:via-yellow-950/10 dark:to-black` (`CeoSidebar.tsx:108`) | `bg-gradient-to-r from-yellow-500 to-amber-600 text-white shadow-sm shadow-yellow-600/25` (`CeoSidebar.tsx:83`) | `SidebarLogoHeader`, tile `from-yellow-500 to-amber-600` (`CeoSidebar.tsx:115`) — this row read "Editorial zinc + crown accents · `bg-white` / `dark:bg-zinc-950` · `bg-[#18181b] text-white` · Lowercase `s` tile"; the code has been yellow/amber since 2026-05-04, b274b489 (changed in code; no ruling recorded) |
-| Manager        | Blue (tinted editorial) | `bg-gradient-to-b from-white via-blue-50/30 to-white` / `dark:from-black dark:via-blue-950/20 dark:to-black` (`ManagerSidebar.tsx:162`) | `bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-sm shadow-blue-600/25` (`ManagerSidebar.tsx:118`) | `SidebarLogoHeader`, tile `from-blue-500 to-blue-700` (`ManagerSidebar.tsx:168`) — this row read "Editorial zinc · `bg-white` / `dark:bg-zinc-950` · `bg-[#18181b] text-white` · Lowercase `s` tile"; the code has been blue since 2026-04-30, 19f384c9 (changed in code; no ruling recorded) |
+| Manager        | Blue (tinted editorial) | `bg-gradient-to-b from-white via-blue-50/30 to-white` / `dark:from-black dark:via-blue-950/20 dark:to-black` (`ManagerSidebar.tsx:161`) | `bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-sm shadow-blue-600/25` (`ManagerSidebar.tsx:117`) | `SidebarLogoHeader`, tile `from-blue-500 to-blue-700` (`ManagerSidebar.tsx:167`) — this row read "Editorial zinc · `bg-white` / `dark:bg-zinc-950` · `bg-[#18181b] text-white` · Lowercase `s` tile"; the code has been blue since 2026-04-30, 19f384c9 (changed in code; no ruling recorded) |
 | HR             | Emerald / teal (tinted, 256px) | `bg-gradient-to-b from-white via-emerald-50/30 to-white` / `dark:from-black dark:via-emerald-950/15 dark:to-black` (`HrSidebar.tsx:147`) | `bg-gradient-to-r from-emerald-500 to-teal-700 text-white shadow-sm shadow-emerald-600/25` (`HrSidebar.tsx:118`) | `SidebarLogoHeader`, tile `from-emerald-500 to-teal-600` (`HrSidebar.tsx:158`) — row added 2026-09-29; the rail has been emerald since 2026-05-08, 7656e18d |
 | QC             | Orange (tinted editorial) | `bg-gradient-to-b from-white via-orange-50/30 to-white` / `dark:from-black dark:via-orange-950/20 dark:to-black` (`QCSidebar.tsx:97`) | `bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-sm shadow-orange-600/25` (`QCSidebar.tsx:74`) | `SidebarLogoHeader`, tile `from-orange-500 to-orange-600` (`QCSidebar.tsx:103`) — row added 2026-09-29; the rail has been orange since 2026-06-26, 0f2f293d |
 | Orphanage      | Pink / rose    | (per-section)                        | per-section                                                             | Heart icon               |
@@ -204,7 +204,7 @@ All sidebars share these mechanics:
 
 This heading read "(Admin, Payroll Clerk, Manager, CEO)". Manager, CEO and QC share the
 width, padding, captions and nav metrics below but not the `#18181b` selected state or the
-flat `bg-white` rail — see § 1.2 *tinted editorial* (`ManagerSidebar.tsx:116-119`); changed
+flat `bg-white` rail — see § 1.2 *tinted editorial* (`ManagerSidebar.tsx:115-118`); changed
 in code, no ruling recorded.
 
 - Width: `w-[220px]`
@@ -1883,9 +1883,10 @@ Every new surface must:
   2026-04-30, 19f384c9 (changed in code; no ruling recorded)
 - 'Manager' caption under the brand mark; nav scoped to the manager's
   department members + leave requests + orphanage create
-- Nav (2026-09-29, `ManagerSidebar.tsx:177-236`): Overview · Time adjustments · Leaves ·
+- Nav (2026-09-29, `ManagerSidebar.tsx:176-234`): Overview · Time adjustments · Leaves ·
   My team · Transfers · Announcements · S-Wall (violet→indigo selected state,
-  `ManagerSidebar.tsx:207-209`) · *Bonuses*: KPI Calculator · Bonus History · Notifications
+  `ManagerSidebar.tsx:206-208`) · *Bonuses*: KPI Calculator · Notifications (Bonus History retired
+  2026-09-29)
 - My Team (2026-09-14): a vertical **department rail** is the outer axis — no
   "All" entry, HSL folded to one parent, a granted-but-empty department still
   shows a 0 tab — then Roster / New Hire Check List / Orientation, with the

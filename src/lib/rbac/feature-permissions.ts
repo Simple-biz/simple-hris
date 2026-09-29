@@ -54,7 +54,6 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "announcements",    label: "Announcements" },
     { key: "s_wall",           label: "S-Wall" },
     { key: "hsl_bonus",        label: "HSL Bonus" },
-    { key: "bonus_history",    label: "Bonus History" },
     { key: "notifications",    label: "Notifications" },
   ],
   orphanage: [

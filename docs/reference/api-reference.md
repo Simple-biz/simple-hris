@@ -3139,7 +3139,8 @@ are `pending`. **Trend** = the 12 Sunday weeks (`INSIGHT_WEEKS`) ending at the n
 
 **Response `200`**: `{ "depts", "through", "insights": { "weeks", "depts", "spotlight" } | null, "error": null }`. **It
 carries PESOS** (PHP `bonus_catalog_applied.amount`, summed in centavos) and the top earner's name and email — figures
-these managers already see on the calculator grid and in Bonus History, unlike the My Team rankings above. Reads are paged
+these managers already see on the calculator grid, any past week through its week picker (Bonus History, retired
+2026-09-29, also listed them), unlike the My Team rankings above. Reads are paged
 (`src/lib/supabase/kpi-insights-db.ts`). `500` with `error` on a failed read.
 
 ### `GET /api/manager/kpi-insights/hsl?depts=a,b,c&week=<sunday>` *(2026-09-29)*

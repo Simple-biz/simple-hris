@@ -9,7 +9,8 @@ export const runtime = 'nodejs';
  * GET /api/hsl-bonus/period-summary?depts=key1,key2[,...]
  *
  * Aggregates `hsl_bonus_period_status` ⨝ `hsl_bonus_entries` per (department,
- * period_start) into a flat list — used by the manager Bonus History tab. A
+ * period_start) into a flat list — used by the manager Overview scoring queue
+ * and the Accounting Overview. A
  * period appears in the result if either table has a row for it (an entries-
  * only week is implicitly "draft"). Sorted period_start DESC, dept ASC.
  */

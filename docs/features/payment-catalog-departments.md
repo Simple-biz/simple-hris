@@ -164,8 +164,8 @@ same null-for-unknown contract as `normalizeDeptToKey`.
   miss the alias map (and aren't `hsl:*` access keys) resolve to their slug
   (`customManagedKeys`), the roster groups under that slug, catalog bonuses
   assigned under it are appliable, and **Mark Ready feeds the same status
-  table Readiness reads**. `ManagerApp`'s "no departments assigned" gate and
-  `ManagerBonusHistory` recognize them too.
+  table Readiness reads**. `ManagerApp`'s "no departments assigned" gate
+  recognizes them too.
 
   > **Exception (2026-08-10):** a slug listed in
   > `KPI_CALCULATOR_RETIRED_DEPT_KEYS` gets **no card**, even when it is a real

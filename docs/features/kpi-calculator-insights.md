@@ -5,7 +5,8 @@ Three read-only cards above the department grid on **Manager → KPI Calculator 
 each department and shows its average bonus per week, the **top earner** for the week in the week
 picker, and a wider **Sent to Accounting** card with a line chart of the weekly total. They are for
 the managers who score these bonuses, and they show only figures those managers already see on the
-grid and in Bonus History. Shipped 2026-09-28 (session `c83472b1`, blueprint). Kane: *"one KPI Card
+grid, any past week through its week picker (`DeptBonusCalculator.tsx` `weekOptions`). Bonus History,
+which also listed every dept-week's total, was retired on 2026-09-29. Shipped 2026-09-28 (session `c83472b1`, blueprint). Kane: *"one KPI Card
 should have a spotlight of each department and their Average bonus per week - and another one that
 has a Spotlight of a random Employee that has the biggest bonus. And the last card should be longer
 … a line graph on the Total Bonuses that were sent to accounting each week make the animation smooth"*.

@@ -13,8 +13,10 @@ Key files:
 - `src/components/manager/ManagerApp.tsx` — binds the cache; the shell + Overview +
   My Team datasets.
 - `src/lib/manager/use-bonus-scoring-queue.ts` — the Overview "Bonuses to score" panel.
-- `src/components/manager/ManagerTransfers.tsx`, `ManagerBonusHistory.tsx` — the two
-  other tabs with their own mount fetches.
+- `src/components/manager/ManagerTransfers.tsx` — the other tab with its own mount
+  fetches. (The Bonus History tab was the second until it was retired on 2026-09-29,
+  at Kane's request: *"Retire the Bonus History tab this is no longer needed"*. Its
+  `bonusHistory` key and `buildBonusHistoryRows` were deleted along with it.)
 - `src/components/manager/ManagerSidebar.tsx` — purges it on sign-out.
 - Tests: `src/lib/manager/tab-cache.test.ts`, `src/lib/manager/bonus-scoring-items.test.ts`.
 
@@ -43,7 +45,6 @@ Per round trip, before:
 | Overview | 1 greeting lookup + the pay-week resolve + 4 scoring summaries |
 | My Team | offboarding queue + resignations + skill sets (+ presence) |
 | Transfers | 3 (`incoming`, `outgoing`, `done`) |
-| Bonus History | 3 summaries |
 | Shell (**on every tab switch, whatever you switch to**) | time adjustments + leave requests |
 
 Listed as still-open in `memory/dashboard-switch-performance` — *"/manager re-fetches on
@@ -135,7 +136,7 @@ The mirror is JSON. A `Date` comes back as a string; a `Set` or `Map` serialises
 
 So: **cache the raw API payload and derive the render shape with `useMemo`**, through a
 module-scope pure function that the fetch path calls too — so the seeded and fetched
-paths cannot diverge. Five derivations were extracted for exactly this:
+paths cannot diverge. These derivations were extracted for exactly this:
 
 | Function | Derives |
 |---|---|
@@ -144,7 +145,6 @@ paths cannot diverge. Five derivations were extracted for exactly this:
 | `derivePendingResignations` | pending resignations keyed by every known email |
 | `deriveSkillSetMap` | skill sets by normalized work email |
 | `buildBonusScoringItems` (`use-bonus-scoring-queue.ts`) | the Overview scoring states |
-| `buildBonusHistoryRows` (`ManagerBonusHistory.tsx`) | the history table |
 
 `buildBonusScoringItems` is the one worth guarding: it mirrors Payroll Readiness
 (`buildKpiReadiness`) so the manager's Overview and the accountant's Readiness tab never
@@ -172,7 +172,6 @@ That is why the roster payload is the cached unit and the gate is derived.
 | `resignations` | `GET /api/resignation-requests?scope=all` | RAW rows |
 | `skillSets` | `GET /api/employee-skill-sets` | RAW rows; shared profile only, never pay |
 | `transfers` | 3 × `GET /api/department-transfers` | one unit — a decided request moves between scopes in one load |
-| `bonusHistory` | 3 summary routes | RAW |
 | `deptSpRankings(label)` | `GET /api/team-rankings?view=manager` | `{ weeks }` — SP + tier, never pesos |
 | `deptAppointments(label)` | `GET /api/manager/appointment-rankings` | `{ available, weeks }` — counts |
 | `deptAppointmentDays(label)` | `GET /api/manager/appointment-rankings/days` | day counts |

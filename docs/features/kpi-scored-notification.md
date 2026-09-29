@@ -90,7 +90,7 @@ future failure by making the notify fatal**.
 - **Reopen → re-ready re-notifies only the corrected people** — everyone else's
   amount matched their last notification.
 - **A whole-row DELETE on a published week doesn't notify by itself**
-  (`hsl-bonus/entries` DELETE, Bonus History dept-week DELETE are unhooked); the
+  (`hsl-bonus/entries` DELETE and the dept-week DELETEs are unhooked); the
   save that follows does. A delete-with-no-resave is a known quiet path.
 - **Toast latency up to ~30s**: `postgres_changes` never delivers to the anon
   browser client on RLS-guarded tables, so the chime's 30s poll is the real

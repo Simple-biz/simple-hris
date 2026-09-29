@@ -1,7 +1,6 @@
 // Display identity for catalog (non-HSL) departments: the accent colour and the
 // human label a department wears wherever a manager sees it — the KPI
-// Calculator's cards, the Bonus History rows and the Overview "Bonuses to
-// score" panel.
+// Calculator's cards and the Overview "Bonuses to score" panel.
 //
 // This used to be a per-file constant copied into each surface with a "keep in
 // lockstep with …" comment. One shared table instead, so a new department (or a

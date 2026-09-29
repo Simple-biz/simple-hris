@@ -51,7 +51,7 @@ export const HSL_FAMILY_DEPT_LABEL = 'HSL';
 //     forever, until a manager marked an empty department "ready".
 //
 // Nothing here reaches a KPI surface: every KPI consumer (HslBonusCalculator,
-// AdminRoles, use-bonus-scoring-queue, ManagerBonusHistory, payroll-readiness,
+// AdminRoles, use-bonus-scoring-queue, payroll-readiness,
 // PayrollWizard, employee-kpi-results, Overview) reads HSL_DEPT_KEYS / HSL_DEPTS
 // directly and never routes through this module.
 

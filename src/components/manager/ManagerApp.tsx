@@ -76,7 +76,6 @@ import AnnouncementComposer from '@/components/announcements/AnnouncementCompose
 import SWall from '@/components/swall/SWall';
 import HslBonusCalculator from '@/components/manager/HslBonusCalculator';
 import DeptBonusCalculator from '@/components/manager/DeptBonusCalculator';
-import ManagerBonusHistory from '@/components/manager/ManagerBonusHistory';
 import { HSL_DEPT_KEYS, canAccessHslDept, type HslDeptKey } from '@/lib/hsl-bonus/schema';
 import {
   isOutstanding,
@@ -996,13 +995,6 @@ export default function ManagerApp() {
                   </div>
                 );
               })()}
-              {activeTab === 'bonus-history' && (
-                <ManagerBonusHistory
-                  viewerEmail={viewerEmail}
-                  managedDepts={teamGate.kind === 'department' ? teamGate.departments : []}
-                  isElevated={teamGate.kind === 'elevated'}
-                />
-              )}
               {activeTab === 'notifications' && (
                 <NotificationsPanel viewerEmail={viewerEmail} accent="blue" view="manager" />
               )}

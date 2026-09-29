@@ -68,7 +68,6 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
     'announcements',
     's-wall',
     'hsl-bonus',
-    'bonus-history',
     'notifications',
   ],
   orphanage: [

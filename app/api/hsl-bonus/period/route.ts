@@ -13,7 +13,7 @@ export const runtime = 'nodejs';
  * DELETE /api/hsl-bonus/period?dept=KEY&period_start=YYYY-MM-DD
  *
  * Hard-deletes both the entries and the period_status row for a given week.
- * Used by the manager Bonus History tab when the manager wants to remove a
+ * Used by HslBonusEditModal's "Delete week" when a manager wants to remove a
  * past KPI submission entirely (e.g., it was sent in error).
  *
  * Returns the counts of rows removed from each table.

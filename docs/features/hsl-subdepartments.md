@@ -95,7 +95,7 @@ with the reason spelled out.
 
 **Nothing in this keyspace reaches a KPI surface.** Every KPI consumer
 (`HslBonusCalculator`, `AdminRoles`, `use-bonus-scoring-queue`,
-`ManagerBonusHistory`, `payroll-readiness`, `PayrollWizard`,
+`payroll-readiness`, `PayrollWizard`,
 `employee-kpi-results`, `Overview`) reads `HSL_DEPT_KEYS` / `HSL_DEPTS` directly
 and never routes through `hsl-subdept.ts` — which is what makes widening the
 placement helpers safe.

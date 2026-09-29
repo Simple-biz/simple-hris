@@ -139,7 +139,7 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   saves, `saveDept()` writes the FX-converted PHP value
   (`computeAmount()` × `phpPerUnit(currency, fx)`) into
   `bonus_catalog_applied.amount`, and **that stored PHP value is what the Payroll
-  Wizard "KPI Sub." sum, Bonus History, and Employee KPI Results read + pay** — it
+  Wizard "KPI Sub." sum and Employee KPI Results read + pay** — it
   never re-converts. A sky tag on non-PHP columns carries a tooltip explaining the
   displayed native amount is paid in PHP at the live rate.
   > **Known limitation (display only):** the grid is a *live* projection — the

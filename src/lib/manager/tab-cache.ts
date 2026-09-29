@@ -535,6 +535,4 @@ export const MANAGER_CACHE_KEYS = {
   deptKpiRankings: (department: string) => `${DEPT_KEY_PREFIX}kpi-rankings:${department}`,
   /** `/api/manager/deliverable-rankings?basis=daily` — days + the per-day positions. */
   deptKpiDaily: (department: string) => `${DEPT_KEY_PREFIX}kpi-daily:${department}`,
-  /** The Bonus History tab's three raw summary payloads. */
-  bonusHistory: 'bonus-history:summaries',
 } as const;

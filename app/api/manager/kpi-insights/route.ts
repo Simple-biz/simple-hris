@@ -36,7 +36,7 @@ export const runtime = 'nodejs';
  * (`scopeInsightDeptKeys`), and an out-of-scope key is dropped, not an error.
  *
  * The same managers already see each of these figures on this page (the per-dept
- * projection, every row's bonus) and in Bonus History (every dept-week's total).
+ * projection, every row's bonus), any past week through the week picker.
  * This route aggregates them; it reveals nothing the grid does not.
  */
 export async function GET(req: NextRequest) {

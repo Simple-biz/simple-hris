@@ -85,7 +85,8 @@ verbatim — plus HSL-only email sets and identity/email-only lookups.
   > or an applied row. Its `DEPARTMENTS` entry, wizard tab, colour and Hubstaff
   > exemption are unchanged, and `sales_assistant` is untouched.
 - SystemSettings' local dept list, both dept color maps
-  (`DeptBonusCalculator` `#ef4444`, `ManagerBonusHistory` mirror), and
+  (`DeptBonusCalculator` `#ef4444`, now the shared `CATALOG_DEPT_COLOR` in
+  `src/lib/departments/dept-identity.ts`), and
   `skill-set-titles.ts` gained `sales` entries.
 - `HUBSTAFF_EXEMPT_DEPTS` now contains **both** `sales` and
   `sales assistant` — one dept was exempt before the split, so both cohorts

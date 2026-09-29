@@ -5,7 +5,7 @@ import { inFilterLists } from './in-list-chunks';
 // Persistence for APPLIED catalog bonuses (see references/create_bonus_catalog_applied.sql).
 // One row per (period_start, department, employee_email, bonus_id): a catalog
 // bonus a manager applied to one employee for one pay-week. The Payroll Wizard
-// sums `amount` per employee for the week; Bonus History reads the breakdown.
+// sums `amount` per employee for the week; the calculator reads the breakdown.
 
 const TABLE = 'bonus_catalog_applied';
 
@@ -30,7 +30,7 @@ export interface AppliedBonusRow {
 }
 
 /** Raw DB-row shape (snake_case). This is the read contract every consumer
- *  expects (Payroll Wizard, DeptBonusCalculator, ManagerBonusHistory) — do NOT
+ *  expects (Payroll Wizard, DeptBonusCalculator) — do NOT
  *  camelCase it on the way out. The camelCase `AppliedBonusRow` is the WRITE
  *  contract only (client → POST). */
 export type AppliedDbRow = {
@@ -149,7 +149,7 @@ export async function saveDeptPeriodApplied(params: {
   return { saved: payload.length, error: null };
 }
 
-/** Per-(department, period_start) rollup for Bonus History. */
+/** Per-(department, period_start) rollup (Overview scoring queue, Payroll Readiness). */
 export interface AppliedSummaryRow {
   department: string;
   period_start: string;
@@ -157,8 +157,8 @@ export interface AppliedSummaryRow {
   employee_count: number;
   total_bonus: number;
   // Attribution for the dept-week: who last applied bonuses and when. Pulled
-  // from the underlying rows so Bonus History can show "added by X on <date>"
-  // even when there's no hsl_bonus_period_status row for the week.
+  // from the underlying rows so a dept-week has an author even when there's no
+  // hsl_bonus_period_status row for it.
   applied_by: string | null;
   applied_at: string | null; // ISO timestamp — most recent row touch
 }
@@ -240,7 +240,8 @@ export async function summarizeApplied(
     .sort((a, b) => (a.period_start < b.period_start ? 1 : a.period_start > b.period_start ? -1 : 0));
 }
 
-/** Remove a whole dept-week (Bonus History delete). */
+/** Remove a whole dept-week. No UI caller since Bonus History was retired
+ *  (2026-09-29); the route is kept, see session log Open item 284. */
 export async function deleteAppliedPeriod(
   department: string,
   periodStart: string,

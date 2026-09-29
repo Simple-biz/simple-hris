@@ -134,7 +134,6 @@ export const DASHBOARD_PAGES: DashboardPages[] = [
       { key: 'announcements', label: 'Announcements' },
       { key: 's-wall', label: 'S-Wall' },
       { key: 'hsl-bonus', label: 'KPI Calculator' },
-      { key: 'bonus-history', label: 'Bonus History' },
       { key: 'notifications', label: 'Notifications' },
     ],
   },

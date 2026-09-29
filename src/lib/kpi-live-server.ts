@@ -20,7 +20,7 @@ import {
  */
 
 /** Mark Ready / Lock / reopen — always announced, whatever the status. `null`
- *  = the status row itself was deleted (Bonus History's HSL dept-week delete). */
+ *  = the status row itself was deleted (the HSL dept-week delete). */
 export async function announceKpiStatusChange(args: {
   department: string;
   periodStart: string;

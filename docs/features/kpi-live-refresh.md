@@ -22,9 +22,9 @@ So the route that just wrote the row announces it on its own Broadcast topic,
 | Route | Write | Announces |
 |---|---|---|
 | `POST /api/hsl-bonus/period-status` | Mark Ready / Lock / reopen (upsert) | always — status from the row the DB wrote, never the unvalidated body |
-| `DELETE /api/hsl-bonus/period` | Bonus History HSL dept-week delete (entries AND status row) | always, `status: null` |
+| `DELETE /api/hsl-bonus/period` | `HslBonusEditModal` **Delete week** (entries AND status row) | always, `status: null` |
 | `POST /api/bonus-catalog-applied` | Departments calculator autosave | only if the week is `ready`/`locked` |
-| `DELETE /api/bonus-catalog-applied` | Bonus History catalog dept-week delete | only if the week is `ready`/`locked` |
+| `DELETE /api/bonus-catalog-applied` | catalog dept-week delete. **No UI caller since Bonus History was retired on 2026-09-29.** The handler is kept (Open item 284) | only if the week is `ready`/`locked` |
 | `POST /api/hsl-bonus/entries` | HSL calculator autosave | per dept-week in the batch, only if `ready`/`locked` |
 | `DELETE /api/hsl-bonus/entries` | remove one scored person | only if `ready`/`locked` |
 
@@ -72,7 +72,6 @@ stepper, and anything short of a clean read keeps what is painted.
 | Manager · Overview "Bonuses to score" (`use-bonus-scoring-queue.ts`) | the four summary reads; a PARTIAL failure keeps the painted chips | week / dept change |
 | Manager · KPI Calculator → Departments / HSL | the calculators' own `refreshAll` — a dirty or saving dept is still skipped | 30 s poll (the `useLiveRefresh` realtime half is dead) |
 | Manager · KPI Insight cards | follow the Departments calculator's `liveKey` | — |
-| Manager · Bonus History | `fetchSummary(false, true)` — no button spinner, keeps the table on any failed read | Refresh button |
 | Manager · My Team → SP / Appointments / KPI Rankings | the three board reads, quietly; no week-stepper reset; never written under another department's cache key | once per department |
 | Accounting · Overview → Payroll Notes card | `/api/payroll-wizard/readiness` | 120 s |
 | Accounting · Payroll Notes → Readiness pane (KPI Submissions tab, score) | the pane's background `load` | 30 s |
