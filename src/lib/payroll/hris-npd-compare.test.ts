@@ -10,6 +10,7 @@ import {
   parseUsdCell,
   stagedUsdCents,
   HRIS_SOURCE_LABELS,
+  MATCH_TOLERANCE_CENTS,
   type CompareHrisNpdInput,
   type HrisCompareInput,
 } from './hris-npd-compare';
@@ -221,10 +222,31 @@ describe('compareHrisNpd', () => {
     assert.deepEqual(c.counts, { match: 1, mismatch: 0, not_in_hris: 0, not_in_npd: 0 });
   });
 
-  test('one cent apart is a mismatch — there is no tolerance', () => {
-    const c = run({ hrisRows: [hris('a@simple.biz', phpFor(250))], paste: 'a@simple.biz\t250.01' });
+  // Kane, 2026-09-30: "now lets make it match if the difference is just 3 cents".
+  test('the tolerance is 3 cents', () => {
+    assert.equal(MATCH_TOLERANCE_CENTS, 3);
+  });
+
+  test('up to 3 cents either way is a MATCH, and the difference is kept, not erased', () => {
+    for (const [npd, delta] of [['250.01', 1], ['250.03', 3], ['249.97', -3], ['249.99', -1]] as const) {
+      const c = run({ hrisRows: [hris('a@simple.biz', phpFor(250))], paste: `a@simple.biz\t${npd}` });
+      assert.equal(c.rows[0].status, 'match', npd);
+      assert.equal(c.rows[0].deltaCents, delta, npd);
+      assert.equal(c.rows[0].impliedNpdRate, null, npd);
+    }
+  });
+
+  test('4 cents either way is a MISMATCH — the boundary is inclusive at 3', () => {
+    for (const npd of ['250.04', '249.96']) {
+      const c = run({ hrisRows: [hris('a@simple.biz', phpFor(250))], paste: `a@simple.biz\t${npd}` });
+      assert.equal(c.rows[0].status, 'mismatch', npd);
+    }
+  });
+
+  test("the 2026-08-18 week's $0.07 residue is still a mismatch under the tolerance", () => {
+    const c = run({ hrisRows: [hris('arvsn@simple.biz', phpFor(207.66))], paste: 'arvsn@simple.biz\t207.73' });
     assert.equal(c.rows[0].status, 'mismatch');
-    assert.equal(c.rows[0].deltaCents, 1);
+    assert.equal(c.rows[0].deltaCents, 7);
   });
 
   test('the 2026-08-18 case: pesos agree, the divisor does not — the row says what rate NPD used', () => {

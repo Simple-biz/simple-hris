@@ -48,6 +48,7 @@ import { formatPHP } from '@/lib/format-php';
 import {
   HRIS_NPD_STATUSES,
   HRIS_SOURCE_LABELS,
+  MATCH_TOLERANCE_CENTS,
   centsToDollars,
   filterHrisNpdRows,
   type HrisNpdComparison as Comparison,
@@ -233,9 +234,21 @@ const ComparisonRow = React.memo(function ComparisonRow({
         {r.status == null ? (
           <span className="text-zinc-400 dark:text-zinc-500" aria-label="Not judged yet">—</span>
         ) : r.status === 'match' ? (
-          <span className="inline-flex text-emerald-700 dark:text-emerald-300" title="HRIS and NPD agree to the cent">
+          // Within MATCH_TOLERANCE_CENTS still counts as a match (Kane, 2026-09-30), but a
+          // non-zero difference stays on screen rather than being erased by the green.
+          <span
+            className="inline-flex flex-col items-center gap-0.5 text-emerald-700 dark:text-emerald-300"
+            title={
+              r.deltaCents
+                ? `Within ${MATCH_TOLERANCE_CENTS}¢, so counted as a match — NPD is ${usd(Math.abs(r.deltaCents))} ${r.deltaCents > 0 ? 'higher' : 'lower'}`
+                : 'HRIS and NPD agree to the cent'
+            }
+          >
             <Check className="h-4 w-4" strokeWidth={2.75} aria-hidden />
             <span className="sr-only">Match</span>
+            {r.deltaCents ? (
+              <span className="whitespace-nowrap font-mono text-[10px] font-medium tabular-nums opacity-80">NPD {signedUsd(r.deltaCents)}</span>
+            ) : null}
           </span>
         ) : r.status === 'mismatch' ? (
           <span className="inline-flex flex-col items-center gap-0.5 text-rose-700 dark:text-rose-300" title={mismatchTitle}>

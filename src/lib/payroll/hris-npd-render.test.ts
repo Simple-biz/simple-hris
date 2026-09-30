@@ -97,6 +97,20 @@ describe('HRIS vs NPD — rendered', () => {
     assert.equal((row.match(/\$250\.00/g) ?? []).length, 2);
   });
 
+  it('within 3 cents is a green row with a check — and the difference is still printed (Kane, 2026-09-30)', () => {
+    const row = rowFor(render('kaner@simple.biz\t250.02'), 'kaner@simple.biz');
+    assert.match(row, /bg-emerald-100/);
+    assert.doesNotMatch(row, /bg-rose-100/);
+    assert.match(row, /<span class="sr-only">Match<\/span>/);
+    assert.match(row, /NPD \+\$0\.02/);
+    assert.match(row, /Within 3¢, so counted as a match/);
+  });
+
+  it('an exact match prints no difference', () => {
+    const row = rowFor(render(PASTE), 'kaner@simple.biz');
+    assert.doesNotMatch(row, /NPD [+−]\$/);
+  });
+
   it('a mismatch is a red row with an ✗ and the difference', () => {
     const row = rowFor(render(PASTE), 'lorar@simple.biz');
     assert.match(row, /bg-rose-100/);

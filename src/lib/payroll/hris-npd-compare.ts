@@ -16,9 +16,11 @@
  *    `amount_usd` expression from the wizard's Send to Payment Dispatch, verbatim
  *    (`Math.round((php / fx) * 100) / 100`), applied per HRIS row and then summed — the
  *    test file pins that the wizard still stages it that way.
- * 3. **Match means equal to the cent.** No tolerance: the 2026-08-18 NPD gaps were
- *    $0.81–$2.68 and one residue was $0.07. A tolerance is a policy that hides the smallest
- *    real differences.
+ * 3. **Match means within 3 cents** (`MATCH_TOLERANCE_CENTS`, Kane, 2026-09-30: "make it
+ *    match if the difference is just 3 cents"). Inclusive: |NPD − HRIS| ≤ $0.03 is a match,
+ *    $0.04 is not. It replaced "equal to the cent". The 2026-08-18 NPD gaps ($0.81–$2.68)
+ *    and that week's $0.07 residue are still mismatches under it. A within-tolerance match
+ *    keeps its `deltaCents`, so the difference is still shown, never erased.
  * 4. **No verdict before the figures can be judged.** While any input behind the dollar
  *    figure is loading, has failed, or the cycle rate is still 0, every row keeps its
  *    figures and loses its verdict (`status: null`), and `hold` says why. A red row painted
@@ -310,6 +312,13 @@ export type HrisNpdStatus = 'match' | 'mismatch' | 'not_in_hris' | 'not_in_npd';
 
 export const HRIS_NPD_STATUSES: readonly HrisNpdStatus[] = ['match', 'mismatch', 'not_in_hris', 'not_in_npd'];
 
+/**
+ * The most NPD and HRIS may differ by and still be a match, in cents, inclusive.
+ * Kane, 2026-09-30: "now lets make it match if the difference is just 3 cents". It was 0
+ * ("equal to the cent") before that. A match inside it still carries its `deltaCents`.
+ */
+export const MATCH_TOLERANCE_CENTS = 3;
+
 export interface HrisNpdRow {
   /** Stable React key. */
   key: string;
@@ -334,7 +343,8 @@ export interface HrisNpdRow {
   npdLines: readonly number[];
   /** Null while verdicts are held (see `HrisNpdComparison.hold`). */
   status: HrisNpdStatus | null;
-  /** NPD − HRIS, in cents, when both figures exist. */
+  /** NPD − HRIS, in cents, when both figures exist. Non-zero on a `match` when the two are
+   *  within `MATCH_TOLERANCE_CENTS` but not equal — the table still shows it. */
   deltaCents: number | null;
   /** PHP per $1 that NPD's figure implies against HRIS's pesos. Set on a `mismatch` only. */
   impliedNpdRate: number | null;
@@ -500,7 +510,12 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
     const deltaCents = hrisCents != null && npdCents != null ? npdCents - hrisCents : null;
     let status: HrisNpdStatus | null = null;
     if (judged) {
-      status = n == null ? 'not_in_npd' : deltaCents === 0 ? 'match' : 'mismatch';
+      status =
+        n == null
+          ? 'not_in_npd'
+          : deltaCents != null && Math.abs(deltaCents) <= MATCH_TOLERANCE_CENTS
+            ? 'match'
+            : 'mismatch';
     }
     const impliedNpdRate =
       status === 'mismatch' && npdCents != null && npdCents > 0 && g.php > 0

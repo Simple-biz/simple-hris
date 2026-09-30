@@ -3,7 +3,7 @@
 A **HRIS vs NPD** tab on the Payroll Wizard's Validation step (7), in two steps. **Step 1, NPD
 Figures**: Accounting pastes the NPD sheet's work emails and dollar figures. **Step 2, Output**
 (opened with **Load output**, the input hidden): every person appears once with HRIS's dollar
-figure beside NPD's. A **green** row with a check means they agree to the cent. A **red** row
+figure beside NPD's. A **green** row with a check means they agree within 3 cents. A **red** row
 with an ✗ and the difference means they don't. A red **Not in HRIS** / **Not in NPD** means one
 side has nobody at that address. Nobody on either side is ever dropped. Display only: it writes
 nothing.
@@ -158,11 +158,22 @@ So:
   throughout (MV and Mark Paid key on it: `payroll-wizard-manual-validation.md` § The lookup key is
   `row.id`).
 
-## Match means equal to the cent
+## Match means within 3 cents
 
-`npdCents === hrisCents`. **No tolerance**: the 2026-08-18 gaps were $0.81–$2.68, and one residue
-was $0.07 (a sub-minute Hubstaff re-sync). A tolerance is a policy that hides the smallest real
-differences. A mismatch shows `NPD +$2.68` / `NPD −$0.07` (NPD minus HRIS) under the ✗.
+`|npdCents − hrisCents| ≤ MATCH_TOLERANCE_CENTS` (**3**, inclusive). So $0.03 either way is a
+match and $0.04 is a mismatch. Kane, 2026-09-30: *"now lets make it match if the difference is just
+3 cents"*.
+
+That replaced the first build's **equal to the cent, no tolerance** (the brief's CHOSEN 5, which
+named a tolerance as the other way). The measured cases behind the old rule still read the same
+under the new one: the 2026-08-18 gaps ($0.81–$2.68) and that week's $0.07 residue (a sub-minute
+Hubstaff re-sync) are all still **mismatches**. Only differences of 1–3¢ changed colour.
+
+**A within-tolerance match still shows its difference.** The row is green with the ✓, and
+`NPD +$0.02` prints under it (the tooltip says it is within 3¢). `deltaCents` is kept on the row, so
+the tolerance makes a small gap acceptable, never invisible. A mismatch shows `NPD +$2.68` /
+`NPD −$0.07` (NPD minus HRIS) under the ✗. Changing the tolerance is one constant, but it is Kane's
+number: do not move it as cleanup.
 
 ## No row is ever dropped
 
