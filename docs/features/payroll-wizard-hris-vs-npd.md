@@ -21,17 +21,36 @@ commit: `git log -- docs/features/payroll-wizard-hris-vs-npd.md`. Plan:
 | Rules tests (parse, buckets, union, bridge, holds, source guard) | `src/lib/payroll/hris-npd-compare.test.ts` |
 | Rendered-spec tests (green / red / labels / holds / phone layout) | `src/lib/payroll/hris-npd-render.test.ts` |
 | The panel (paste card, rate line, hold banner, chips, table) | `src/components/payroll/HrisNpdComparison.tsx` |
-| Wiring: `VALIDATION_SECTIONS` strip, `npdPaste` state, the memos after `validationRedFlagCount` | `src/components/PayrollWizard.tsx` |
+| The full-screen overlay (both sections) + the one `VALIDATION_SECTIONS` definition | `src/components/payroll/ValidationFullScreen.tsx` |
+| Wiring: the strip, `npdPaste` + search/chip state, the memos after `validationRedFlagCount`, `hrisNpdPanelProps`, the one overlay mount | `src/components/PayrollWizard.tsx` |
 
 ## Where it lives
 
 Step 7 now carries a **Final Pay | HRIS vs NPD** strip, a copy of step 5's `Departments | HSL`
 strip (underline variant, `layoutId="validation-section-indicator"`). It sits **below** the
 header, the summary cards and the US-holiday card, and **above** the workspace. The swap replaces
-only the workspace: the department rail plus Final Pay table (with MV, Exclude and the full-screen
-portal), or the comparison. The Validation Checks card stays under both. **Final Pay is the
-default**, and the tutorial anchor `step7-validation-table` is on the header, so it is visible in
-both sections.
+only the workspace: the department rail plus Final Pay table (with MV and Exclude), or the
+comparison. The Validation Checks card stays under both. **Final Pay is the default**, and the
+tutorial anchor `step7-validation-table` is on the header, so it is visible in both sections.
+
+### Full screen (2026-09-30)
+
+Kane, same day: *"please add this in the full screen view please"*. The Validation full-screen
+overlay (`ValidationFullScreen`) carries the same `Final Pay | HRIS vs NPD` strip, and the
+comparison has its own **Full screen** button in the same place as the Final Pay table's (the
+table's header bar, so it shows once there is a table). The rules are in
+[payroll-wizard-manual-validation.md § It carries both sections](./payroll-wizard-manual-validation.md#it-carries-both-sections-2026-09-30).
+The short version:
+
+- The overlay renders **this same panel from the same `hrisNpdPanelProps` object** as the step
+  (`<HrisNpdComparison {...hrisNpd} fillHeight />`). Same paste, same verdicts, same holds, same
+  search and chip. It is never a second implementation.
+- It shows **the step's own section state**: opening full screen from HRIS vs NPD lands on HRIS vs
+  NPD, switching inside it switches the step too, and Escape or ✕ returns to the section you were on.
+- The wizard mounts **one** overlay, **outside** the section swap (source-guarded). Mounted inside a
+  section's branch, switching sections from within the overlay would unmount it.
+- `fillHeight` lets the table take the overlay's full height (no 62vh cap), and the panel then
+  skips its own week label because the overlay's header already names the week.
 
 The HRIS vs NPD tab's badge counts rows that need a look (mismatch + Not in HRIS + Not in NPD), in
 rose. It shows **only once verdicts can be given**, never while they are held.
@@ -153,7 +172,11 @@ the Validation step's rows for the replayed week.
 
 ## The search and the chips never narrow the totals
 
-`filterHrisNpdRows` is display only. The footer shows **whole-comparison** totals (sticky, so they
+`filterHrisNpdRows` is display only. The search text and the chip are **wizard state**
+(`hrisNpdSearch`, `hrisNpdFilter`), not the panel's, because the step and the full-screen overlay
+each mount a panel and must show the same slice, the way Final Pay's `validationSearch` is
+shared. Like that search, they are not cleared on a week switch. The "showing X of N" line says
+when they narrow. The footer shows **whole-comparison** totals (sticky, so they
 stay visible down a long list), and says "(every row, not just those shown)" when filtered. This is
 the same rule as Reports: a total that follows a filter gets read out as the week's figure
 (`payroll-wizard-final-pay.md` § 2026-09-09). The search matches the address, the name **and every
@@ -191,6 +214,16 @@ manager file). The panel was rendered to static markup with fixtures and
 screenshotted (light, dark, loading, no FX, empty, 390px) against CSS compiled by the app's own
 Tailwind plugin. **Not clicked through signed in.** **`next build` not run**: a dev server was live
 on :3000 ([[nextjs-build-vs-dev-shared-dir]]).
+
+*Full screen (2026-09-30, second commit):* both test files **66/66**. `npm test` **5,178/5,180**,
+the same 2 pre-existing failures. tsc clean apart from the same stale `.next/types` errors. The
+overlay is a portal behind a mount guard, so it cannot be server-rendered. It was exercised in a
+real Chromium instead: an esbuild bundle of the overlay + an inline panel, wired exactly as the
+wizard wires them. That run checked: opens on HRIS vs NPD; switching to Final Pay inside it keeps
+it open; filter + search inside it; Escape closes it and the step's panel shows the same search
+and chip; the step's Full screen button reopens it; the strip sits at the same height in both
+sections; no horizontal overflow at 390px; no console errors. Still **not clicked through signed
+in**.
 
 ## Deploy notes
 

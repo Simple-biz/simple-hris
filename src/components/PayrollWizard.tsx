@@ -59,7 +59,6 @@ import {
   Cpu,
   HelpCircle,
   Database,
-  ArrowLeftRight,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -361,7 +360,10 @@ import {
   parseOrphanageNoneMarker,
 } from '@/lib/payroll/wizard-setup-steps';
 import ValidationBreakdownTable from '@/components/payroll/ValidationBreakdownTable';
-import ValidationFullScreen from '@/components/payroll/ValidationFullScreen';
+import ValidationFullScreen, {
+  VALIDATION_SECTIONS,
+  type ValidationSectionKey,
+} from '@/components/payroll/ValidationFullScreen';
 import {
   parseManualValidationMap,
   type ManualValidationMap,
@@ -371,11 +373,12 @@ import {
   countRedFlags,
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
-import HrisNpdComparison from '@/components/payroll/HrisNpdComparison';
+import HrisNpdComparison, { type HrisNpdPanelProps } from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
   parseNpdPaste,
   type HrisCompareInput,
+  type HrisNpdFilter,
 } from '@/lib/payroll/hris-npd-compare';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
@@ -2128,20 +2131,9 @@ const ORPHANAGE_SECTIONS = [
 
 type OrphanageSectionKey = (typeof ORPHANAGE_SECTIONS)[number]['key'];
 
-/**
- * Validation step sections. `final_pay` is the department rail + Final Pay table (MV,
- * Exclude, full screen) exactly as before; `hris_vs_npd` is the dollar-by-dollar
- * comparison against the NPD sheet (`HrisNpdComparison`, docs/features/payroll-wizard-hris-vs-npd.md).
- * The swap covers ONLY that workspace — the header, the summary cards, the holiday card and
- * the Validation Checks are the cycle's, so both sections keep them. Same shape as
- * ADDITIONS_SECTIONS.
- */
-const VALIDATION_SECTIONS = [
-  { key: 'final_pay', label: 'Final Pay', icon: ShieldCheck },
-  { key: 'hris_vs_npd', label: 'HRIS vs NPD', icon: ArrowLeftRight },
-] as const;
-
-type ValidationSectionKey = (typeof VALIDATION_SECTIONS)[number]['key'];
+// Validation step sections (`VALIDATION_SECTIONS`, Final Pay | HRIS vs NPD) are defined
+// once in `ValidationFullScreen.tsx`, because the step's strip and the full-screen
+// overlay's strip must list the same tabs. See docs/features/payroll-wizard-hris-vs-npd.md.
 
 export default function PayrollWizard({
   sessionEmail,
@@ -2856,6 +2848,11 @@ export default function PayrollWizard({
    * purpose: nothing about it is ever written (payroll-wizard-hris-vs-npd.md).
    */
   const [npdPaste, setNpdPaste] = useState<{ sourceFile: string | null; text: string }>({ sourceFile: null, text: '' });
+  /** HRIS vs NPD's search + status chip. Wizard state, not the panel's, because the step
+   *  and the full-screen overlay each mount a panel and must show the same slice — the
+   *  way Final Pay's `validationSearch` is shared. Display only. */
+  const [hrisNpdSearch, setHrisNpdSearch] = useState('');
+  const [hrisNpdFilter, setHrisNpdFilter] = useState<HrisNpdFilter>('all');
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
     work_email: string;
@@ -10294,6 +10291,19 @@ export default function PayrollWizard({
   const hrisNpdAttentionCount = hrisNpdComparison.counts
     ? hrisNpdComparison.counts.mismatch + hrisNpdComparison.counts.not_in_hris + hrisNpdComparison.counts.not_in_npd
     : 0;
+
+  /** The one way to change the Validation section — the step's strip and the full-screen
+   *  overlay's strip both call it, so the slide direction and the section never disagree. */
+  const selectValidationSection = React.useCallback(
+    (key: ValidationSectionKey) => {
+      if (key === validationSection) return;
+      const from = VALIDATION_SECTIONS.findIndex((x) => x.key === validationSection);
+      const to = VALIDATION_SECTIONS.findIndex((x) => x.key === key);
+      setValidationSectionDir(to >= from ? 1 : -1);
+      setValidationSection(key);
+    },
+    [validationSection],
+  );
 
   /** [WIZARD-TUTORIAL] Advisory signals for the Processing Tutorial guide —
    *  plain values the wizard already computes, no new derivation here. The
@@ -19362,6 +19372,60 @@ export default function PayrollWizard({
         const stepContractorsUSD = approvedContractorsByCurrency.USD;
         const totalWeeklyOutflow = grandFinal + stepContractorsPHP;
 
+        // ── Final Pay's department grouping. Computed here, not inside the Final Pay
+        // branch, because the full-screen overlay below is mounted OUTSIDE the section
+        // swap (so switching sections from inside it cannot unmount it) and still needs
+        // the rail, the active department and its rows. Same predicates as before.
+        const vNeedle = validationSearch.toLowerCase().trim();
+        const UNASSIGNED = '__unassigned__';
+        // Bucket every final-pay row by department (DEPARTMENTS order; an
+        // "Unassigned" bucket collects anyone without a department).
+        const groupMap = new Map<string, typeof finalPayRows>();
+        for (const row of finalPayRows) {
+          const k = row.deptKey ?? UNASSIGNED;
+          const arr = groupMap.get(k);
+          if (arr) arr.push(row);
+          else groupMap.set(k, [row]);
+        }
+        const deptGroups: { key: string; name: string; rows: typeof finalPayRows }[] = [
+          ...additionsDepartments.filter(d => groupMap.has(d.key)).map(d => ({
+            key: d.key,
+            name: d.name,
+            rows: groupMap.get(d.key)!,
+          })),
+          ...(groupMap.has(UNASSIGNED)
+            ? [{ key: UNASSIGNED, name: 'Unassigned', rows: groupMap.get(UNASSIGNED)! }]
+            : []),
+        ];
+        // Null exactly when there are no groups (no Hubstaff data yet).
+        const activeKey: string | null = deptGroups.length === 0
+          ? null
+          : deptGroups.some(g => g.key === validationDeptTab)
+            ? (validationDeptTab as string)
+            : deptGroups[0].key;
+        const activeGroup = activeKey == null ? null : deptGroups.find(g => g.key === activeKey) ?? null;
+        const filteredRows = activeGroup == null
+          ? []
+          : vNeedle
+            ? activeGroup.rows.filter(row => [row.name, row.email].join(' ').toLowerCase().includes(vNeedle))
+            : activeGroup.rows;
+
+        // HRIS vs NPD — ONE props object, handed to the step's panel and to the
+        // full-screen overlay's, so the two mirror by construction.
+        const hrisNpdPanelProps: HrisNpdPanelProps = {
+          pasteText: npdPasteText,
+          onPasteChange: setNpdPasteText,
+          parse: npdPasteParse,
+          comparison: hrisNpdComparison,
+          fxRate: usdToPhpRate,
+          hrisPeople: finalPayRows.length,
+          periodLabel: calcSourceFile,
+          search: hrisNpdSearch,
+          onSearchChange: setHrisNpdSearch,
+          filter: hrisNpdFilter,
+          onFilterChange: setHrisNpdFilter,
+        };
+
         return (
           <div className="flex min-w-0 flex-col gap-5">
             {/* Header */}
@@ -19622,13 +19686,7 @@ export default function PayrollWizard({
                     type="button"
                     role="tab"
                     aria-selected={isActive}
-                    onClick={() => {
-                      if (isActive) return;
-                      const from = VALIDATION_SECTIONS.findIndex((x) => x.key === validationSection);
-                      const to = VALIDATION_SECTIONS.findIndex((x) => x.key === sec.key);
-                      setValidationSectionDir(to >= from ? 1 : -1);
-                      setValidationSection(sec.key);
-                    }}
+                    onClick={() => selectValidationSection(sec.key)}
                     className={cn(
                       'relative -mb-px flex items-center gap-2 px-3.5 py-2 text-sm font-semibold transition-colors duration-200',
                       isActive
@@ -19691,54 +19749,17 @@ export default function PayrollWizard({
                 the Exclude header. */}
             {validationSection === 'hris_vs_npd' ? (
               <HrisNpdComparison
-                pasteText={npdPasteText}
-                onPasteChange={setNpdPasteText}
-                parse={npdPasteParse}
-                comparison={hrisNpdComparison}
-                fxRate={usdToPhpRate}
-                hrisPeople={finalPayRows.length}
-                periodLabel={calcSourceFile}
+                {...hrisNpdPanelProps}
+                onOpenFullScreen={() => setValidationFullScreen(true)}
               />
             ) : (() => {
-              const vNeedle = validationSearch.toLowerCase().trim();
-              const UNASSIGNED = '__unassigned__';
-
-              // Bucket every final-pay row by department (DEPARTMENTS order; an
-              // "Unassigned" bucket collects anyone without a department).
-              const groupMap = new Map<string, typeof finalPayRows>();
-              for (const row of finalPayRows) {
-                const k = row.deptKey ?? UNASSIGNED;
-                const arr = groupMap.get(k);
-                if (arr) arr.push(row);
-                else groupMap.set(k, [row]);
-              }
-              const deptGroups: { key: string; name: string; rows: typeof finalPayRows }[] = [
-                ...additionsDepartments.filter(d => groupMap.has(d.key)).map(d => ({
-                  key: d.key,
-                  name: d.name,
-                  rows: groupMap.get(d.key)!,
-                })),
-                ...(groupMap.has(UNASSIGNED)
-                  ? [{ key: UNASSIGNED, name: 'Unassigned', rows: groupMap.get(UNASSIGNED)! }]
-                  : []),
-              ];
-
-              if (deptGroups.length === 0) {
+              if (activeGroup == null) {
                 return (
                   <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 py-10 text-center text-sm text-zinc-400 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
                     No Hubstaff data. Complete Steps 1–3 first.
                   </div>
                 );
               }
-
-              const activeKey = deptGroups.some(g => g.key === validationDeptTab)
-                ? (validationDeptTab as string)
-                : deptGroups[0].key;
-              const activeGroup = deptGroups.find(g => g.key === activeKey)!;
-
-              const filteredRows = vNeedle
-                ? activeGroup.rows.filter(row => [row.name, row.email].join(' ').toLowerCase().includes(vNeedle))
-                : activeGroup.rows;
 
               // Excluded count for the header bar above the table — the "exclude
               // all" checkbox state and the payable subtotal are now derived by
@@ -19870,34 +19891,42 @@ export default function PayrollWizard({
                     </div>
                   </div>
 
-                  {/* The same table, filling the viewport. It is handed the SAME
-                      `filteredRows` array and the same handlers, so it mirrors
-                      this view by construction rather than by agreement. */}
-                  <ValidationFullScreen
-                    open={validationFullScreen}
-                    onClose={() => setValidationFullScreen(false)}
-                    deptGroups={deptGroups}
-                    activeKey={activeKey}
-                    onSelectDept={setValidationDeptTab}
-                    rows={filteredRows}
-                    deptName={activeGroup.name}
-                    isHsl={filteredRows.some((r) => r.isHsl)}
-                    search={validationSearch}
-                    onSearchChange={setValidationSearch}
-                    disabled={isReplay}
-                    onToggleExcluded={toggleExcluded}
-                    onToggleAllExcluded={setExcludedMany}
-                    validations={mvValidations}
-                    onToggleValidated={isReplay ? undefined : toggleValidated}
-                    savingValidations={mvSaving}
-                    periodLabel={calcSourceFile}
-                  />
                 </div>
               );
             })()}
                 </motion.div>
               </AnimatePresence>
             </div>
+
+            {/* ONE full-screen overlay for BOTH sections, mounted OUTSIDE the section
+                swap: inside a section's branch, switching sections from within the
+                overlay would unmount the overlay itself. It is handed the SAME
+                `filteredRows` array and handlers as the Final Pay table, and the SAME
+                `hrisNpdPanelProps` object as the HRIS vs NPD panel, so it mirrors the
+                step by construction rather than by agreement. */}
+            <ValidationFullScreen
+              open={validationFullScreen}
+              onClose={() => setValidationFullScreen(false)}
+              section={validationSection}
+              onSelectSection={selectValidationSection}
+              deptGroups={deptGroups}
+              activeKey={activeKey}
+              onSelectDept={setValidationDeptTab}
+              rows={filteredRows}
+              deptName={activeGroup?.name ?? ''}
+              isHsl={filteredRows.some((r) => r.isHsl)}
+              search={validationSearch}
+              onSearchChange={setValidationSearch}
+              disabled={isReplay}
+              onToggleExcluded={toggleExcluded}
+              onToggleAllExcluded={setExcludedMany}
+              validations={mvValidations}
+              onToggleValidated={isReplay ? undefined : toggleValidated}
+              savingValidations={mvSaving}
+              hrisNpd={hrisNpdPanelProps}
+              hrisNpdAttention={hrisNpdAttentionCount}
+              periodLabel={calcSourceFile}
+            />
 
             {/* Validation Checks */}
             <Card className="border-zinc-200/90 bg-white/90 shadow-sm ring-0 dark:border-zinc-800 dark:bg-zinc-900/50">

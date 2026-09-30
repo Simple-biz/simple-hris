@@ -2317,7 +2317,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/payroll/TimeAdjustmentIssueRows.tsx` | component | *this file* · [time-adjustment-requests](../features/time-adjustment-requests.md) |
 | `src/components/payroll/TimeAdjustmentReviewPanel.tsx` | component | *this file* · [time-adjustment-requests](../features/time-adjustment-requests.md) |
 | `src/components/payroll/ValidationBreakdownTable.tsx` | component | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
-| `src/components/payroll/ValidationFullScreen.tsx` | component | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
+| `src/components/payroll/ValidationFullScreen.tsx` | component | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) · [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) |
 | `src/components/payroll/WizardCursorOverlay.tsx` | component | — **no doc** |
 | `src/components/payroll/issue-row-motion.tsx` | component | *this file* (§ `PabDisputeQueue.tsx` Motion) |
 | `src/components/paystub/PayStubModal.tsx` | component | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |

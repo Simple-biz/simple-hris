@@ -13,12 +13,13 @@ Shipped **2026-08-21**. Source: `src/lib/payroll/manual-validation.ts`,
 `src/components/payroll/ValidationBreakdownTable.tsx`,
 `src/components/payroll/ValidationFullScreen.tsx`.
 
-*2026-09-30:* the department rail, this table and its full-screen portal are now the
-**Final Pay** section of a `Final Pay | HRIS vs NPD` strip on the step. Final Pay is the
-default, and nothing on it changed. The other section is the NPD comparison
+*2026-09-30:* the department rail and this table are now the **Final Pay** section of a
+`Final Pay | HRIS vs NPD` strip on the step. Final Pay is the default, and nothing on it
+changed. The other section is the NPD comparison
 ([payroll-wizard-hris-vs-npd.md](./payroll-wizard-hris-vs-npd.md)), which reads the same
 Validation rows and writes nothing. The header, the summary cards and the Validation Checks
-sit outside the swap.
+sit outside the swap. The full-screen overlay carries **both** sections (§ Full screen is a
+portal, not a route).
 
 ## Key files
 
@@ -224,6 +225,38 @@ same Escape-to-close.
 
 Its only extra prop is `fillHeight`, which drops the table's `min(62vh, …)` cap — the inline
 step sits in a scrolling page, the overlay in a `min-h-0 flex-1` box.
+
+### It carries both sections (2026-09-30)
+
+Kane: *"please add this in the full screen view please"* — the HRIS vs NPD tab. The overlay
+now has the step's own `Final Pay | HRIS vs NPD` strip, and the same rules hold for both:
+
+- **One section state.** The overlay is handed `validationSection` and
+  `selectValidationSection`, the same state and the same setter as the step's strip. Opening,
+  switching inside it and closing can never disagree about which section the operator is on.
+  `VALIDATION_SECTIONS` is defined once, in `ValidationFullScreen.tsx`, so the two strips
+  cannot list different tabs.
+- **One overlay, mounted OUTSIDE the section swap.** Inside a section's branch, switching
+  sections from within the overlay would unmount the overlay itself. That is also why
+  step 7 computes the department grouping (`deptGroups`, `activeKey`, `filteredRows`) at the
+  top of the case, not inside the Final Pay branch. A source guard in
+  `hris-npd-render.test.ts` fails if the overlay moves back inside the swap, or if a second
+  `<ValidationFullScreen>` appears.
+- **Both sections mirror by construction.** Final Pay keeps the same `filteredRows` and the
+  same handlers. HRIS vs NPD gets the SAME `hrisNpdPanelProps` object the step's panel is
+  spread from, including its search and status chip (wizard state), so full screen opens on
+  the slice you were looking at and hands it back on close. The only extra prop is again
+  `fillHeight`.
+- **Final Pay-only chrome stays Final Pay-only.** The department rail (and its
+  all-validated dots), the header search and the footer subtotal render only in that
+  section. HRIS vs NPD brings its own search and its own sticky totals row. The header keeps
+  one height either way (`min-h-14`), so the strip does not jump on a switch.
+- **No groups is now reachable.** Before, the Full screen button lived inside the Final Pay
+  table, so the overlay could not open with no rows. It can now, from HRIS vs NPD. Its Final
+  Pay section then shows the step's own "No Hubstaff data. Complete Steps 1–3 first."
+- The overlay's strip has its own `layoutId` (`validation-fullscreen-section-indicator`),
+  because the step's strip stays mounted underneath and two indicators sharing an id would
+  fly the underline between the page and the overlay.
 
 ## Column arithmetic
 

@@ -18,6 +18,9 @@
  *     render uncoloured with "—" in Match, and the banner says why.
  *   - HRIS's figure is the dollar amount Payment Dispatch is sent, and the rate it was
  *     divided by is printed, because an HRIS-vs-NPD gap is an FX question first.
+ *   - The full-screen overlay renders THIS component from the SAME `HrisNpdPanelProps`
+ *     object as the step; only `fillHeight` differs. The search and chip are the wizard's
+ *     state, so both mounts show the same slice.
  */
 
 import React, { useDeferredValue, useMemo, useState } from 'react';
@@ -29,6 +32,7 @@ import {
   ChevronUp,
   ClipboardPaste,
   Loader2,
+  Maximize2,
   SearchX,
   X,
 } from 'lucide-react';
@@ -51,7 +55,13 @@ import {
   type NpdPasteParse,
 } from '@/lib/payroll/hris-npd-compare';
 
-type Props = {
+/**
+ * Everything the panel shows. The wizard builds ONE of these per render and hands the same
+ * object to the step's panel and to the full-screen overlay's (`ValidationFullScreen`), so
+ * the two mirror by construction — the rule the Final Pay table's full screen already keeps
+ * (payroll-wizard-manual-validation.md § Full screen is a portal).
+ */
+export type HrisNpdPanelProps = {
   pasteText: string;
   onPasteChange: (text: string) => void;
   parse: NpdPasteParse;
@@ -61,6 +71,20 @@ type Props = {
   /** Rows on the Validation step this week, for the empty state. */
   hrisPeople: number;
   periodLabel: string | null;
+  /** The search and the status chip live in the WIZARD, so opening full screen keeps
+   *  them and closing it hands them back — like Final Pay's search. Display only. */
+  search: string;
+  onSearchChange: (next: string) => void;
+  filter: HrisNpdFilter;
+  onFilterChange: (next: HrisNpdFilter) => void;
+};
+
+type Props = HrisNpdPanelProps & {
+  /** Fill the parent instead of capping the table at ~62vh — the full-screen overlay's
+   *  `min-h-0 flex-1` box, the same lever `ValidationBreakdownTable` takes. */
+  fillHeight?: boolean;
+  /** Opens the full-screen overlay. Omitted inside the overlay itself. */
+  onOpenFullScreen?: () => void;
 };
 
 const STATUS_LABEL: Record<HrisNpdStatus, string> = {
@@ -240,12 +264,16 @@ export default function HrisNpdComparison({
   fxRate,
   hrisPeople,
   periodLabel,
+  search,
+  onSearchChange,
+  filter,
+  onFilterChange,
+  fillHeight = false,
+  onOpenFullScreen,
 }: Props) {
   const reduceMotion = useReducedMotion();
   const [pasteOpen, setPasteOpen] = useState(() => pasteText.trim() === '');
   const [showSkipped, setShowSkipped] = useState(false);
-  const [filter, setFilter] = useState<HrisNpdFilter>('all');
-  const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
 
   const hasText = pasteText.trim() !== '';
@@ -265,9 +293,11 @@ export default function HrisNpdComparison({
   const chips: HrisNpdFilter[] = ['all', ...HRIS_NPD_STATUSES];
 
   return (
-    <div className="flex min-w-0 flex-col gap-4">
+    // `fillHeight` (the full-screen overlay): the column fills its box and only the table
+    // grows — everything above it keeps its natural height.
+    <div className={cn('flex min-w-0 flex-col gap-4', fillHeight && 'h-full min-h-0')}>
       {/* ── The paste ─────────────────────────────────────────────────────────── */}
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
         <button
           type="button"
           onClick={() => hasText && setPasteOpen((v) => !v)}
@@ -339,7 +369,7 @@ export default function HrisNpdComparison({
                       <span className="text-[12px] text-zinc-500 dark:text-zinc-400">dollars read from column {parse.amountColumn + 1}</span>
                     )}
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => { onPasteChange(''); setPasteOpen(true); setFilter('all'); }} className="text-zinc-500">
+                  <Button variant="ghost" size="sm" onClick={() => { onPasteChange(''); setPasteOpen(true); onFilterChange('all'); }} className="text-zinc-500">
                     Clear
                   </Button>
                 </div>
@@ -364,7 +394,7 @@ export default function HrisNpdComparison({
       </div>
 
       {hold?.kind === 'no_npd_rows' ? (
-        <div className="flex flex-col items-center rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-10 text-center dark:border-zinc-700 dark:bg-zinc-950/25">
+        <div className="flex shrink-0 flex-col items-center rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-10 text-center dark:border-zinc-700 dark:bg-zinc-950/25">
           <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600/10 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300">
             <ClipboardPaste className="h-5 w-5" aria-hidden />
           </div>
@@ -380,7 +410,7 @@ export default function HrisNpdComparison({
       ) : (
         <>
           {/* ── The rate, the verdict hold, the chips ───────────────────────────── */}
-          <div className="flex flex-col gap-3">
+          <div className="flex shrink-0 flex-col gap-3">
             {fxRate > 0 && (
               <p className="text-[12px] text-zinc-600 dark:text-zinc-400">
                 HRIS&apos;s dollar figure is what Payment Dispatch will be sent: final pay ÷{' '}
@@ -402,7 +432,7 @@ export default function HrisNpdComparison({
                     <button
                       key={f}
                       type="button"
-                      onClick={() => setFilter(f)}
+                      onClick={() => onFilterChange(f)}
                       aria-pressed={active}
                       disabled={disabled}
                       className={cn(
@@ -447,14 +477,14 @@ export default function HrisNpdComparison({
                 <Input
                   placeholder="Search by email or name…"
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => onSearchChange(e.target.value)}
                   aria-label="Search HRIS vs NPD"
                   className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
                 />
                 {search && (
                   <button
                     type="button"
-                    onClick={() => setSearch('')}
+                    onClick={() => onSearchChange('')}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
                     aria-label="Clear search"
                   >
@@ -466,8 +496,13 @@ export default function HrisNpdComparison({
           </div>
 
           {/* ── The table ───────────────────────────────────────────────────────── */}
-          <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50/90 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
+          <div
+            className={cn(
+              'overflow-hidden rounded-xl border border-zinc-200 bg-white/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/25',
+              fillHeight && 'flex min-h-0 flex-1 flex-col',
+            )}
+          >
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-zinc-200 bg-zinc-50/90 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/50">
               <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                 HRIS vs NPD
                 {narrowed && (
@@ -476,13 +511,28 @@ export default function HrisNpdComparison({
                   </span>
                 )}
               </span>
-              {periodLabel && (
-                <span className="max-w-full truncate font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{periodLabel}</span>
-              )}
+              <span className="flex min-w-0 items-center gap-2">
+                {/* The overlay's header already names the week. */}
+                {periodLabel && !fillHeight && (
+                  <span className="max-w-full truncate font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{periodLabel}</span>
+                )}
+                {/* The same button, in the same place, as the Final Pay table's. */}
+                {onOpenFullScreen && (
+                  <button
+                    type="button"
+                    onClick={onOpenFullScreen}
+                    title="Open this table full screen"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                  >
+                    <Maximize2 className="h-3 w-3" aria-hidden />
+                    Full screen
+                  </button>
+                )}
+              </span>
             </div>
 
             {visible.length === 0 ? (
-              <div className="flex flex-col items-center px-6 py-10 text-center">
+              <div className={cn('flex flex-col items-center px-6 py-10 text-center', fillHeight && 'flex-1 justify-center')}>
                 <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                   <SearchX className="h-5 w-5" aria-hidden />
                 </div>
@@ -492,7 +542,7 @@ export default function HrisNpdComparison({
                     {deferredSearch.trim()}
                   </span>
                 )}
-                <Button variant="outline" size="sm" className="mt-3 h-7 text-xs" onClick={() => { setSearch(''); setFilter('all'); }}>
+                <Button variant="outline" size="sm" className="mt-3 h-7 text-xs" onClick={() => { onSearchChange(''); onFilterChange('all'); }}>
                   Show every row
                 </Button>
               </div>
@@ -500,7 +550,10 @@ export default function HrisNpdComparison({
               // `relative` so the sr-only labels (absolutely positioned) are clipped by this
               // scroller too — unpositioned, they escape it from the off-screen Match
               // column and widen the whole page on a phone.
-              <div className="relative overflow-auto [scrollbar-gutter:stable]" style={{ maxHeight: 'min(62vh, calc(100dvh - 24rem))' }}>
+              <div
+                className={cn('relative overflow-auto [scrollbar-gutter:stable]', fillHeight && 'min-h-0 flex-1')}
+                style={fillHeight ? undefined : { maxHeight: 'min(62vh, calc(100dvh - 24rem))' }}
+              >
                 {/* The minimum width sits on a wrapper, never on the table: browsers ignore
                     `min-width` on a fixed-layout table, which then shrinks to a phone's
                     width and the three fixed columns crush Work Email to nothing.

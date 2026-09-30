@@ -1,10 +1,18 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import HrisNpdComparison from '@/components/payroll/HrisNpdComparison';
-import { compareHrisNpd, parseNpdPaste, type CompareHrisNpdInput, type HrisCompareInput } from './hris-npd-compare';
+import {
+  compareHrisNpd,
+  parseNpdPaste,
+  type CompareHrisNpdInput,
+  type HrisCompareInput,
+  type HrisNpdFilter,
+} from './hris-npd-compare';
 
 // ── HRIS vs NPD, as rendered (Kane, 2026-09-30) ──────────────────────────────
 //
@@ -20,7 +28,16 @@ function hris(email: string, php: number): HrisCompareInput {
   return { email, name: email.split('@')[0], php, dispatchable: true, excluded: false };
 }
 
-function render(paste: string, over: Partial<CompareHrisNpdInput> = {}): string {
+/** How the panel is mounted: the display-only search / chip (wizard state in the app) and
+ *  the full-screen levers. */
+type Mount = {
+  search?: string;
+  filter?: HrisNpdFilter;
+  fillHeight?: boolean;
+  onOpenFullScreen?: () => void;
+};
+
+function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: Mount = {}): string {
   const parse = parseNpdPaste(paste);
   const comparison = compareHrisNpd({
     hrisRows: [
@@ -42,6 +59,12 @@ function render(paste: string, over: Partial<CompareHrisNpdInput> = {}): string 
       fxRate: over.fxRate ?? FX,
       hrisPeople: 3,
       periodLabel: 'hubstaff_2026-09-20_to_2026-09-26.csv',
+      search: mount.search ?? '',
+      onSearchChange: () => {},
+      filter: mount.filter ?? 'all',
+      onFilterChange: () => {},
+      fillHeight: mount.fillHeight,
+      onOpenFullScreen: mount.onOpenFullScreen,
     }),
   );
 }
@@ -131,5 +154,82 @@ describe('HRIS vs NPD — rendered', () => {
     const html = render('');
     assert.doesNotMatch(html, /<table/);
     assert.match(html, /Paste NPD(?:&#x27;|')s figures to compare/);
+  });
+});
+
+// ── The full-screen view (Kane, 2026-09-30: "please add this in the full screen view") ──
+//
+// The overlay renders THIS component from the SAME props object as the step, plus
+// `fillHeight` — the rule the Final Pay table's full screen already keeps
+// (payroll-wizard-manual-validation.md § Full screen is a portal). The search and the
+// chip are the wizard's, so both mounts show the same slice.
+
+describe('HRIS vs NPD — full screen', () => {
+  it('on the step the table is capped at ~62vh; in the overlay it fills the box instead', () => {
+    const inline = render(PASTE);
+    assert.match(inline, /max-height:min\(62vh, calc\(100dvh - 24rem\)\)/);
+    const full = render(PASTE, {}, { fillHeight: true });
+    assert.doesNotMatch(full, /max-height/);
+    assert.match(full, /class="relative overflow-auto \[scrollbar-gutter:stable\] min-h-0 flex-1"/);
+    assert.match(full, /^<div class="flex min-w-0 flex-col gap-4 h-full min-h-0">/);
+  });
+
+  it('offers "Full screen" on the step, like the Final Pay table — and not inside the overlay', () => {
+    assert.match(render(PASTE, {}, { onOpenFullScreen: () => {} }), /title="Open this table full screen"/);
+    assert.doesNotMatch(render(PASTE, {}, { fillHeight: true }), /Open this table full screen/);
+  });
+
+  it('the overlay does not repeat the week — its own header carries it', () => {
+    assert.match(render(PASTE), /hubstaff_2026-09-20_to_2026-09-26\.csv<\/span>/);
+    assert.doesNotMatch(render(PASTE, {}, { fillHeight: true }), /hubstaff_2026-09-20_to_2026-09-26\.csv<\/span>/);
+  });
+
+  it('the chip and the search come from the mount, so step and overlay show the same slice', () => {
+    const onlyMismatch = render(PASTE, {}, { filter: 'mismatch', fillHeight: true });
+    assert.ok(onlyMismatch.includes('lorar@simple.biz'));
+    assert.ok(!onlyMismatch.includes('>kaner@simple.biz<'));
+    assert.match(onlyMismatch, /showing 1 of 4/);
+    const searched = render(PASTE, {}, { search: 'npdonly' });
+    assert.ok(searched.includes('npdonly@simple.biz'));
+    assert.ok(!searched.includes('>lorar@simple.biz<'));
+    // …and the totals still cover every row.
+    assert.match(searched, /Totals · 4 people/);
+  });
+
+  it('a held chip still falls back to All while verdicts cannot be given', () => {
+    const html = render(PASTE, { hrisState: 'pending' }, { filter: 'mismatch' });
+    assert.ok(html.includes('kaner@simple.biz') && html.includes('npdonly@simple.biz'));
+  });
+});
+
+describe('HRIS vs NPD — the wizard mounts ONE overlay for both sections (source guard)', () => {
+  const src = fs
+    .readFileSync(path.join(process.cwd(), 'src/components/PayrollWizard.tsx'), 'utf8')
+    .replace(/\r\n/g, '\n');
+
+  it('there is exactly one full-screen overlay', () => {
+    assert.equal(src.split('<ValidationFullScreen').length - 1, 1);
+  });
+
+  it('it is mounted AFTER the section swap closes, so switching sections inside it cannot unmount it', () => {
+    const swapBranch = src.indexOf("validationSection === 'hris_vs_npd' ? (");
+    assert.ok(swapBranch > 0, 'section swap not found');
+    const swapClose = src.indexOf('</AnimatePresence>', swapBranch);
+    const overlay = src.indexOf('<ValidationFullScreen', swapBranch);
+    assert.ok(swapClose > 0 && overlay > swapClose, 'ValidationFullScreen must render outside the section swap');
+  });
+
+  it('step and overlay are handed the SAME panel props object and the SAME section state', () => {
+    assert.match(src, /<HrisNpdComparison\n\s+\{\.\.\.hrisNpdPanelProps\}/);
+    assert.match(src, /hrisNpd=\{hrisNpdPanelProps\}/);
+    assert.match(src, /section=\{validationSection\}\n\s+onSelectSection=\{selectValidationSection\}/);
+    assert.match(src, /onClick=\{\(\) => selectValidationSection\(sec\.key\)\}/);
+  });
+
+  it('the sections are defined once — in ValidationFullScreen.tsx — never again in the wizard', () => {
+    assert.doesNotMatch(src, /const VALIDATION_SECTIONS\s*=/);
+    const overlaySrc = fs.readFileSync(path.join(process.cwd(), 'src/components/payroll/ValidationFullScreen.tsx'), 'utf8');
+    assert.match(overlaySrc, /export const VALIDATION_SECTIONS = \[/);
+    assert.match(overlaySrc, /<HrisNpdComparison \{\.\.\.hrisNpd\} fillHeight \/>/);
   });
 });
