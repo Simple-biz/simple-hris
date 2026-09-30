@@ -27,7 +27,7 @@
  *     state, so both mounts show the same slice.
  */
 
-import React, { useDeferredValue, useMemo, useState } from 'react';
+import React, { useDeferredValue, useEffect, useId, useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
@@ -47,9 +47,11 @@ import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/contractor-currency';
 import { formatPHP } from '@/lib/format-php';
 import {
+  DEFAULT_MATCH_TOLERANCE_CENTS,
   HRIS_NPD_STATUSES,
   HRIS_SOURCE_LABELS,
-  MATCH_TOLERANCE_CENTS,
+  MAX_MATCH_TOLERANCE_CENTS,
+  parseToleranceCents,
   centsToDollars,
   filterHrisNpdRows,
   type HrisNpdComparison as Comparison,
@@ -90,6 +92,14 @@ export type HrisNpdPanelProps = {
    */
   step: HrisNpdStep;
   onStepChange: (next: HrisNpdStep) => void;
+  /**
+   * How many cents HRIS and NPD may be off by and still match (the output's "off by" box,
+   * Kane 2026-09-30). The WIZARD keeps it, so step and overlay agree. Never saved: it starts
+   * at `DEFAULT_MATCH_TOLERANCE_CENTS` (3) on every load. The comparison is already built
+   * with it; this is only what the box shows.
+   */
+  toleranceCents: number;
+  onToleranceChange: (next: number) => void;
   /** The search and the status chip live in the WIZARD, so opening full screen keeps
    *  them and closing it hands them back — like Final Pay's search. Display only. */
   search: string;
@@ -149,10 +159,13 @@ const ComparisonRow = React.memo(function ComparisonRow({
   r,
   fxRate,
   loading,
+  toleranceCents,
 }: {
   r: HrisNpdRow;
   fxRate: number;
   loading: boolean;
+  /** The tolerance the verdict was given with (`comparison.toleranceCents`). */
+  toleranceCents: number;
 }) {
   const tone = r.status === 'match' ? 'match' : r.status == null ? 'held' : 'problem';
   // Ink comes from the row's own ground (ui-standards §15.3), never grey on a tint.
@@ -239,13 +252,13 @@ const ComparisonRow = React.memo(function ComparisonRow({
         {r.status == null ? (
           <span className="text-zinc-400 dark:text-zinc-500" aria-label="Not judged yet">—</span>
         ) : r.status === 'match' ? (
-          // Within MATCH_TOLERANCE_CENTS still counts as a match (Kane, 2026-09-30), but a
+          // Within the tolerance still counts as a match (Kane, 2026-09-30), but a
           // non-zero difference stays on screen rather than being erased by the green.
           <span
             className="inline-flex flex-col items-center gap-0.5 text-emerald-700 dark:text-emerald-300"
             title={
               r.deltaCents
-                ? `Within ${MATCH_TOLERANCE_CENTS}¢, so counted as a match — NPD is ${usd(Math.abs(r.deltaCents))} ${r.deltaCents > 0 ? 'higher' : 'lower'}`
+                ? `Within ${toleranceCents}¢, so counted as a match — NPD is ${usd(Math.abs(r.deltaCents))} ${r.deltaCents > 0 ? 'higher' : 'lower'}`
                 : 'HRIS and NPD agree to the cent'
             }
           >
@@ -292,6 +305,76 @@ function HoldBanner({ hold }: { hold: HrisNpdHold }) {
     <div role="status" className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
       <span>{text}</span>
+    </div>
+  );
+}
+
+// ─── The "off by" box ──────────────────────────────────────────────────────────
+
+/**
+ * How many cents HRIS and NPD may be off by and still count as a match. Kane, 2026-09-30:
+ * "Lets add a user input at the top please after the load output where the user can set
+ * the off by how many cents". The default is 3, his number from the same day.
+ *
+ * Only a usable value is ever applied (`parseToleranceCents`: whole cents, 0–99). Typing
+ * something else marks the box and changes nothing, and leaving the box puts back the value
+ * the table is actually using, so the box can never show a number the verdicts don't use.
+ */
+function ToleranceControl({ value, onChange }: { value: number; onChange: (next: number) => void }) {
+  const id = useId();
+  const hintId = useId();
+  const [draft, setDraft] = useState(String(value));
+  // The other mount (step ↔ full screen) or Reset can move the value; follow it.
+  useEffect(() => setDraft(String(value)), [value]);
+  const invalid = parseToleranceCents(draft) == null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-700 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+      <label htmlFor={id} className="font-medium">
+        Count as a match when HRIS and NPD are off by at most
+      </label>
+      <span className="inline-flex items-center gap-1">
+        <input
+          id={id}
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={MAX_MATCH_TOLERANCE_CENTS}
+          step={1}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            const next = parseToleranceCents(e.target.value);
+            if (next != null) onChange(next);
+          }}
+          onBlur={() => setDraft(String(value))}
+          aria-invalid={invalid || undefined}
+          aria-describedby={hintId}
+          className={cn(
+            'h-8 w-16 rounded-md border bg-white px-2 text-right font-mono text-xs tabular-nums text-zinc-900 outline-none transition focus:ring-2 dark:bg-zinc-900 dark:text-zinc-100',
+            invalid
+              ? 'border-rose-400 focus:ring-rose-200 dark:border-rose-700 dark:focus:ring-rose-900/40'
+              : 'border-zinc-300 focus:border-violet-400 focus:ring-violet-200 dark:border-zinc-700 dark:focus:border-violet-600 dark:focus:ring-violet-900/40',
+          )}
+        />
+        <span className="font-medium">¢</span>
+      </span>
+      <span id={hintId} className={cn('text-[11px]', invalid ? 'text-rose-700 dark:text-rose-400' : 'text-zinc-500 dark:text-zinc-400')}>
+        {invalid
+          ? `Whole cents from 0 to ${MAX_MATCH_TOLERANCE_CENTS}. Still using ${value}¢`
+          : value === 0
+            ? 'Only an exact match counts'
+            : `Up to ${usd(value)} either way`}
+      </span>
+      {value !== DEFAULT_MATCH_TOLERANCE_CENTS && (
+        <button
+          type="button"
+          onClick={() => onChange(DEFAULT_MATCH_TOLERANCE_CENTS)}
+          className="font-medium text-violet-700 hover:underline dark:text-violet-300"
+        >
+          Reset to {DEFAULT_MATCH_TOLERANCE_CENTS}¢
+        </button>
+      )}
     </div>
   );
 }
@@ -372,6 +455,8 @@ export default function HrisNpdComparison({
   periodLabel,
   step,
   onStepChange,
+  toleranceCents,
+  onToleranceChange,
   search,
   onSearchChange,
   filter,
@@ -509,8 +594,10 @@ export default function HrisNpdComparison({
         />
       ) : (
         <>
-          {/* ── The rate, the verdict hold, the chips, the search ────────────────── */}
+          {/* ── The "off by" box, the rate, the verdict hold, the chips, the search ── */}
           <div className="flex shrink-0 flex-col gap-3">
+            {/* At the top of the output, first thing after Load output (Kane, 2026-09-30). */}
+            <ToleranceControl value={toleranceCents} onChange={onToleranceChange} />
             {fxRate > 0 && (
               <p className="text-[12px] text-zinc-600 dark:text-zinc-400">
                 HRIS&apos;s dollar figure is what Payment Dispatch will be sent: final pay ÷{' '}
@@ -683,7 +770,7 @@ export default function HrisNpdComparison({
                   </thead>
                   <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
                     {visible.map((r) => (
-                      <ComparisonRow key={r.key} r={r} fxRate={fxRate} loading={loading} />
+                      <ComparisonRow key={r.key} r={r} fxRate={fxRate} loading={loading} toleranceCents={comparison.toleranceCents} />
                     ))}
                   </tbody>
                   {/* Whole-comparison totals: a search or a chip never changes them

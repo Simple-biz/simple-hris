@@ -62,6 +62,9 @@ function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: M
       periodLabel: 'hubstaff_2026-09-20_to_2026-09-26.csv',
       step: mount.step ?? 'output',
       onStepChange: () => {},
+      // The box shows the SAME tolerance the verdicts were given with, as in the wizard.
+      toleranceCents: comparison.toleranceCents,
+      onToleranceChange: () => {},
       search: mount.search ?? '',
       onSearchChange: () => {},
       filter: mount.filter ?? 'all',
@@ -245,6 +248,28 @@ describe('HRIS vs NPD — step 1 NPD Figures, then step 2 Output', () => {
     assert.match(railOutput, /disabled=""/);
   });
 
+  it('the "off by" box is at the TOP of the output (first after Load output), set to 3 by default', () => {
+    const html = render(PASTE, {}, { step: 'output' });
+    const box = html.indexOf('Count as a match when HRIS and NPD are off by at most');
+    assert.ok(box > 0, 'no off-by box');
+    assert.ok(box < html.indexOf('per $1') && box < html.indexOf('<table'), 'the box must sit above the rate line and the table');
+    assert.match(html, /<input[^>]*type="number"[^>]*min="0"[^>]*max="99"[^>]*step="1"[^>]*value="3"/);
+    assert.match(html, /Up to \$0\.03 either way/);
+    assert.doesNotMatch(html, /Reset to 3¢/);
+  });
+
+  it('the box is on the output only, never on step 1', () => {
+    assert.doesNotMatch(render(PASTE, {}, { step: 'input' }), /off by at most/);
+  });
+
+  it('a non-default setting shows the value the verdicts use, a Reset, and drives the "within N¢" wording', () => {
+    const html = render('kaner@simple.biz\t250.01', { toleranceCents: 1 });
+    assert.match(html, /value="1"/);
+    assert.match(html, /Reset to 3¢/);
+    assert.match(rowFor(html, 'kaner@simple.biz'), /Within 1¢, so counted as a match/);
+    assert.match(render('kaner@simple.biz\t250.00', { toleranceCents: 0 }), /Only an exact match counts/);
+  });
+
   it('the output has a full-width search bar directly above the table', () => {
     const html = render(PASTE, {}, { step: 'output' });
     const search = html.indexOf('aria-label="Search HRIS vs NPD"');
@@ -322,6 +347,12 @@ describe('HRIS vs NPD — the wizard mounts ONE overlay for both sections (sourc
     assert.match(src, /hrisNpd=\{hrisNpdPanelProps\}/);
     assert.match(src, /section=\{validationSection\}\n\s+onSelectSection=\{selectValidationSection\}/);
     assert.match(src, /onClick=\{\(\) => selectValidationSection\(sec\.key\)\}/);
+  });
+
+  it('the "off by" setting is ONE wizard state: it builds the comparison and fills the box', () => {
+    assert.match(src, /useState<number>\(DEFAULT_MATCH_TOLERANCE_CENTS\)/);
+    assert.match(src, /toleranceCents: hrisNpdTolerance,\n\s+\}\),/);
+    assert.match(src, /toleranceCents: hrisNpdTolerance,\n\s+onToleranceChange: setHrisNpdTolerance,/);
   });
 
   it('the step rides in the SAME week-stamped state as the paste, so another week starts on step 1', () => {

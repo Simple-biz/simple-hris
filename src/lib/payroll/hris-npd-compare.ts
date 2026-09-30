@@ -19,11 +19,12 @@
  *    `amount_usd` expression from the wizard's Send to Payment Dispatch, verbatim
  *    (`Math.round((php / fx) * 100) / 100`), applied per HRIS row and then summed — the
  *    test file pins that the wizard still stages it that way.
- * 3. **Match means within 3 cents** (`MATCH_TOLERANCE_CENTS`, Kane, 2026-09-30: "make it
- *    match if the difference is just 3 cents"). Inclusive: |NPD − HRIS| ≤ $0.03 is a match,
- *    $0.04 is not. It replaced "equal to the cent". The 2026-08-18 NPD gaps ($0.81–$2.68)
- *    and that week's $0.07 residue are still mismatches under it. A within-tolerance match
- *    keeps its `deltaCents`, so the difference is still shown, never erased.
+ * 3. **Match means within N cents, inclusive: N is the operator's, default 3**
+ *    (`toleranceCents`, `DEFAULT_MATCH_TOLERANCE_CENTS`; Kane, 2026-09-30: first "make it
+ *    match if the difference is just 3 cents", then a box "where the user can set the off by
+ *    how many cents"). At the default, |NPD − HRIS| ≤ $0.03 is a match and $0.04 is not, so
+ *    the 2026-08-18 NPD gaps ($0.81–$2.68) and that week's $0.07 residue are mismatches. A
+ *    within-tolerance match keeps its `deltaCents`, so the difference is shown, never erased.
  * 4. **No verdict before the figures can be judged.** While any input behind the dollar
  *    figure is loading, has failed, or the cycle rate is still 0, every row keeps its
  *    figures and loses its verdict (`status: null`), and `hold` says why. A red row painted
@@ -305,6 +306,9 @@ export interface CompareHrisNpdInput {
   hrisState: PayStubFieldState;
   /** The inputs that failed, named in the banner. Read only when `hrisState` is `unavailable`. */
   unavailableSources?: readonly PayStubSourceKey[];
+  /** The operator's "off by" setting, in whole cents (0–99). Anything unusable, or absent,
+   *  means `DEFAULT_MATCH_TOLERANCE_CENTS`. */
+  toleranceCents?: number;
   // There is deliberately NO alias / master-list bridge here. Kane, 2026-09-30: "We are not
   // connecting this with the personal email please we are connecting this to the work
   // email". A line reaches an HRIS row by its work email, exactly, or not at all.
@@ -318,11 +322,27 @@ export type HrisNpdStatus = 'match' | 'mismatch' | 'not_in_hris' | 'not_in_npd';
 export const HRIS_NPD_STATUSES: readonly HrisNpdStatus[] = ['match', 'mismatch', 'not_in_hris', 'not_in_npd'];
 
 /**
- * The most NPD and HRIS may differ by and still be a match, in cents, inclusive.
- * Kane, 2026-09-30: "now lets make it match if the difference is just 3 cents". It was 0
- * ("equal to the cent") before that. A match inside it still carries its `deltaCents`.
+ * The DEFAULT for how far NPD and HRIS may differ and still be a match, in cents, inclusive.
+ * Kane, 2026-09-30: "now lets make it match if the difference is just 3 cents" (it was 0,
+ * "equal to the cent", before that). Then, the same day: "Lets add a user input at the top
+ * please after the load output where the user can set the off by how many cents". So the
+ * operator sets it on the output (`CompareHrisNpdInput.toleranceCents`), this is what it
+ * starts at, and nothing saves the choice. A match inside it still carries its `deltaCents`.
  */
-export const MATCH_TOLERANCE_CENTS = 3;
+export const DEFAULT_MATCH_TOLERANCE_CENTS = 3;
+
+/** The highest the output's "off by" box accepts: whole cents, under a dollar. */
+export const MAX_MATCH_TOLERANCE_CENTS = 99;
+
+/**
+ * A usable tolerance, or null. Whole cents from 0 to `MAX_MATCH_TOLERANCE_CENTS` only. A
+ * fraction, a negative, NaN or anything above the cap is refused, never rounded or clamped
+ * into range, so the box only ever applies exactly what the operator typed.
+ */
+export function parseToleranceCents(raw: unknown): number | null {
+  const n = typeof raw === 'string' ? (raw.trim() === '' ? NaN : Number(raw.trim())) : raw;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= MAX_MATCH_TOLERANCE_CENTS ? n : null;
+}
 
 export interface HrisNpdRow {
   /** Stable React key. */
@@ -354,7 +374,8 @@ export interface HrisNpdRow {
   /** Null while verdicts are held (see `HrisNpdComparison.hold`). */
   status: HrisNpdStatus | null;
   /** NPD − HRIS, in cents, when both figures exist. Non-zero on a `match` when the two are
-   *  within `MATCH_TOLERANCE_CENTS` but not equal — the table still shows it. */
+   *  within the tolerance (`HrisNpdComparison.toleranceCents`) but not equal — the table
+   *  still shows it. */
   deltaCents: number | null;
   /** PHP per $1 that NPD's figure implies against HRIS's pesos. Set on a `mismatch` only. */
   impliedNpdRate: number | null;
@@ -396,6 +417,8 @@ export interface HrisNpdComparison {
   leftOut: HrisNpdLeftOut[];
   /** Null while verdicts are held. */
   counts: Record<HrisNpdStatus, number> | null;
+  /** The tolerance these verdicts were given with — what the table says "within N¢" by. */
+  toleranceCents: number;
   /** Whole-comparison sums over `rows`. They never follow a filter or a search. */
   totals: {
     /** Null when there is no rate. */
@@ -483,12 +506,14 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
   const hold = resolveHold(input);
   const judged = hold === null;
   const fxOk = input.fxRate > 0;
+  const toleranceCents = parseToleranceCents(input.toleranceCents) ?? DEFAULT_MATCH_TOLERANCE_CENTS;
 
   if (input.npdRows.length === 0) {
     return {
       rows: [],
       leftOut: [],
       counts: null,
+      toleranceCents,
       totals: { hrisCents: null, npdCents: 0, people: 0 },
       hold,
     };
@@ -574,7 +599,7 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
       status =
         n == null
           ? 'not_in_npd'
-          : deltaCents != null && Math.abs(deltaCents) <= MATCH_TOLERANCE_CENTS
+          : deltaCents != null && Math.abs(deltaCents) <= toleranceCents
             ? 'match'
             : 'mismatch';
     }
@@ -658,6 +683,7 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
     rows,
     leftOut,
     counts,
+    toleranceCents,
     totals: { hrisCents: hrisTotal, npdCents: npdTotal, people: rows.length },
     hold,
   };

@@ -376,6 +376,7 @@ import {
 import HrisNpdComparison, { type HrisNpdPanelProps, type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
+  DEFAULT_MATCH_TOLERANCE_CENTS,
   parseNpdPaste,
   type HrisCompareInput,
   type HrisNpdFilter,
@@ -2861,6 +2862,9 @@ export default function PayrollWizard({
    *  way Final Pay's `validationSearch` is shared. Display only. */
   const [hrisNpdSearch, setHrisNpdSearch] = useState('');
   const [hrisNpdFilter, setHrisNpdFilter] = useState<HrisNpdFilter>('all');
+  /** HRIS vs NPD's "off by at most N¢" setting (Kane, 2026-09-30). Wizard state so step and
+   *  full screen agree; never saved, so every load starts at the default 3¢. */
+  const [hrisNpdTolerance, setHrisNpdTolerance] = useState<number>(DEFAULT_MATCH_TOLERANCE_CENTS);
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
     work_email: string;
@@ -10300,6 +10304,8 @@ export default function PayrollWizard({
         // Joined on the WORK email only — deliberately no master-list / personal-email
         // bridge (Kane, 2026-09-30). See hris-npd-compare.ts rule 6.
         pausedEmails: npdPausedEmails,
+        // The output's "off by at most N¢" box.
+        toleranceCents: hrisNpdTolerance,
       }),
     [
       npdHrisRows,
@@ -10308,6 +10314,7 @@ export default function PayrollWizard({
       hrisNpdUsdState,
       paystubSourceStates,
       npdPausedEmails,
+      hrisNpdTolerance,
     ],
   );
 
@@ -19446,6 +19453,8 @@ export default function PayrollWizard({
           periodLabel: calcSourceFile,
           step: npdStep,
           onStepChange: setNpdStep,
+          toleranceCents: hrisNpdTolerance,
+          onToleranceChange: setHrisNpdTolerance,
           search: hrisNpdSearch,
           onSearchChange: setHrisNpdSearch,
           filter: hrisNpdFilter,

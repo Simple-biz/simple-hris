@@ -10,7 +10,9 @@ import {
   parseUsdCell,
   stagedUsdCents,
   HRIS_SOURCE_LABELS,
-  MATCH_TOLERANCE_CENTS,
+  DEFAULT_MATCH_TOLERANCE_CENTS,
+  MAX_MATCH_TOLERANCE_CENTS,
+  parseToleranceCents,
   type CompareHrisNpdInput,
   type HrisCompareInput,
 } from './hris-npd-compare';
@@ -222,9 +224,41 @@ describe('compareHrisNpd', () => {
     assert.deepEqual(c.counts, { match: 1, mismatch: 0, not_in_hris: 0, not_in_npd: 0 });
   });
 
-  // Kane, 2026-09-30: "now lets make it match if the difference is just 3 cents".
-  test('the tolerance is 3 cents', () => {
-    assert.equal(MATCH_TOLERANCE_CENTS, 3);
+  // Kane, 2026-09-30: "now lets make it match if the difference is just 3 cents", then "a user
+  // input … where the user can set the off by how many cents". 3 is the default.
+  test('the default tolerance is 3 cents, and the result says which tolerance it used', () => {
+    assert.equal(DEFAULT_MATCH_TOLERANCE_CENTS, 3);
+    assert.equal(MAX_MATCH_TOLERANCE_CENTS, 99);
+    const c = run({ hrisRows: [hris('a@simple.biz', phpFor(1))], paste: 'a@simple.biz\t1' });
+    assert.equal(c.toleranceCents, 3);
+  });
+
+  test('the operator sets it: at 1¢ a 2¢ gap is a mismatch; at 0 only exact counts; at 10 the 7¢ residue matches', () => {
+    const at = (tol: number, npd: string) =>
+      run({ hrisRows: [hris('a@simple.biz', phpFor(250))], paste: `a@simple.biz\t${npd}`, toleranceCents: tol });
+    assert.equal(at(1, '250.02').rows[0].status, 'mismatch');
+    assert.equal(at(1, '250.01').rows[0].status, 'match');
+    assert.equal(at(0, '250.01').rows[0].status, 'mismatch');
+    assert.equal(at(0, '250.00').rows[0].status, 'match');
+    assert.equal(at(10, '250.07').rows[0].status, 'match');
+    assert.equal(at(10, '250.07').toleranceCents, 10);
+  });
+
+  test('an unusable tolerance is never applied — the default is used and reported', () => {
+    for (const bad of [-1, 1.5, 100, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const c = run({ hrisRows: [hris('a@simple.biz', phpFor(250))], paste: 'a@simple.biz\t250.03', toleranceCents: bad });
+      assert.equal(c.toleranceCents, 3, String(bad));
+      assert.equal(c.rows[0].status, 'match', String(bad));
+    }
+  });
+
+  test('parseToleranceCents: whole cents 0–99 only, never rounded or clamped into range', () => {
+    for (const [raw, want] of [[0, 0], [3, 3], [99, 99], ['7', 7], [' 12 ', 12]] as const) {
+      assert.equal(parseToleranceCents(raw), want, JSON.stringify(raw));
+    }
+    for (const raw of [-1, 100, 1.5, '1.5', '', '  ', 'abc', '-2', null, undefined, Number.NaN]) {
+      assert.equal(parseToleranceCents(raw), null, JSON.stringify(raw));
+    }
   });
 
   test('up to 3 cents either way is a MATCH, and the difference is kept, not erased', () => {

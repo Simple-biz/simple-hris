@@ -3,7 +3,8 @@
 A **HRIS vs NPD** tab on the Payroll Wizard's Validation step (7), in two steps. **Step 1, NPD
 Figures**: Accounting pastes the NPD sheet's work emails and dollar figures. **Step 2, Output**
 (opened with **Load output**, the input hidden): every person appears once with HRIS's dollar
-figure beside NPD's. A **green** row with a check means they agree within 3 cents. A **red** row
+figure beside NPD's. A **green** row with a check means they agree within N cents (N is set at the
+top of the output, default 3). A **red** row
 with an ✗ and the difference means they don't. A red **Not in HRIS** / **Not in NPD** means one
 side has nobody at that address. Nobody on either side is ever dropped, except people configured
 not to be paid this week, who are left out and listed. Display only: it writes
@@ -71,7 +72,7 @@ mismatches"*, then *"add a search bar in the output"*. So the tab is a two-step 
 | **Step 1 (`NpdFiguresStep`) is the input**: instructions, the paste box, what was read, **every refused line**, Clear, and **Load output** | The input has one place. Nothing about it shows on the output |
 | **Load output needs at least one readable line.** With none, the button and the rail's Output are disabled, and asking for step 2 still shows step 1 | There is no output of nothing ("absence is not zero") |
 | **Step 2 hides the input.** Its side of the rail shows `NPD Figures · N lines read`, the **skipped count in rose** when there are refusals, and **Edit** (back to step 1, paste intact) | Hiding the input must never hide a refused line |
-| **Load output opens a fresh output**: chip back to All, search cleared. Moving along the rail keeps them | A new paste is seen whole. A quick look back at step 1 does not lose your filter |
+| **Load output opens a fresh output**: chip back to All, search cleared. Moving along the rail keeps them. The "off by" setting is never reset by either (§ Match) | A new paste is seen whole. A quick look back at step 1 does not lose your filter. The tolerance is a setting, not part of a paste |
 | **The step is wizard state, stamped with the week**: it rides in `npdPaste = {sourceFile, text, step}`. Another week, or an emptied paste, is back on step 1 | Otherwise a paste typed for the next week would flip straight to the output mid-typing. The step's panel and the full-screen overlay read the same state (it is in `hrisNpdPanelProps`), so they are always on the same step |
 | The output opens on **All**, every row, with the mismatches in red. The **Mismatch** chip narrows to just them | Kane's spec is the whole list, green and red. Filtering is one click and never narrows the totals |
 | In full screen, step 1's paste box grows into the overlay's height | Big pastes get room. The rail and the rules are the same panel's |
@@ -179,22 +180,32 @@ So:
   throughout (MV and Mark Paid key on it: `payroll-wizard-manual-validation.md` § The lookup key is
   `row.id`).
 
-## Match means within 3 cents
+## Match means within N cents, and the operator sets N
 
-`|npdCents − hrisCents| ≤ MATCH_TOLERANCE_CENTS` (**3**, inclusive). So $0.03 either way is a
-match and $0.04 is a mismatch. Kane, 2026-09-30: *"now lets make it match if the difference is just
-3 cents"*.
+`|npdCents − hrisCents| ≤ N`, inclusive. N is set in the output's **"off by" box**: *"Count as a
+match when HRIS and NPD are off by at most [N] ¢"*, the first thing at the top of step 2. The
+default is **3** (`DEFAULT_MATCH_TOLERANCE_CENTS`). Kane, 2026-09-30, first *"now lets make it match
+if the difference is just 3 cents"*, then *"Lets add a user input at the top please after the load
+output where the user can set the off by how many cents"*.
 
-That replaced the first build's **equal to the cent, no tolerance** (the brief's CHOSEN 5, which
-named a tolerance as the other way). The measured cases behind the old rule still read the same
-under the new one: the 2026-08-18 gaps ($0.81–$2.68) and that week's $0.07 residue (a sub-minute
-Hubstaff re-sync) are all still **mismatches**. Only differences of 1–3¢ changed colour.
+| Rule | Why |
+|---|---|
+| **Whole cents from 0 to 99 only** (`parseToleranceCents`, `MAX_MATCH_TOLERANCE_CENTS`). Anything else (a fraction, a negative, 100+, blank) marks the box red and **changes nothing**: the verdicts keep the last good N, and the hint says which (`Still using 1¢`). Leaving the box puts that N back | The box can never show a number the verdicts are not using. A value is never rounded or clamped into range, so what applies is exactly what was typed |
+| `0` = only an exact match counts. **Reset to 3¢** appears whenever N is not the default | 0 restores the first build's "equal to the cent" |
+| **One wizard state** (`hrisNpdTolerance`). It builds the comparison and fills the box, and rides in `hrisNpdPanelProps`, so the step's panel and the full-screen overlay always show the same N and the same verdicts. Load output does not reset it | Same rule as the search and the chip. It is a setting, not part of a paste |
+| **Never saved**: every load starts at 3 | § Nothing is saved |
+| The result carries the N it was given with (`comparison.toleranceCents`), and the "within N¢" tooltip reads it | The wording can never disagree with the verdict |
+
+At the default, the measured cases behind the first build's "equal to the cent, no tolerance" (the
+brief's CHOSEN 5) still read the same: the 2026-08-18 gaps ($0.81–$2.68) and that week's $0.07
+residue (a sub-minute Hubstaff re-sync) are all **mismatches**. At N = 10 the residue would match.
+That is the operator's call, and the box makes it visible.
 
 **A within-tolerance match still shows its difference.** The row is green with the ✓, and
-`NPD +$0.02` prints under it (the tooltip says it is within 3¢). `deltaCents` is kept on the row, so
+`NPD +$0.02` prints under it (the tooltip says it is within N¢). `deltaCents` is kept on the row, so
 the tolerance makes a small gap acceptable, never invisible. A mismatch shows `NPD +$2.68` /
-`NPD −$0.07` (NPD minus HRIS) under the ✗. Changing the tolerance is one constant, but it is Kane's
-number: do not move it as cleanup.
+`NPD −$0.07` (NPD minus HRIS) under the ✗. **The default 3 is Kane's number**: do not move it as
+cleanup.
 
 ## No row is ever dropped
 
@@ -313,6 +324,13 @@ both test files **81/81** after the fifth. `npm test`: the same 2 pre-existing f
 clean apart from the stale `.next/types` errors. Pinned by render tests: a 2¢ match is green and
 prints its difference; people configured out are not table rows, and the "not compared" line
 counts them by reason.
+
+*The "off by" box (sixth commit, 2026-09-30):* both test files **88/88**. `npm test`: the same 2
+pre-existing failures only. tsc clean apart from the stale `.next/types` errors. Driven in Chromium
+through the fixture: default 3 keeps a 2¢ row green; setting 1 turns it red and the Mismatch chip
+counts it; typing 150 marks the box red and changes nothing ("Still using 1¢"); leaving the box
+puts 1 back; 5 set on the step shows as 5 in full screen; Reset brings back 3; no console errors.
+Still **not clicked through signed in**.
 
 ## Deploy notes
 
