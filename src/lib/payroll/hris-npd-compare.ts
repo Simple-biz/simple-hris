@@ -12,6 +12,9 @@
  *    every NPD line that parsed. A person missing on one side is labelled `not_in_hris` /
  *    `not_in_npd`, never filtered out. A pasted line that could not be read is a
  *    REFUSAL, listed with its line number and reason — never silently skipped.
+ *    **The one exception is people configured not to be paid this week** (Excluded on
+ *    Final Pay, or a department paused in Configuration; Kane, 2026-09-30). They are not
+ *    compared at all, and they are listed in `leftOut` so the table can say so.
  * 2. **HRIS's dollar figure is the one Payment Dispatch stages.** `stagedUsdCents` is the
  *    `amount_usd` expression from the wizard's Send to Payment Dispatch, verbatim
  *    (`Math.round((php / fx) * 100) / 100`), applied per HRIS row and then summed — the
@@ -288,7 +291,8 @@ export interface HrisCompareInput {
   php: number;
   /** False when no dispatch payload exists (no personal email): dispatch sends nothing. */
   dispatchable: boolean;
-  /** Accounting ticked Exclude ("do not pay") on the Validation step. */
+  /** Accounting ticked Exclude ("do not pay") on the Validation step. Such a row is not
+   *  compared; see `HrisNpdComparison.leftOut`. */
   excluded: boolean;
 }
 
@@ -304,7 +308,8 @@ export interface CompareHrisNpdInput {
   // There is deliberately NO alias / master-list bridge here. Kane, 2026-09-30: "We are not
   // connecting this with the personal email please we are connecting this to the work
   // email". A line reaches an HRIS row by its work email, exactly, or not at all.
-  /** Normalized work emails of people whose department is paused this week ("Pay this week" off). */
+  /** Normalized work emails of people whose department is paused this week ("Pay this week"
+   *  off). NPD lines for them are LEFT OUT (`leftOut`, reason `paused`), not compared. */
   pausedEmails?: ReadonlySet<string>;
 }
 
@@ -332,8 +337,13 @@ export interface HrisNpdRow {
   hrisCents: number | null;
   /** HRIS pesos (the pivot), for NPD's implied rate. Null when not in HRIS. */
   hrisPhp: number | null;
-  /** How many Validation rows carry this email (normally 1; 0 when not in HRIS). */
+  /** How many PAYABLE Validation rows carry this email (normally 1; 0 when not in HRIS). */
   hrisRowCount: number;
+  /**
+   * Excluded ("do not pay") rows on this same work email that were LEFT OUT of HRIS's
+   * figure because the person also has a payable row. Normally 0. A person whose every row
+   * is excluded is not a row at all: they are in `HrisNpdComparison.leftOut`.
+   */
   excludedRowCount: number;
   /** Rows with no staged payload — dispatch will send them nothing. */
   noPayoutRowCount: number;
@@ -348,8 +358,25 @@ export interface HrisNpdRow {
   deltaCents: number | null;
   /** PHP per $1 that NPD's figure implies against HRIS's pesos. Set on a `mismatch` only. */
   impliedNpdRate: number | null;
-  /** A fact about the row the table should say out loud, or null. */
-  note: string | null;
+}
+
+/** Why a person is not compared at all. Both are the wizard's own do-not-pay configuration
+ *  for the week (payroll-wizard-configuration-tab.md § "Pay this week"). */
+export type HrisNpdLeftOutReason =
+  /** Accounting ticked Exclude ("do not pay") on the Final Pay table. */
+  | 'excluded'
+  /** Their department is paused this week (Step 1 → Configuration → "Pay this week" off). */
+  | 'paused';
+
+/** A person left OUT of the comparison because they are configured not to be paid. */
+export interface HrisNpdLeftOut {
+  workEmail: string;
+  /** HRIS's name when known (an excluded row); null for a paused-department NPD line. */
+  name: string | null;
+  reason: HrisNpdLeftOutReason;
+  /** What NPD lists for them, in cents, or null when NPD does not list them. */
+  npdCents: number | null;
+  npdLines: readonly number[];
 }
 
 export type HrisNpdHold =
@@ -359,17 +386,21 @@ export type HrisNpdHold =
   | { kind: 'no_fx' };
 
 export interface HrisNpdComparison {
-  /** Sorted by `workEmail`. The union of both sides — see rule 1. */
+  /** Sorted by `workEmail`. The union of both sides, minus `leftOut` — see rule 1. */
   rows: HrisNpdRow[];
+  /**
+   * People configured not to be paid this week, left OUT of `rows` (Kane, 2026-09-30:
+   * "If they are configured not to be paid please lets not include them here"). Listed so
+   * leaving them out is disclosed, never silent. Sorted by `workEmail`.
+   */
+  leftOut: HrisNpdLeftOut[];
   /** Null while verdicts are held. */
   counts: Record<HrisNpdStatus, number> | null;
-  /** Whole-comparison sums. They never follow a filter or a search. */
+  /** Whole-comparison sums over `rows`. They never follow a filter or a search. */
   totals: {
     /** Null when there is no rate. */
     hrisCents: number | null;
     npdCents: number;
-    /** The HRIS total's share that belongs to rows Accounting excluded from pay. */
-    excludedHrisCents: number;
     people: number;
   };
   /** Why no row has a verdict, or null when every row has one. */
@@ -412,7 +443,6 @@ interface NpdGroup {
   firstEmail: string;
   cents: number;
   lines: number[];
-  note: string | null;
 }
 
 function resolveHold(input: CompareHrisNpdInput): HrisNpdHold | null {
@@ -431,8 +461,15 @@ function round2(n: number): number {
  * Pair every HRIS row with NPD's figure for the same person. See the file header for
  * the rules; the ones that live only here:
  *
- * - HRIS rows are grouped by normalized email. Two Validation rows on one email are both
- *   staged, so both are paid — their staged cents are summed, never deduplicated.
+ * - **People configured not to be paid this week are not compared** (Kane, 2026-09-30:
+ *   "If they are configured not to be paid please lets not include them here"). That is
+ *   an Excluded ("do not pay") Validation row, and an NPD line for someone whose department
+ *   is paused in Configuration. Neither becomes a row, and neither becomes a false "Not in
+ *   HRIS": they go to `leftOut`, which the table discloses. A person with an excluded row
+ *   AND a payable row on the same work email is compared on the payable one, and the row
+ *   counts the excluded one it left out (`excludedRowCount`).
+ * - HRIS rows are grouped by normalized email. Two payable Validation rows on one email
+ *   are both staged, so both are paid — their staged cents are summed, never deduplicated.
  * - **An NPD line reaches an HRIS row by its WORK EMAIL, exactly (case- and
  *   whitespace-insensitive), or not at all.** No master-list bridge, no personal address,
  *   no alternate (Kane, 2026-09-30: "we are connecting this to the work email"). A line
@@ -450,22 +487,30 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
   if (input.npdRows.length === 0) {
     return {
       rows: [],
+      leftOut: [],
       counts: null,
-      totals: { hrisCents: null, npdCents: 0, excludedHrisCents: 0, people: 0 },
+      totals: { hrisCents: null, npdCents: 0, people: 0 },
       hold,
     };
   }
 
+  // Payable rows only. Excluded rows are set aside by work email.
   const hris = new Map<string, HrisGroup>();
+  const excluded = new Map<string, { email: string; name: string; rows: number }>();
   input.hrisRows.forEach((r, i) => {
     const k = keyOf(r.email) ?? `__hris_row_${i}`;
+    if (r.excluded) {
+      const x = excluded.get(k);
+      if (x) x.rows += 1;
+      else excluded.set(k, { email: r.email.trim() || '—', name: r.name, rows: 1 });
+      return;
+    }
     const cents = fxOk ? stagedUsdCents(r.php, input.fxRate) : null;
     const g = hris.get(k);
     if (g) {
       g.php += r.php;
       g.stagedCents = g.stagedCents == null || cents == null ? null : g.stagedCents + cents;
       g.rowCount += 1;
-      if (r.excluded) g.excludedRowCount += 1;
       if (!r.dispatchable) g.noPayoutRowCount += 1;
       if (!g.name && r.name) g.name = r.name;
     } else {
@@ -475,29 +520,45 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
         php: r.php,
         stagedCents: cents,
         rowCount: 1,
-        excludedRowCount: r.excluded ? 1 : 0,
+        excludedRowCount: 0,
         noPayoutRowCount: r.dispatchable ? 0 : 1,
       });
     }
   });
+  // A payable person keeps a count of the excluded rows their figure leaves out.
+  for (const [k, x] of excluded) {
+    const g = hris.get(k);
+    if (g) g.excludedRowCount += x.rows;
+  }
+
+  /** Configured not to be paid — and so not compared — when no payable row carries the email. */
+  const leftOutReason = (k: string): HrisNpdLeftOutReason | null =>
+    hris.has(k) ? null : excluded.has(k) ? 'excluded' : input.pausedEmails?.has(k) ? 'paused' : null;
 
   const npd = new Map<string, NpdGroup>();
+  const leftOutNpd = new Map<string, { cents: number; lines: number[] }>();
   for (const line of input.npdRows) {
     const k = keyOf(line.email);
     if (!k) continue; // the parser never emits one; kept so a caller's row cannot throw
+    if (leftOutReason(k)) {
+      const l = leftOutNpd.get(k);
+      if (l) {
+        l.cents += line.cents;
+        l.lines.push(line.line);
+      } else {
+        leftOutNpd.set(k, { cents: line.cents, lines: [line.line] });
+      }
+      continue;
+    }
     // Work email, exactly. Nothing else reaches an HRIS row.
     const target: string | null = hris.has(k) ? k : null;
-    const note: string | null =
-      target == null && input.pausedEmails?.has(k)
-        ? 'In HRIS, but their department is paused this week (Step 1 → Configuration → “Pay this week”)'
-        : null;
     const gk = target != null ? `hris:${target}` : `npd:${k}`;
     const g = npd.get(gk);
     if (g) {
       g.cents += line.cents;
       g.lines.push(line.line);
     } else {
-      npd.set(gk, { target, firstEmail: k, cents: line.cents, lines: [line.line], note });
+      npd.set(gk, { target, firstEmail: k, cents: line.cents, lines: [line.line] });
     }
   }
 
@@ -537,7 +598,6 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
       status,
       deltaCents,
       impliedNpdRate,
-      note: null,
     });
   }
 
@@ -559,11 +619,24 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
       status: judged ? 'not_in_hris' : null,
       deltaCents: null,
       impliedNpdRate: null,
-      note: n.note,
     });
   }
 
   rows.sort((a, b) => a.workEmail.localeCompare(b.workEmail) || a.key.localeCompare(b.key));
+
+  // Every excluded person (NPD lists them or not), then every paused-department person NPD
+  // lists. A paused person NPD does not list was never going to be a row on this step.
+  const leftOut: HrisNpdLeftOut[] = [];
+  for (const [k, x] of excluded) {
+    if (hris.has(k)) continue;
+    const l = leftOutNpd.get(k);
+    leftOut.push({ workEmail: x.email, name: x.name || null, reason: 'excluded', npdCents: l ? l.cents : null, npdLines: l ? l.lines : [] });
+  }
+  for (const [k, l] of leftOutNpd) {
+    if (excluded.has(k)) continue;
+    leftOut.push({ workEmail: k, name: null, reason: 'paused', npdCents: l.cents, npdLines: l.lines });
+  }
+  leftOut.sort((a, b) => a.workEmail.localeCompare(b.workEmail));
 
   let counts: Record<HrisNpdStatus, number> | null = null;
   if (judged) {
@@ -572,23 +645,20 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
   }
 
   let hrisTotal: number | null = fxOk ? 0 : null;
-  let excludedHrisCents = 0;
   let npdTotal = 0;
   for (const r of rows) {
     if (hrisTotal != null && r.inHris) {
       if (r.hrisCents == null) hrisTotal = null;
       else hrisTotal += r.hrisCents;
     }
-    if (r.inHris && r.excludedRowCount > 0 && r.hrisCents != null && r.excludedRowCount === r.hrisRowCount) {
-      excludedHrisCents += r.hrisCents;
-    }
     if (r.npdCents != null) npdTotal += r.npdCents;
   }
 
   return {
     rows,
+    leftOut,
     counts,
-    totals: { hrisCents: hrisTotal, npdCents: npdTotal, excludedHrisCents, people: rows.length },
+    totals: { hrisCents: hrisTotal, npdCents: npdTotal, people: rows.length },
     hold,
   };
 }

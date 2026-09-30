@@ -35,6 +35,7 @@ import {
   ClipboardPaste,
   Loader2,
   Maximize2,
+  PowerOff,
   SearchX,
   X,
 } from 'lucide-react';
@@ -54,6 +55,7 @@ import {
   type HrisNpdComparison as Comparison,
   type HrisNpdFilter,
   type HrisNpdHold,
+  type HrisNpdLeftOut,
   type HrisNpdRow,
   type HrisNpdStatus,
   type NpdPasteParse,
@@ -155,7 +157,6 @@ const ComparisonRow = React.memo(function ComparisonRow({
   const tone = r.status === 'match' ? 'match' : r.status == null ? 'held' : 'problem';
   // Ink comes from the row's own ground (ui-standards §15.3), never grey on a tint.
   const sub = tone === 'held' ? 'text-zinc-500 dark:text-zinc-400' : 'opacity-75';
-  const fullyExcluded = r.excludedRowCount > 0 && r.excludedRowCount === r.hrisRowCount;
 
   const mismatchTitle =
     r.status === 'mismatch' && r.hrisCents != null && r.npdCents != null
@@ -182,9 +183,14 @@ const ComparisonRow = React.memo(function ComparisonRow({
         {r.name && <div className={cn('truncate text-[11px]', sub)}>{r.name}</div>}
         {(r.excludedRowCount > 0 || r.noPayoutRowCount > 0) && (
           <div className="mt-1 flex flex-wrap gap-1">
+            {/* Only when the same work email ALSO has a payable row: a person who is
+                wholly excluded is not a row at all (they are in the "not compared" list). */}
             {r.excludedRowCount > 0 && (
-              <span className="whitespace-nowrap rounded-full border border-current/25 bg-white/60 px-1.5 py-px text-[10px] font-semibold dark:bg-black/20">
-                {fullyExcluded ? 'Excluded from pay' : `${r.excludedRowCount} of ${r.hrisRowCount} excluded`}
+              <span
+                className="whitespace-nowrap rounded-full border border-current/25 bg-white/60 px-1.5 py-px text-[10px] font-semibold dark:bg-black/20"
+                title="Excluded on Final Pay (do not pay), so that row is not part of HRIS's figure here"
+              >
+                {r.excludedRowCount} excluded row{r.excludedRowCount === 1 ? '' : 's'} not counted
               </span>
             )}
             {r.noPayoutRowCount > 0 && (
@@ -197,7 +203,6 @@ const ComparisonRow = React.memo(function ComparisonRow({
             )}
           </div>
         )}
-        {r.note && <div className={cn('mt-1 text-[10px] leading-snug', sub)}>{r.note}</div>}
       </td>
 
       <td className="px-3 py-2 text-right align-top font-mono text-xs tabular-nums">
@@ -209,7 +214,7 @@ const ComparisonRow = React.memo(function ComparisonRow({
           <span className={sub} title="Set this cycle's USD→PHP rate on Step 2">—</span>
         ) : (
           <>
-            <span className={cn('font-semibold', fullyExcluded && 'line-through decoration-1')}>{usd(r.hrisCents)}</span>
+            <span className="font-semibold">{usd(r.hrisCents)}</span>
             {r.hrisRowCount > 1 && <div className={cn('text-[10px] font-sans', sub)}>{r.hrisRowCount} HRIS rows added</div>}
           </>
         )}
@@ -287,6 +292,70 @@ function HoldBanner({ hold }: { hold: HrisNpdHold }) {
     <div role="status" className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
       <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
       <span>{text}</span>
+    </div>
+  );
+}
+
+// ─── Not compared ──────────────────────────────────────────────────────────────
+
+/**
+ * People configured not to be paid this week are left out of the comparison (Kane,
+ * 2026-09-30). Said out loud here, with who and why, so leaving them out is never silent.
+ * Neutral, not amber: a deliberate configuration is not a warning.
+ */
+function LeftOutNotice({ leftOut }: { leftOut: readonly HrisNpdLeftOut[] }) {
+  const [open, setOpen] = useState(false);
+  const excluded = leftOut.filter((l) => l.reason === 'excluded').length;
+  const paused = leftOut.length - excluded;
+  const inNpd = leftOut.filter((l) => l.npdCents != null).length;
+  const why = [
+    excluded > 0 ? `${excluded} excluded on Final Pay` : null,
+    paused > 0 ? `${paused} in a department paused in Step 1 → Configuration` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <span className="flex min-w-0 items-start gap-2">
+          <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
+          <span>
+            <strong className="font-semibold">
+              {leftOut.length} {leftOut.length === 1 ? 'person' : 'people'} not compared
+            </strong>
+            , configured not to be paid this week: {why}.{inNpd > 0 ? ` NPD lists ${inNpd} of them.` : ''}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="shrink-0 font-medium text-violet-700 hover:underline dark:text-violet-300"
+        >
+          {open ? 'Hide' : 'Show who'}
+        </button>
+      </div>
+      {open && (
+        <ul aria-label="Not compared" className="mt-2 max-h-48 overflow-auto rounded-md border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+          {leftOut.map((l) => (
+            <li
+              key={`${l.reason}:${l.workEmail}`}
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-b border-zinc-100 px-3 py-1.5 last:border-b-0 dark:border-zinc-800/70"
+            >
+              <span className="min-w-0">
+                <span className="font-mono">{l.workEmail}</span>
+                {l.name && <span className="ml-2 text-zinc-500 dark:text-zinc-400">{l.name}</span>}
+              </span>
+              <span className="flex items-center gap-3 text-[11px]">
+                <span className="text-zinc-500 dark:text-zinc-400">
+                  {l.reason === 'excluded' ? 'Excluded on Final Pay' : 'Department paused this week'}
+                </span>
+                <span className="font-mono tabular-nums">{l.npdCents != null ? `NPD ${usd(l.npdCents)}` : 'not in NPD'}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -450,6 +519,7 @@ export default function HrisNpdComparison({
               </p>
             )}
             {hold && <HoldBanner hold={hold} />}
+            {comparison.leftOut.length > 0 && <LeftOutNotice leftOut={comparison.leftOut} />}
 
               <div role="group" aria-label="Show rows" className="flex flex-wrap items-center gap-1.5">
                 {chips.map((f) => {
@@ -644,13 +714,6 @@ export default function HrisNpdComparison({
                             : `NPD ${signedUsd(totals.npdCents - totals.hrisCents)}`}
                       </td>
                     </tr>
-                    {totals.excludedHrisCents > 0 && (
-                      <tr>
-                        <td colSpan={4} className="px-3 pb-2.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                          HRIS&apos;s total includes {usd(totals.excludedHrisCents)} for people excluded from pay this week.
-                        </td>
-                      </tr>
-                    )}
                   </tfoot>
                 </table>
                 </div>

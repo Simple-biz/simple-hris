@@ -347,10 +347,44 @@ describe('compareHrisNpd', () => {
     assert.equal(c.rows[0].status, 'match');
   });
 
-  test('someone NPD lists whose department is paused this week says so instead of a bare Not in HRIS', () => {
-    const c = run({ paste: 'paused@simple.biz\t9', pausedEmails: new Set(['paused@simple.biz']) });
-    assert.equal(c.rows[0].status, 'not_in_hris');
-    assert.match(c.rows[0].note ?? '', /paused this week/);
+  // Kane, 2026-09-30: "If they are configured not to be paid please lets not include them here".
+  test('CONFIGURED NOT TO BE PAID — paused department: NPD\'s line is not compared, and is listed as left out', () => {
+    const c = run({
+      hrisRows: [hris('a@simple.biz', phpFor(1))],
+      paste: 'a@simple.biz\t1\npaused@simple.biz\t9\nPaused@simple.biz\t1',
+      pausedEmails: new Set(['paused@simple.biz']),
+    });
+    assert.deepEqual(c.rows.map((r) => r.workEmail), ['a@simple.biz']);
+    assert.deepEqual(c.leftOut, [
+      { workEmail: 'paused@simple.biz', name: null, reason: 'paused', npdCents: 1000, npdLines: [2, 3] },
+    ]);
+    assert.equal(c.totals.npdCents, 100);
+  });
+
+  test('CONFIGURED NOT TO BE PAID — Excluded on Final Pay: not a row, not a false "Not in HRIS", listed with what NPD says', () => {
+    const c = run({
+      hrisRows: [hris('x@simple.biz', phpFor(5), { excluded: true, name: 'Xena' }), hris('z@simple.biz', phpFor(8), { excluded: true })],
+      paste: 'x@simple.biz\t5\ny@simple.biz\t6',
+    });
+    assert.deepEqual(c.rows.map((r) => [r.workEmail, r.status]), [['y@simple.biz', 'not_in_hris']]);
+    assert.deepEqual(c.leftOut, [
+      { workEmail: 'x@simple.biz', name: 'Xena', reason: 'excluded', npdCents: 500, npdLines: [1] },
+      { workEmail: 'z@simple.biz', name: 'z', reason: 'excluded', npdCents: null, npdLines: [] },
+    ]);
+    assert.deepEqual(c.counts, { match: 0, mismatch: 0, not_in_hris: 1, not_in_npd: 0 });
+  });
+
+  test('an excluded row beside a payable row on the same work email: compared on the payable one, and says so', () => {
+    const c = run({
+      hrisRows: [hris('a@simple.biz', phpFor(10)), hris('a@simple.biz', phpFor(99), { excluded: true })],
+      paste: 'a@simple.biz\t10',
+    });
+    assert.equal(c.rows.length, 1);
+    assert.equal(c.rows[0].hrisCents, 1000);
+    assert.equal(c.rows[0].hrisRowCount, 1);
+    assert.equal(c.rows[0].excludedRowCount, 1);
+    assert.equal(c.rows[0].status, 'match');
+    assert.deepEqual(c.leftOut, []);
   });
 
   test('two Validation rows on one email are both paid, so their staged cents are summed', () => {
@@ -363,17 +397,15 @@ describe('compareHrisNpd', () => {
     assert.equal(c.rows[0].hrisCents, stagedUsdCents(100.01, FX)! + stagedUsdCents(200.02, FX)!);
   });
 
-  test('excluded and no-payout rows stay in, carrying their flags', () => {
+  test('a no-payout row (no payout address) is a data gap, not a configuration — it stays in', () => {
     const c = run({
-      hrisRows: [hris('x@simple.biz', phpFor(5), { excluded: true }), hris('y@simple.biz', phpFor(6), { dispatchable: false })],
-      paste: 'x@simple.biz\t5\ny@simple.biz\t6',
+      hrisRows: [hris('y@simple.biz', phpFor(6), { dispatchable: false })],
+      paste: 'y@simple.biz\t6',
     });
-    const x = c.rows.find((r) => r.workEmail === 'x@simple.biz')!;
-    const y = c.rows.find((r) => r.workEmail === 'y@simple.biz')!;
-    assert.equal(x.excludedRowCount, 1);
-    assert.equal(x.status, 'match');
-    assert.equal(y.noPayoutRowCount, 1);
-    assert.equal(c.totals.excludedHrisCents, 500);
+    assert.equal(c.rows.length, 1);
+    assert.equal(c.rows[0].noPayoutRowCount, 1);
+    assert.equal(c.rows[0].status, 'match');
+    assert.deepEqual(c.leftOut, []);
   });
 
   test('rows are sorted by address', () => {
@@ -386,7 +418,7 @@ describe('compareHrisNpd', () => {
       hrisRows: [hris('a@simple.biz', phpFor(10)), hris('b@simple.biz', phpFor(20))],
       paste: 'a@simple.biz\t10\nz@simple.biz\t7',
     });
-    assert.deepEqual(c.totals, { hrisCents: 3000, npdCents: 1700, excludedHrisCents: 0, people: 3 });
+    assert.deepEqual(c.totals, { hrisCents: 3000, npdCents: 1700, people: 3 });
   });
 });
 

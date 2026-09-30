@@ -140,6 +140,27 @@ describe('HRIS vs NPD — rendered', () => {
     assert.match(render(PASTE), /<table class="table-keep /);
   });
 
+  it('people configured not to be paid are not rows — and the output says how many, and why (Kane, 2026-09-30)', () => {
+    const html = render(`${PASTE}\nexcl@simple.biz\t50.00\npaused@simple.biz\t9.00`, {
+      hrisRows: [
+        hris('kaner@simple.biz', phpFor(250)),
+        { email: 'excl@simple.biz', name: 'Ex', php: phpFor(50), dispatchable: true, excluded: true },
+      ],
+      pausedEmails: new Set(['paused@simple.biz']),
+    });
+    const tableRows = html.split('<tr').slice(1).join('');
+    assert.ok(!tableRows.includes('excl@simple.biz') && !tableRows.includes('paused@simple.biz'), 'left-out people must not be table rows');
+    assert.match(html, /2 people not compared/);
+    assert.match(html, /1 excluded on Final Pay · 1 in a department paused in Step 1 → Configuration/);
+    assert.match(html, /NPD lists 2 of them/);
+    assert.match(html, />Show who</);
+    assert.doesNotMatch(html, /Excluded from pay/);
+  });
+
+  it('with nobody configured out, there is no "not compared" line', () => {
+    assert.doesNotMatch(render(PASTE), /not compared/);
+  });
+
   it('prints the divisor behind every HRIS dollar figure', () => {
     assert.match(render(PASTE), /₱61\.52<\/span> per \$1/);
   });

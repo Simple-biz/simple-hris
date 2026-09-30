@@ -5,7 +5,8 @@ Figures**: Accounting pastes the NPD sheet's work emails and dollar figures. **S
 (opened with **Load output**, the input hidden): every person appears once with HRIS's dollar
 figure beside NPD's. A **green** row with a check means they agree within 3 cents. A **red** row
 with an ✗ and the difference means they don't. A red **Not in HRIS** / **Not in NPD** means one
-side has nobody at that address. Nobody on either side is ever dropped. Display only: it writes
+side has nobody at that address. Nobody on either side is ever dropped, except people configured
+not to be paid this week, who are left out and listed. Display only: it writes
 nothing.
 
 Kane, 2026-09-30: *"compare their Dollar Values - against their work emails … If they are a match
@@ -119,17 +120,37 @@ together or not at all.
   the match, which is on the work email.
 - **Where Gross and the staged final differ** (the Final Pay table's red `gross_mismatch`), this
   column follows **dispatch**, not the Gross column. That is on purpose.
-- **Excluded ("do not pay") people stay in**, with their figure struck through and an **Excluded
-  from pay** tag. They are judged like anyone else, so **a green row can be excluded**: the two
-  sheets agree on the figure, and HRIS still won't send it this week. The HRIS total includes them,
-  and the footer says by how much.
-- **Two Validation rows on one email** are both staged, so both are paid. Their staged cents are
-  **summed** ("2 HRIS rows added"), never deduplicated.
-- **Who is "in HRIS"**: every Validation row, meaning every department including HSL (the same
-  rows as Final Pay). Not included: departments paused by *"Pay this week"* (they are not on the
-  step), contractor invoices (step 6) and orphanage interns. When NPD lists someone from a paused
-  department, the row reads **Not in HRIS** plus *"In HRIS, but their department is paused this
-  week"*, using the same predicate `effectiveCalcResults` filters with.
+- **Two payable Validation rows on one email** are both staged, so both are paid. Their staged
+  cents are **summed** ("2 HRIS rows added"), never deduplicated.
+- **Who is "in HRIS"**: every PAYABLE Validation row, meaning every department including HSL (the
+  same rows as Final Pay, minus the excluded). Contractor invoices (step 6) and orphanage interns
+  are not part of it.
+
+### People configured not to be paid are not compared (2026-09-30)
+
+Kane: *"If they are configured not to be paid please lets not include them here"*. There are two
+ways to be configured not to be paid this week, and both are the wizard's own do-not-pay settings
+for the week (`payroll-wizard-configuration-tab.md` § "Pay this week"):
+
+| Configured by | What happens here |
+|---|---|
+| **Exclude** ticked on the Final Pay table ("do not pay") | Not a row. NPD's line for them is **not** a false "Not in HRIS" either. They are listed as left out, with what NPD says for them |
+| Their department's **"Pay this week"** off (Step 1 → Configuration) | They were never on the step. An NPD line for them is left out, not shown as "Not in HRIS" |
+
+- **Left out, never silent.** The output shows a neutral line: `N people not compared, configured
+  not to be paid this week: X excluded on Final Pay · Y in a department paused in Step 1 →
+  Configuration. NPD lists Z of them.` **Show who** lists each work email, the reason, and NPD's
+  figure (or "not in NPD"). It is neutral, not amber: a deliberate configuration is not a warning.
+  `compareHrisNpd` returns them as `leftOut`.
+- A paused-department person NPD does **not** list is never counted, since they were never going
+  to be a row on this step. Every excluded person is listed, whether or not NPD has them.
+- **Edge:** one work email with an excluded row AND a payable row is compared on the payable one.
+  The row says `1 excluded row not counted`, and the person is not in the left-out list.
+- **"No payout this week" is NOT a configuration** (a missing payout address, a data gap). Those
+  rows stay in and are compared like anyone else.
+- This reversed the first build (items 292–295), which kept excluded people in as struck green or red
+  rows and showed paused people as "Not in HRIS" with a note. That was the brief's CHOSEN 7, whose
+  other way was "payable-only".
 
 The rate line prints the divisor (`final pay ÷ ₱61.52 per $1`). **An HRIS-vs-NPD gap is an FX
 divisor question before it is a math question** (Payroll Wizard INDEX row; 2026-08-18: all three
@@ -177,10 +198,14 @@ number: do not move it as cleanup.
 
 ## No row is ever dropped
 
-The rows are the **union** of both sides: every HRIS email and every NPD address that parsed. At
-1,200 HRIS rows against 1,100 NPD lines, the test asserts one row per distinct person, unique keys,
-and exact bucket counts. Rows sort by address. Unreadable paste lines are **refusals**, listed in
-the paste card, not rows.
+The rows are the **union** of both sides: every payable HRIS email and every NPD address that
+parsed. At 1,200 HRIS rows against 1,100 NPD lines, the test asserts one row per distinct person,
+unique keys, and exact bucket counts. Rows sort by address. Unreadable paste lines are
+**refusals**, listed on step 1, not rows.
+
+**The one exception is people configured not to be paid this week** (§ People configured not to be
+paid). They are left out on purpose, and the output says who and why, so this is the only thing
+that is not a row, and it is never unaccounted for.
 
 ## No verdict before the figures can be judged
 
@@ -282,6 +307,12 @@ Edit returns to step 1 with the paste kept; Clear leaves Load output disabled; f
 from the output shows the output, Edit inside it moves both mounts to step 1, and Escape closes it;
 no horizontal overflow at 390px on either step; no console errors. Still **not clicked through
 signed in**.
+
+*Within 3 cents (fourth commit) and configured-not-to-be-paid left out (fifth commit), 2026-09-30:*
+both test files **81/81** after the fifth. `npm test`: the same 2 pre-existing failures only. tsc
+clean apart from the stale `.next/types` errors. Pinned by render tests: a 2¢ match is green and
+prints its difference; people configured out are not table rows, and the "not compared" line
+counts them by reason.
 
 ## Deploy notes
 
