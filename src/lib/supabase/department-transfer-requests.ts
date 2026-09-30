@@ -1,4 +1,6 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceRoleClient } from './server';
+import { selectAllPaged } from './select-all-paged';
 import { hslSubKeyFromRaw, isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 
 export type TransferRequestStatus = 'pending' | 'approved' | 'applied' | 'rejected' | 'cancelled';
@@ -82,36 +84,77 @@ export async function insertTransferRequest(row: {
   return { id: (data as { id: string } | null)?.id ?? null, error: null };
 }
 
-export async function listAllTransferRequests(limit = 300): Promise<{
-  rows: DepartmentTransferRequestRow[];
-  error: string | null;
-}> {
-  const supabase = createSupabaseServiceRoleClient();
+type TransferListResult = { rows: DepartmentTransferRequestRow[]; error: string | null };
+
+/** One page of a list read: a fresh builder with `.range(from, to)` applied. */
+type TransferPage = (
+  from: number,
+  to: number,
+) => PromiseLike<{ data: DepartmentTransferRequestRow[] | null; error: { message: string } | null }>;
+
+/**
+ * Drain a list read of this table in full. EVERY list reader below goes
+ * through here (a test in `department-transfer-requests-paging.test.ts` greps
+ * the file for any that does not).
+ *
+ * Until 2026-09-30 each list reader ended in `.limit(300)`, and the cron's
+ * read had no bound at all, so `db.max-rows` would have capped it at 1000.
+ * The table held 434 rows that day. HR and Accounting got the newest 300,
+ * which read as "299 completed", and the Accounting export exported only those
+ * (audit item 290). The per-department readers filter in memory, so they cut
+ * the newest 300 across ALL departments first and then kept a manager's own.
+ *
+ * The page MUST carry a total order: a timestamp, then `id`. PostgREST's order
+ * over tied timestamps is not stable between pages. A repeated `id` means the
+ * pages sheared, for example when a release mid-read moves a row up the
+ * `updated_at` order, and a sheared read has also dropped a row somewhere.
+ * So it is retried once and then refused, and never de-duplicated. A page
+ * error returns NO rows, because a short list reads as a complete one.
+ */
+async function selectEveryTransferRow(page: TransferPage): Promise<TransferListResult> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { rows, error } = await selectAllPaged<DepartmentTransferRequestRow>(page);
+    if (error) return { rows: [], error };
+    if (new Set(rows.map((r) => r.id)).size === rows.length) return { rows, error: null };
+  }
+  return {
+    rows: [],
+    error: 'Transfer list read repeated rows on two attempts; refusing a list that may be missing some',
+  };
+}
+
+/** The whole trail, every status, newest first: HR `scope=all` and Accounting. */
+export async function listAllTransferRequests(
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+  return selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
+  );
 }
 
 /** Requests raised by one manager (their own outbox). */
 export async function listTransferRequestsByRequester(
   requesterEmail: string,
-  limit = 300,
-): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   const e = requesterEmail.trim().toLowerCase();
   if (!e) return { rows: [], error: null };
-  const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .ilike('requested_by', e)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+  return selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .ilike('requested_by', e)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
+  );
 }
 
 export async function getTransferRequestById(id: string): Promise<{
@@ -231,22 +274,21 @@ export function managerOwnsSourceDept(managedDepts: string[], fromDepartment: st
  */
 export async function listIncomingTransfersForDepartments(
   departments: string[],
-  limit = 300,
-): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   if (departments.filter((d) => d.trim()).length === 0) return { rows: [], error: null };
-  const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) return { rows: [], error: error.message };
-  const rows = ((data ?? []) as DepartmentTransferRequestRow[]).filter((r) =>
-    managerOwnsSourceDept(departments, r.from_department),
+  const { rows, error } = await selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
   );
-  return { rows, error: null };
+  if (error) return { rows: [], error };
+  return { rows: rows.filter((r) => managerOwnsSourceDept(departments, r.from_department)), error: null };
 }
 
 /**
@@ -258,24 +300,23 @@ export async function listIncomingTransfersForDepartments(
  */
 export async function listResolvedTransfersForDepartments(
   departments: string[],
-  limit = 300,
-): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   if (departments.filter((d) => d.trim()).length === 0) return { rows: [], error: null };
-  const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .neq('status', 'pending')
-    // updated_at is stamped on every release/decline/cancel/apply, so it's the
-    // most recent-activity ordering across all resolved statuses.
-    .order('updated_at', { ascending: false })
-    .limit(limit);
-  if (error) return { rows: [], error: error.message };
-  const rows = ((data ?? []) as DepartmentTransferRequestRow[]).filter((r) =>
-    managerOwnsSourceDept(departments, r.from_department),
+  const { rows, error } = await selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .neq('status', 'pending')
+      // updated_at is stamped on every release/decline/cancel/apply, so it's the
+      // most recent-activity ordering across all resolved statuses.
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
   );
-  return { rows, error: null };
+  if (error) return { rows: [], error };
+  return { rows: rows.filter((r) => managerOwnsSourceDept(departments, r.from_department)), error: null };
 }
 
 /** Source manager releases a pending request: locks the effective date and moves
@@ -370,17 +411,20 @@ export async function setTransferSheetSync(params: {
  *  applied — the daily apply-scheduled-transfers cron's work list. */
 export async function listScheduledDueTransfers(
   todayIso: string,
-): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
-  const supabase = createSupabaseServiceRoleClient();
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .eq('status', 'approved')
-    .not('effective_date', 'is', null)
-    .lte('effective_date', todayIso)
-    .order('effective_date', { ascending: true });
-  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+  return selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .eq('status', 'approved')
+      .not('effective_date', 'is', null)
+      .lte('effective_date', todayIso)
+      .order('effective_date', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
 }
 
 export async function updateTransferRequestStatus(params: {
@@ -427,33 +471,35 @@ export async function cancelTransferRequestIfOwned(params: {
  * {@link listResolvedTransfersForDepartments}).
  */
 export async function listAllResolvedTransfers(
-  limit = 300,
-): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
-  const supabase = createSupabaseServiceRoleClient();
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .neq('status', 'pending')
-    .order('updated_at', { ascending: false })
-    .limit(limit);
-  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+  return selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .neq('status', 'pending')
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
+  );
 }
 
 /** Every still-pending release request (any source department) — the stale-sweep
  *  input for the transfer cron. */
 export async function listPendingTransfers(
-  limit = 500,
-): Promise<{ rows: DepartmentTransferRequestRow[]; error: string | null }> {
-  const supabase = createSupabaseServiceRoleClient();
+  supabase: SupabaseClient | null = createSupabaseServiceRoleClient(),
+): Promise<TransferListResult> {
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .eq('status', 'pending')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  return { rows: (data ?? []) as DepartmentTransferRequestRow[], error: error?.message ?? null };
+  return selectEveryTransferRow((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('*')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
+  );
 }
 
 /**

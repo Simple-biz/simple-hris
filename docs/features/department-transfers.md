@@ -24,6 +24,7 @@ Key files:
 - `src/lib/transfers/apply-transfer.ts` — `applyApprovedTransfer` (master + Sheet + notify).
 - `src/lib/transfers/accounting-transfers.ts` — joins each transfer to its dept-to-dept rate change.
 - `src/lib/supabase/department-transfer-requests.ts` — table row type + all read/write helpers.
+  Every list reader pages the whole table (§3); `department-transfer-requests-paging.test.ts` pins it.
 - `src/lib/google-sheets/update-master-sheet-department.ts` — the master-Sheet Department write-back.
 - `src/lib/payroll/rate-history-resolve.ts` — client-safe as-of-date rate resolution.
 - `src/components/manager/ManagerTransfers.tsx` — the Manager Transfers tab (3 sub-tabs, KPI + charts layout).
@@ -250,15 +251,30 @@ then flips to `applied`).
 
 ## 3 · The three surfaces
 
-> **Every list on these three tabs stops at 300 rows, and nothing on screen says so** (measured
-> 2026-09-30, audit item 290, **OPEN**). Each reader in `department-transfer-requests.ts` ends in
-> `.limit(300)`: `listAllTransferRequests` (HR `scope=all` and Accounting), `listAllResolvedTransfers`
-> and `listResolvedTransfersForDepartments` (Done), `listTransferRequestsByRequester` (My requests).
-> On 2026-09-30 the table held **434** rows (426 applied · 5 approved · 2 cancelled · 1 pending,
-> 2026-06-24 → 2026-09-29). HR and Accounting got the newest 300 by `created_at`, which is
-> 299 applied + 1 pending. That is where HR's *Completed 299* came from, and the 134 rows before
-> 2026-08-01 05:49Z were missing. The Accounting export exports those same 300. Pay is **not**
-> affected: `fetchDepartmentTransferRows` (`hsl-transfer-effective.ts`) pages the whole table.
+> **Every list on these three tabs is the WHOLE matching set, never a newest-N slice.** All seven
+> list readers in `department-transfer-requests.ts` (`listAllTransferRequests`,
+> `listTransferRequestsByRequester`, `listIncomingTransfersForDepartments`,
+> `listResolvedTransfersForDepartments`, `listAllResolvedTransfers`, `listPendingTransfers`,
+> `listScheduledDueTransfers`) drain the table through `selectEveryTransferRow`. It pages 1,000 at a
+> time with a **total** order (the timestamp, then `id`). It retries a sheared read once, then
+> refuses it rather than de-duplicating, and it returns **no rows** on a page error, so a short list
+> can never pass for a complete one. **No list reader carries `.limit()`.** The only bounded read in
+> the file is `hasPendingTransferForEmployee`'s `.limit(1)`. The KPI cards, the Manager rail's
+> charts and Transfer rate, and the CSV / XLSX / PDF export all count what the reader returns, and
+> none of them has a cap of its own. The PDF paginates every row. `department-transfer-requests-paging.test.ts`
+> pins all of this against a double that caps each request at 1,000 rows and reshuffles tied
+> timestamps on every request.
+>
+> *Why (2026-09-30, audit items 290 and 291):* every reader used to end in `.limit(300)`, and the
+> cron's read was un-ranged, so `db.max-rows` would have capped it at 1,000. The table held **434**
+> rows (426 applied · 5 approved · 2 cancelled · 1 pending, 2026-06-24 → 2026-09-29). HR and
+> Accounting got the newest 300 by `created_at`, which is 299 applied + 1 pending. That is where HR's
+> *Completed 299* came from. The 134 rows before 2026-08-01 05:49Z were missing, and so was the
+> export's tail. The per-department readers filter in memory, so they cut the newest 300 across
+> **all** departments before keeping a manager's own. Lead Gen's Done list reads **334** once paged.
+> After the fix the same production read returns 434 on HR and Accounting and 433 on the admin
+> Done tab. The Accounting PDF built from it is 28 pages ending at row #434. Pay was never affected:
+> `fetchDepartmentTransferRows` (`hsl-transfer-effective.ts`) already paged.
 
 ### Manager → Transfers tab (`ManagerTransfers.tsx`)
 
