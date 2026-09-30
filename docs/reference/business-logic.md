@@ -1064,6 +1064,8 @@ When `AdminRoles → toggleRole` revokes a role, it fires `POST /api/auth/force-
 
 US-based employees (Carla, Jeff, Thomas, Brandon, etc.) were seeded into `global_master_list` manually (migration #18) and are not part of the Google Sheet master sync. The `active_employees` view's `last_seen_upload_id = current` filter drops them on every re-sync.
 
+> ⚠ **Dated 2026-09-30:** the sentence above describes the view **before 2026-09-21**. `references/sql/alter/2026-09-21_active_employees_drop_upload_gate.sql` removed the upload filter. On 2026-09-29 the view was measured reading `global_master_list WHERE off_boarded_at IS NULL` and nothing else, as `security_invoker`, with every role seeing the base set (Sep 29 log item 281). The US widening below is unchanged and was **not** re-verified against the new view.
+
 **Fix in `getEmployeeRateProfileSummaries` and `getEmployeeRateProfileByEmail`:**
 - After fetching `active_employees`, also pull every `global_master_list` row whose `Work Email` or `Personal Email` matches an `employee_ids.employee_id LIKE 'US-%'` entry (and is not off-boarded).
 - Deduped against active rows by row id.

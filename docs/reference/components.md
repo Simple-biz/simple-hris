@@ -9,7 +9,7 @@ This document covers UI components — what each renders, why it is designed tha
 > (265 components + 32 hooks, 2026-09-22). A file absent from **that table** does not exist; a file absent from the prose above is
 > merely **undescribed**. By the index's broader match — path, `` `Name` `` or `<Name` rather than bare filename —
 > **140** are named somewhere above and **58** appear in no feature doc at all.
-> **Tree on 2026-09-29: 287 `.tsx` under `src/components/` and 33 hooks in `src/hooks/` (+1 test).** Five `.tsx` files
+> **Tree on 2026-09-29: 287 `.tsx` under `src/components/` and 33 hooks in `src/hooks/` (+1 test).** *(2026-09-30: 287 and **34**; `useKpiLive.ts` is new. See the index note.)* Five `.tsx` files
 > were missing from the index until that day — `employee/CurrentPaycycle.tsx`, `manager/KpiInsightCards.tsx`,
 > `manager/RankingHistoryChart.tsx`, `manager/RankingHistoryModal.tsx`, `manager/leaderboard-ui.tsx` — and are now
 > listed. The 127 / 140 / 58 counts above are the 2026-09-22 measurement and were not re-taken.
@@ -2049,6 +2049,11 @@ table also carries a few `.ts` helpers that sit under `src/components/`; six of 
 `payroll-clerk/useDispatchQueue.ts`, `payroll/use-oms-hours.ts`, `payroll/useManualValidations.ts`), so for a `.ts`
 file the "does not exist" claim does not hold.
 
+**Re-checked 2026-09-30:** 287 `.tsx` and **34** hooks (+1 test). Two files added on 2026-09-29 were missing until this
+date: `payroll-clerk/AutoThresholdNotice.tsx` (`c7a437ff`) and `src/hooks/useKpiLive.ts` (`e7f5eb91`). Both are listed now,
+with the `.ts` helper `payroll-clerk/useAutoThreshold.ts`, for 326 rows. `manager/ManagerBonusHistory.tsx` was deleted by
+`31fd9c0a` and its row went with it. Diffed both directions against the tree: every `.tsx` and hook is below. Sep 29 log item 289.
+
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
 not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
 2026-09-29, a count of cells — the matches were not re-run).
@@ -2265,6 +2270,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/orphanage/interns/InternsWizard.tsx` | component | — **no doc** |
 | `src/components/payroll-clerk/AnimatedNumber.tsx` | component | *this file* · [payment-dispatch](../features/payment-dispatch.md) |
 | `src/components/payroll-clerk/AuditTrailPanel.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
+| `src/components/payroll-clerk/AutoThresholdNotice.tsx` | component | *this file* · [payment-dispatch](../features/payment-dispatch.md) |
 | `src/components/payroll-clerk/ContractorChip.tsx` | component | — **no doc** |
 | `src/components/payroll-clerk/ContractorInvoiceDialog.tsx` | component | — **no doc** |
 | `src/components/payroll-clerk/DeptChip.tsx` | component | — **no doc** |
@@ -2288,6 +2294,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/payroll-clerk/SentPaymentsHistory.tsx` | component | *this file* |
 | `src/components/payroll-clerk/UndoHistoryPanel.tsx` | component | [payment-dispatch](../features/payment-dispatch.md) |
 | `src/components/payroll-clerk/UrgentPaymentsQueue.tsx` | component | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
+| `src/components/payroll-clerk/useAutoThreshold.ts` | hook | *this file* · [payment-dispatch](../features/payment-dispatch.md) |
 | `src/components/payroll-live/PayrollLivePublisher.tsx` | component | — **no doc** |
 | `src/components/payroll-wizard/tutorial/ProcessingNarrative.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
 | `src/components/payroll-wizard/tutorial/TutorialGuide.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
@@ -2360,6 +2367,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/hooks/useFpuLive.ts` | hook | [fpu-enrollment](../features/fpu-enrollment.md) |
 | `src/hooks/useHrOrientationAttendance.ts` | hook | [hr-dashboard-cache](../features/hr-dashboard-cache.md) · [hr-orientation-attendance](../features/hr-orientation-attendance.md) |
 | `src/hooks/useKpiCacheIdentity.ts` | hook | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
+| `src/hooks/useKpiLive.ts` | hook | [kpi-live-refresh](../features/kpi-live-refresh.md) |
 | `src/hooks/useLiveCells.ts` | hook | [new-hire-checklist](../features/new-hire-checklist.md) |
 | `src/hooks/useLiveRefresh.ts` | hook | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
 | `src/hooks/useManagerCachedState.ts` | hook | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [manager-overview](../features/manager-overview.md) |

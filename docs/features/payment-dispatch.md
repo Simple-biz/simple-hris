@@ -248,7 +248,7 @@ Sticky column header on desktop (`hidden md:grid`); on mobile each row collapses
 
 | Column | Content |
 |---|---|
-| Avatar | Gradient initials circle (deterministic palette per row id) |
+| Avatar | Gradient initials circle (deterministic palette per row id). Of its six gradients, violet → fuchsia became `from-lime-500 to-green-600` on 2026-09-29 (`314dccad`, Kane's OK), in both this table and `ExcludedQueue.tsx`. Violet stays on the stat cards. The two tables' lists already differed, so one person can show different colours in each |
 | Recipient | Name (bold), work email (mono), expand chevron |
 | USD / PHP / COP Value | One column each. The row's headline currency (USD, or native COP on the COP tab) renders strong; the others are muted reference lines — the same weighting the old stacked "Current pay" cell had. `—` where that currency doesn't apply: `amountCOP` is only populated for COP-paid people and COP-country payees, so the COP column stays empty for everyone else. The bonus chip (`incl. ₱x bonus`) hangs under PHP. |
 | From Bank | SEND-FROM rail (Bank Preferred): pill with processor accent dot + label, the `Wires → Wise · under ₱7k` reroute note, and the `x1xxx` wire suffix in mono-amber when present |

@@ -153,8 +153,12 @@ the history is the record of what system read the roster and it must outlive the
 row with `off_boarded_at` set **before** any filter runs — which is why `off_boarded_at` is
 always selected and then projected away. There is no `include_offboarded` parameter; an
 unknown parameter is a `400`. "Active" is the `gml-status.ts` rule (any unstamped row), **not**
-the `active_employees` view (a `security_invoker` view that goes silently empty under RLS —
-memory/security-invoker-view-silent-empty.md). Duplicate master rows for one person are
+the `active_employees` view, which the API never reads. *(Until 2026-09-30 this parenthesis called the
+view "a `security_invoker` view that goes silently empty under RLS". When that was written on 2026-09-17 the view
+ran as **definer**. It has been `security_invoker` since 2026-09-29 17:28Z, over `global_master_list` alone, and every
+role reads the same 1,270 rows as the base table. Sep 29 log items 281 and 289,
+memory/security-invoker-view-silent-empty.md. The comment at `src/lib/supabase/external-api-db.ts:12-14` still gives the
+old reason.)* Duplicate master rows for one person are
 returned as-is — the API reports the table, it does not resolve identity.
 
 ## Every call is logged, denied ones included

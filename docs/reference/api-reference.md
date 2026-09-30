@@ -3258,7 +3258,7 @@ of cells — the matches were not re-run).
 | `/api/bank-update/save` | POST | service-role only | [update-bank-info](../features/update-bank-info.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |
 | `/api/bank-update/verify-otp` | POST | — **none found** | [update-bank-info](../features/update-bank-info.md) |
 | `/api/bonus-catalog` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) · *this file* |
-| `/api/bonus-catalog-applied` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [kpi-scored-notification](../features/kpi-scored-notification.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `/api/bonus-catalog-applied` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [kpi-scored-notification](../features/kpi-scored-notification.md) · [payment-dispatch](../features/payment-dispatch.md) · [kpi-live-refresh](../features/kpi-live-refresh.md) (POST + DELETE broadcast `kpi-bonus-sync`, 2026-09-29) |
 | `/api/bonus-catalog/history` | GET | — **none found** | [bonus-catalog](../features/bonus-catalog.md) |
 | `/api/ceo/accounting-team` | GET | `requireRateVisibilitySession` | — **no doc** |
 | `/api/ceo/chat` | POST | `getServerSession` | [admin-api-keys](../features/admin-api-keys.md) · [audit-log](../features/audit-log.md) · *this file* |
@@ -3289,7 +3289,7 @@ of cells — the matches were not re-run).
 | `/api/dispatch-paystubs` | POST | `requireFeatureEdit` | [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) · [paystub-dispatch](../features/paystub-dispatch.md) |
 | `/api/employee-feature-permissions` | GET, POST | `requireElevatedSession` | [identity-resolution](../features/identity-resolution.md) · [rbac-feature-permissions](../features/rbac-feature-permissions.md) · *this file* |
 | `/api/employee-forgot-password` | POST | — **none found** | — **no doc** |
-| `/api/employee-gift-receipts` | GET, PUT, DELETE | `requireFeatureAccess` | [gift-tracker-receipts](../features/gift-tracker-receipts.md) |
+| `/api/employee-gift-receipts` | GET, PUT, DELETE | `requireFeatureAccess` · PUT/DELETE refuse the actor's **own** gift (403, or 503 when that cannot be told), received → owed (409), and a DELETE without a reason (400), 2026-09-29 | [gift-tracker-receipts](../features/gift-tracker-receipts.md) |
 | `/api/employee-gift-shipping` | GET, PUT | `requireFeatureAccess` | [audit-log](../features/audit-log.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · *this file* |
 | `/api/employee-gift-shipping/[id]` | PATCH, DELETE | `requireFeatureEdit` | [audit-log](../features/audit-log.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) · *this file* |
 | `/api/employee-gift-shipping/[id]/decide` | PATCH | `requireFeatureEdit` | — **no doc** |
@@ -3381,9 +3381,9 @@ of cells — the matches were not re-run).
 | `/api/hr/work-email/suggest` | POST | `requireElevatedSession` | [audit-log](../features/audit-log.md) · [workspace-account-verify](../features/workspace-account-verify.md) |
 | `/api/hr/workspace-account/verify` | POST | `requireFeatureEdit` | [audit-log](../features/audit-log.md) |
 | `/api/hr/workspace-license-info` | GET | `requireElevatedSession` | — **no doc** |
-| `/api/hsl-bonus/entries` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
-| `/api/hsl-bonus/period` | DELETE | `requireFeatureEdit` | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
-| `/api/hsl-bonus/period-status` | GET, POST | `requireFeatureEdit` · *GET: none in route* | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) |
+| `/api/hsl-bonus/entries` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-live-refresh](../features/kpi-live-refresh.md) (POST + DELETE broadcast `kpi-bonus-sync`, 2026-09-29) |
+| `/api/hsl-bonus/period` | DELETE | `requireFeatureEdit` | [audit-log](../features/audit-log.md) · [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-live-refresh](../features/kpi-live-refresh.md) (broadcasts `kpi-bonus-sync`, 2026-09-29) |
+| `/api/hsl-bonus/period-status` | GET, POST | `requireFeatureEdit` · *GET: none in route* | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) · [kpi-scored-notification](../features/kpi-scored-notification.md) · [kpi-live-refresh](../features/kpi-live-refresh.md) (POST broadcasts `kpi-bonus-sync`, 2026-09-29) |
 | `/api/hsl-bonus/period-summary` | GET | — **none found** | [pre-release-security-readiness](../features/pre-release-security-readiness.md) |
 | `/api/hsl-bonus/team-members` | GET | `getServerSession` | [hsl-subdepartments](../features/hsl-subdepartments.md) |
 | ↳ | | | **503 when `?dept=` names a branch it cannot resolve** (2026-09-22). DATA sub-teams live in `app_settings`, so an unreadable map makes a data key indistinguishable from a typo — and the reply would be a confident empty roster, i.e. "this team has nobody in it". Code teams still resolve and still answer. |

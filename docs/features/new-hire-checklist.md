@@ -192,7 +192,12 @@ attendance surfaces run on.
   lock itself still succeeds (the DB is the source of truth, as always). Re-locking after fixing
   the calendar is safe **in this specific case only** — no hire got a first email, so there is
   nothing to duplicate; the standing "never reopen+re-lock to resend" rule still holds whenever a
-  send actually happened.
+  send actually happened. **That rule is not enforced in code, only written here.** `PUT` lock has no
+  send-once guard: a re-lock after a real send fires the webhook again, and n8n mails every hire again.
+  It happened on 2026-09-18: week 09-20 was locked (94 sent, 20:05Z), reopened (20:15Z) and re-locked (20:19Z,
+  95 sent), so about 94 hires got the orientation email twice. The separate 2026-09-29 send of 106 emails did
+  **not** come from the HRIS (no lock audit row). Sep 29 log item 282, memory
+  `orientation-email-106-from-teal-gmail`. Whether to add the guard is Kane's call (item 288).
 - **The payload carries its own reasoning**: `orientation_shifted`, `orientation_default_date`
   and `orientation_shift_reason` ride alongside the email fields (n8n ignores them), and the
   `hr.new_hire_checklist.locked` audit row records `orientation_date`, `orientation_weekday`,
