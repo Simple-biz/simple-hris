@@ -452,6 +452,13 @@ Closing this class means one of: validating the typed rate against the sheet cel
 replacing, or a stored band + confirm-on-outlier, plus making the missing-key case an
 error rather than `1`. None of it is built.
 
+*2026-09-30:* the Validation step's **HRIS vs NPD** tab
+([payroll-wizard-hris-vs-npd.md](./payroll-wizard-hris-vs-npd.md)) prints the divisor
+behind every HRIS dollar figure. On a mismatched row it also shows the rate NPD's figure
+implies against HRIS's pesos, which is exactly this table's third column. That makes a
+divisor gap visible person by person. **It is a hint, not the cross-check**: nothing
+validates or stores the typed rate, so this class stays OPEN.
+
 *One residual from the same reconciliation, unrelated to FX:* at 60.93 two of the three
 land exactly and `arvsn@` is $0.07 short (₱4.25 ≈ 0.016 h at ₱265) — NPD's `M-F Total
 Hours` reading ≈40.52 h where HRIS has 40.51 h, i.e. a sub-minute Hubstaff re-sync

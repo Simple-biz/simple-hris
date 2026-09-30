@@ -59,6 +59,7 @@ import {
   Cpu,
   HelpCircle,
   Database,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { useWizardDispatchLock } from '@/hooks/useWizardDispatchLock';
@@ -162,7 +163,9 @@ import {
   type ProrationBlockRaw,
 } from '@/lib/payroll/paystub-view';
 import {
+  PAY_STUB_SOURCE_KEYS,
   resolvePayStubFieldStates,
+  worstState,
   type PayStubFieldState,
   type PayStubSourceStates,
 } from '@/lib/payroll/paystub-field-state';
@@ -368,6 +371,12 @@ import {
   countRedFlags,
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
+import HrisNpdComparison from '@/components/payroll/HrisNpdComparison';
+import {
+  compareHrisNpd,
+  parseNpdPaste,
+  type HrisCompareInput,
+} from '@/lib/payroll/hris-npd-compare';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
@@ -2119,6 +2128,21 @@ const ORPHANAGE_SECTIONS = [
 
 type OrphanageSectionKey = (typeof ORPHANAGE_SECTIONS)[number]['key'];
 
+/**
+ * Validation step sections. `final_pay` is the department rail + Final Pay table (MV,
+ * Exclude, full screen) exactly as before; `hris_vs_npd` is the dollar-by-dollar
+ * comparison against the NPD sheet (`HrisNpdComparison`, docs/features/payroll-wizard-hris-vs-npd.md).
+ * The swap covers ONLY that workspace — the header, the summary cards, the holiday card and
+ * the Validation Checks are the cycle's, so both sections keep them. Same shape as
+ * ADDITIONS_SECTIONS.
+ */
+const VALIDATION_SECTIONS = [
+  { key: 'final_pay', label: 'Final Pay', icon: ShieldCheck },
+  { key: 'hris_vs_npd', label: 'HRIS vs NPD', icon: ArrowLeftRight },
+] as const;
+
+type ValidationSectionKey = (typeof VALIDATION_SECTIONS)[number]['key'];
+
 export default function PayrollWizard({
   sessionEmail,
   sessionRole,
@@ -2822,6 +2846,16 @@ export default function PayrollWizard({
   const [validationSearch, setValidationSearch] = useState('');
   /** Active department in the Validation step's per-department final-pay view. */
   const [validationDeptTab, setValidationDeptTab] = useState<string | null>(null);
+  /** Validation step section: the Final Pay workspace or HRIS vs NPD. */
+  const [validationSection, setValidationSection] = useState<ValidationSectionKey>('final_pay');
+  const [validationSectionDir, setValidationSectionDir] = useState(1);
+  /**
+   * The NPD paste for HRIS vs NPD, stamped with the week it was pasted against. It is
+   * read only while that week is on screen (`npdPasteText`), so a paste can never be
+   * compared against another week's pay — no clearing effect needed. Session-only on
+   * purpose: nothing about it is ever written (payroll-wizard-hris-vs-npd.md).
+   */
+  const [npdPaste, setNpdPaste] = useState<{ sourceFile: string | null; text: string }>({ sourceFile: null, text: '' });
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
     work_email: string;
@@ -10175,6 +10209,91 @@ export default function PayrollWizard({
     () => countRedFlags(validationBreakdowns),
     [validationBreakdowns],
   );
+
+  // ── Validation → HRIS vs NPD (docs/features/payroll-wizard-hris-vs-npd.md) ──────
+  // DISPLAY ONLY: nothing below writes anywhere, and nothing reads it back into pay.
+
+  /**
+   * HRIS's side: every Validation row — the SAME rows the Final Pay table shows — at the
+   * PHP figure dispatch will be sent (the staged final), or the row's Gross when nothing
+   * is staged (no personal email ⇒ the pay run skips them, and the row says so).
+   */
+  const npdHrisRows = useMemo<HrisCompareInput[]>(
+    () =>
+      validationBreakdowns.map((r) => ({
+        email: r.email,
+        name: r.name,
+        php: r.dispatchNet ?? r.gross,
+        dispatchable: r.dispatchNet != null,
+        excluded: r.excluded,
+      })),
+    [validationBreakdowns],
+  );
+
+  /** People in a department paused this week — the same predicate `effectiveCalcResults`
+   *  filters them out with — so NPD listing one reads "paused", not a bare "Not in HRIS". */
+  const npdPausedEmails = useMemo(() => {
+    const out = new Set<string>();
+    if (pausedDeptKeys.size === 0) return out;
+    for (const row of calcResults) {
+      const dk = employeeDepts[row.email] ?? employeeDepts[(row.email ?? '').toLowerCase()];
+      if (!dk || !pausedDeptKeys.has(dk)) continue;
+      const k = normEmail(row.email);
+      if (k) out.add(k);
+    }
+    return out;
+  }, [calcResults, employeeDepts, pausedDeptKeys]);
+
+  /**
+   * Can HRIS's dollar figures be judged yet? The Step-8 preview's own judgement of the
+   * statement's USD line (every Net input + the FX read, with the same PAB policy
+   * exemption), AND the step-7 load line — so no row turns green or red on a figure that
+   * has not landed.
+   */
+  const hrisNpdUsdState = useMemo<PayStubFieldState>(() => {
+    const usd = resolvePayStubFieldStates(paystubSourceStates, {
+      settledByPolicy:
+        paystubSourceStates.pabPeriod === 'settled' && !dispatchData.isFinalPabWeek
+          ? ['attendanceBonus']
+          : [],
+    }).totalUsd;
+    return worstState([usd, isStepDataLoading(7) ? 'pending' : 'settled']);
+  }, [paystubSourceStates, dispatchData.isFinalPabWeek, isStepDataLoading]);
+
+  const npdPasteText = npdPaste.sourceFile === calcSourceFile ? npdPaste.text : '';
+  const setNpdPasteText = React.useCallback(
+    (text: string) => setNpdPaste({ sourceFile: calcSourceFile, text }),
+    [calcSourceFile],
+  );
+  const npdPasteParse = useMemo(() => parseNpdPaste(npdPasteText), [npdPasteText]);
+
+  const hrisNpdComparison = useMemo(
+    () =>
+      compareHrisNpd({
+        hrisRows: npdHrisRows,
+        npdRows: npdPasteParse.rows,
+        fxRate: usdToPhpRate,
+        hrisState: hrisNpdUsdState,
+        unavailableSources: PAY_STUB_SOURCE_KEYS.filter((k) => paystubSourceStates[k] === 'unavailable'),
+        // The same master-list bridge the orphanage paste resolves through.
+        aliasesFor: orphanageResolveCtx.masterAliasesFor,
+        pausedEmails: npdPausedEmails,
+      }),
+    [
+      npdHrisRows,
+      npdPasteParse.rows,
+      usdToPhpRate,
+      hrisNpdUsdState,
+      paystubSourceStates,
+      orphanageResolveCtx.masterAliasesFor,
+      npdPausedEmails,
+    ],
+  );
+
+  /** Rows that need a look — the HRIS vs NPD tab's badge. 0 while verdicts are held. */
+  const hrisNpdAttentionCount = hrisNpdComparison.counts
+    ? hrisNpdComparison.counts.mismatch + hrisNpdComparison.counts.not_in_hris + hrisNpdComparison.counts.not_in_npd
+    : 0;
 
   /** [WIZARD-TUTORIAL] Advisory signals for the Processing Tutorial guide —
    *  plain values the wizard already computes, no new derivation here. The
@@ -19485,10 +19604,102 @@ export default function PayrollWizard({
               );
             })()}
 
-            {/* Final Pay Table — separated per department (mirrors the Additions
-                step's department rail). Each department has its own table plus a
-                master "exclude all" tickbox in the Exclude header. */}
-            {(() => {
+            {/* ── Section tabs: Final Pay | HRIS vs NPD ─────────────────────────────
+                Step 5's Departments | HSL strip (ui-standards §11.1, underline variant).
+                The swap replaces ONLY the workspace below — the department rail + Final
+                Pay table, or the NPD comparison. The header, summary cards, holiday card
+                and Validation Checks are the cycle's, so both sections keep them. The
+                HRIS vs NPD badge counts rows that need a look (mismatch or missing on one
+                side), and only once verdicts can be given. */}
+            <div role="tablist" aria-label="Validation sections" className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
+              {VALIDATION_SECTIONS.map((sec) => {
+                const isActive = validationSection === sec.key;
+                const npd = sec.key === 'hris_vs_npd';
+                const count = npd ? hrisNpdAttentionCount : finalPayRows.length;
+                return (
+                  <button
+                    key={sec.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => {
+                      if (isActive) return;
+                      const from = VALIDATION_SECTIONS.findIndex((x) => x.key === validationSection);
+                      const to = VALIDATION_SECTIONS.findIndex((x) => x.key === sec.key);
+                      setValidationSectionDir(to >= from ? 1 : -1);
+                      setValidationSection(sec.key);
+                    }}
+                    className={cn(
+                      'relative -mb-px flex items-center gap-2 px-3.5 py-2 text-sm font-semibold transition-colors duration-200',
+                      isActive
+                        ? npd
+                          ? 'text-violet-700 dark:text-violet-300'
+                          : 'text-indigo-700 dark:text-indigo-300'
+                        : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200',
+                    )}
+                  >
+                    {isActive && (
+                      <motion.span
+                        layoutId="validation-section-indicator"
+                        className={cn(
+                          'absolute inset-x-0 bottom-0 h-0.5 rounded-full',
+                          npd ? 'bg-violet-600 dark:bg-violet-400' : 'bg-indigo-600 dark:bg-indigo-400',
+                        )}
+                        transition={{ duration: reduceMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
+                      />
+                    )}
+                    <sec.icon className="relative h-3.5 w-3.5 shrink-0" />
+                    <span className="relative">{sec.label}</span>
+                    {count > 0 && (
+                      <span
+                        title={npd ? `${count} row${count === 1 ? '' : 's'} where HRIS and NPD disagree, or someone is missing on one side` : undefined}
+                        className={cn(
+                          'relative rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none transition-colors duration-200',
+                          npd
+                            ? 'bg-rose-600 text-white'
+                            : isActive
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                        )}
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* The section swap — `overflow-x-clip` and `mode="wait"` for the same reasons
+                as step 5's: no page scrollbar from the slide, sticky table heads intact,
+                and two money tables never cross-dissolve. */}
+            <div className="overflow-x-clip">
+              <AnimatePresence mode="wait" initial={false} custom={validationSectionDir}>
+                <motion.div
+                  key={validationSection}
+                  custom={validationSectionDir}
+                  variants={ADDITIONS_SECTION_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+                >
+            {/* HRIS vs NPD — display only: it reads the SAME Validation rows the Final Pay
+                table shows and writes nothing. Final Pay Table (the other branch) —
+                separated per department (mirrors the Additions step's department rail).
+                Each department has its own table plus a master "exclude all" tickbox in
+                the Exclude header. */}
+            {validationSection === 'hris_vs_npd' ? (
+              <HrisNpdComparison
+                pasteText={npdPasteText}
+                onPasteChange={setNpdPasteText}
+                parse={npdPasteParse}
+                comparison={hrisNpdComparison}
+                fxRate={usdToPhpRate}
+                hrisPeople={finalPayRows.length}
+                periodLabel={calcSourceFile}
+              />
+            ) : (() => {
               const vNeedle = validationSearch.toLowerCase().trim();
               const UNASSIGNED = '__unassigned__';
 
@@ -19684,6 +19895,9 @@ export default function PayrollWizard({
                 </div>
               );
             })()}
+                </motion.div>
+              </AnimatePresence>
+            </div>
 
             {/* Validation Checks */}
             <Card className="border-zinc-200/90 bg-white/90 shadow-sm ring-0 dark:border-zinc-800 dark:bg-zinc-900/50">

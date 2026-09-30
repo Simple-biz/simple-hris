@@ -2299,6 +2299,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/payroll-wizard/tutorial/ProcessingNarrative.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
 | `src/components/payroll-wizard/tutorial/TutorialGuide.tsx` | component | [payroll-wizard-tutorial-mode](../features/payroll-wizard-tutorial-mode.md) |
 | `src/components/payroll/AccountingMesa.tsx` | component | *this file* · [accounting-mesa-export](../features/accounting-mesa-export.md) · [mesa](../features/mesa.md) |
+| `src/components/payroll/HrisNpdComparison.tsx` | component | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) |
 | `src/components/payroll/LockToggleConfirmDialog.tsx` | component | *this file* · [cycle-closeout](../features/cycle-closeout.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `src/components/payroll/OrphanageClearConfirmDialog.tsx` | component | *this file* · [orphanage-pay-step](../features/orphanage-pay-step.md) |
 | `src/components/payroll/OrphanageOmsLiveConfirmDialog.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
