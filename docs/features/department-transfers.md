@@ -250,6 +250,16 @@ then flips to `applied`).
 
 ## 3 · The three surfaces
 
+> **Every list on these three tabs stops at 300 rows, and nothing on screen says so** (measured
+> 2026-09-30, audit item 290, **OPEN**). Each reader in `department-transfer-requests.ts` ends in
+> `.limit(300)`: `listAllTransferRequests` (HR `scope=all` and Accounting), `listAllResolvedTransfers`
+> and `listResolvedTransfersForDepartments` (Done), `listTransferRequestsByRequester` (My requests).
+> On 2026-09-30 the table held **434** rows (426 applied · 5 approved · 2 cancelled · 1 pending,
+> 2026-06-24 → 2026-09-29). HR and Accounting got the newest 300 by `created_at`, which is
+> 299 applied + 1 pending. That is where HR's *Completed 299* came from, and the 134 rows before
+> 2026-08-01 05:49Z were missing. The Accounting export exports those same 300. Pay is **not**
+> affected: `fetchDepartmentTransferRows` (`hsl-transfer-effective.ts`) pages the whole table.
+
 ### Manager → Transfers tab (`ManagerTransfers.tsx`)
 
 A dedicated tab (id `transfers`, feature `transfers`), redesigned Jul 24 2026 (via `impeccable`)
