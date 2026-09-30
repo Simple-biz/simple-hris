@@ -373,7 +373,7 @@ import {
   countRedFlags,
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
-import HrisNpdComparison, { type HrisNpdPanelProps } from '@/components/payroll/HrisNpdComparison';
+import HrisNpdComparison, { type HrisNpdPanelProps, type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
   parseNpdPaste,
@@ -2846,8 +2846,16 @@ export default function PayrollWizard({
    * read only while that week is on screen (`npdPasteText`), so a paste can never be
    * compared against another week's pay — no clearing effect needed. Session-only on
    * purpose: nothing about it is ever written (payroll-wizard-hris-vs-npd.md).
+   *
+   * `step` (1 NPD Figures → 2 Output) rides in the SAME week-stamped object, so another
+   * week always starts on step 1 and a paste arriving for it cannot flip straight to the
+   * output mid-typing; emptying the paste drops back to step 1 the same way.
    */
-  const [npdPaste, setNpdPaste] = useState<{ sourceFile: string | null; text: string }>({ sourceFile: null, text: '' });
+  const [npdPaste, setNpdPaste] = useState<{ sourceFile: string | null; text: string; step: HrisNpdStep }>({
+    sourceFile: null,
+    text: '',
+    step: 'input',
+  });
   /** HRIS vs NPD's search + status chip. Wizard state, not the panel's, because the step
    *  and the full-screen overlay each mount a panel and must show the same slice — the
    *  way Final Pay's `validationSearch` is shared. Display only. */
@@ -10257,9 +10265,26 @@ export default function PayrollWizard({
     return worstState([usd, isStepDataLoading(7) ? 'pending' : 'settled']);
   }, [paystubSourceStates, dispatchData.isFinalPabWeek, isStepDataLoading]);
 
-  const npdPasteText = npdPaste.sourceFile === calcSourceFile ? npdPaste.text : '';
+  const npdPasteForThisWeek = npdPaste.sourceFile === calcSourceFile;
+  const npdPasteText = npdPasteForThisWeek ? npdPaste.text : '';
+  const npdStep: HrisNpdStep = npdPasteForThisWeek ? npdPaste.step : 'input';
   const setNpdPasteText = React.useCallback(
-    (text: string) => setNpdPaste({ sourceFile: calcSourceFile, text }),
+    (text: string) =>
+      setNpdPaste((prev) => ({
+        sourceFile: calcSourceFile,
+        text,
+        // A paste for another week, or an emptied one, is back on step 1.
+        step: prev.sourceFile === calcSourceFile && text.trim() !== '' ? prev.step : 'input',
+      })),
+    [calcSourceFile],
+  );
+  const setNpdStep = React.useCallback(
+    (step: HrisNpdStep) =>
+      setNpdPaste((prev) =>
+        prev.sourceFile === calcSourceFile
+          ? { ...prev, step }
+          : { sourceFile: calcSourceFile, text: '', step: 'input' },
+      ),
     [calcSourceFile],
   );
   const npdPasteParse = useMemo(() => parseNpdPaste(npdPasteText), [npdPasteText]);
@@ -10272,8 +10297,8 @@ export default function PayrollWizard({
         fxRate: usdToPhpRate,
         hrisState: hrisNpdUsdState,
         unavailableSources: PAY_STUB_SOURCE_KEYS.filter((k) => paystubSourceStates[k] === 'unavailable'),
-        // The same master-list bridge the orphanage paste resolves through.
-        aliasesFor: orphanageResolveCtx.masterAliasesFor,
+        // Joined on the WORK email only — deliberately no master-list / personal-email
+        // bridge (Kane, 2026-09-30). See hris-npd-compare.ts rule 6.
         pausedEmails: npdPausedEmails,
       }),
     [
@@ -10282,7 +10307,6 @@ export default function PayrollWizard({
       usdToPhpRate,
       hrisNpdUsdState,
       paystubSourceStates,
-      orphanageResolveCtx.masterAliasesFor,
       npdPausedEmails,
     ],
   );
@@ -19420,6 +19444,8 @@ export default function PayrollWizard({
           fxRate: usdToPhpRate,
           hrisPeople: finalPayRows.length,
           periodLabel: calcSourceFile,
+          step: npdStep,
+          onStepChange: setNpdStep,
           search: hrisNpdSearch,
           onSearchChange: setHrisNpdSearch,
           filter: hrisNpdFilter,

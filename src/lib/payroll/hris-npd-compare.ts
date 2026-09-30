@@ -25,6 +25,8 @@
  *    over an unloaded bonus is a false alarm; a green one over an unloaded figure is worse.
  * 5. **Absence is not zero.** With nothing pasted there are no rows at all — "everyone is
  *    Not in NPD" would be a claim about NPD that an empty box cannot support.
+ * 6. **The join is the WORK EMAIL, exactly.** No master-list bridge and no personal or
+ *    alternate address (Kane, 2026-09-30: "we are connecting this to the work email").
  */
 
 import { normEmail } from '@/lib/email/norm-email';
@@ -297,13 +299,10 @@ export interface CompareHrisNpdInput {
   hrisState: PayStubFieldState;
   /** The inputs that failed, named in the banner. Read only when `hrisState` is `unavailable`. */
   unavailableSources?: readonly PayStubSourceKey[];
-  /**
-   * The master-list bridge: every normalized address of the master record holding this
-   * one (work, personal, alternates), or null when no master record has it. The same
-   * bridge the orphanage paste resolves through.
-   */
-  aliasesFor?: (emailKey: string) => readonly string[] | null;
-  /** Normalized emails of people whose department is paused this week ("Pay this week" off). */
+  // There is deliberately NO alias / master-list bridge here. Kane, 2026-09-30: "We are not
+  // connecting this with the personal email please we are connecting this to the work
+  // email". A line reaches an HRIS row by its work email, exactly, or not at all.
+  /** Normalized work emails of people whose department is paused this week ("Pay this week" off). */
   pausedEmails?: ReadonlySet<string>;
 }
 
@@ -333,8 +332,6 @@ export interface HrisNpdRow {
   npdCents: number | null;
   /** The paste lines that landed on this row, in paste order. */
   npdLines: readonly number[];
-  /** NPD addresses that differ from `workEmail` — a bridged alias, or a second address. */
-  npdAliases: readonly string[];
   /** Null while verdicts are held (see `HrisNpdComparison.hold`). */
   status: HrisNpdStatus | null;
   /** NPD − HRIS, in cents, when both figures exist. */
@@ -405,7 +402,6 @@ interface NpdGroup {
   firstEmail: string;
   cents: number;
   lines: number[];
-  emails: string[];
   note: string | null;
 }
 
@@ -427,13 +423,14 @@ function round2(n: number): number {
  *
  * - HRIS rows are grouped by normalized email. Two Validation rows on one email are both
  *   staged, so both are paid — their staged cents are summed, never deduplicated.
- * - An NPD line reaches an HRIS row by its own address first, then through the master
- *   list. A bridge that reaches TWO HRIS rows is refused as ambiguous (the row stays
- *   `not_in_hris`, with a note): personal addresses are shared and recycled, and a
- *   guessed pairing would show one person's figure against another's.
- * - Every NPD line that reaches the same HRIS row is ADDED (a person on two lines, or
- *   under their work and personal address) — Kane's orphanage ruling of 2026-09-29, and
- *   HRIS pays one figure per person. Unmatched lines for one address are added too.
+ * - **An NPD line reaches an HRIS row by its WORK EMAIL, exactly (case- and
+ *   whitespace-insensitive), or not at all.** No master-list bridge, no personal address,
+ *   no alternate (Kane, 2026-09-30: "we are connecting this to the work email"). A line
+ *   whose address is not an HRIS row's work email is its own Not-in-HRIS row, and the
+ *   HRIS row stays Not in NPD — both visible, nothing guessed.
+ * - Every NPD line on the same work email is ADDED (a person on two lines) — Kane's
+ *   orphanage ruling of 2026-09-29, and HRIS pays one figure per person. Unmatched lines
+ *   for one address are added too.
  */
 export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
   const hold = resolveHold(input);
@@ -478,41 +475,19 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
   for (const line of input.npdRows) {
     const k = keyOf(line.email);
     if (!k) continue; // the parser never emits one; kept so a caller's row cannot throw
-    let target: string | null = null;
-    let note: string | null = null;
-    if (hris.has(k)) {
-      target = k;
-    } else {
-      const aliases = input.aliasesFor?.(k) ?? null;
-      const hits = new Set<string>();
-      for (const a of aliases ?? []) {
-        const ak = keyOf(a);
-        if (ak && hris.has(ak)) hits.add(ak);
-      }
-      if (hits.size === 1) {
-        target = [...hits][0];
-      } else if (hits.size > 1) {
-        const names = [...hits].map((h) => hris.get(h)!.email).sort();
-        note = `Reaches ${hits.size} HRIS rows through the master list (${names.join(', ')}) — not matched to either`;
-      } else {
-        const paused = input.pausedEmails;
-        if (paused && (paused.has(k) || (aliases ?? []).some((a) => {
-          const ak = keyOf(a);
-          return ak != null && paused.has(ak);
-        }))) {
-          note = 'In HRIS, but their department is paused this week (Step 1 → Configuration → “Pay this week”)';
-        }
-      }
-    }
+    // Work email, exactly. Nothing else reaches an HRIS row.
+    const target: string | null = hris.has(k) ? k : null;
+    const note: string | null =
+      target == null && input.pausedEmails?.has(k)
+        ? 'In HRIS, but their department is paused this week (Step 1 → Configuration → “Pay this week”)'
+        : null;
     const gk = target != null ? `hris:${target}` : `npd:${k}`;
     const g = npd.get(gk);
     if (g) {
       g.cents += line.cents;
       g.lines.push(line.line);
-      if (!g.emails.includes(k)) g.emails.push(k);
-      if (!g.note && note) g.note = note;
     } else {
-      npd.set(gk, { target, firstEmail: k, cents: line.cents, lines: [line.line], emails: [k], note });
+      npd.set(gk, { target, firstEmail: k, cents: line.cents, lines: [line.line], note });
     }
   }
 
@@ -544,7 +519,6 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
       noPayoutRowCount: g.noPayoutRowCount,
       npdCents,
       npdLines: n ? n.lines : [],
-      npdAliases: n ? n.emails.filter((e) => e !== keyOf(g.email)) : [],
       status,
       deltaCents,
       impliedNpdRate,
@@ -567,7 +541,6 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
       noPayoutRowCount: 0,
       npdCents: n.cents,
       npdLines: n.lines,
-      npdAliases: n.emails.filter((e) => e !== n.firstEmail),
       status: judged ? 'not_in_hris' : null,
       deltaCents: null,
       impliedNpdRate: null,
@@ -611,8 +584,7 @@ export type HrisNpdFilter = 'all' | HrisNpdStatus;
 
 /**
  * The table's search + status chips. DISPLAY ONLY: totals and counts are always the whole
- * comparison's. The needle matches the row's address, its name and every NPD address that
- * landed on it, so a person found under an alias is still reachable by that alias.
+ * comparison's. The needle matches the row's work email and its name.
  */
 export function filterHrisNpdRows(
   rows: readonly HrisNpdRow[],
@@ -623,7 +595,7 @@ export function filterHrisNpdRows(
   return rows.filter((r) => {
     if (status !== 'all' && r.status !== status) return false;
     if (!needle) return true;
-    return [r.workEmail, r.name ?? '', ...r.npdAliases].join(' ').toLowerCase().includes(needle);
+    return `${r.workEmail} ${r.name ?? ''}`.toLowerCase().includes(needle);
   });
 }
 

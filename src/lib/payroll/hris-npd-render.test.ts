@@ -5,7 +5,7 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import HrisNpdComparison from '@/components/payroll/HrisNpdComparison';
+import HrisNpdComparison, { type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
   parseNpdPaste,
@@ -28,9 +28,10 @@ function hris(email: string, php: number): HrisCompareInput {
   return { email, name: email.split('@')[0], php, dispatchable: true, excluded: false };
 }
 
-/** How the panel is mounted: the display-only search / chip (wizard state in the app) and
- *  the full-screen levers. */
+/** How the panel is mounted: which step (wizard state in the app; the output tests default
+ *  to step 2), the display-only search / chip, and the full-screen levers. */
 type Mount = {
+  step?: HrisNpdStep;
   search?: string;
   filter?: HrisNpdFilter;
   fillHeight?: boolean;
@@ -59,6 +60,8 @@ function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: M
       fxRate: over.fxRate ?? FX,
       hrisPeople: 3,
       periodLabel: 'hubstaff_2026-09-20_to_2026-09-26.csv',
+      step: mount.step ?? 'output',
+      onStepChange: () => {},
       search: mount.search ?? '',
       onSearchChange: () => {},
       filter: mount.filter ?? 'all',
@@ -150,10 +153,70 @@ describe('HRIS vs NPD — rendered', () => {
     assert.match(html, /Couldn(?:&#x27;|')t load the Additions values/);
   });
 
-  it('with nothing pasted there is no table — "absence is not zero"', () => {
-    const html = render('');
+  it('with nothing pasted there is no table — "absence is not zero" — even if step 2 was asked for', () => {
+    const html = render('', {}, { step: 'output' });
     assert.doesNotMatch(html, /<table/);
-    assert.match(html, /Paste NPD(?:&#x27;|')s figures to compare/);
+    assert.match(html, /<h3[^>]*>NPD Figures<\/h3>/);
+    assert.match(html, /<textarea/);
+  });
+});
+
+// ── The two steps (Kane, 2026-09-30: "separate the input from the output please hide the
+// input" · "The NPD Figures lets make this the first step after that it will load the
+// output where we can see the mismatches" · "add a search bar in the output") ──────────
+
+/** The "Load output" button's opening tag. */
+function loadOutputButton(html: string): string {
+  const at = html.indexOf('Load output');
+  assert.ok(at > 0, 'no Load output button');
+  return html.slice(html.lastIndexOf('<button', at), at);
+}
+
+describe('HRIS vs NPD — step 1 NPD Figures, then step 2 Output', () => {
+  it('step 1 is the input: the paste box, what was read, and Load output — no table', () => {
+    const html = render(PASTE, {}, { step: 'input' });
+    assert.match(html, /<textarea[^>]*aria-label="NPD work emails and dollar amounts"/);
+    assert.match(html, /3 lines read/);
+    assert.doesNotMatch(html, /<table/);
+    assert.doesNotMatch(loadOutputButton(html), /disabled=""/);
+    assert.match(html, /aria-current="step"[^>]*>[\s\S]*?NPD Figures/);
+  });
+
+  it('step 2 is the output with the input HIDDEN: no paste box, the table, and the rail summary', () => {
+    const html = render(PASTE, {}, { step: 'output' });
+    assert.doesNotMatch(html, /<textarea/);
+    assert.match(html, /<table/);
+    assert.match(html, /NPD Figures · 3 lines read/);
+    assert.match(html, />Edit</);
+  });
+
+  it('hiding the input never hides a refused line: step 2 carries the skipped count', () => {
+    const html = render(`${PASTE}\nbad@simple.biz\t₱1,000`, {}, { step: 'output' });
+    assert.doesNotMatch(html, /<textarea/);
+    assert.match(html, />1 skipped</);
+  });
+
+  it('step 1 lists every refused line with its line number and reason', () => {
+    const html = render(`${PASTE}\nbad@simple.biz\t₱1,000`, {}, { step: 'input' });
+    assert.match(html, /aria-label="Skipped lines"/);
+    assert.match(html, />L4</);
+    assert.match(html, /looks like pesos/);
+  });
+
+  it('with nothing readable, Load output and the Output step are disabled', () => {
+    const html = render('only-garbage', {}, { step: 'input' });
+    assert.match(loadOutputButton(html), /disabled=""/);
+    const railOutput = html.slice(html.lastIndexOf('<button', html.indexOf('Output</button>')), html.indexOf('Output</button>'));
+    assert.match(railOutput, /disabled=""/);
+  });
+
+  it('the output has a full-width search bar directly above the table', () => {
+    const html = render(PASTE, {}, { step: 'output' });
+    const search = html.indexOf('aria-label="Search HRIS vs NPD"');
+    const table = html.indexOf('<table');
+    assert.ok(search > 0 && search < table, 'search must sit above the table');
+    assert.match(html, /placeholder="Search the output by email or name…"/);
+    assert.equal((html.match(/aria-label="Search HRIS vs NPD"/g) ?? []).length, 1);
   });
 });
 
@@ -224,6 +287,13 @@ describe('HRIS vs NPD — the wizard mounts ONE overlay for both sections (sourc
     assert.match(src, /hrisNpd=\{hrisNpdPanelProps\}/);
     assert.match(src, /section=\{validationSection\}\n\s+onSelectSection=\{selectValidationSection\}/);
     assert.match(src, /onClick=\{\(\) => selectValidationSection\(sec\.key\)\}/);
+  });
+
+  it('the step rides in the SAME week-stamped state as the paste, so another week starts on step 1', () => {
+    assert.match(src, /useState<\{ sourceFile: string \| null; text: string; step: HrisNpdStep \}>/);
+    assert.match(src, /step: prev\.sourceFile === calcSourceFile && text\.trim\(\) !== '' \? prev\.step : 'input'/);
+    assert.match(src, /const npdStep: HrisNpdStep = npdPasteForThisWeek \? npdPaste\.step : 'input';/);
+    assert.match(src, /step: npdStep,\n\s+onStepChange: setNpdStep,/);
   });
 
   it('the sections are defined once — in ValidationFullScreen.tsx — never again in the wizard', () => {

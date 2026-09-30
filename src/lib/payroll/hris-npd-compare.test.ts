@@ -293,54 +293,36 @@ describe('compareHrisNpd', () => {
     assert.equal(c.rows[0].status, 'not_in_hris');
   });
 
-  test('a personal address reaches the HRIS row through the master list, and the row says which address NPD used', () => {
-    const aliases = new Map([['kane.personal@gmail.com', ['kaner@simple.biz', 'kane.personal@gmail.com']]]);
+  // Kane, 2026-09-30: "We are not connecting this with the personal email please we are
+  // connecting this to the work email." The join is the work email, exactly.
+
+  test('WORK EMAIL ONLY: a personal address never reaches the HRIS row — both sides stay visible, unmatched', () => {
     const c = run({
       hrisRows: [hris('kaner@simple.biz', phpFor(250))],
       paste: 'kane.personal@gmail.com\t250',
-      aliasesFor: (k) => aliases.get(k) ?? null,
     });
-    assert.equal(c.rows.length, 1);
-    assert.equal(c.rows[0].status, 'match');
-    assert.equal(c.rows[0].workEmail, 'kaner@simple.biz');
-    assert.deepEqual(c.rows[0].npdAliases, ['kane.personal@gmail.com']);
+    assert.deepEqual(c.rows.map((r) => [r.workEmail, r.status]), [
+      ['kane.personal@gmail.com', 'not_in_hris'],
+      ['kaner@simple.biz', 'not_in_npd'],
+    ]);
   });
 
-  test('work + personal address of one person on two NPD lines are added onto the one HRIS row', () => {
-    const aliases = new Map([['p@gmail.com', ['a@simple.biz', 'p@gmail.com']]]);
+  test('WORK EMAIL ONLY: the compare input has no alias bridge to hand an address to', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/payroll/hris-npd-compare.ts'), 'utf8');
+    assert.doesNotMatch(src, /aliasesFor|masterAliases|personal_email/);
+    const wizard = fs.readFileSync(path.join(process.cwd(), 'src/components/PayrollWizard.tsx'), 'utf8');
+    const call = wizard.slice(wizard.indexOf('compareHrisNpd({'), wizard.indexOf('compareHrisNpd({') + 900);
+    assert.doesNotMatch(call, /aliasesFor|masterAliasesFor/);
+  });
+
+  test('a work email on two NPD lines is still one person, added', () => {
     const c = run({
       hrisRows: [hris('a@simple.biz', phpFor(30))],
-      paste: 'a@simple.biz\t10\np@gmail.com\t20',
-      aliasesFor: (k) => aliases.get(k) ?? null,
+      paste: 'a@simple.biz\t10\nA@Simple.biz\t20',
     });
     assert.equal(c.rows.length, 1);
     assert.equal(c.rows[0].npdCents, 3000);
     assert.equal(c.rows[0].status, 'match');
-  });
-
-  test('a bridge that reaches TWO HRIS rows is refused as ambiguous — nothing is paired, nothing dropped', () => {
-    const aliases = new Map([['shared@gmail.com', ['a@simple.biz', 'b@simple.biz', 'shared@gmail.com']]]);
-    const c = run({
-      hrisRows: [hris('a@simple.biz', phpFor(1)), hris('b@simple.biz', phpFor(2))],
-      paste: 'shared@gmail.com\t3',
-      aliasesFor: (k) => aliases.get(k) ?? null,
-    });
-    assert.deepEqual(c.rows.map((r) => [r.workEmail, r.status]), [
-      ['a@simple.biz', 'not_in_npd'],
-      ['b@simple.biz', 'not_in_npd'],
-      ['shared@gmail.com', 'not_in_hris'],
-    ]);
-    assert.match(c.rows[2].note ?? '', /Reaches 2 HRIS rows/);
-  });
-
-  test('the address itself wins over the bridge', () => {
-    const aliases = new Map([['a@simple.biz', ['a@simple.biz', 'b@simple.biz']]]);
-    const c = run({
-      hrisRows: [hris('a@simple.biz', phpFor(1)), hris('b@simple.biz', phpFor(2))],
-      paste: 'a@simple.biz\t1',
-      aliasesFor: (k) => aliases.get(k) ?? null,
-    });
-    assert.equal(c.rows.find((r) => r.workEmail === 'a@simple.biz')!.status, 'match');
   });
 
   test('someone NPD lists whose department is paused this week says so instead of a bare Not in HRIS', () => {
@@ -435,11 +417,9 @@ describe('compareHrisNpd — no verdict before the figures can be judged', () =>
 });
 
 describe('filterHrisNpdRows — display only', () => {
-  const aliases = new Map([['kane.personal@gmail.com', ['kaner@simple.biz']]]);
   const c = run({
     hrisRows: [hris('kaner@simple.biz', phpFor(1), { name: 'Kane Rivera' }), hris('b@simple.biz', phpFor(2))],
-    paste: 'kane.personal@gmail.com\t1\nb@simple.biz\t3\nz@simple.biz\t4',
-    aliasesFor: (k) => aliases.get(k) ?? null,
+    paste: 'kaner@simple.biz\t1\nb@simple.biz\t3\nz@simple.biz\t4',
   });
 
   test('status chips narrow to one bucket', () => {
@@ -448,9 +428,9 @@ describe('filterHrisNpdRows — display only', () => {
     assert.equal(filterHrisNpdRows(c.rows, { status: 'all' }).length, 3);
   });
 
-  test('the search reaches a person by name and by the alias NPD used', () => {
+  test('the search reaches a person by work email and by name', () => {
     assert.deepEqual(filterHrisNpdRows(c.rows, { needle: 'rivera' }).map((r) => r.workEmail), ['kaner@simple.biz']);
-    assert.deepEqual(filterHrisNpdRows(c.rows, { needle: 'kane.personal' }).map((r) => r.workEmail), ['kaner@simple.biz']);
+    assert.deepEqual(filterHrisNpdRows(c.rows, { needle: 'KANER@' }).map((r) => r.workEmail), ['kaner@simple.biz']);
   });
 
   test('filtering never touches the totals', () => {

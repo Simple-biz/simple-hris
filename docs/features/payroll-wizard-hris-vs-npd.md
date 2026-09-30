@@ -1,10 +1,12 @@
 # Payroll Wizard — HRIS vs NPD (Validation step tab)
 
-A **HRIS vs NPD** tab on the Payroll Wizard's Validation step (7). Accounting pastes the NPD
-sheet's work emails and dollar figures, and every person appears once with HRIS's dollar figure
-beside NPD's: a **green** row with a check when they agree to the cent, a **red** row with an ✗
-and the difference when they don't, and a red **Not in HRIS** / **Not in NPD** when one side has
-nobody at that address. Nobody on either side is ever dropped. Display only: it writes nothing.
+A **HRIS vs NPD** tab on the Payroll Wizard's Validation step (7), in two steps. **Step 1, NPD
+Figures**: Accounting pastes the NPD sheet's work emails and dollar figures. **Step 2, Output**
+(opened with **Load output**, the input hidden): every person appears once with HRIS's dollar
+figure beside NPD's. A **green** row with a check means they agree to the cent. A **red** row
+with an ✗ and the difference means they don't. A red **Not in HRIS** / **Not in NPD** means one
+side has nobody at that address. Nobody on either side is ever dropped. Display only: it writes
+nothing.
 
 Kane, 2026-09-30: *"compare their Dollar Values - against their work emails … If they are a match
 then that row will be green along with the Match column that has a check mark and X mark if other
@@ -18,9 +20,10 @@ commit: `git log -- docs/features/payroll-wizard-hris-vs-npd.md`. Plan:
 | Piece | File |
 | --- | --- |
 | Pure module: parse the paste, HRIS's staged dollars, compare, filter, labels | `src/lib/payroll/hris-npd-compare.ts` |
-| Rules tests (parse, buckets, union, bridge, holds, source guard) | `src/lib/payroll/hris-npd-compare.test.ts` |
-| Rendered-spec tests (green / red / labels / holds / phone layout) | `src/lib/payroll/hris-npd-render.test.ts` |
-| The panel (paste card, rate line, hold banner, chips, table) | `src/components/payroll/HrisNpdComparison.tsx` |
+| Rules tests (parse, buckets, union, work-email-only join, holds, source guards) | `src/lib/payroll/hris-npd-compare.test.ts` |
+| Rendered-spec tests (green / red / labels / holds / the two steps / phone layout / wiring guards) | `src/lib/payroll/hris-npd-render.test.ts` |
+| The panel: the step rail, and step 2 (rate line, hold banner, chips, the output's search, table) | `src/components/payroll/HrisNpdComparison.tsx` |
+| Step 1, **NPD Figures** — the input (paste box, what was read, refused lines, Clear, Load output) | `src/components/payroll/NpdFiguresStep.tsx` |
 | The full-screen overlay (both sections) + the one `VALIDATION_SECTIONS` definition | `src/components/payroll/ValidationFullScreen.tsx` |
 | Wiring: the strip, `npdPaste` + search/chip state, the memos after `validationRedFlagCount`, `hrisNpdPanelProps`, the one overlay mount | `src/components/PayrollWizard.tsx` |
 
@@ -55,6 +58,23 @@ The short version:
 The HRIS vs NPD tab's badge counts rows that need a look (mismatch + Not in HRIS + Not in NPD), in
 rose. It shows **only once verdicts can be given**, never while they are held.
 
+## Two steps: the input, then the output (2026-09-30)
+
+Kane, same day: *"Lets separate the input from the output please hide the input"*, then *"The NPD
+Figures lets make this the first step after that it will load the output where we can see the
+mismatches"*, then *"add a search bar in the output"*. So the tab is a two-step rail,
+**1 NPD Figures → 2 Output**:
+
+| Rule | Why |
+|---|---|
+| **Step 1 (`NpdFiguresStep`) is the input**: instructions, the paste box, what was read, **every refused line**, Clear, and **Load output** | The input has one place. Nothing about it shows on the output |
+| **Load output needs at least one readable line.** With none, the button and the rail's Output are disabled, and asking for step 2 still shows step 1 | There is no output of nothing ("absence is not zero") |
+| **Step 2 hides the input.** Its side of the rail shows `NPD Figures · N lines read`, the **skipped count in rose** when there are refusals, and **Edit** (back to step 1, paste intact) | Hiding the input must never hide a refused line |
+| **Load output opens a fresh output**: chip back to All, search cleared. Moving along the rail keeps them | A new paste is seen whole. A quick look back at step 1 does not lose your filter |
+| **The step is wizard state, stamped with the week**: it rides in `npdPaste = {sourceFile, text, step}`. Another week, or an emptied paste, is back on step 1 | Otherwise a paste typed for the next week would flip straight to the output mid-typing. The step's panel and the full-screen overlay read the same state (it is in `hrisNpdPanelProps`), so they are always on the same step |
+| The output opens on **All**, every row, with the mismatches in red. The **Mismatch** chip narrows to just them | Kane's spec is the whole list, green and red. Filtering is one click and never narrows the totals |
+| In full screen, step 1's paste box grows into the overlay's height | Big pastes get room. The rail and the rules are the same panel's |
+
 ## The paste
 
 TAB-separated, straight from the sheet. Google Sheets cannot copy two columns that are not next to
@@ -71,11 +91,16 @@ column**. `parseNpdPaste` reads it like this:
 | With **no tab anywhere** (typed by hand), each line is `email amount`, split at the first space, comma or semicolon. In a tab paste, a line with no tab is refused | Typed input is unambiguous because emails have no spaces. A mixed paste is not |
 | Every refused line is listed with its line number (blanks counted, like QC Compare) and the reason | "A row is never silently dropped and never silently coerced" (`src/lib/qc/paste.ts`) |
 
-**A person on two lines is added together**, and so is one person under two addresses (work +
-personal). The NPD cell then says "2 lines added". This follows Kane's 2026-09-29 orphanage ruling
-(*"if there are two line items just add them both"*, `orphanage-pay-step.md`), and HRIS pays one
-figure per person. The parser does not decide this. The comparison does, because only it can see
-aliases.
+**A person on two lines (the same work email twice) is added together**, and the NPD cell then
+says "2 lines added". This follows Kane's 2026-09-29 orphanage ruling (*"if there are two line
+items just add them both"*, `orphanage-pay-step.md`), and HRIS pays one figure per person. The
+parser does not decide this. The comparison does.
+
+**The key must be the WORK email** (§ Matching people). It is the first email cell on the line, so
+the block must start at the Work Email column. That is exactly what step 1 tells the clerk to
+select. If a block starts at a personal-email column, its lines key on the personal address, and
+each person shows as Not in HRIS plus Not in NPD rather than being matched. There is no
+work-email domain rule anywhere in the code to recognise one by, so none is invented here.
 
 ## HRIS's figure is the one Payment Dispatch is sent
 
@@ -88,9 +113,10 @@ together or not at all.
 - **USD is the comparator** because it is the only figure comparable across PHP- and COP-settled
   people (`cop-country-payees.md`, [[settlement-currency-per-person]]). NPD's figures are USD
   (the 2026-08-18 reconciliation below).
-- **No staged payload** (no personal email, so the pay run skips them) → the row's **Gross**,
-  tagged **"No payout · no personal email"**. The Final Pay table flags the same row red
-  `not_dispatchable`.
+- **No staged payload** (no payout address on file, so the pay run skips them) → the row's
+  **Gross**, tagged **"No payout this week"**. The Final Pay table flags the same row red
+  `not_dispatchable`. This is about where dispatch would SEND money. It has nothing to do with
+  the match, which is on the work email.
 - **Where Gross and the staged final differ** (the Final Pay table's red `gross_mismatch`), this
   column follows **dispatch**, not the Gross column. That is on purpose.
 - **Excluded ("do not pay") people stay in**, with their figure struck through and an **Excluded
@@ -111,16 +137,26 @@ reported gaps were 61.52 vs ≈60.93, and the pesos agreed to the centavo). Hove
 gives **the rate NPD's figure implies** against HRIS's pesos. This is a hint only. It is not the FX
 cross-check, which is still **OPEN** (`payroll-wizard-final-pay.md` § 2026-08-18).
 
-## Matching people
+## Matching people: the work email, exactly
 
-The row's own address first, case- and whitespace-insensitive. If that misses, the **master-list
-bridge the orphanage paste uses** (`orphanageResolveCtx.masterAliasesFor`: work, personal, both
-alternates). A bridged row keeps HRIS's address and shows `NPD: <the address NPD used>`.
+**An NPD line reaches an HRIS row only when its email IS that row's work email**, case- and
+whitespace-insensitive. Nothing else: no master-list bridge, no personal address, no alternate
+work address. Kane, 2026-09-30: *"We are not connecting this with the personal email please we are
+connecting this to the work email."*
 
-**A bridge that reaches two HRIS rows is refused as ambiguous.** The NPD line stays **Not in HRIS**
-with a note naming both rows, and both HRIS rows stay **Not in NPD**. Personal addresses are
-shared and recycled in the master list. A guessed pairing would show one person's figure against
-another's, which is the same hazard MV's `row.id` rule guards (`payroll-wizard-manual-validation.md`).
+That ruling reversed the first build (commits `e8c0cdba` / `7e6a50e3`), which fell back to the
+orphanage paste's master-list bridge (work, personal, both alternates). It was the brief's CHOSEN 7.
+So:
+
+- **A line whose address is not an HRIS work email is its own Not in HRIS row, and the HRIS row
+  stays Not in NPD.** Both are visible and nothing is guessed. That applies to a personal address,
+  an old or alternate work address, or a typo alike.
+- `compareHrisNpd` takes **no alias input at all** (there is nothing to hand an address to), and
+  the wizard passes none. A rules test pins both. Re-adding a bridge is a change to Kane's ruling,
+  not a cleanup.
+- The HRIS side's address is the Validation row's email, which the wizard treats as the work email
+  throughout (MV and Mark Paid key on it: `payroll-wizard-manual-validation.md` § The lookup key is
+  `row.id`).
 
 ## Match means equal to the cent
 
@@ -142,7 +178,7 @@ this order:
 
 | Hold | When | What shows |
 |---|---|---|
-| `no_npd_rows` | nothing parsed | **no table at all**: "Paste NPD's figures to compare". An empty box is not evidence that NPD has nobody, so "everyone is Not in NPD" would be a false claim |
+| `no_npd_rows` | nothing parsed | **no table at all**: step 1 (NPD Figures) shows, and Load output and the rail's Output are disabled. An empty box is not evidence that NPD has nobody, so "everyone is Not in NPD" would be a false claim |
 | `loading` | `hrisNpdUsdState` is `pending`: the Step-8 preview's own `totalUsd` judgement (`resolvePayStubFieldStates`, every Net input + FX, same PAB `settledByPolicy`) **or** step 7's load line | neutral banner. HRIS cells **and the HRIS total** shimmer, Match shows "—", no colour |
 | `unavailable` | a loader behind the figure **failed** | amber, static banner naming the failed sources (`HRIS_SOURCE_LABELS`, a `Record` over every source key, so a new key is a type error until named) |
 | `no_fx` | the cycle rate is still 0 | amber banner pointing at Step 2. HRIS cells show "—". `stagedUsdCents` never divides by 0 or a placeholder |
@@ -179,8 +215,9 @@ shared. Like that search, they are not cleared on a week switch. The "showing X 
 when they narrow. The footer shows **whole-comparison** totals (sticky, so they
 stay visible down a long list), and says "(every row, not just those shown)" when filtered. This is
 the same rule as Reports: a total that follows a filter gets read out as the week's figure
-(`payroll-wizard-final-pay.md` § 2026-09-09). The search matches the address, the name **and every
-NPD address that landed on the row**, so a person found under an alias stays reachable by it.
+(`payroll-wizard-final-pay.md` § 2026-09-09). The search matches the work email and the name. It is
+a **full-width bar directly above the table**, the Final Pay pattern (Kane, 2026-09-30: *"add a
+search bar in the output"*).
 
 ## Phone layout (three traps, each pinned by a render test)
 
@@ -224,6 +261,16 @@ it open; filter + search inside it; Escape closes it and the step's panel shows 
 and chip; the step's Full screen button reopens it; the strip sits at the same height in both
 sections; no horizontal overflow at 390px; no console errors. Still **not clicked through signed
 in**.
+
+*Two steps + the output's search + work-email-only matching (2026-09-30, third commit):* both
+test files **72/72**. `npm test`: the same 2 pre-existing failures only. tsc clean apart from the
+stale `.next/types` errors. Driven in Chromium through the same fixture, wired like the wizard.
+That run checked: step 1 shows the paste box and no table; Load output shows the table, the
+full-width search and the rail summary with the input hidden; searching narrows to the one row;
+Edit returns to step 1 with the paste kept; Clear leaves Load output disabled; full screen opened
+from the output shows the output, Edit inside it moves both mounts to step 1, and Escape closes it;
+no horizontal overflow at 390px on either step; no console errors. Still **not clicked through
+signed in**.
 
 ## Deploy notes
 

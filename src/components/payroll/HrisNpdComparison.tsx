@@ -9,6 +9,10 @@
  * "Not in NPD" when one side has no one by that address. Nobody is dropped from either side.
  *
  * Rules this panel keeps (docs/features/payroll-wizard-hris-vs-npd.md):
+ *   - TWO STEPS, input then output (Kane, 2026-09-30). Step 1, **NPD Figures**
+ *     (`NpdFiguresStep`), takes the paste; **Load output** shows step 2, and the input is
+ *     hidden there. Step 2 exists only while a line is read. Its rail summary always
+ *     carries the skipped count, so a refused line is never out of sight.
  *   - DISPLAY ONLY. It writes nothing, anywhere: no route, no app_settings key, no audit.
  *     The paste lives in the wizard's state for the week on screen and is gone on reload.
  *   - Every row, count, total and verdict comes from `compareHrisNpd` — this file never
@@ -28,8 +32,6 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
   Check,
-  ChevronDown,
-  ChevronUp,
   ClipboardPaste,
   Loader2,
   Maximize2,
@@ -39,6 +41,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import NpdFiguresStep from '@/components/payroll/NpdFiguresStep';
 import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/contractor-currency';
 import { formatPHP } from '@/lib/format-php';
@@ -56,6 +59,12 @@ import {
 } from '@/lib/payroll/hris-npd-compare';
 
 /**
+ * The tab's two steps (Kane, 2026-09-30): `input` = step 1, **NPD Figures** (the paste);
+ * `output` = step 2, the comparison, with the input hidden.
+ */
+export type HrisNpdStep = 'input' | 'output';
+
+/**
  * Everything the panel shows. The wizard builds ONE of these per render and hands the same
  * object to the step's panel and to the full-screen overlay's (`ValidationFullScreen`), so
  * the two mirror by construction — the rule the Final Pay table's full screen already keeps
@@ -68,9 +77,16 @@ export type HrisNpdPanelProps = {
   comparison: Comparison;
   /** This cycle's USD→PHP rate (PHP per $1) — the divisor behind every HRIS dollar figure. */
   fxRate: number;
-  /** Rows on the Validation step this week, for the empty state. */
+  /** Rows on the Validation step this week, shown on step 1. */
   hrisPeople: number;
   periodLabel: string | null;
+  /**
+   * Which step is showing. The WIZARD keeps it, inside the same week-keyed state as the
+   * paste, so a new week always starts on step 1 and the step's panel and the overlay's
+   * never disagree. `output` shows only while at least one line is read.
+   */
+  step: HrisNpdStep;
+  onStepChange: (next: HrisNpdStep) => void;
   /** The search and the status chip live in the WIZARD, so opening full screen keeps
    *  them and closing it hands them back — like Final Pay's search. Display only. */
   search: string;
@@ -95,6 +111,19 @@ const STATUS_LABEL: Record<HrisNpdStatus, string> = {
 };
 
 const EASE = [0.22, 1, 0.36, 1] as const;
+
+/** The rail, in order. Labels are Kane's words ("NPD Figures … load the output"). */
+const STEPS: readonly { key: HrisNpdStep; label: string }[] = [
+  { key: 'input', label: 'NPD Figures' },
+  { key: 'output', label: 'Output' },
+];
+
+/** The step swap: a short directional slide, the house sub-tab motion (ui-standards §11.1). */
+const STEP_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 20 : -20 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -20 : 20 }),
+};
 
 function usd(cents: number): string {
   return formatMoney(centsToDollars(cents), 'USD');
@@ -150,11 +179,6 @@ const ComparisonRow = React.memo(function ComparisonRow({
       <td className="px-3 py-2 align-top">
         <div className="truncate font-mono text-xs font-medium" title={r.workEmail}>{r.workEmail}</div>
         {r.name && <div className={cn('truncate text-[11px]', sub)}>{r.name}</div>}
-        {r.npdAliases.length > 0 && (
-          <div className={cn('truncate font-mono text-[10px]', sub)} title={r.npdAliases.join(', ')}>
-            NPD: {r.npdAliases.join(', ')}
-          </div>
-        )}
         {(r.excludedRowCount > 0 || r.noPayoutRowCount > 0) && (
           <div className="mt-1 flex flex-wrap gap-1">
             {r.excludedRowCount > 0 && (
@@ -165,9 +189,9 @@ const ComparisonRow = React.memo(function ComparisonRow({
             {r.noPayoutRowCount > 0 && (
               <span
                 className="whitespace-nowrap rounded-full border border-current/25 bg-white/60 px-1.5 py-px text-[10px] font-semibold dark:bg-black/20"
-                title="No personal email on file, so the pay run skips this person — the figure is the Validation step's Gross"
+                title="Payment Dispatch skips this person: there is no payout address on file. The HRIS figure is the Validation step's Gross. The match itself is on the work email."
               >
-                No payout · no personal email
+                No payout this week
               </span>
             )}
           </div>
@@ -264,6 +288,8 @@ export default function HrisNpdComparison({
   fxRate,
   hrisPeople,
   periodLabel,
+  step,
+  onStepChange,
   search,
   onSearchChange,
   filter,
@@ -272,13 +298,26 @@ export default function HrisNpdComparison({
   onOpenFullScreen,
 }: Props) {
   const reduceMotion = useReducedMotion();
-  const [pasteOpen, setPasteOpen] = useState(() => pasteText.trim() === '');
-  const [showSkipped, setShowSkipped] = useState(false);
   const deferredSearch = useDeferredValue(search);
 
-  const hasText = pasteText.trim() !== '';
-  const expanded = pasteOpen || !hasText;
   const { hold, counts, totals } = comparison;
+  // Step 2 exists only while a line is read — there is no output of nothing, so an emptied
+  // or unreadable paste always shows step 1.
+  const canOutput = parse.rows.length > 0;
+  const view: HrisNpdStep = step === 'output' && canOutput ? 'output' : 'input';
+  // Which way the panel slides: forward to the output, back to the input.
+  const [dir, setDir] = useState(1);
+  const goTo = (next: HrisNpdStep) => {
+    if (next === view) return;
+    setDir(next === 'output' ? 1 : -1);
+    onStepChange(next);
+  };
+  /** Step 1's button: a fresh output, on All with no search, so a new paste is seen whole. */
+  const loadOutput = () => {
+    onSearchChange('');
+    onFilterChange('all');
+    goTo('output');
+  };
   const judged = counts != null;
   // A status chip means nothing while verdicts are held, so the table falls back to All.
   const activeFilter: HrisNpdFilter = judged ? filter : 'all';
@@ -294,122 +333,101 @@ export default function HrisNpdComparison({
 
   return (
     // `fillHeight` (the full-screen overlay): the column fills its box and only the table
-    // grows — everything above it keeps its natural height.
+    // (or step 1's paste box) grows — everything above it keeps its natural height.
     <div className={cn('flex min-w-0 flex-col gap-4', fillHeight && 'h-full min-h-0')}>
-      {/* ── The paste ─────────────────────────────────────────────────────────── */}
-      <div className="shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <button
-          type="button"
-          onClick={() => hasText && setPasteOpen((v) => !v)}
-          aria-expanded={expanded}
-          aria-controls="hris-npd-paste"
-          disabled={!hasText}
-          className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors enabled:hover:bg-violet-50/50 disabled:cursor-default dark:enabled:hover:bg-violet-950/15"
-        >
-          <ClipboardPaste className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold text-zinc-800 dark:text-zinc-100">NPD figures</span>
-            <span className="block truncate text-[12px] text-zinc-600 dark:text-zinc-400">
-              {hasText
-                ? `${parse.rows.length} line${parse.rows.length === 1 ? '' : 's'} read${parse.refusals.length > 0 ? ` · ${parse.refusals.length} skipped` : ''}${parse.headerSkipped ? ' · header skipped' : ''}`
-                : 'Work email and dollar amount, straight from the NPD sheet'}
-            </span>
-          </span>
-          {hasText && (expanded
-            ? <ChevronUp className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
-            : <ChevronDown className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />)}
-        </button>
-
-        <AnimatePresence initial={false}>
-          {expanded && (
-            <motion.div
-              key="hris-npd-paste"
-              id="hris-npd-paste"
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-              animate={reduceMotion ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
-              transition={{ duration: reduceMotion ? 0.12 : 0.24, ease: EASE }}
-              className="overflow-hidden"
-            >
-              <div className="flex flex-col gap-3 border-t border-zinc-100 px-4 pb-4 pt-3 dark:border-zinc-800/70">
-                <p className="text-[12px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-                  In the NPD sheet, select from the <strong className="font-semibold text-zinc-800 dark:text-zinc-200">Work Email</strong> column
-                  across to the <strong className="font-semibold text-zinc-800 dark:text-zinc-200">dollar</strong> column, copy, and paste here.
-                  The rightmost column is read as the dollar amount. A person on two lines has them added together.
-                  Nothing is saved: the paste stays with this week until the page is reloaded.
-                </p>
-                <textarea
-                  value={pasteText}
-                  onChange={(e) => onPasteChange(e.target.value)}
-                  spellCheck={false}
-                  rows={7}
-                  aria-label="NPD work emails and dollar amounts"
-                  placeholder={'kaner@simple.biz\t250.00\nlorar@simple.biz\t276.49'}
-                  className="w-full resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2.5 font-mono text-[13px] leading-relaxed text-zinc-900 shadow-sm outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-200 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-violet-600 dark:focus:ring-violet-900/40"
-                />
-                {hasText && (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
-                    <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                      {parse.rows.length} line{parse.rows.length === 1 ? '' : 's'} read
+      {/* ── The two steps: 1 NPD Figures (the input) → 2 Output ─────────────────
+          The input is hidden on step 2. Its summary stays on step 2's side of the rail and
+          always carries the skipped count, so hiding the input never hides a refusal. */}
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <nav aria-label="HRIS vs NPD steps">
+          <ol className="flex items-center gap-2">
+            {STEPS.map((s, i) => {
+              const active = view === s.key;
+              const done = s.key === 'input' && view === 'output';
+              const disabled = s.key === 'output' && !canOutput;
+              return (
+                <li key={s.key} className="flex items-center gap-2">
+                  {i > 0 && <span aria-hidden className="h-px w-6 bg-zinc-300 dark:bg-zinc-700" />}
+                  <button
+                    type="button"
+                    onClick={() => goTo(s.key)}
+                    disabled={disabled}
+                    aria-current={active ? 'step' : undefined}
+                    title={disabled ? 'Paste at least one readable line on NPD Figures first' : undefined}
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-full py-0.5 pr-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45',
+                      active
+                        ? 'text-violet-700 dark:text-violet-300'
+                        : 'text-zinc-500 enabled:hover:text-zinc-800 dark:text-zinc-400 dark:enabled:hover:text-zinc-200',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold',
+                        active
+                          ? 'bg-violet-600 text-white'
+                          : done
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+                      )}
+                    >
+                      {done ? <Check className="h-3 w-3" strokeWidth={3} aria-hidden /> : i + 1}
                     </span>
-                    {parse.refusals.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setShowSkipped((v) => !v)}
-                        aria-expanded={showSkipped}
-                        className="inline-flex items-center gap-1 font-medium text-rose-700 underline-offset-2 hover:underline dark:text-rose-400"
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-                        {parse.refusals.length} skipped
-                        {showSkipped ? <ChevronUp className="h-3.5 w-3.5" aria-hidden /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden />}
-                      </button>
-                    )}
-                    {parse.mode === 'tsv' && parse.amountColumn != null && (
-                      <span className="text-[12px] text-zinc-500 dark:text-zinc-400">dollars read from column {parse.amountColumn + 1}</span>
-                    )}
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => { onPasteChange(''); setPasteOpen(true); onFilterChange('all'); }} className="text-zinc-500">
-                    Clear
-                  </Button>
-                </div>
-                )}
-                {showSkipped && parse.refusals.length > 0 && (
-                  <ul className="max-h-48 overflow-auto rounded-lg border border-rose-200/70 bg-rose-50/60 text-[12px] dark:border-rose-900/40 dark:bg-rose-950/20">
-                    {parse.refusals.map((f) => (
-                      <li key={f.line} className="flex gap-2 border-b border-rose-200/50 px-3 py-1.5 last:border-b-0 dark:border-rose-900/30">
-                        <span className="shrink-0 font-mono font-semibold text-rose-800 dark:text-rose-300">L{f.line}</span>
-                        <span className="min-w-0 flex-1 text-rose-900 dark:text-rose-200">
-                          {f.reason}
-                          <span className="block truncate font-mono text-[11px] opacity-70">{f.raw.replace(/\t/g, ' ⇥ ')}</span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    {s.label}
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+        {view === 'output' && (
+          <button
+            type="button"
+            onClick={() => goTo('input')}
+            title="Back to NPD Figures — the input"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+          >
+            <ClipboardPaste className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" aria-hidden />
+            <span>
+              NPD Figures · {parse.rows.length} line{parse.rows.length === 1 ? '' : 's'} read
+            </span>
+            {parse.refusals.length > 0 && (
+              <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                {parse.refusals.length} skipped
+              </span>
+            )}
+            <span className="text-violet-700 dark:text-violet-300">Edit</span>
+          </button>
+        )}
       </div>
 
-      {hold?.kind === 'no_npd_rows' ? (
-        <div className="flex shrink-0 flex-col items-center rounded-xl border border-dashed border-zinc-300 bg-white/50 px-6 py-10 text-center dark:border-zinc-700 dark:bg-zinc-950/25">
-          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600/10 text-violet-600 dark:bg-violet-500/15 dark:text-violet-300">
-            <ClipboardPaste className="h-5 w-5" aria-hidden />
-          </div>
-          <h4 className="text-sm font-semibold text-zinc-900 dark:text-white">
-            {hasText ? 'None of the pasted lines could be read' : "Paste NPD's figures to compare"}
-          </h4>
-          <p className="mt-1 max-w-md text-xs text-zinc-500 dark:text-zinc-400">
-            {hasText
-              ? 'Open the skipped lines above to see why each one was refused.'
-              : `The ${hrisPeople} ${hrisPeople === 1 ? 'person' : 'people'} on this step will be matched to NPD by work email, and everyone on either side gets a row.`}
-          </p>
-        </div>
+      {/* The step swap — `overflow-x-clip` (never -hidden) so the 20px slide cannot spawn a page
+          scrollbar without becoming a scroll container; `mode="wait"` so input and output never
+          overlap mid-swap. */}
+      <div className={cn('overflow-x-clip', fillHeight && 'flex min-h-0 flex-1 flex-col')}>
+        <AnimatePresence mode="wait" initial={false} custom={dir}>
+          <motion.div
+            key={view}
+            custom={dir}
+            variants={STEP_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: reduceMotion ? 0 : 0.22, ease: EASE }}
+            className={cn('flex min-w-0 flex-col gap-4', fillHeight && 'min-h-0 flex-1')}
+          >
+      {view === 'input' ? (
+        <NpdFiguresStep
+          pasteText={pasteText}
+          onPasteChange={onPasteChange}
+          parse={parse}
+          hrisPeople={hrisPeople}
+          onLoadOutput={loadOutput}
+          fillHeight={fillHeight}
+        />
       ) : (
         <>
-          {/* ── The rate, the verdict hold, the chips ───────────────────────────── */}
+          {/* ── The rate, the verdict hold, the chips, the search ────────────────── */}
           <div className="flex shrink-0 flex-col gap-3">
             {fxRate > 0 && (
               <p className="text-[12px] text-zinc-600 dark:text-zinc-400">
@@ -420,7 +438,6 @@ export default function HrisNpdComparison({
             )}
             {hold && <HoldBanner hold={hold} />}
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div role="group" aria-label="Show rows" className="flex flex-wrap items-center gap-1.5">
                 {chips.map((f) => {
                   const active = activeFilter === f;
@@ -467,31 +484,33 @@ export default function HrisNpdComparison({
                   );
                 })}
               </div>
-              <div className="relative sm:w-72">
-                <svg
-                  className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
-                  fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden
+
+            {/* The output's search — full width, directly above the table, like Final Pay's.
+                Display only: it never narrows the totals. */}
+            <div className="relative">
+              <svg
+                className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+                fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden
+              >
+                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+              </svg>
+              <Input
+                placeholder="Search the output by email or name…"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                aria-label="Search HRIS vs NPD"
+                className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => onSearchChange('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                  aria-label="Clear search"
                 >
-                  <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-                </svg>
-                <Input
-                  placeholder="Search by email or name…"
-                  value={search}
-                  onChange={(e) => onSearchChange(e.target.value)}
-                  aria-label="Search HRIS vs NPD"
-                  className="h-9 rounded-lg border-zinc-200 bg-white pl-8 pr-8 text-xs shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-                />
-                {search && (
-                  <button
-                    type="button"
-                    onClick={() => onSearchChange('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                    aria-label="Clear search"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
+                  ✕
+                </button>
+              )}
             </div>
           </div>
 
@@ -627,6 +646,9 @@ export default function HrisNpdComparison({
           </div>
         </>
       )}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
