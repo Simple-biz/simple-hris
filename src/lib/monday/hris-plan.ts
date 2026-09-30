@@ -61,6 +61,9 @@ export const TASK_GROUPS = {
   // ("Sprint 29 · Sep 14-Sep 25 · Backlog Pull"). Mirroring it is what re-bounds S28's ATTRIBUTION
   // to Sep 1-13, so the two commits that landed on Sun Sep 13 have a sprint to belong to at all.
   S29: 'group_mm739kne',
+  // Added by hand on the board and mirrored 2026-09-30 from the live group list
+  // ("Sprint 30 · Sep 29-Oct 9 · Backlog Pull"). Mirroring it re-bounds S29's ATTRIBUTION to Sep 15-28.
+  S30: 'group_mm7m3x2d',
   BL: 'group_mm4m1eqp', // Backlog
 } as const;
 export const TASK_COLS = {
@@ -134,7 +137,8 @@ export const TASK_SPRINT_INDEX: Record<TaskSprint, number> = {
   // S28 = 104, read off settings_str 2026-09-01 — the indices keep not being sequential.
   // S29 = 105, read off settings_str 2026-09-13. Read, never guessed — 103/104/105 running
   // consecutively is a coincidence of these three, not a rule (S22 is 3 and S26 is 13).
-  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, S28: 104, S29: 105, BL: 2,
+  // S30 = 106, read off settings_str 2026-09-30 (tmp-probe-s30.mts), not assumed from 105.
+  S17: 8, S18: 9, S19: 10, S20: 11, S21: 12, S22: 3, S23: 4, S24: 0, S25: 1, S26: 13, S27: 103, S28: 104, S29: 105, S30: 106, BL: 2,
 };
 /**
  * The live label TEXT for each sprint key. The board is structure-locked — the API cannot create a
@@ -155,6 +159,7 @@ export const TASK_SPRINT_LABELS: Record<TaskSprint, string> = {
   S27: 'Sprint 27',
   S28: 'Sprint 28',
   S29: 'Sprint 29',
+  S30: 'Sprint 30',
   BL: 'Backlog',
 };
 /**
@@ -196,6 +201,9 @@ export const TASK_SPRINT_WINDOWS: Record<Exclude<TaskSprint, 'BL'>, { start: str
   // that pass 27 recorded. The board owns this range, so the start moves to Sep 15 — which re-bounds
   // S28's ATTRIBUTION to Sep 1-14 and gives Sun Sep 13 + Mon Sep 14 a sprint to belong to.
   S29: { start: '2026-09-15', end: '2026-09-25' },
+  // Added 2026-09-30 from the live group title "Sprint 30 · Sep 29-Oct 9". Adding it re-bounds S29's
+  // attribution to Sep 15-28, giving the gap days Sat Sep 26 – Mon Sep 28 a sprint to belong to.
+  S30: { start: '2026-09-29', end: '2026-10-09' },
 };
 
 /**
@@ -429,7 +437,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
   // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
   // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
-  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S29' },
+  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S30' },
   { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
   { epic: 'HRIS-14', name: 'Master-list sync race + orphaned-upload guard', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-14', name: 'Webhooks admin + bank-info-missing red-alarm notify email', type: 'Integration', sp: 2, done: true, sprint: 'S25' },
@@ -465,7 +473,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
   // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
   // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
-  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-19', name: 'Legacy rates-sheet cell can route null-preferred → hurupay: decision + guard', type: 'Spike', sp: 2, done: false, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-24', name: 'Referred-by column + Referrals week section (email-tier matching)', type: 'Feature', sp: 3, done: true, sprint: 'S24' },
   // ── Sprint 26 reconciliation — shipped Jul 29 – Aug 5 2026 ─────────────────
   // Grouped from 171 commits by feature, not by commit. SP scored against the
@@ -815,7 +823,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
   // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
   // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
-  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
   // 2 SP: both 2026-08-19 migrations had silently never applied because the password's `@` was not
   // percent-encoded in DATABASE_URL — an unencoded @ truncates the host instead of erroring.
   { epic: 'HRIS-15', name: 'Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
@@ -848,7 +856,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // Rolled S27 → S28 on 2026-09-01: unfinished at sprint close. Board status stays Pending Deploy —
   // the sprint move changes WHERE it is filed, not how far along it is; the CHECK widen + two n8n
   // imports are still Kane's to run.
-  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S29' },
+  { epic: 'HRIS-17', name: 'Tickets board notifies the requester on every update — comment emails and status-move emails', type: 'Feature', sp: 5, done: false, sprint: 'S30' },
   // 2 SP: `HUBSTAFF_EXEMPT_DEPTS` matches raw master-list labels exactly, and the dept it excuses was
   // renamed — `Site Building` became `Site Building (US - Freelance)` (20 people, ZERO with Hubstaff
   // hours) and `Site Building (PH - Freelancer)` (13, zero) — so the list silently inverted its own
@@ -1864,13 +1872,13 @@ export const PLAN_TASKS: PlanTask[] = [
   // 5 SP: Scheduling moves INSIDE the HSL department and starts saving. Gated on `scheduling`, NOT
   // `team`. done:false and held at Pending Deploy — `employee_schedule_periods` was MEASURED ABSENT
   // from production on 2026-09-16, so the feature is code-complete and dead. See [[hsl-scheduling-in-department]].
-  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
   // 1 SP: the Offboarded list shows the inbox that still works after the work account is gone.
   { epic: 'HRIS-01a', name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone', type: 'Feature', sp: 1, done: true, sprint: 'S28', priority: 'Low' },
   // 3 SP: Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750 — a first pass stranded in
   // staging. The restore is BUILT and --apply is still NOT RUN, re-measured 2026-09-16 (192 rows both
   // at zero). OPEN RULING. See [[lead-gen-qc-first-pass-stranded-in-staging]].
-  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
   // 2 SP Spike: the Sep 14 Carla meeting record plus four findings measured the same day — there is no
   // QC Manager role to flip on (granting `qc` makes jackie@ an OFFICER and re-deals the live week), the
   // transferred status has never once fired and cannot, an absent officer does not block the week, and
@@ -2085,7 +2093,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // nobody answers (`expired`) AND when an agent addresses it (`addressed`); naming only the first
   // understates what shipped. Kane overrode Carla's signed Decision 2 to build this first — a
   // named, dated reversal, not drift. See [[employee-support-blueprint-pending]].
-  { epic: 'HRIS-17', name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-17', name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
 
   // 5 SP: PURE MODULES AND COLUMNS, NO SCREEN. The name says "the columns behind them" rather than
   // "the triage line" on purpose: `src/components/tickets/` holds no SupportTicketsTab, so a name
@@ -2096,13 +2104,13 @@ export const PLAN_TASKS: PlanTask[] = [
   // is a 404 and not a 403, and an employee reply to a closed ticket reopens it as a CAS while a
   // staff reply does not. The staff-only trial gate Carla signed is STILL only a comment, so the
   // Help button ships to every employee.
-  { epic: 'HRIS-17', name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-17', name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
 
   // 5 SP: the 834-line staff route out of the mixed `push` commit. NAMED NARROWLY — "read and
   // triage", never "gets its API": `app/api/support/tickets/` holds route.ts ALONE, the plan's
   // `[id]/reply` route does not exist, and grep finds ZERO callers, so no staff member can answer
   // a ticket through any API and the route is dead code in production until the tab body lands.
-  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
 
   // 3 SP, a Bug because it repairs a regression a SIBLING row caused: hosting Employee Support at
   // /tickets tied the dev Kanban's rendering to a client-side roles fetch, so the Board vanished
@@ -2120,7 +2128,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // after a same-day reversal (sub-team bonus targets; Filing/Intake). One is Done on measurement
   // (the GML reconcile, both counts 1,247 on 2026-09-23); the rest wait for Kane to name them.
   { epic: 'HRIS-06', name: 'Discovery can add an external member to its KPI calculator', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-17', name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-17', name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-06', name: 'Edit Department manager access is scoped — one list per HSL sub-team, never one collapsed family list', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-26', name: 'The Edit Department People step moves someone as a real department transfer, never a registry note', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-06', name: 'Built-in departments can have sub-departments, HSL included — code teams pinned, data teams under hsl: labels', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
@@ -2185,16 +2193,20 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-26', name: 'A manager may transfer someone out of a department they also manage, and never releases their own request', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The support.closed CHECK widen is NOT applied (measured 2026-09-29: one Close was
   // rejected on 09-25 at 20:03Z, and 0 notifications of the type exist), and there are still 0 Support grants.
-  { epic: 'HRIS-17', name: 'Closing a Support ticket notifies the employee', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-17', name: 'Closing a Support ticket notifies the employee', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-25', name: 'The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The warning lives in the n8n workflow JSON, and the live workflow runs whatever was
   // pasted last. The re-paste is PENDING (session-log item 207). Nothing here can measure n8n.
-  { epic: 'HRIS-25', name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code', type: 'n8n Workflow', sp: 1, done: false, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-25', name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code', type: 'n8n Workflow', sp: 1, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-19', name: 'The People Bank changes feed filters by bank type', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
   { epic: 'HRIS-06', name: 'The Current Banks Who banks here list has unique row keys', type: 'Bug', sp: 1, done: false, sprint: 'S29', priority: 'Low' },
   // Supersedes the 12-second bound in the S29 row 'Start Processing plays one bounded cue…'. That row
-  // was true when it shipped and stays; this one is the current rule.
-  { epic: 'HRIS-02a', name: 'Start Processing plays the whole Jellyfish Jam, and the peer modal names who started it', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
+  // was true when it shipped and stays. RENAMED 2026-09-30, before it ever reached the board: it was
+  // staged as 'Start Processing plays the whole Jellyfish Jam, and the peer modal names who started
+  // it', and 56e0a7f4 (09-29, S30) cut the whole song to one minute with a fade. A row must describe
+  // the current rule, so this one keeps only what 0f4667c5 still makes true, and the length has its
+  // own S30 row below.
+  { epic: 'HRIS-02a', name: 'The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
   { epic: 'HRIS-23', name: 'People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-23', name: 'The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-15', name: 'Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
@@ -2231,5 +2243,25 @@ export const PLAN_TASKS: PlanTask[] = [
   // ROLLS TO S30, and it is In Progress, NOT Pending Deploy. The panel button that opens the dialog was
   // never added (a permission classifier refused that one edit). OMS_RETURN_TABLE is unset even in
   // .env.local, and the OMS team has not created the table. See [[orphanage-oms-pull]].
-  { epic: 'HRIS-03c', name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-03c', name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+
+  // —── PASS 36, continued 2026-09-30 · Sep 29, 11 rows, 33 SP — the commits after the staging ────────
+  // Sprint 30 was READ off the board 2026-09-30 11:05Z: group_mm7m3x2d, label 106, "Sep 29-Oct 9".
+  // The 15 commits 0fa0b89d..31fd9c0a all carry an author date of 2026-09-29, inside S30's window, and
+  // are all ancestors of origin/main. Clustered by FILE OVERLAP they make these 11 rows. c76bb25a (this
+  // pass's own staging) and 54803650 (one audit line) carry no row. 47f30fd2 shares KpiInsightCards.tsx
+  // and HslBonusCalculator.tsx with 3f2f1ea5, so it is evidence on that row. a3babfbb + 81eb0299 are
+  // one Advisor fix.
+  { epic: 'HRIS-09', name: 'The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload', type: 'Bug', sp: 2, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-03c', name: 'The Orphanage paste adds up a person’s repeated lines and prices the total once', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'The Start Processing cue plays one minute, then fades out', type: 'Feature', sp: 1, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'The Pending and Excluded queues swap their violet avatar gradient for lime → green', type: 'Chore', sp: 1, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-30', name: 'The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  // Done on a database fact: nothing deploys, and the catalog was re-read 2026-09-30.
+  { epic: 'HRIS-05', name: 'The Supabase Advisor’s four security errors are closed — RLS on three anon-writable tables, and active_employees runs as the caller', type: 'Bug', sp: 5, done: true, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-32', name: 'A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-10', name: 'The Manager Bonus History tab is retired', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up', type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Low' },
 ];

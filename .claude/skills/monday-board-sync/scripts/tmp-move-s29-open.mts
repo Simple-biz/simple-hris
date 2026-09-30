@@ -76,9 +76,9 @@ const EXPECTED: Record<string, string | null> = {
 };
 
 const BODY =
-  `**Sprint 29 → Sprint 30**: rollover 2026-09-29, on Kane's instruction to move S29's unfinished work.\n\n` +
+  `**Sprint 29 → Sprint 30**: rollover 2026-09-30, on Kane's instruction to move S29's unfinished work (asked 09-29, repeated 09-30).\n\n` +
   `**Status, Actual SP and Completed Date are unchanged.** A sprint move is a scheduling fact, not a ` +
-  `claim about progress. Re-measured read-only 2026-09-29: this row is either unstarted or held only by ` +
+  `claim about progress. Re-measured read-only 2026-09-29 and 2026-09-30: this row is either unstarted or held only by ` +
   `an external step that has not happened. When that step happens, it closes with an external ` +
   `Completed Date on that day, inside Sprint 30's window.`;
 

@@ -2269,3 +2269,36 @@ exists, and Sprint 30's group id, label index and window are UNREAD.
    each row.
 
 Open item 255.
+
+### Resumed 2026-09-30: staged in full, and the budget died ten minutes after it came back
+
+Kane: *"All withheld sp push them to monday asap and if there are unfinished Tasks from sprint 29
+move them to 30"*. Session `b4e8ee88`.
+
+- **Sprint 30 was read, not assumed.** At 11:05Z `tmp-probe-s30.mts` (2 calls) found the budget alive
+  and read `group_mm7m3x2d`, label index **106**, *"Sprint 30 · Sep 29-Oct 9 · Backlog Pull"*. The Tue
+  Sep 29 start held, so S29's attribution is Sep 15–28 and every staged S29 row stays valid. All four
+  maps are mirrored (`TASK_GROUPS`, `TASK_SPRINT_INDEX`, `TASK_SPRINT_LABELS`, `TASK_SPRINT_WINDOWS`).
+- **The withheld set grew.** `origin/main` moved to `31fd9c0a` (0/0 after a fetch). The range is now
+  `217544cd..31fd9c0a`, 142 commits. Clustered by file overlap, the 15 new commits (all authored 09-29)
+  make **11 new S30 rows / 33 SP**. `c76bb25a` (the staging) and `54803650` (one audit line) carry no
+  row. `47f30fd2` shares `KpiInsightCards.tsx` and `HslBonusCalculator.tsx` with `3f2f1ea5`, so it is
+  evidence on that row.
+- **A staged row was renamed before it reached the board.** `56e0a7f4` cut Start Processing's
+  whole-song length to one minute with a fade. The staged S29 row now claims only what `0f4667c5` still
+  makes true: the peer modal names the starter, and the cue is no longer cut at 12 s. The one-minute
+  rule is its own S30 row. This is the same rule as the `5eb398a` case: a row describes the current rule.
+- **One new row is Done on a database fact.** The Advisor fix (`a3babfbb` + `81eb0299`, item 281) has
+  no deploy step: every reader is service-role, and the app-code edits are comments. The catalog was
+  re-read at 11:10Z. It is the only row in the pass that goes Done without Kane's word, and it is
+  flagged to him as such.
+- **Rollover.** 10 open S29 rows (49 SP) plus 3 held new rows (9 SP) are filed as S30. The 48
+  code-complete Pending Deploy rows stay in S29. That is pass 32's rule, and it answers item 256
+  unless Kane overrides it. Every blocker was re-measured read-only at 11:10Z, and all are unchanged.
+- **Selfcheck PASS**: 65 rows, 4 Done, S29 = 51, S30 = 14.
+- **The budget died at 11:15:23Z**, on `review.mts`'s first call (`boardGroups`), ten minutes after the
+  probe had worked. The retry was 45,877 s, which is **00:00Z 10-01** again. Something other than this
+  session spent the day's budget in that window. So no hash exists, and nothing was written or moved.
+
+**Owed at 00:00Z:** `review.mts` → Kane approves the hash → `apply.mts --apply --only-new --approve
+<hash>` (65 rows) → `tmp-move-s29-open.mts --apply` (10 rows) → `verify-one.mts` on each. Open item 285.

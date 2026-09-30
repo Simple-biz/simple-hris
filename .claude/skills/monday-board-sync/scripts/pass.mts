@@ -740,18 +740,45 @@
  *   • Lead Gen 2026-09-06 bonus_catalog_applied: the same 290 rows by carla@ at 09-15 15:16Z, so the
  *     restore has not run
  *   • OMS_RETURN_TABLE is not set in .env.local
+ *
+ * ── PASS 36, RESUMED 2026-09-30 — Kane: "All withheld sp push them to monday asap and if there are
+ * unfinished Tasks from sprint 29 move them to 30" ────────────────────────────────────────────────────
+ * The budget was ALIVE: tmp-probe-s30.mts (2 calls) at 11:05Z read Sprint 30 = group_mm7m3x2d,
+ * label 106, "Sprint 30 · Sep 29-Oct 9 · Backlog Pull". So the Tue Sep 29 assumption held, and S29's
+ * attribution is Sep 15-28 as staged. All four maps are mirrored and the 13 rolling rows say S30.
+ * PASS_DATE moved to 09-30 because the CONTENT changed (11 new rows, S30 mirrored, one rename). It was
+ * not moved to clear a mismatch: no hash was ever minted for 09-29.
+ *
+ * THE RANGE GREW. origin/main moved from 0fa0b89d to 31fd9c0a (0 ahead / 0 behind after a fetch on
+ * 2026-09-30), so the withheld set is now 217544cd..31fd9c0a, 142 commits. The 15 new ones all carry
+ * an author date of 2026-09-29, inside S30. 13 make the 11 new rows; c76bb25a (this pass's staging)
+ * and 54803650 (one audit line) carry none. 56e0a7f4 REVERSES the staged whole-song length, and that
+ * row had never reached the board, so it was renamed to what 0f4667c5 still makes true and the new
+ * length is its own S30 row. Every staged row's status was re-derived from git: no other later commit
+ * contradicts one.
+ *
+ * BLOCKERS RE-MEASURED read-only 2026-09-30 ~11:10Z (pg, BEGIN READ ONLY per query, from the
+ * scratchpad, nothing written). Every one is unchanged since 09-29:
+ *   • support.closed still absent from employee_notifications_type_check; 0 rows of the type
+ *   • 0 live employee_roles employee_support / support_tickets; 0 live support feature grants
+ *   • ticket_replied / ticket_moved: active=false, url '' (webhooks.config updated_at 2026-09-12)
+ *   • to_regclass('public.employee_schedule_periods') is null
+ *   • Lead Gen 2026-09-06 bonus_catalog_applied: 290 rows, applied_by carla@ only, all 09-15 15:16:08Z
+ *   • OrphanageOmsPanel.tsx still mounts omsReturn with no button that opens it; OMS_RETURN_TABLE unset
+ *   • the Advisor fix HOLDS: relrowsecurity true on all three tables, 0 public tables with RLS off,
+ *     active_employees reloptions [security_invoker=true], 0 public views left as definer
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-29';
-export const AUDIT_RANGE = '217544cd..0fa0b89d';
-export const AUDIT_COMMITS = 127;
+export const PASS_DATE = '2026-09-30';
+export const AUDIT_RANGE = '217544cd..31fd9c0a';
+export const AUDIT_COMMITS = 142;
 
 /** The standing proof state of every Pending Deploy row in pass 36 — pushed is not deployed. */
 const ON_MAIN =
-  'Every sha is an ancestor of origin/main (0 ahead / 0 behind after a fetch on 2026-09-29), and ' +
+  'Every sha is an ancestor of origin/main (0 ahead / 0 behind after a fetch on 2026-09-30), and ' +
   'Vercel deploys main, but nobody has confirmed this live in prod. It goes Done on Kane\'s word ' +
   'that he has looked at it, with the last sha\'s commit date as the Completed Date.';
 const pd = (what: string) => `PENDING DEPLOY. ${what} ${ON_MAIN}`;
@@ -928,7 +955,7 @@ export const ROWS: PassRow[] = [
     name: 'Closing a Support ticket notifies the employee',
     status: 'Pending Deploy',
     shas: ['e686963e'],
-    basis: 'PENDING DEPLOY and HELD. The code is on origin/main: a staff Close on a Support ticket sends the employee a support.closed notification (reply route, recipients.ts, notification-views + tests). It does nothing in prod yet. Measured read-only 2026-09-29: support.closed is ABSENT from employee_notifications_type_check. The one Close so far was rejected (notification.insert_failed, 2026-09-25 20:03Z), and 0 notifications of the type exist. The Support board also has 0 grants, the blocker the four Employee Support rows share. This row rolls to Sprint 30 with them.',
+    basis: 'PENDING DEPLOY and HELD. The code is on origin/main: a staff Close on a Support ticket sends the employee a support.closed notification (reply route, recipients.ts, notification-views + tests). It does nothing in prod yet. Measured read-only 2026-09-29 and again 2026-09-30: support.closed is ABSENT from employee_notifications_type_check. The one Close so far was rejected (notification.insert_failed, 2026-09-25 20:03Z), and 0 notifications of the type exist. The Support board also has 0 grants, the blocker the four Employee Support rows share. Filed in Sprint 30 with them, because the step that closes it lies ahead; it closes with an external Completed Date on the day it happens.',
     blockers: [
       'Run scripts/apply-support-closed-notification-type.mjs --apply (the CHECK widen). Its default is read-only.',
       'Grant employee_support / support_tickets to the staff who will close tickets (0 today).',
@@ -944,7 +971,7 @@ export const ROWS: PassRow[] = [
     name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code',
     status: 'Pending Deploy',
     shas: ['87c407ff'],
-    basis: 'PENDING DEPLOY and HELD. references/n8n/bank-info-missing-notify.workflow.json carries the card-safety trust note, but n8n runs whatever was pasted last, and the re-paste of the Build Recipients code is PENDING (session-log item 207). The bank_info_notify webhook is active (measured 2026-09-29), which says nothing about which code it runs. Nothing here can see inside n8n. This row rolls to Sprint 30.',
+    basis: 'PENDING DEPLOY and HELD. references/n8n/bank-info-missing-notify.workflow.json carries the card-safety trust note, but n8n runs whatever was pasted last, and the re-paste of the Build Recipients code is PENDING (session-log item 207). The bank_info_notify webhook is active (measured 2026-09-29), which says nothing about which code it runs. Nothing here can see inside n8n (the n8n connector is unauthorised as of 2026-09-30). Filed in Sprint 30, because the re-paste lies ahead.',
     blockers: ['Paste the Build Recipients code from the repo JSON into the live n8n workflow, and have Kane confirm it.'],
   },
   {
@@ -960,10 +987,10 @@ export const ROWS: PassRow[] = [
     basis: pd('Payment Catalog → Current Banks: the "Who banks here" list keyed rows on a value that repeats, so React reused rows. It now uses unique keys.'),
   },
   {
-    name: 'Start Processing plays the whole Jellyfish Jam, and the peer modal names who started it',
+    name: 'The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds',
     status: 'Pending Deploy',
     shas: ['0f4667c5'],
-    basis: pd('Start Processing now plays the whole Jellyfish Jam (2:31), clamped to a 12 s floor and a 180 s ceiling, and the modal on every other open Wizard and Dispatch names who started it (Kane\'s ruling on Open item 174 Q1 (b)). The 12 s staleness cutoff for a late arrival stays. This REPLACES the 12-second ceiling of the Done S29 row "Start Processing plays one bounded cue…", which was true when it shipped. This row is the current rule.'),
+    basis: pd('The modal on every other open Wizard and Dispatch names who started Start Processing (Kane\'s ruling on Open item 174 Q1 (b)), and the cue is no longer cut at 12 s, which REPLACES the 12-second ceiling of the Done S29 row "Start Processing plays one bounded cue…" (true when it shipped). The 12 s staleness cutoff for a late arrival stays. 0f4667c5 played the whole 2:31 track under a 180 s ceiling; 56e0a7f4 (09-29) cut that to one minute with a fade, which is its own Sprint 30 row. This row was renamed before it reached the board so it claims only what is still true.'),
   },
   {
     name: 'People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab',
@@ -1144,12 +1171,81 @@ export const ROWS: PassRow[] = [
     name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS',
     status: 'In Progress',
     shas: ['0fa0b89d'],
-    basis: 'IN PROGRESS, not Pending Deploy: the feature is not code-complete. What is built: the Orphanage step can return each person\'s regular and OT hours and paid amount to OMS. It writes ONE append-only OMS table, and the server rebuilds the rows from the saved blob plus the record, never from the tab (oms-return.ts + 198 lines of tests, audit item 235). What is missing: the panel BUTTON that opens the dialog was never added (a permission classifier refused that one edit). OMS_RETURN_TABLE has no default and is unset even in .env.local (measured 2026-09-29), and the OMS team has not created the table. This row rolls to Sprint 30.',
+    basis: 'IN PROGRESS, not Pending Deploy: the feature is not code-complete. What is built: the Orphanage step can return each person\'s regular and OT hours and paid amount to OMS. It writes ONE append-only OMS table, and the server rebuilds the rows from the saved blob plus the record, never from the tab (oms-return.ts + 198 lines of tests, audit item 235). What is missing: the panel BUTTON that opens the dialog was never added (a permission classifier refused that one edit). OMS_RETURN_TABLE has no default and is unset even in .env.local (measured 2026-09-29 and 2026-09-30), and the OMS team has not created the table. 0236d8e8 (09-29) changed the Orphanage PASTE, not this return path, and is its own row. Filed in Sprint 30.',
     blockers: [
       'Add the Send to OMS button to OrphanageOmsPanel.tsx. The dialog and omsReturn.open are already mounted.',
       'The OMS team creates the return table and grants INSERT + SELECT.',
       'Kane sets OMS_RETURN_TABLE in .env.local and in Vercel prod.',
     ],
+  },
+
+  // —── PASS 36, continued 2026-09-30 · Sep 29, 11 rows, all Sprint 30 ─────────────────────────────
+  {
+    name: 'The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload',
+    status: 'Pending Deploy',
+    shas: ['2a4695ee'],
+    basis: pd('The employee Overview KPI Bonus card read /api/kpi-results once on mount, and the shell keeps tabs mounted, so it never refetched until F5, and the KPI Results tab polled on its own 30 s clock. useNotificationChime now dispatches notification:arrived for the batch it just toasted (notification-arrived.ts + tests), and both surfaces refetch on it. A failed read keeps the last good figure and never shows PHP 0. Audit item 276.'),
+  },
+  {
+    name: 'The Orphanage paste adds up a person’s repeated lines and prices the total once',
+    status: 'Pending Deploy',
+    shas: ['0236d8e8'],
+    basis: pd('Kane 2026-09-29: two pasted lines for one person are added, not skipped as a duplicate. resolveOrphanageHourRows gains repeats: combine for the paste door (OMS keeps refuse). It sums the hours and calls priceOrphanageHours ONCE, so the 40 h regular cap is consumed once by the total; pricing per line would pay the regular capacity twice. One invalid line holds the whole person. orphanage-rows.ts + 162 lines of tests. MONEY: this changes what a repeated paste pays.'),
+  },
+  {
+    name: 'The Start Processing cue plays one minute, then fades out',
+    status: 'Pending Deploy',
+    shas: ['56e0a7f4'],
+    basis: pd('Kane: "should just be 1 minute please and fade it out." STAGE_PREPPED_MAX_SECONDS 180 → 60 and a new 5 s fade (stagePreppedFadeSeconds), so the 2:31 track fades 55 s → 60 s. The 12 s floor and the loop ramp are unchanged, and the mp3 is untouched because Carla\'s bubble plays the whole file. Tests 17/17. This is the current length rule; it supersedes the whole-song length that 0f4667c5 shipped. Item 208 (no stop control after Confirm) stays open. Audit item 275.'),
+  },
+  {
+    name: 'KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes',
+    status: 'Pending Deploy',
+    shas: ['e7f5eb91'],
+    basis: pd('Measured first: anon reads 0 rows of hsl_bonus_period_status, bonus_catalog_applied and hsl_bonus_entries, so every postgres_changes binding on the KPI tables was dead. Now the route that wrote the row broadcasts kpi-bonus-sync through after() from period-status POST, hsl-bonus/period DELETE, bonus-catalog-applied POST and DELETE, and hsl-bonus/entries POST and DELETE. The payload is a re-read signal, never a value. useKpiLive and joinSharedBroadcast drive the employee, manager, Payroll Notes and Wizard surfaces; the Wizard follows only while values are UNLOCKED (wizard-kpi-load.ts). ~1,500 lines with tests. Audit items 276-278; the final-pay publisher gap (277) is Kane\'s call and not part of this row.'),
+  },
+  {
+    name: 'Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many',
+    status: 'Pending Deploy',
+    shas: ['c7a437ff'],
+    basis: pd('Kane 2026-09-29, ruling (b) over payment-dispatch.md\'s "No automation". When the live week loads, every pending employee row priced by the wizard at a finite USD strictly under 15.00 is held at Threshold with the same marker clerks logged by hand, and a popup says "N payees are at Threshold". Once per person per week, and a Clear sticks. The page proposes and POST /api/payment-dispatches/auto-threshold re-validates each row (feature edit gate, current and wizard-locked week or 409). auto-threshold.ts + 18 tests. NOTE: a local dev load writes these rows to PROD.'),
+  },
+  {
+    name: 'The Pending and Excluded queues swap their violet avatar gradient for lime → green',
+    status: 'Pending Deploy',
+    shas: ['314dccad'],
+    basis: pd('Kane OK\'d it after the design hook flagged from-violet-500 to-fuchsia-500 as an AI-palette tell. One of six decorative initials gradients in each queue changes; the other five and the per-row hashing are unchanged. Two lines.'),
+  },
+  {
+    name: 'The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row',
+    status: 'Pending Deploy',
+    shas: ['3f2f1ea5', '47f30fd2'],
+    basis: pd('Kane: the HSL Branch calculator should have the KPI cards the Departments one has. The same KpiInsightCards (calculator="hsl") sit above the branch grid: branch spotlight, top earner, Sent to Accounting trend. New GET /api/manager/kpi-insights/hsl, whose money is hsl_bonus_entries.calculated_bonus and whose scope is an explicit hsl:<key> grant with NO elevated arm. Shared change: a ready week with zero rows now counts as sent. 47f30fd2 shares KpiInsightCards.tsx and HslBonusCalculator.tsx: both calculators\' first-load skeleton now paints the card row from the same loading bodies, so the grid no longer drops 200+ px on reveal. Audit item 280.'),
+  },
+  {
+    name: 'The Supabase Advisor’s four security errors are closed — RLS on three anon-writable tables, and active_employees runs as the caller',
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['a3babfbb', '81eb0299'],
+    basis: 'DONE on a DATABASE FACT, because nothing here deploys: every reader is service-role and 81eb0299\'s app-code edits are comments only. Kane: "can you connect to supabase and close these for me please turn on RLS for public", and he chose (b) for the view. Applied 2026-09-29 17:18Z (RLS on penny_employee_usage, bonus_catalog_bonus_history and bonus_catalog_assignment_history, 0 policies; the anon key had held SELECT/INSERT/UPDATE/DELETE on all three, and an anon DELETE on the Penny ledger lifted the Anthropic spend ceiling) and 17:28Z (active_employees security_invoker = true, anon and service each reading 1,270 = base). RE-READ from the catalog 2026-09-30 ~11:10Z, read-only: relrowsecurity true on all three, 0 public tables with RLS off, active_employees reloptions [security_invoker=true], 0 public views left as definer. The Advisor dashboard itself was not re-read. Completed Date is the commit date of 81eb0299, the same day as both applies. Audit item 281.',
+  },
+  {
+    name: 'A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason',
+    status: 'Pending Deploy',
+    shas: ['e37022cc'],
+    basis: pd('Carla, via Kane, 2026-09-29. A received gift offers only Clear, and the route refuses received → owed (409). Clear needs a written reason of 8+ characters, audited. Nobody records or clears their own gift (403, and a failed master-row read fails closed with 503). Re-stating the current state writes nothing, and PUT and DELETE are conditional on the state the caller read. receipt-guards.ts + 109 lines of tests. NOT part of this row: Carla\'s "received only when ordered" ask, held for Kane (audit item 283).'),
+  },
+  {
+    name: 'The Manager Bonus History tab is retired',
+    status: 'Pending Deploy',
+    shas: ['31fd9c0a'],
+    basis: pd('Kane: "Retire the Bonus History tab this is no longer needed." ManagerBonusHistory.tsx (995 lines) is deleted, and the tab is removed from the sidebar, the ManagerTab union, VIEW_TAB_IDS.manager, the bonus_history feature key, Pages visibility and MANAGER_CACHE_KEYS. No route was gated on bonus_history, so no server authorization changes. KEPT on Kane\'s call, now with no UI caller: DELETE /api/bonus-catalog-applied and the all-weeks ?summary=1 branch (audit item 284).'),
+  },
+  {
+    name: 'The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up',
+    status: 'Pending Deploy',
+    shas: ['28e8bbb0'],
+    basis: pd('Docs only, the same class as the S29 row "The reference docs index every route and component…". 31 sessions and 84 commits read against the Sep 25 log: two new feature docs (termination-docs.md, 609 lines; update-bank-info.md, 477 lines), 20 feature docs corrected, api-reference / components / data-sources / business-logic caught up, and ui-standards.md § 20 listing 14 flagged deviations. Findings filed as audit items 256-274, several of them Kane\'s calls (264, 266, 272, 274).'),
   },
 ];
 
