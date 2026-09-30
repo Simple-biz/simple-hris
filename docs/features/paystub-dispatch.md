@@ -453,9 +453,48 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
 | `pay_period.pab_evaluation` | `pabMonthRange` — the PAB month inferred for the current UI context (see `BUSINESS_LOGIC.md#PAB month period`). |
 | `personal_email` | Resolved per-row by `resolvePersonalEmail`: (1) rate row keyed by Hubstaff work email, (2) `global_master_list` match on `work_email`, (3) `global_master_list` name match via `normalizeNameTokens`, (4) the off-boarded overlay. **Each tier must yield a MAILABLE address** (`mailableEmail`, `src/lib/email/norm-email.ts`), not merely a non-empty cell: a tier holding anything else falls through (2026-09-24, Open item 199: `breyl@`'s rates-sheet Personal Email was his name, it won over a real master-list address, and n8n skipped six weeks of paystubs). Rows without a mailable personal email in any tier are **skipped** with a toast warning. **A re-send reads the QUEUED `payload.personal_email`** (`getFreshPaystubEntry` → `staged.payload`), so fixing the roster does not repair a week that is already locked — the queue row must be corrected too (see `scripts/fix-breyl-personal-email.mjs`). |
 | `department_key/name` | `employeeDepts[email]` → `DEPARTMENTS.find(...)`. |
-| `hours.*` | From `effectiveCalcResults[].totalHours/regularHours/otHours`. |
+| `hours.*` | From `effectiveCalcResults[].totalHours/regularHours/otHours`. Non-HSL weeks from **2026-09-27** carry the **2dp** hours they were priced on; earlier daily-column weeks carry raw seconds ÷ 3600 (see [2dp hours pricing](#2dp-hours-pricing--2026-09-30)). |
 | `rates_php.*` | From `effectiveCalcResults[].regularRate/otRate`. |
-| `pay_php.regular/ot/initial` | From `effectiveCalcResults[]`. |
+| `pay_php.regular/ot/initial` | From `effectiveCalcResults[]`. Non-HSL from 2026-09-27: `round2(2dp hours × rate)` per bucket. |
+
+## 2dp hours pricing — 2026-09-30
+
+**A printed `H.HHh × ₱R` line multiplies out to its amount.** Kane, 2026-09-30, on imeer@'s
+09-20→09-26 stub (*"Can we fix the math on this overtime"*, then *"lets not use 4-5 decimals only 2
+decimals!"*). Overtime read `12.54h × ₱427.50 = ₱5,358.71`, but 12.54 × 427.50 = ₱5,360.85. The money
+was right at whole-second precision: 45,126 s = 12.535h, and 12.535 × 427.50 = ₱5,358.71. The
+statement prints 2dp hours (`formatHours`), and that stays.
+
+**The rule.** A non-HSL pay week starting on/after **Sun 2026-09-27** (`TWO_DP_HOURS_PRICING_FROM`)
+prices **2dp hours × rate**. The week's total seconds round half-up to the hundredth
+(`splitTwoDpHoursWeek`, integer math: 18 s = 0.005h rounds UP) and split at 40h. Each bucket is then
+`round2(hours × rate)`. Three engines take the same split under the same gate
+(`pricesAtTwoDpHours(first day of the week)`):
+
+| Engine | Path |
+|---|---|
+| Payroll Wizard `calcResults` | the daily-column (`payHoursByEmail`) branch, non-HSL rows |
+| `proratePayForMidPeriodChange` | a constant history rate overriding a stale cache, non-HSL |
+| Dispatch `computeProratedRowPay` | single-rate non-HSL weeks, a flat catalog override included. The seconds it returns are the 2dp ones, so Dispatch and the disbursement reports display the hours that were priced |
+
+**Forward-only** ([[payroll-rule-changes-forward-only]]). Weeks before 2026-09-27 keep whole-seconds
+money in every engine, so a re-lock, a live snapshot republish, a stub recompute or a Dispatch
+recompute of those weeks reproduces what was staged and paid. The **09-20→09-26 week is among
+them**: its stubs still print 2dp lines that can be off by up to ½ hundredth-hour × rate (imeer@
++₱2.14). Measured 2026-09-30: 492 of 780 non-HSL hours lines that week. Nothing was staged or
+snapshotted from 09-27 when this shipped.
+
+**Already 2dp, not gated:** HSL sheet form (`computeHoganWeekPay`, 2026-08-11), genuinely changed
+weeks (`priceChangedWeek2dp`, 2026-08-18), and rows with no daily columns
+(`splitRegularOvertimeSeconds`, always).
+
+**Not changed:** the employee live estimates `member-monthly-pay.ts` and `EmployeeMyHours.tsx` still
+accumulate whole seconds per day. Until the week's snapshot lands, they can show a few centavos
+different from what the wizard stages.
+
+`findRateConsistencyIssues` multiplies the payload's hours, which are 2dp from 09-27. So its
+₱0.05 tolerance now checks the printed arithmetic itself. On earlier weeks it checked raw hours and
+could not see this gap.
 | `pay_php.perfect_attendance_bonus` | `isFinalPabWeek && toggles.perfect_attendance ? 5000 : 0`. Only attaches on the final weekly paystub of the PAB month. |
 | `pay_php.tech_bonus` | `(isTechBonusWeek \|\| toggles.tech_bonus) && hasThirtyDays ? 1850 : 0`. Only on the paycheck whose salary date falls in the **3rd full Mon–Sun week** of its month (week 1 = first Mon–Sun whose Monday ≥ the 1st; week 3 = +14d) and only after 30 days of service. This lands tech bonus two weeks out from PAB. |
 | `pay_php.other_bonuses` | `bonusTotals[email] − toggledPab − toggledTech`. Department-specific bonuses (collections tiers, per-ticket, etc.). |
@@ -599,7 +638,9 @@ price at 2dp.** Three consequences, shipped together after 23 Lead Gen → HSL t
    `prorate-mid-period.ts`, shared verbatim by the wizard's `proratePayForMidPeriodChange` and
    Dispatch's `computeProratedRowPay`): the per-rate basis line the statement prints multiplies out
    to the money exactly, and line totals are the sums of the displayed legs. Constant-rate weeks
-   are untouched (HSL single-rate weeks already priced through `computeHoganWeekPay`). Expect the
+   were untouched by this ruling (HSL single-rate weeks already priced through `computeHoganWeekPay`).
+   Non-HSL constant-rate weeks went 2dp from 2026-09-27 under their own ruling, see
+   [2dp hours pricing](#2dp-hours-pricing--2026-09-30). Expect the
    2dp segment HOURS to sum up to 0.01h off the raw headline total — the money is leg-exact.
 3. **HSL overtime on a changed week counts ALL hours toward the 40h threshold** — pre-transfer
    days included — derived from the rounded totals like `computeHoganWeekPay` and attributed

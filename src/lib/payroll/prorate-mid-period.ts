@@ -5,13 +5,16 @@ import {
   HSL_WEEKEND_PREMIUM_PHP,
   OT_DIFFERENTIAL_MULTIPLIER,
 } from './hogan-week-pay';
+import { phpHourlyPayFromSeconds, pricesAtTwoDpHours, splitTwoDpHoursWeek } from './money-php';
 
 /**
  * Client-safe per-day proration across a MID-PERIOD rate change (a department
  * transfer, a dated raise). Extracted verbatim from PayrollWizard.tsx so the
  * engine is pure + unit-tested; the wizard imports it back. It mirrors the
- * server dispatch compute (`computeProratedRowPay` in current-pay.ts) EXACTLY:
- * raw per-day accumulation rounded once at the end.
+ * server dispatch compute (`computeProratedRowPay` in current-pay.ts) EXACTLY.
+ * A constant-rate non-HSL week prices 2dp hours × rate from the 2026-09-27
+ * pay week (`splitTwoDpHoursWeek`); before it, raw per-day accumulation
+ * rounded once at the end.
  *
  * 2026-08-11 (Kane): HSL pays the Hogan sheet's three-stage form, per day —
  * see hogan-week-pay.ts for the single-rate weekly authority. Every HSL hour
@@ -484,8 +487,38 @@ export function proratePayForMidPeriodChange(params: {
   }
 
   // Constant history rate overriding a stale cache (non-HSL — the HSL twin
-  // returned the sheet computation above): keep the original raw-seconds
-  // accumulation, byte-identical to what this path always staged.
+  // returned the sheet computation above). From the 2026-09-27 pay week it
+  // prices 2dp HOURS × rate (Kane 2026-09-30), the same split the wizard's
+  // single-rate path and Dispatch's computeProratedRowPay use, so the printed
+  // hours multiply out. `change` is null here, so the rate is constant all week.
+  if (!isHsl && pricesAtTwoDpHours(days[0].date)) {
+    const two = splitTwoDpHoursWeek(totalSecAll);
+    const reg = firstReg ?? null;
+    const ot = firstOt ?? null;
+    const regularPay = reg != null ? phpHourlyPayFromSeconds(reg, two.regularSec) : null;
+    const otPay = ot != null ? phpHourlyPayFromSeconds(ot, two.otSec) : null;
+    return {
+      regularPay,
+      otPay,
+      change: null,
+      regularRatesUsed,
+      otRatesUsed,
+      weekend: { regularHours: 0, otHours: 0, regularPay: 0, otPay: 0 },
+      segments: {
+        regular:
+          reg != null && two.regularSec > 0
+            ? [{ ratePhp: reg, hours: two.regularHours, payPhp: regularPay ?? 0 }]
+            : [],
+        ot:
+          ot != null && two.otSec > 0 ? [{ ratePhp: ot, hours: two.otHours, payPhp: otPay ?? 0 }] : [],
+        weekendRegular: [],
+        weekendOt: [],
+      },
+    };
+  }
+
+  // Weeks before 2026-09-27: the original raw-seconds accumulation,
+  // byte-identical to what this path staged and paid.
   return {
     regularPay: anyReg ? Math.round(regularPayPHP * 100) / 100 : null,
     otPay: anyOt ? Math.round(otPayPHP * 100) / 100 : null,

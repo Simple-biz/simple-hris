@@ -54,6 +54,14 @@ otPay        = otHours × otRate
 initialPay   = regularPay + otPay
 ```
 
+**Pay is priced on 2dp hours, the hours the statement prints** (non-HSL from the Sun 2026-09-27 pay
+week, Kane 2026-09-30). The week's total seconds round half-up to the hundredth on integer seconds
+(18 s = 0.005h rounds UP), split at 40h, then each bucket is `round2(hours × rate)`
+(`splitTwoDpHoursWeek` in `money-php.ts`). So `12.54h × ₱427.50` pays ₱5,360.85. Weeks before
+2026-09-27 keep the whole-seconds money they were paid (`12.535h × ₱427.50 = ₱5,358.71`); a rule
+change never reprices a staged week. HSL (sheet form) and genuinely changed weeks were already 2dp.
+See `docs/features/paystub-dispatch.md` § 2dp hours pricing.
+
 Currency is formatted as Philippine Peso (₱) using `en-PH` locale.
 
 ---

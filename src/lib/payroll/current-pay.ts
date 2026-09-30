@@ -37,6 +37,11 @@ import {
   OT_DIFFERENTIAL_MULTIPLIER,
 } from "@/lib/payroll/hogan-week-pay";
 import { priceChangedWeek2dp } from "@/lib/payroll/prorate-mid-period";
+import {
+  phpHourlyPayFromSeconds,
+  pricesAtTwoDpHours,
+  splitTwoDpHoursWeek,
+} from "@/lib/payroll/money-php";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
 import { mesaContributesForWeek } from "@/lib/mesa/deposit-date";
@@ -660,6 +665,25 @@ export function computeProratedRowPay(
     };
   }
 
+  // Single-rate non-HSL week (a flat catalog override included). From the
+  // 2026-09-27 pay week it prices 2dp HOURS × rate (Kane 2026-09-30), the same
+  // split the wizard's calcResults and proratePayForMidPeriodChange use, so the
+  // statement's printed hours multiply out. The returned seconds are the 2dp
+  // ones, so the callers' displayed hours are the hours that were priced.
+  if (!isHsl && !rateChanged && pricesAtTwoDpHours(days[0].date)) {
+    const two = splitTwoDpHoursWeek(totalSec);
+    return {
+      regularPayPHP:
+        anyRegRate && firstDayReg != null ? phpHourlyPayFromSeconds(firstDayReg, two.regularSec) : null,
+      otPayPHP: anyOtRate && firstDayOt != null ? phpHourlyPayFromSeconds(firstDayOt, two.otSec) : null,
+      totalSec,
+      regularSec: two.regularSec,
+      otSec: two.otSec,
+    };
+  }
+
+  // Weeks before 2026-09-27: raw whole-seconds accumulation, byte-identical to
+  // what was staged and paid.
   return {
     regularPayPHP: anyRegRate ? Math.round(regularPayPHP * 100) / 100 : null,
     otPayPHP: anyOtRate ? Math.round(otPayPHP * 100) / 100 : null,

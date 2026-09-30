@@ -198,8 +198,10 @@ import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
 import {
   phpHourlyPayFromSeconds,
+  pricesAtTwoDpHours,
   roundWorkedHoursForPay,
   splitRegularOvertimeSeconds,
+  splitTwoDpHoursWeek,
 } from '@/lib/payroll/money-php';
 import {
   OFFICIAL_USD_TO_PHP_RATE,
@@ -7973,7 +7975,9 @@ export default function PayrollWizard({
   /**
    * Match Hubstaff Email to employee_hourly_rates Work Email (or Personal Email).
    * Reg Pay = Reg Rate × Reg Hrs, OT Pay = OT Rate × OT Hrs (Reg Hrs = min(Total, 40), OT = rest).
-   * Total hours rounded to 2dp (Hubstaff-style) before split; pay uses whole seconds + centavo rounding.
+   * Rows with no daily columns round the total to 2dp before the split. Rows WITH daily columns
+   * priced raw whole seconds until 2026-09-27; non-HSL weeks from then on price 2dp hours × rate
+   * (`splitTwoDpHoursWeek`), so the statement's printed hours multiply out. Centavo rounding either way.
    * HSL employees receive an additional +15 PHP/h for Saturday and Sunday hours.
    */
   // Catalog index used ONLY to resolve individual (employee-scoped) rates during
@@ -7999,7 +8003,16 @@ export default function PayrollWizard({
       let totalH: number;
       let regularSec: number;
       let otSec: number;
-      if (paid) {
+      const weekDays = em ? payDaysByEmail.get(em) : undefined;
+      if (paid && weekDays && !weekDays.isHsl && pricesAtTwoDpHours(weekDays.days[0]?.date)) {
+        // Non-HSL weeks from 2026-09-27 price 2dp HOURS × rate (Kane 2026-09-30),
+        // so the statement's printed hours multiply out to the money. The same
+        // split Dispatch's computeProratedRowPay and proratePayForMidPeriodChange use.
+        const two = splitTwoDpHoursWeek(paid.totalSec);
+        totalH = two.totalHours;
+        regularSec = two.regularSec;
+        otSec = two.otSec;
+      } else if (paid) {
         totalH = roundWorkedHoursForPay(paid.totalSec / 3600);
         regularSec = paid.regularSec;
         otSec = paid.otSec;
