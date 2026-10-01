@@ -1,0 +1,334 @@
+{
+  "pass": 36,
+  "passDate": "2026-09-30",
+  "approved": "e8e9a7031db4",
+  "appliedAt": "2026-10-01T11:3xZ",
+  "note": "Ids written by apply.mts --only-new. VALUES NOT RE-READ: run verify-one.mts on each after the budget resets. Moves (tmp-move-s29-open.mts) NOT done.",
+  "rows": [
+    {
+      "item": "[HRIS] Gift Tracker Recently filled / updated — who used the link, and an alert to HR",
+      "id": "13121871467",
+      "status": "Done"
+    },
+    {
+      "item": "[HRIS] Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt",
+      "id": "13034136298",
+      "status": "Done"
+    },
+    {
+      "item": "[HRIS] The HSL Branches KPI calculator can score the upcoming week",
+      "id": "13180401736",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Accounting → People Pay button shows only for the CEO — the button, not the pay route",
+      "id": "13180407547",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Anniversary Gifts pick their gift from Gift items, items show a reference price again, and the free-form Suggestions card is gone",
+      "id": "13180416473",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Gift Tracker Orders — approved gifts are locked into a priced PDF invoice, and the tab badge counts the gifts still open",
+      "id": "13180413261",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] A Gift Tracker order invoice can be deleted, and locking one shows a Creating invoice overlay",
+      "id": "13180425284",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Gift Tracker Submissions tab pages at 20",
+      "id": "13180440388",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] CEO Penny runs on Opus 5.5 with every Admin tool, and can map who holds access over whom",
+      "id": "13180375319",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] A leaver with no master row gets termination documents from the pay ledger, never by writing a master row back, and the starting rate is optional",
+      "id": "13180439995",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Payment Dispatch hero leads with the pay week — one Start/Stop control, no heading or source filename, and a finished processor shows a green check",
+      "id": "13180375348",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] A failed pay read on Payment Dispatch shows an error instead of claiming no Hubstaff cycle was uploaded",
+      "id": "13180375350",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] A rehire’s promote reactivates their own off-boarded master row instead of leaving them invisible, and refuses a row on a different personal email",
+      "id": "13180424490",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Payment Catalog re-reads the roster on refetch, so a transfer moves the sub-team headcounts",
+      "id": "13180375010",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] A Personal Email cell holding a name instead of an address no longer wins paystub delivery, and five of the six paystubs it blocked are sent",
+      "id": "13180439850",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Employees can no longer pick their sending bank — only Accounting sets it, and the approval queue is retired",
+      "id": "13180401754",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Employee Profile puts the ID card beside the information, matches the Overview navy in dark mode, and drops the Selected channel line",
+      "id": "13180416945",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] A manager may transfer someone out of a department they also manage, and never releases their own request",
+      "id": "13180401757",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Closing a Support ticket notifies the employee",
+      "id": "13180440232",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry",
+      "id": "13180425705",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code",
+      "id": "13180401801",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The People Bank changes feed filters by bank type",
+      "id": "13180384960",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Current Banks Who banks here list has unique row keys",
+      "id": "13180424282",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds",
+      "id": "13180425766",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab",
+      "id": "13180425350",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses",
+      "id": "13180393133",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will",
+      "id": "13180392905",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] HR Onboarding loads every submission and staged hire past 1,000, and splits Archived from Archived/Complete",
+      "id": "13180413443",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] HR Onboarding All shows live submissions only, Archived gets its own pill, and the hero card and Lead Gen Bulk promote button are gone",
+      "id": "13180425193",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Three more readers capped at 1,000 rows now page — the work-email taken set, the New Hire Checklist and the rates sync",
+      "id": "13180401898",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The AI/API Team’s own managers read SP Rankings on My Team, and the Employee tab stays Kane’s",
+      "id": "13180425254",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] My Team Appointments ranking for Lead Gen and Callback — most appointments set, with tenure",
+      "id": "13180417035",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] My Team Rankings leaderboard for appointment teams — average appointments per day, week and month",
+      "id": "13180393279",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] PM Team Rankings rank by bonus earned, shown as KPI items",
+      "id": "13180425488",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] KPI Rankings for every per-person KPI-bonus department, cached per department, with Client VA order-only",
+      "id": "13180440873",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Rankings gets a top-3 podium, a board-shaped skeleton and search by name or work email",
+      "id": "13180402109",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Rankings View — one person’s KPI and ranking performance, week by week",
+      "id": "13180407784",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] HR, QC and Accounting get KPI Rankings and View as team boards",
+      "id": "13180417093",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator’s stored bonus",
+      "id": "13180416960",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Overview Payroll Notes card tracks wizard Steps 1–8, open steps first, in place of New hires and Attrition",
+      "id": "13180407728",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Hi Kane payroll cycle greeting lists the unfinished wizard steps and jumps to Step N",
+      "id": "13180425890",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The blueprint skill takes its own recommendations and builds, stopping only for a closed NEEDS list",
+      "id": "13180448210",
+      "status": "Done"
+    },
+    {
+      "item": "[HRIS] The Issues table moves smoothly, and a time-adjustment proof opens in a viewer with Next and a preview strip",
+      "id": "13180425879",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Payroll Wizard’s all-uploads PAB merge is one streamed server call, byte-identical to the old result",
+      "id": "13180402552",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Employee Overview PAB calendar follows a wizard PAB Period save live",
+      "id": "13180417471",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Every Payroll Wizard write leaves an audit row with the right actor, the Hubstaff uploader included",
+      "id": "13180455871",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] KPI Calculator Add External Member finds people in the manager’s other departments",
+      "id": "13180402169",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Lead Gen can save and lock its KPI week again — the replace-set delete no longer puts every kept id in the URL",
+      "id": "13180417457",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Orientation on My Team pages its weeks, and each week’s people, at 10",
+      "id": "13180402692",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The offboarding queue dialogs render light in light mode",
+      "id": "13180402420",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Seven more HSL KPI branches are scored from the Payment Catalog — their hardcoded rules retired, and the Mgr column dropped",
+      "id": "13180426052",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] KPI Calculator insight cards — department spotlight, top earner and the Sent-to-Accounting trend",
+      "id": "13180402818",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Carla gets a Jellyfish Jam play bubble every five active minutes",
+      "id": "13180408309",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS",
+      "id": "13180441015",
+      "status": "In Progress"
+    },
+    {
+      "item": "[HRIS] The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload",
+      "id": "13180407892",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Orphanage paste adds up a person’s repeated lines and prices the total once",
+      "id": "13180448063",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Start Processing cue plays one minute, then fades out",
+      "id": "13180449464",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes",
+      "id": "13180457217",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many",
+      "id": "13180425886",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Pending and Excluded queues swap their violet avatar gradient for lime → green",
+      "id": "13180440813",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row",
+      "id": "13180408161",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Supabase Advisor’s four security errors are closed — RLS on three anon-writable tables, and active_employees runs as the caller",
+      "id": "13180403239",
+      "status": "Done"
+    },
+    {
+      "item": "[HRIS] A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason",
+      "id": "13180426436",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Manager Bonus History tab is retired",
+      "id": "13180426438",
+      "status": "Pending Deploy"
+    },
+    {
+      "item": "[HRIS] The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up",
+      "id": "13180426077",
+      "status": "Pending Deploy"
+    }
+  ]
+}

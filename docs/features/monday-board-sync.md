@@ -2302,3 +2302,30 @@ move them to 30"*. Session `b4e8ee88`.
 
 **Owed at 00:00Z:** `review.mts` → Kane approves the hash → `apply.mts --apply --only-new --approve
 <hash>` (65 rows) → `tmp-move-s29-open.mts --apply` (10 rows) → `verify-one.mts` on each. Open item 285.
+
+### Applied 2026-10-01 — 65/65 written, the moves and the read-back owed
+
+Kane: *"Push"*, *"Continue"*, then *"Lets make sure all unfinished tasks from S29 is moved to S30"*.
+
+- **11:27Z** the 2-call probe was alive. S30 was unchanged, and every blocker was re-measured read-only
+  and unchanged.
+- **`review.mts` → `e8e9a7031db4`**, in exactly the shape put to Kane on 09-30: 63 created · 10
+  re-filed · 65 corrected · 4 Done / 19 SP · 0 orphans · 0 duplicates · 0 epics. A matching shape was
+  the condition of his go, and anything else would have stopped for him.
+- **`apply.mts --apply --only-new --approve e8e9a7031db4`** wrote **65/65, 0 skipped**.
+  - **Partial verification, the half it earns:** the 63 creates returned ids, and the 2 corrections
+    (the gift alert and the paystub reissue, now Done in S29) resolved by byte-exact name. So the rows
+    exist. The values are acknowledged mutations and have not been re-read.
+  - The ids are in `scripts/tmp-verify-pass36.ids.json`.
+- **11:32:30Z the budget died** on the mover's first call (retry 44,849 s → 00:00Z 10-02), two minutes
+  after the apply. **Nothing has moved.** The 10 open rows are still in the S29 group.
+- **Pass 37 staged:** `31fd9c0a..57e712f9`, 12 commits, **3 rows / 14 SP**, all S30 Pending Deploy:
+  - Transfers lists page the whole table
+  - HRIS vs NPD validation, six commits as one current-rule row
+  - 2dp hours pricing from the Sep 27 week
+  `pass.mts` now holds only these 3 rows; pass 36's are in git history and the ids file. selfcheck PASS.
+- **Open, Kane's call:** the 48 code-complete Pending Deploy rows. Pass 32 keeps them in S29. "Looked
+  at in prod" makes them Done in S29. "S30 anyway" changes the rule.
+
+**Owed at 00:00Z 10-02:** `tmp-move-s29-open.mts --apply` → `verify-one.mts` on the 65 ids plus the
+10 moved → `review.mts` (pass 37) → Kane's hash → `apply.mts --apply --only-new`. Open item 300.

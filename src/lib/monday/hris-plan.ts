@@ -2264,4 +2264,17 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-32', name: 'A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-10', name: 'The Manager Bonus History tab is retired', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
   { epic: 'HRIS-15', name: 'The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up', type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Low' },
+
+  // —── PASS 37 · 2026-10-01 · Sep 30, 3 rows, 14 SP — the commits after pass 36's staging ─────────────
+  // Pass 36 was APPLIED 2026-10-01 (hash e8e9a7031db4, 65 rows). These come from 31fd9c0a..57e712f9,
+  // 12 commits, all ancestors of origin/main (0/0 after a fetch on 10-01), all authored 2026-09-30,
+  // inside S30. Clustered by FILE OVERLAP: the six HRIS vs NPD commits share HrisNpdComparison.tsx and
+  // hris-npd-compare.ts, and 9ed71b58 / ff397af1 REVERSE parts of e8c0cdba (match on the work email
+  // only; excluded people left out, not struck), so one row describes the current rule. 27082696 and
+  // ae33f9fd are the findings their fixes close, so they are evidence on those rows. 64728b4b is pass
+  // 36's own staging. f3b95535 is a ~70-line docs sweep, the same class as the docs-only commits pass 36
+  // gave no row.
+  { epic: 'HRIS-26', name: 'Every Transfers list pages the whole table — HR, Accounting, Manager and the export', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'The Payroll Wizard Validation step gets HRIS vs NPD — paste NPD’s figures, match each work email to within a set number of cents, and list who is left out', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub’s Hours × Rate multiplies out', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
 ];

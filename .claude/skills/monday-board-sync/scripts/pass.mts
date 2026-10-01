@@ -767,18 +767,30 @@
  *   • OrphanageOmsPanel.tsx still mounts omsReturn with no button that opens it; OMS_RETURN_TABLE unset
  *   • the Advisor fix HOLDS: relrowsecurity true on all three tables, 0 public tables with RLS off,
  *     active_employees reloptions [security_invoker=true], 0 public views left as definer
+ *
+ * PASS 36 APPLIED 2026-10-01. Kane: "Push", "Continue". The 11:27Z probe was alive, the blockers were
+ * re-measured unchanged, and review.mts minted e8e9a7031db4 in EXACTLY the shape put to him: 63
+ * created, 10 re-filed, 65 corrected, 4 Done (19 SP), 0 orphans, 0 duplicates. `apply.mts --apply
+ * --only-new` wrote 65/65 with 0 skipped. The budget then died at 11:32:30Z (retry 44,849 s → 00:00Z
+ * 10-02) on the mover's first call, so the 10 moves and every verify-one are still OWED.
+ *
+ * ── PASS 37 · 2026-10-01 — the commits after pass 36's staging ────────────────────────────────────
+ * 31fd9c0a..57e712f9, 12 commits, all on origin/main (0/0), all authored 2026-09-30, inside Sprint 30.
+ * Three rows / 14 SP, all Pending Deploy (see the cluster note in hris-plan.ts). No new blocker: no
+ * .sql, no apply script, no n8n workflow in the range. This needs ITS OWN review hash; pass 36's
+ * approval does not cover it.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 
-export const PASS_DATE = '2026-09-30';
-export const AUDIT_RANGE = '217544cd..31fd9c0a';
-export const AUDIT_COMMITS = 142;
+export const PASS_DATE = '2026-10-01';
+export const AUDIT_RANGE = '31fd9c0a..57e712f9';
+export const AUDIT_COMMITS = 12;
 
-/** The standing proof state of every Pending Deploy row in pass 36 — pushed is not deployed. */
+/** The standing proof state of every Pending Deploy row in passes 36-37 — pushed is not deployed. */
 const ON_MAIN =
-  'Every sha is an ancestor of origin/main (0 ahead / 0 behind after a fetch on 2026-09-30), and ' +
+  'Every sha is an ancestor of origin/main (0 ahead / 0 behind after a fetch on 2026-10-01), and ' +
   'Vercel deploys main, but nobody has confirmed this live in prod. It goes Done on Kane\'s word ' +
   'that he has looked at it, with the last sha\'s commit date as the Completed Date.';
 const pd = (what: string) => `PENDING DEPLOY. ${what} ${ON_MAIN}`;
@@ -808,444 +820,27 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 35 · 2026-09-25 · STATUS PASS — the 13 open HRIS rows, 2 Done / 11 stay open ─────────
-  // Re-minted the same night: first hash d12f4153349b (gift row only) was never applied. Kane then ran
-  // the paystub_issues migration ("Migration applied"), the probe found it RLS-OFF, the SQL was fixed
-  // (7586a85f), Kane re-ran it ("paystub migration is done"), and the reissue row joined the pass.
-  // Kane 2026-09-25: "Check all unfinished tasks from monday and check our git commits if we have done
-  // them make sure to add a completion date on them Ive checked the gift tracker it was already done."
-  // The board holds 13 HRIS rows that are not Done (398 ours, 385 Done, pulled 2026-09-26 ~01:05Z):
-  // pass 34's 9 held Pending Deploy rows plus 4 Ready to Start. Local main == origin/main (0/0 after a
-  // fetch). Every blocker was RE-MEASURED read-only 2026-09-26 01:11Z (scripts/tmp-probe-monday-blockers
-  // .mts, deleted after use), never carried from pass 34's prose. ONE row has lost its blocker:
-  //   • Gift Tracker Recently filled / updated → Done (below)
-  //   • Sending a second copy of a pay document → Done (below), once its migration ran
-  // The other eleven are unchanged, so no evidence update is posted on them:
-  //   • 4 Employee Support rows: employee_roles employee_support=0 / support_tickets=0, and 0 support
-  //     grants in employee_feature_permissions (735 live, paged)
-  //   • Tickets emails: ticket_replied and ticket_moved still active=false with an EMPTY url
-  //     (webhooks.config last saved 2026-09-12)
-  //   • HSL scheduling: employee_schedule_periods PGRST205, same code as the negative control
-  //     definitely_not_a_table_xyz (paystub_issues was absent at 01:11Z too, then applied: row below)
-  //   • Lead Gen QC: probe-lead-gen-qc-vs-applied.mts shows the same 290 applied rows by carla@ at
-  //     2026-09-15T15:16Z, so the restore has not run
-  //   • 4 Ready to Start rows: no commit touches them. process-scheduled-deletions/route.ts has no
-  //     commit since 08-20; the 5 employee-scope bare-hsl rows still exist (5 rows, all scope employee);
-  //     nothing in git touches the legacy rates-sheet null-preferred routing or the sheet-sync cron split.
+  // —── PASS 37 · 2026-10-01 · Sep 30, 3 rows, 14 SP, all Sprint 30 ───────────────────────────────
+  // Pass 36's 65 rows were APPLIED 2026-10-01 under e8e9a7031db4 and are recorded in git history and in
+  // scripts/tmp-verify-pass36.ids.json, so they leave this array. Nothing here is Done: Kane has not
+  // said he has looked at any of these in prod.
   {
-    name: 'Gift Tracker Recently filled / updated — who used the link, and an alert to HR',
-    status: 'Done',
-    completed: '2026-09-25',
-    shas: ['7ee98b64'],
-    dateBasis: 'external',
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-25: "Ive checked the gift tracker it was already done." The measurement agrees. Pass 34 held this row on one step outside git: the gift_shipping.submitted notification-type widen. It was re-measured read-only 2026-09-26 01:11Z. The last insert rejection (notification.insert_failed) was 2026-09-25 09:27:27Z. The first delivered HR alert was 2026-09-25 12:08:17Z, and 50 have been delivered since (latest 20:22Z). No gift alert was ever delivered before that. The code (7ee98b64, 2026-09-22) is an ancestor of origin/main. Completed Date is the day the widen made the alert fire, not the commit date (dateBasis external). It falls inside Sprint 29 (Sep 15-25). Three HR alerts rejected before the widen (00:55Z, 09:27Z x2) were not re-sent; the submissions themselves are saved and listed.',
-  },
-  {
-    name: 'Sending a second copy of a pay document asks first, and the copy is labelled Reissued or Amended rather than counted as an attempt',
-    status: 'Done',
-    completed: '2026-09-25',
-    shas: ['4acceeb9'],
-    dateBasis: 'external',
-    basis: 'DONE on Kane\'s recorded confirmation, 2026-09-25: "Migration applied", then "paystub migration is done". The measurement agrees. Pass 34 held this row on one step outside git: public.paystub_issues was absent. It was measured read-only. At 2026-09-26 01:11Z it was still PGRST205. At 01:25Z it was PRESENT in the catalog and through PostgREST, both CHECKs were live (kind refuses \'attempt\'), and it had 0 rows. That first apply left row level security OFF, so anon and authenticated had full CRUD and an anon-key GET returned 200. The create SQL was fixed to enable RLS (7586a85f, audit item 226), and Kane re-ran it. At 01:46Z relrowsecurity was true with 0 policies, and as anon and as authenticated the planner returns "One-Time Filter: false". A control table with RLS off still plans a Seq Scan, so the check can tell the difference on an empty table. The code (4acceeb9, 2026-09-12) is an ancestor of origin/main. Completed Date is the day the migration made the feature record, not the commit date (dateBasis external). It falls inside Sprint 29 (Sep 15-25). Not exercised end to end: no statement has been reissued since the table landed, so the first real issue row is still to come.',
-  },
-
-  // —── PASS 36 · 2026-09-29 · the withheld week, 52 new rows ─────────────────────────────────────
-  // The two pass-35 rows above were never written (hash 47f9f0a49887 was never approved, and it was
-  // minted for 2026-09-25). They are carried INTO this pass unchanged and re-measured on 2026-09-29:
-  // paystub_issues is present with RLS on, and the gift alert still delivers. They must land in S29
-  // as Done BEFORE the rollover. Otherwise they are Pending Deploy rows in S29, and a sweep of
-  // "unfinished" would carry them into a sprint their Completed Date does not belong to.
-  {
-    name: 'The HSL Branches KPI calculator can score the upcoming week',
+    name: 'Every Transfers list pages the whole table — HR, Accounting, Manager and the export',
     status: 'Pending Deploy',
-    shas: ['00cd5eac'],
-    basis: pd('HslBonusCalculator had no week control and was pinned to the live batch, so HSL managers could not enter next week\'s bonus. It gets a Live | Upcoming switch on the manager tab. The week comes from upcomingWeekFor (live Sunday + 7, never the clock), and the switch remounts the calculator, so no autosave armed on one week can write the other.'),
+    shas: ['27082696', '0f783bf4'],
+    basis: pd('Every list reader in department-transfer-requests.ts ended in .limit(300) (pending 500, and the cron read was un-ranged, so the 1,000-row cap applied). The table holds 434 rows, so HR showed "Completed 299", Accounting and its CSV/XLSX/PDF export stopped at 300, and the per-department Done / Release readers cut the newest 300 across ALL teams before filtering. All seven readers now drain through selectEveryTransferRow (selectAllPaged, ordered by timestamp + id, a sheared read retried once then refused). 12 tests against a 1,000-row-capped double, mutation-checked. 27082696 is the finding (audit item 290); 0f783bf4 is the fix (item 291).'),
   },
   {
-    name: 'The Accounting → People Pay button shows only for the CEO — the button, not the pay route',
+    name: 'The Payroll Wizard Validation step gets HRIS vs NPD — paste NPD’s figures, match each work email to within a set number of cents, and list who is left out',
     status: 'Pending Deploy',
-    shas: ['131289f7'],
-    basis: pd('The Pay button on Accounting → People renders only for the CEO. Named narrowly on purpose: audit item 189 found /api/people/pay still admits Accounting editors, so this narrows the button and not the route.'),
+    shas: ['e8c0cdba', '7e6a50e3', '9ed71b58', '505e3a99', 'ff397af1', '851777f6'],
+    basis: pd('Kane, 2026-09-30, over six commits on the same files (HrisNpdComparison.tsx, hris-npd-compare.ts). The CURRENT rule: Step 7 Validation gets an HRIS vs NPD tab, also in the full-screen view. Step 1 is NPD Figures (paste work emails and dollars; every unreadable line is listed). Step 2 is the output, with a search bar: one row per person, the union of both sides, green when HRIS and NPD agree within N cents, red with the difference, or Not in HRIS / Not in NPD. Nobody is dropped. The match is on the WORK EMAIL only. N defaults to 3 and Kane sets it in an "off by" box; it is never saved. People configured not to be paid this week (Excluded on Final Pay, or the department paused in Step 1) are left out and listed. HRIS $ is the staged final over the cycle FX, rounded as dispatch stages it. Compares only, and writes nothing. ~3,000 lines with tests. Audit items 292-297.'),
   },
   {
-    name: 'Anniversary Gifts pick their gift from Gift items, items show a reference price again, and the free-form Suggestions card is gone',
+    name: 'Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub’s Hours × Rate multiplies out',
     status: 'Pending Deploy',
-    shas: ['d4cf4d17', 'd73f5db2', 'b386f258'],
-    basis: pd('Gift Catalog: an Anniversary Gift is PICKED from Gift items (anniversary-items.ts + tests), an off-catalog pick already saved is kept, Gift items show an editable Price (PHP) for reference only, and the free-form Suggestions card is removed. Three commits touching GiftCatalog.tsx on one day.'),
-  },
-  {
-    name: 'Gift Tracker Orders — approved gifts are locked into a priced PDF invoice, and the tab badge counts the gifts still open',
-    status: 'Pending Deploy',
-    shas: ['c98b0a99', 'ec77a51d', '923d7956'],
-    basis: pd('Gift Tracker gets an Orders tab after Submissions. An approved gift is locked into a server-priced PDF invoice (the one output allowed to carry price, Kane 2026-09-23), a reopen keeps the stamped invoice, and the badge counts approved gifts with no live order line, any month. ~2,400 lines with tests. Migration measured read-only 2026-09-29: gift_orders and gift_order_lines are present.'),
-  },
-  {
-    name: 'A Gift Tracker order invoice can be deleted, and locking one shows a Creating invoice overlay',
-    status: 'Pending Deploy',
-    shas: ['c6f4d06f'],
-    basis: pd('A Locked gift order can be deleted, atomically with its lines, audited as gift.order_deleted carrying the whole order read before the delete (Kane 2026-09-23, replacing the never-delete rule held in audit item 195). Locking shows a Creating invoice overlay. The delete function gift_order_delete() is present (measured 2026-09-29, and 2026-09-26 with EXECUTE on service_role only). Nobody has clicked Delete in prod.'),
-  },
-  {
-    name: 'The Gift Tracker Submissions tab pages at 20',
-    status: 'Pending Deploy',
-    shas: ['b47bb153'],
-    basis: pd('The Gift Tracker Submissions tab pages its list at 20 rows.'),
-  },
-  {
-    name: 'CEO Penny runs on Opus 5.5 with every Admin tool, and can map who holds access over whom',
-    status: 'Pending Deploy',
-    shas: ['643d25af'],
-    basis: pd('CEO Penny moves to Opus 5.5 with thinking kept on (disabling it is a 400), gains the Admin tool set, and gets an access-graph tool that answers who holds access over whom (access-graph.ts + 138 lines of tests).'),
-  },
-  {
-    name: 'A leaver with no master row gets termination documents from the pay ledger, never by writing a master row back, and the starting rate is optional',
-    status: 'Pending Deploy',
-    shas: ['ca36e17e', '6565022d'],
-    basis: pd('Termination Documents issues a leaver with NO master row from the pay ledger arm and never writes back into the master list. The starting rate is optional, not a refusal. This describes the CURRENT rule: ca36e17e first added a one-person insert script (Raph Sepnio, whose row exists), and 6565022d superseded that approach for issuing a letter. 554 lines + 512 of tests. Open alongside it, not part of this claim: 832 off-list ledger labels (audit item 248).'),
-  },
-  {
-    name: 'The Payment Dispatch hero leads with the pay week — one Start/Stop control, no heading or source filename, and a finished processor shows a green check',
-    status: 'Pending Deploy',
-    shas: ['e7f67ad2', 'f957cb10', 'd309dc61', '277352b0'],
-    basis: pd('Four commits on PayrollDispatch.tsx the same day: the heading, blurb and source CSV filename leave the hero, the hero leads with the pay week, status plus Start/Stop become one control, and a finished processor card shows a green check instead of 0.'),
-  },
-  {
-    name: 'A failed pay read on Payment Dispatch shows an error instead of claiming no Hubstaff cycle was uploaded',
-    status: 'Pending Deploy',
-    shas: ['9e775ef6'],
-    basis: pd('/api/payroll-current-pay answered a 500 with a null period, and useDispatchQueue never checked the error, so the failure rendered as "No Hubstaff cycle uploaded" over a live week with 1,039 of 1,051 paid. loadAll now aborts on the failed read, the same way it does for the rates read.'),
-  },
-  {
-    name: 'A rehire’s promote reactivates their own off-boarded master row instead of leaving them invisible, and refuses a row on a different personal email',
-    status: 'Pending Deploy',
-    shas: ['e41ce525'],
-    basis: pd('Promote (single and bulk) runs decideMasterRowReuse. An off-boarded row with the SAME Personal Email is reactivated: its off_boarded fields and deletion timers are cleared and it is audited hr.employee.reonboarded via rehire_promote. A different or missing personal email is REFUSED, and the reuse UPDATE error is now checked (Kane chose (b), audit item 197). Forward only: the 46 already-invisible rehires need a by-row HR Restore, and 4 of them carry someone else\'s Personal Email. As of 2026-09-25, 0 rehire_promote reonboards had happened.'),
-  },
-  {
-    name: 'The Payment Catalog re-reads the roster on refetch, so a transfer moves the sub-team headcounts',
-    status: 'Pending Deploy',
-    shas: ['327f5d94'],
-    basis: pd('The Payment Catalog roster was frozen at first load, so a transfer left the sub-team shown as "0 people" until a full reload. Refetch now re-reads it (catalog-roster.ts + tests).'),
-  },
-  {
-    name: 'A Personal Email cell holding a name instead of an address no longer wins paystub delivery, and five of the six paystubs it blocked are sent',
-    status: 'Pending Deploy',
-    shas: ['2a4ab788', 'a09ba22d'],
-    basis: pd('resolvePersonalEmail uses mailableEmail on every tier, so a Personal Email cell holding a NAME falls through to the next address instead of winning delivery (norm-email.ts + tests). The data fix was APPLIED by Kane 2026-09-24 20:05Z. The 09-13 paystub was sent from Payment Dispatch, and 08-09, 08-16, 08-30 and 09-06 by send-breyl-skipped-paystubs.mts. 08-23 was NOT sent: its payment row and queue row name different files (audit item 199). The row claims five of six, not six.'),
-  },
-  {
-    name: 'Employees can no longer pick their sending bank — only Accounting sets it, and the approval queue is retired',
-    status: 'Pending Deploy',
-    shas: ['6cabcff3'],
-    basis: pd('Commit titled "0". It removes the employee sending-bank dropdown and its Pending approval badge, deletes the approval routes and the Issues bank rows (PabDisputeQueue loses 637 lines), and pins send-from as Accounting-only (People → Banking) with tests. 28 files, 1,621 lines deleted. The table is kept. Audit items 201 and 203.'),
-  },
-  {
-    name: 'The Employee Profile puts the ID card beside the information, matches the Overview navy in dark mode, and drops the Selected channel line',
-    status: 'Pending Deploy',
-    shas: ['aeb2efad', 'b7e954c8', '0d5e26e2'],
-    basis: pd('Three EmployeeProfile.tsx polish commits (09-25 to 09-27): the "Selected channel: X" line under Payout goes, the dark background matches the Overview navy #0d1117, and the Overview puts the ID card to the right of the information.'),
-  },
-  {
-    name: 'A manager may transfer someone out of a department they also manage, and never releases their own request',
-    status: 'Pending Deploy',
-    shas: ['431b3914'],
-    basis: pd('transfer-authority.ts decides a transfer-out when the manager also manages the source department (the no-poaching rule was refusing it, audit item 205), and a manager can never release their own request. Across the transfer routes and the transfer-candidates picker, 176 lines + 150 of tests.'),
-  },
-  {
-    name: 'Closing a Support ticket notifies the employee',
-    status: 'Pending Deploy',
-    shas: ['e686963e'],
-    basis: 'PENDING DEPLOY and HELD. The code is on origin/main: a staff Close on a Support ticket sends the employee a support.closed notification (reply route, recipients.ts, notification-views + tests). It does nothing in prod yet. Measured read-only 2026-09-29 and again 2026-09-30: support.closed is ABSENT from employee_notifications_type_check. The one Close so far was rejected (notification.insert_failed, 2026-09-25 20:03Z), and 0 notifications of the type exist. The Support board also has 0 grants, the blocker the four Employee Support rows share. Filed in Sprint 30 with them, because the step that closes it lies ahead; it closes with an external Completed Date on the day it happens.',
-    blockers: [
-      'Run scripts/apply-support-closed-notification-type.mjs --apply (the CHECK widen). Its default is read-only.',
-      'Grant employee_support / support_tickets to the staff who will close tickets (0 today).',
-    ],
-  },
-  {
-    name: 'The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry',
-    status: 'Pending Deploy',
-    shas: ['d21a0a3b', '87c407ff'],
-    basis: pd('The /update-bank-info page shows an amber notice on every step before save, and the OTP code email (otp-email.ts, HTML and text) carries the same line: Simple employees will never ask for your card number, CVV or expiry date. Both are in-app and ship on deploy. The third surface, the Missing Bank Info email, is n8n and is its own row.'),
-  },
-  {
-    name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code',
-    status: 'Pending Deploy',
-    shas: ['87c407ff'],
-    basis: 'PENDING DEPLOY and HELD. references/n8n/bank-info-missing-notify.workflow.json carries the card-safety trust note, but n8n runs whatever was pasted last, and the re-paste of the Build Recipients code is PENDING (session-log item 207). The bank_info_notify webhook is active (measured 2026-09-29), which says nothing about which code it runs. Nothing here can see inside n8n (the n8n connector is unauthorised as of 2026-09-30). Filed in Sprint 30, because the re-paste lies ahead.',
-    blockers: ['Paste the Build Recipients code from the repo JSON into the live n8n workflow, and have Kane confirm it.'],
-  },
-  {
-    name: 'The People Bank changes feed filters by bank type',
-    status: 'Pending Deploy',
-    shas: ['faf996f9'],
-    basis: pd('People → Bank changes gets a bank-type filter (bank-change-type.ts + tests). It filters the FEED only and never the send-from band.'),
-  },
-  {
-    name: 'The Current Banks Who banks here list has unique row keys',
-    status: 'Pending Deploy',
-    shas: ['85085bf5'],
-    basis: pd('Payment Catalog → Current Banks: the "Who banks here" list keyed rows on a value that repeats, so React reused rows. It now uses unique keys.'),
-  },
-  {
-    name: 'The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds',
-    status: 'Pending Deploy',
-    shas: ['0f4667c5'],
-    basis: pd('The modal on every other open Wizard and Dispatch names who started Start Processing (Kane\'s ruling on Open item 174 Q1 (b)), and the cue is no longer cut at 12 s, which REPLACES the 12-second ceiling of the Done S29 row "Start Processing plays one bounded cue…" (true when it shipped). The 12 s staleness cutoff for a late arrival stays. 0f4667c5 played the whole 2:31 track under a 180 s ceiling; 56e0a7f4 (09-29) cut that to one minute with a fade, which is its own Sprint 30 row. This row was renamed before it reached the board so it claims only what is still true.'),
-  },
-  {
-    name: 'People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab',
-    status: 'Pending Deploy',
-    shas: ['27225f85', '9258059e', 'b2c7de37'],
-    basis: pd('A Search Bar tab, now the FIRST People tab, finds a person by name or work email and shows their bank details inline (bank-search.ts + tests, ~1,000 lines). The account-number reveal is click-to-reveal and audited. A follow-up commit smooths the animations.'),
-  },
-  {
-    name: 'The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses',
-    status: 'Pending Deploy',
-    shas: ['7480c046'],
-    basis: pd('The Search Bar person record gains the popup\'s tabs: Profile, Banking, Payroll and PAB. The panels move into person-record-panels.tsx, read-only. Payroll lists each statement\'s Net plus its bonus lines, falls back to the paid dispatch, and captions hourly-only weeks. It fails closed. New /api/people/[email] and /payroll routes. 1,391 lines + 192 of tests.'),
-  },
-  {
-    name: 'Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will',
-    status: 'Pending Deploy',
-    shas: ['ab361ae3', 'cbe1754f'],
-    basis: pd('Admin → Integrations gets a Data catalog listing every dataset in three states: readable by outside systems, may one day be, never. The live set is pinned in BOTH directions to the SQL scope CHECK (dataset-access.ts + datasets.ts, 255 lines of tests). cbe1754f is a docs(security) commit that also edits datasets.ts, which is why it is evidence here.'),
-  },
-  {
-    name: 'HR Onboarding loads every submission and staged hire past 1,000, and splits Archived from Archived/Complete',
-    status: 'Pending Deploy',
-    shas: ['ae4e7392'],
-    basis: pd('Both HR → Onboarding readers made one capped .range() read, which dropped the oldest 518 of 1,518 submissions and 304 of 1,304 staged hires. They now page, and the .in() enrichment lookups are batched. It was verified read-only against prod: 1,518/1,518 and 1,304/1,304, with no duplicates. A failed linked-hire lookup now fails the list instead of silently refiling ~1,200 completed hires. Audit item 219.'),
-  },
-  {
-    name: 'HR Onboarding All shows live submissions only, Archived gets its own pill, and the hero card and Lead Gen Bulk promote button are gone',
-    status: 'Pending Deploy',
-    shas: ['ed79a222', '5c5cc077'],
-    basis: pd('HR Onboarding UI (Kane): All shows the live pipeline only, Archived gets its own icon pill, and the hero card and the Bulk promote (Lead Gen) button are removed.'),
-  },
-  {
-    name: 'Three more readers capped at 1,000 rows now page — the work-email taken set, the New Hire Checklist and the rates sync',
-    status: 'Pending Deploy',
-    shas: ['40fd43d8', '7adcae0d', '8591e978'],
-    basis: pd('Audit item 227. The work-email taken set now pages employee_ids and employee_roles. Every whole-table read of the New Hire Checklist pages (it had read 1,000 of 1,756). The rates sync reads every rate row and updates each person\'s CURRENT one (current-rate-row.ts + tests).'),
-  },
-  {
-    name: 'The AI/API Team’s own managers read SP Rankings on My Team, and the Employee tab stays Kane’s',
-    status: 'Pending Deploy',
-    shas: ['ce76444c'],
-    basis: pd('The AI/API Team\'s own GRANTED managers can read SP Rankings on My Team (rankings-viewers.ts + 122 lines of tests). The Employee-tab tier stays kaner@ only.'),
-  },
-  {
-    name: 'My Team Appointments ranking for Lead Gen and Callback — most appointments set, with tenure',
-    status: 'Pending Deploy',
-    shas: ['3a0866cc'],
-    basis: pd('A new My Team Appointments ranking for Lead Gen and Callback: most appointments set, shown with tenure. The gate is the dept-members scope; weeks count as Finalized at the wizard lock. New route and readers, 1,235 lines + 389 of tests.'),
-  },
-  {
-    name: 'My Team Rankings leaderboard for appointment teams — average appointments per day, week and month',
-    status: 'Pending Deploy',
-    shas: ['5db19364'],
-    basis: pd('A Rankings leaderboard for appointment teams: average appointments per day (divided by Hubstaff days), per week and per month, over settled weeks only, with NO money on it. New days route, 1,146 lines + 286 of tests.'),
-  },
-  {
-    name: 'PM Team Rankings rank by bonus earned, shown as KPI items',
-    status: 'Pending Deploy',
-    shas: ['7dc15098'],
-    basis: pd('PM Team Rankings rank by bonus earned and show it as KPI items, not pesos. SP Rankings needs both SP and Ranking. New deliverable-rankings route and readers, 1,202 lines + 531 of tests.'),
-  },
-  {
-    name: 'KPI Rankings for every per-person KPI-bonus department, cached per department, with Client VA order-only',
-    status: 'Pending Deploy',
-    shas: ['a738ff1f', 'a7d39f5e'],
-    basis: pd('KPI Rankings extend to every department with a per-person KPI bonus. Client VA is order-only. Rankings data is cached per department, and the KPI picker becomes the house SmoothSelect.'),
-  },
-  {
-    name: 'Rankings gets a top-3 podium, a board-shaped skeleton and search by name or work email',
-    status: 'Pending Deploy',
-    shas: ['459d65a2', '13e59805', '34e31cab', 'fe676f9d'],
-    basis: pd('Rankings polish, four commits on 09-27. The AI/API Team board opens with a top-3 podium. The loading skeleton is shaped like the board, and the hold waits for the SP read. Every Rankings view can be searched by name or work email (rankings-search.ts + tests). The redundant "Showing active roster members in…" header line is dropped.'),
-  },
-  {
-    name: 'Rankings View — one person’s KPI and ranking performance, week by week',
-    status: 'Pending Deploy',
-    shas: ['16d958ba'],
-    basis: pd('A View modal on Rankings charts one person\'s KPI and rank week by week. The weekly KPI rank is the SERVER\'s bonus order and never a count, and a row is kept after a week closes (ranking-history.ts + tests, 1,467 lines).'),
-  },
-  {
-    name: 'HR, QC and Accounting get KPI Rankings and View as team boards',
-    status: 'Pending Deploy',
-    shas: ['3305969c'],
-    basis: pd('HR, QC and Accounting get KPI Rankings and View as TEAM boards, on Kane\'s ruling (b) (audit item 247). Their KPI figures are the team\'s, so everyone ties by design, and the team KPI is the variables without the divisor.'),
-  },
-  {
-    name: 'HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator’s stored bonus',
-    status: 'Pending Deploy',
-    shas: ['505c3b2e', '707fb1b0'],
-    basis: pd('HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator\'s stored calculated_bonus, with the rail key hsl:<key> and the whole-family roster (audit item 249). 707fb1b0 repairs two ManagerApp insertions that 505c3b2e placed one line late.'),
-  },
-  {
-    name: 'The Overview Payroll Notes card tracks wizard Steps 1–8, open steps first, in place of New hires and Attrition',
-    status: 'Pending Deploy',
-    shas: ['da7d22f5'],
-    basis: pd('The Accounting Overview replaces its New hires and Attrition cards with a Payroll Notes Steps 1–8 card, with open steps spotlighted first (wizard-setup-spotlight.ts + tests). wizardSetup is read AS SENT.'),
-  },
-  {
-    name: 'The Hi Kane payroll cycle greeting lists the unfinished wizard steps and jumps to Step N',
-    status: 'Pending Deploy',
-    shas: ['5f22e91b'],
-    basis: pd('A payroll-cycle greeting modal ("Hi Kane") lists the unfinished wizard steps first, once per session, with Go to Step N (step-jump.ts and cycle-greeting.ts + tests).'),
-  },
-  {
-    name: 'The blueprint skill takes its own recommendations and builds, stopping only for a closed NEEDS list',
-    status: 'Done',
-    completed: '2026-09-26',
-    shas: ['6aa48b99'],
-    basis: 'DONE on USE, the pass-17 rule for dev tooling, which has no prod surface to click through. The blueprint skill (and CLAUDE.md) now take the brief\'s own recommendations as CHOSEN lines and build straight away, stopping only for a closed NEEDS list: a value only Kane holds, an external party\'s schema or grant, a money ruling, or a contradiction with a documented rule (Kane 2026-09-26). It is in use: 505c3b2e (2026-09-28) was built under it, "Blueprint, no NEEDS; six CHOSEN lines". Completed Date is the commit date of 6aa48b99.',
-  },
-  {
-    name: 'The Issues table moves smoothly, and a time-adjustment proof opens in a viewer with Next and a preview strip',
-    status: 'Pending Deploy',
-    shas: ['2aebfde3'],
-    basis: pd('Accounting → Issues gets smooth table motion (issue-row-motion.tsx, issue-row-flash.ts + tests), and a time-adjustment proof opens in a viewer with Next and a preview strip.'),
-  },
-  {
-    name: 'The Payroll Wizard’s all-uploads PAB merge is one streamed server call, byte-identical to the old result',
-    status: 'Pending Deploy',
-    shas: ['f30f498c'],
-    basis: pd('The wizard\'s PAB merge had pulled all 31 uploads client-side. It is now one streamed server call (pab-merge-stream.ts), verified byte-identical by scripts/verify-pab-merge-identity.mts, and the week in view is read once. 868 lines + 544 of tests. Audit item 236. Item 238 stays open.'),
-  },
-  {
-    name: 'The Employee Overview PAB calendar follows a wizard PAB Period save live',
-    status: 'Pending Deploy',
-    shas: ['bbdea24a'],
-    basis: pd('A wizard PAB Period save broadcasts, and the employee Overview PAB calendar follows it live without a reload (pab-period-live.ts + tests).'),
-  },
-  {
-    name: 'Every Payroll Wizard write leaves an audit row with the right actor, the Hubstaff uploader included',
-    status: 'Pending Deploy',
-    shas: ['47e75366', '6259f31b'],
-    basis: pd('Every Payroll Wizard write now leaves an audit row with the right actor. That covers app_settings audited BY KEY (the PAB Period save left none, audit item 239), additions, manual validation, orphanage pay, PAB disputes, and the two sheet-sync crons with a cron actor. The Hubstaff upload is audited as the SESSION user, not the form\'s uploaded_by. 572 lines + 286 of tests.'),
-  },
-  {
-    name: 'KPI Calculator Add External Member finds people in the manager’s other departments',
-    status: 'Pending Deploy',
-    shas: ['a40076a6'],
-    basis: pd('KPI Calculator → Add External Member now lists people in the manager\'s OTHER departments: their own roster minus the card (external-member-candidates.ts + tests, audit item 241).'),
-  },
-  {
-    name: 'Lead Gen can save and lock its KPI week again — the replace-set delete no longer puts every kept id in the URL',
-    status: 'Pending Deploy',
-    shas: ['889cce6a'],
-    basis: pd('Lead Gen\'s KPI Lock died with Bad Request. The replace-set delete sent a 478-id not.in in the URL, past PostgREST\'s ~16 KB ceiling. The stale set is now computed in process from a paged id read and deleted in chunks (in-list-chunks.ts + tests), and qc-db.ts gets the same treatment. PM Team (~32 KB) was over the line too. Audit item 244.'),
-  },
-  {
-    name: 'Orientation on My Team pages its weeks, and each week’s people, at 10',
-    status: 'Pending Deploy',
-    shas: ['a8507246'],
-    basis: pd('My Team → Orientation pages its weeks, and each opened week\'s people, at 10 (page-window.ts + tests). This is DISPLAY ONLY: the tiles and the PDF stay whole-department.'),
-  },
-  {
-    name: 'The offboarding queue dialogs render light in light mode',
-    status: 'Pending Deploy',
-    shas: ['8423e710'],
-    basis: pd('The HR and Manager offboarding queue dialogs had hardcoded dark surfaces. They now follow light mode.'),
-  },
-  {
-    name: 'Seven more HSL KPI branches are scored from the Payment Catalog — their hardcoded rules retired, and the Mgr column dropped',
-    status: 'Pending Deploy',
-    shas: ['c9153d9a', '6acb6579', '5e3ca407', '957ec0c0'],
-    basis: pd('Five HSL KPI Calculator branches (c9153d9a), then Collections and Pre/Post-Hearing (6acb6579, Kane\'s ruling (b)), drop their hardcoded rules for the Payment Catalog Library. That makes 9 of 14 branches Library-only. retired-rules.ts pins the retirement with tests. The Mgr column leaves the card because it no longer changes anyone\'s pay, and the Library column head drops a clipped formula line. MONEY, recorded: the PHP 2,500 flats and the cap are gone by ruling (b), and Pre/Post-Hearing pays PHP 0 until Accounting adds it to the Library.'),
-  },
-  {
-    name: 'KPI Calculator insight cards — department spotlight, top earner and the Sent-to-Accounting trend',
-    status: 'Pending Deploy',
-    shas: ['98a9ecc7'],
-    basis: pd('The KPI Calculator gets insight cards: a department spotlight, the top earner, and a Sent-to-Accounting trend. SENT means ready or locked, a week with no row is NO point, the trend is monotone, and scope comes from the SESSION. New kpi-insights route. 2,106 lines + 347 of tests, with scripts/verify-kpi-insights.ts. Audit item 250.'),
-  },
-  {
-    name: 'Carla gets a Jellyfish Jam play bubble every five active minutes',
-    status: 'Pending Deploy',
-    shas: ['89ec1f99', 'd9dc6322'],
-    basis: pd('carla@ gets a Jellyfish Jam play bubble every 5 ACTIVE minutes (carla-jam-clock.ts + tests). Audio plays ONLY from her click, and a restore comes back PAUSED. It shares jellyfish-jam.mp3 with Start Processing. d9dc6322 is the impeccable config ignore for the jam-wobble bounce easing. Audit item 254.'),
-  },
-  {
-    name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS',
-    status: 'In Progress',
-    shas: ['0fa0b89d'],
-    basis: 'IN PROGRESS, not Pending Deploy: the feature is not code-complete. What is built: the Orphanage step can return each person\'s regular and OT hours and paid amount to OMS. It writes ONE append-only OMS table, and the server rebuilds the rows from the saved blob plus the record, never from the tab (oms-return.ts + 198 lines of tests, audit item 235). What is missing: the panel BUTTON that opens the dialog was never added (a permission classifier refused that one edit). OMS_RETURN_TABLE has no default and is unset even in .env.local (measured 2026-09-29 and 2026-09-30), and the OMS team has not created the table. 0236d8e8 (09-29) changed the Orphanage PASTE, not this return path, and is its own row. Filed in Sprint 30.',
-    blockers: [
-      'Add the Send to OMS button to OrphanageOmsPanel.tsx. The dialog and omsReturn.open are already mounted.',
-      'The OMS team creates the return table and grants INSERT + SELECT.',
-      'Kane sets OMS_RETURN_TABLE in .env.local and in Vercel prod.',
-    ],
-  },
-
-  // —── PASS 36, continued 2026-09-30 · Sep 29, 11 rows, all Sprint 30 ─────────────────────────────
-  {
-    name: 'The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload',
-    status: 'Pending Deploy',
-    shas: ['2a4695ee'],
-    basis: pd('The employee Overview KPI Bonus card read /api/kpi-results once on mount, and the shell keeps tabs mounted, so it never refetched until F5, and the KPI Results tab polled on its own 30 s clock. useNotificationChime now dispatches notification:arrived for the batch it just toasted (notification-arrived.ts + tests), and both surfaces refetch on it. A failed read keeps the last good figure and never shows PHP 0. Audit item 276.'),
-  },
-  {
-    name: 'The Orphanage paste adds up a person’s repeated lines and prices the total once',
-    status: 'Pending Deploy',
-    shas: ['0236d8e8'],
-    basis: pd('Kane 2026-09-29: two pasted lines for one person are added, not skipped as a duplicate. resolveOrphanageHourRows gains repeats: combine for the paste door (OMS keeps refuse). It sums the hours and calls priceOrphanageHours ONCE, so the 40 h regular cap is consumed once by the total; pricing per line would pay the regular capacity twice. One invalid line holds the whole person. orphanage-rows.ts + 162 lines of tests. MONEY: this changes what a repeated paste pays.'),
-  },
-  {
-    name: 'The Start Processing cue plays one minute, then fades out',
-    status: 'Pending Deploy',
-    shas: ['56e0a7f4'],
-    basis: pd('Kane: "should just be 1 minute please and fade it out." STAGE_PREPPED_MAX_SECONDS 180 → 60 and a new 5 s fade (stagePreppedFadeSeconds), so the 2:31 track fades 55 s → 60 s. The 12 s floor and the loop ramp are unchanged, and the mp3 is untouched because Carla\'s bubble plays the whole file. Tests 17/17. This is the current length rule; it supersedes the whole-song length that 0f4667c5 shipped. Item 208 (no stop control after Confirm) stays open. Audit item 275.'),
-  },
-  {
-    name: 'KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes',
-    status: 'Pending Deploy',
-    shas: ['e7f5eb91'],
-    basis: pd('Measured first: anon reads 0 rows of hsl_bonus_period_status, bonus_catalog_applied and hsl_bonus_entries, so every postgres_changes binding on the KPI tables was dead. Now the route that wrote the row broadcasts kpi-bonus-sync through after() from period-status POST, hsl-bonus/period DELETE, bonus-catalog-applied POST and DELETE, and hsl-bonus/entries POST and DELETE. The payload is a re-read signal, never a value. useKpiLive and joinSharedBroadcast drive the employee, manager, Payroll Notes and Wizard surfaces; the Wizard follows only while values are UNLOCKED (wizard-kpi-load.ts). ~1,500 lines with tests. Audit items 276-278; the final-pay publisher gap (277) is Kane\'s call and not part of this row.'),
-  },
-  {
-    name: 'Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many',
-    status: 'Pending Deploy',
-    shas: ['c7a437ff'],
-    basis: pd('Kane 2026-09-29, ruling (b) over payment-dispatch.md\'s "No automation". When the live week loads, every pending employee row priced by the wizard at a finite USD strictly under 15.00 is held at Threshold with the same marker clerks logged by hand, and a popup says "N payees are at Threshold". Once per person per week, and a Clear sticks. The page proposes and POST /api/payment-dispatches/auto-threshold re-validates each row (feature edit gate, current and wizard-locked week or 409). auto-threshold.ts + 18 tests. NOTE: a local dev load writes these rows to PROD.'),
-  },
-  {
-    name: 'The Pending and Excluded queues swap their violet avatar gradient for lime → green',
-    status: 'Pending Deploy',
-    shas: ['314dccad'],
-    basis: pd('Kane OK\'d it after the design hook flagged from-violet-500 to-fuchsia-500 as an AI-palette tell. One of six decorative initials gradients in each queue changes; the other five and the per-row hashing are unchanged. Two lines.'),
-  },
-  {
-    name: 'The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row',
-    status: 'Pending Deploy',
-    shas: ['3f2f1ea5', '47f30fd2'],
-    basis: pd('Kane: the HSL Branch calculator should have the KPI cards the Departments one has. The same KpiInsightCards (calculator="hsl") sit above the branch grid: branch spotlight, top earner, Sent to Accounting trend. New GET /api/manager/kpi-insights/hsl, whose money is hsl_bonus_entries.calculated_bonus and whose scope is an explicit hsl:<key> grant with NO elevated arm. Shared change: a ready week with zero rows now counts as sent. 47f30fd2 shares KpiInsightCards.tsx and HslBonusCalculator.tsx: both calculators\' first-load skeleton now paints the card row from the same loading bodies, so the grid no longer drops 200+ px on reveal. Audit item 280.'),
-  },
-  {
-    name: 'The Supabase Advisor’s four security errors are closed — RLS on three anon-writable tables, and active_employees runs as the caller',
-    status: 'Done',
-    completed: '2026-09-29',
-    shas: ['a3babfbb', '81eb0299'],
-    basis: 'DONE on a DATABASE FACT, because nothing here deploys: every reader is service-role and 81eb0299\'s app-code edits are comments only. Kane: "can you connect to supabase and close these for me please turn on RLS for public", and he chose (b) for the view. Applied 2026-09-29 17:18Z (RLS on penny_employee_usage, bonus_catalog_bonus_history and bonus_catalog_assignment_history, 0 policies; the anon key had held SELECT/INSERT/UPDATE/DELETE on all three, and an anon DELETE on the Penny ledger lifted the Anthropic spend ceiling) and 17:28Z (active_employees security_invoker = true, anon and service each reading 1,270 = base). RE-READ from the catalog 2026-09-30 ~11:10Z, read-only: relrowsecurity true on all three, 0 public tables with RLS off, active_employees reloptions [security_invoker=true], 0 public views left as definer. The Advisor dashboard itself was not re-read. Completed Date is the commit date of 81eb0299, the same day as both applies. Audit item 281.',
-  },
-  {
-    name: 'A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason',
-    status: 'Pending Deploy',
-    shas: ['e37022cc'],
-    basis: pd('Carla, via Kane, 2026-09-29. A received gift offers only Clear, and the route refuses received → owed (409). Clear needs a written reason of 8+ characters, audited. Nobody records or clears their own gift (403, and a failed master-row read fails closed with 503). Re-stating the current state writes nothing, and PUT and DELETE are conditional on the state the caller read. receipt-guards.ts + 109 lines of tests. NOT part of this row: Carla\'s "received only when ordered" ask, held for Kane (audit item 283).'),
-  },
-  {
-    name: 'The Manager Bonus History tab is retired',
-    status: 'Pending Deploy',
-    shas: ['31fd9c0a'],
-    basis: pd('Kane: "Retire the Bonus History tab this is no longer needed." ManagerBonusHistory.tsx (995 lines) is deleted, and the tab is removed from the sidebar, the ManagerTab union, VIEW_TAB_IDS.manager, the bonus_history feature key, Pages visibility and MANAGER_CACHE_KEYS. No route was gated on bonus_history, so no server authorization changes. KEPT on Kane\'s call, now with no UI caller: DELETE /api/bonus-catalog-applied and the all-weeks ?summary=1 branch (audit item 284).'),
-  },
-  {
-    name: 'The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up',
-    status: 'Pending Deploy',
-    shas: ['28e8bbb0'],
-    basis: pd('Docs only, the same class as the S29 row "The reference docs index every route and component…". 31 sessions and 84 commits read against the Sep 25 log: two new feature docs (termination-docs.md, 609 lines; update-bank-info.md, 477 lines), 20 feature docs corrected, api-reference / components / data-sources / business-logic caught up, and ui-standards.md § 20 listing 14 flagged deviations. Findings filed as audit items 256-274, several of them Kane\'s calls (264, 266, 272, 274).'),
+    shas: ['ae33f9fd', '57e712f9'],
+    basis: pd('Item 298: non-HSL pay was priced on WHOLE SECONDS while every statement prints 2dp hours, so 492 of 780 hours lines on the 09-20 → 09-26 stubs did not multiply out (12.54h × PHP 427.50 ≠ PHP 5,358.71). Kane: "only 2 decimals!" From the Sun 2026-09-27 pay week (TWO_DP_HOURS_PRICING_FROM), the wizard, proratePayForMidPeriodChange and Dispatch\'s computeProratedRowPay all price splitTwoDpHoursWeek: the total rounds half-up on integer seconds, then splits at 40 h. 237 lines of tests. MONEY, recorded: pay moves by fractions of a peso per line from that week on; Sep 20-26 and earlier keep their whole-seconds money, and their stubs still print the mismatch. Audit item 299.'),
   },
 ];
 
