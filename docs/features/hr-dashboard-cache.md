@@ -220,9 +220,9 @@ replace (`hr-orientation-attendance.md` § *Failure refuses to render*).
   tests pass. The two failures are pre-existing, in files this change does not touch. The tab
   switches were not clicked through.
 - **The other dashboards' copies of the four shared panels are still cold, except Manager.**
-  Manager's Announcements, S-Wall and Notifications were wired on 2026-10-01 through
-  `managerPaintCache`, and its Leaves tab is held for Kane (`manager-dashboard-cache.md`,
-  session log item 304). The prop is there and any `TabCache` from `create-tab-cache.ts`
+  Manager's Announcements, S-Wall, Notifications and Leaves were wired on 2026-10-01
+  through `managerPaintCache` (Leaves once Kane had ruled on it: `manager-dashboard-cache.md`,
+  session log items 304 and 306). The prop is there and any `TabCache` from `create-tab-cache.ts`
   satisfies `PaintCache`. Accounting and the rest are a separate change against each
   dashboard's own store.
 - **Not verified in a browser.** `tsc` is clean and 2739/2741 tests pass (both failures

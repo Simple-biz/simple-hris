@@ -447,6 +447,18 @@ test('the shared-panel adapter is inert until bound, like every other key', asyn
   assert.equal(managerPaintCache.has(MANAGER_CACHE_KEYS.notifications), false);
 });
 
+test('the Leaves tab list and the shell badge count are two keys, never one', () => {
+  // Kane, 2026-10-01: the tab caches the list it renders. The badge keeps its
+  // own count so it repaints whether or not the Leaves tab was ever opened.
+  assert.notEqual(MANAGER_CACHE_KEYS.leaves, MANAGER_CACHE_KEYS.pendingLeaveCount);
+  newTab();
+  bindManagerCacheIdentity('mgr@simple.biz');
+  setManagerCache(MANAGER_CACHE_KEYS.leaves, [{ id: 'l1' }, { id: 'l2' }]);
+  setManagerCache(MANAGER_CACHE_KEYS.pendingLeaveCount, 1);
+  assert.deepEqual(getManagerCache(MANAGER_CACHE_KEYS.leaves), [{ id: 'l1' }, { id: 'l2' }]);
+  assert.equal(getManagerCache(MANAGER_CACHE_KEYS.pendingLeaveCount), 1);
+});
+
 test('no new key is spelled after pay, presence or a signed URL', () => {
   for (const k of [
     MANAGER_CACHE_KEYS.pendingHires,

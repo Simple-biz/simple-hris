@@ -829,7 +829,11 @@ export default function ManagerApp() {
                   onCountChange={handleApprovalCountChange}
                 />
               )}
-              {activeTab === 'leaves' && <LeaveRequestsPanel />}
+              {activeTab === 'leaves' && (
+                <LeaveRequestsPanel
+                  paintCache={{ store: managerPaintCache, key: MANAGER_CACHE_KEYS.leaves }}
+                />
+              )}
               {activeTab === 'team' && (
                 <TeamPanel
                   members={teamMembers}

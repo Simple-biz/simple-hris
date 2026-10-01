@@ -302,7 +302,7 @@ UI copy was updated 2026-05-01 to drop the "and the following day" language (D+1
 
 ## `src/components/LeaveRequestsPanel.tsx`
 
-Shared leave-request queue mounted by the **Accounting** (`/`), **Manager** (`/manager`) and **HR** (`/hr`) dashboards. Optional prop `paintCache?: { store, key }` (`src/lib/dashboard-cache/paint-cache.ts`). HR passes `hrPaintCache` with the viewer folded into `key`. A painted list is ALWAYS refetched, silently, and the delete permission is never cached. With no prop the panel is uncached ([hr-dashboard-cache](../features/hr-dashboard-cache.md) § *Every HR tab, checked*).
+Shared leave-request queue mounted by the **Accounting** (`/`), **Manager** (`/manager`) and **HR** (`/hr`) dashboards. Optional prop `paintCache?: { store, key }` (`src/lib/dashboard-cache/paint-cache.ts`). HR passes `hrPaintCache` with the viewer folded into `key`; Manager passes `managerPaintCache` with `MANAGER_CACHE_KEYS.leaves` (Kane, 2026-10-01; the shell badge keeps its own `pendingLeaveCount`). A painted list is ALWAYS refetched, silently, and the delete permission is never cached. With no prop the panel is uncached ([hr-dashboard-cache](../features/hr-dashboard-cache.md) § *Every HR tab, checked*).
 
 **Stats strip**: pending / approved / rejected counts.
 

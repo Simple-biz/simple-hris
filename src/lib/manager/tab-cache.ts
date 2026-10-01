@@ -54,12 +54,15 @@ import type { PaintCache } from '@/lib/dashboard-cache/paint-cache';
  * - **Signed evidence URLs** on time-adjustment rows. They expire; a cached one
  *   paints a broken image where the uncached path paints nothing. The rows are
  *   cached, the `signedUrls` map is not.
- * - **The company-wide leave-request list.** `/api/leave-requests?scope=all`
- *   returns every request in the company and the shell uses exactly one number
- *   from it. Caching the list would spend the whole `sessionStorage` budget on
- *   rows nothing reads, so {@link MANAGER_CACHE_KEYS.pendingLeaveCount} holds
- *   the badge count itself — which is the state, so there is no second
- *   derivation for the seed path to diverge from.
+ * - **The leave-request list, as the SHELL's badge source.** The shell reads one
+ *   number off `/api/leave-requests?scope=all`, so
+ *   {@link MANAGER_CACHE_KEYS.pendingLeaveCount} holds the badge count itself —
+ *   which is the state, so there is no second derivation for the seed path to
+ *   diverge from. The Leaves TAB, which renders the list, caches it under its own
+ *   key, {@link MANAGER_CACHE_KEYS.leaves} (Kane, 2026-10-01). The old reason for
+ *   keeping the list out — it "would spend the whole `sessionStorage` budget" —
+ *   measured 4 rows / 2,239 bytes that day, and a quota failure degrades to
+ *   memory anyway.
  * - **Anything carrying a pay rate.** Managers see no compensation on any My
  *   Team surface (`docs/features/manager-my-team.md`), and nothing cached here
  *   may become the back door that reintroduces one.
@@ -469,6 +472,17 @@ export const MANAGER_CACHE_KEYS = {
    * there is no second derivation the seed path could diverge from.
    */
   pendingLeaveCount: 'shell:pending-leave-count',
+  /**
+   * Leaves tab: base key for `LeaveRequestsPanel`'s paint cache — the list the
+   * tab renders. Kane, 2026-10-01 (session log item 304, resolution (b)).
+   *
+   * A different dataset from {@link pendingLeaveCount}, deliberately: the shell
+   * badge still restores its own count, so the badge never depends on whether
+   * the Leaves tab has been opened. The rows are scoped server-side by the
+   * signed-in manager's department assignments; the identity stamp isolates
+   * viewers, so the key carries no email.
+   */
+  leaves: 'leaves:list',
   /** The viewer's resolved display name for the Overview greeting. */
   viewerName: 'overview:viewer-name',
   /**

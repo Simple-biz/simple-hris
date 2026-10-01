@@ -170,7 +170,7 @@ That is why the roster payload is the cached unit and the gate is derived.
 | `teamRoster` | `GET /api/manager/department-members` | RAW; `teamMembers` **and** `teamGate` derive from it |
 | `timeAdjustmentRows` | `GET /api/manager/time-adjustments` | the pending rows only — see *Not cached* |
 | `pendingApprovalCount` | ↑, and the tab's own `onCountChange` | its own key: the two are deliberately different numbers |
-| `pendingLeaveCount` | `GET /api/leave-requests?scope=all` | the COUNT, not the list — see *Not cached* |
+| `pendingLeaveCount` | `GET /api/leave-requests?scope=all` | the shell badge's COUNT — its own key, never derived from `leaves` |
 | `viewerName` | `GET /api/employees?email=` | the Overview greeting |
 | `scoringSummaries` | 3 summary routes | RAW, **with the pay week inside the value** |
 | `bonusCatalog` | `GET /api/bonus-catalog` | shared by the Overview panel and the Departments calculator |
@@ -188,14 +188,25 @@ That is why the roster payload is the cached unit and the gate is derived.
 | `announcements` (+ scope) | `GET /api/announcements` | the shared `AnnouncementWall`; the panel appends the scope |
 | `swall` (+ viewer) | `GET /api/swall/posts` + the CEO rail | the shared `SWall`; image URLs are `getPublicUrl`, not signed (`swall/upload/route.ts:37`) |
 | `notifications` (+ view + viewer) | `GET /api/employee-notifications` | the shared `NotificationsPanel`; the cached copy has its rate blocks stripped |
+| `leaves` | `GET /api/leave-requests?scope=all` | the shared `LeaveRequestsPanel` — the LIST the Leaves tab renders (Kane, 2026-10-01); the delete permission stays live |
 
 ### The shared panels and the New Hire Check List (2026-10-01)
 
 Kane: *"Now lets check the managers dashboard"*, the same ask as HR's sweep
 (`hr-dashboard-cache.md` § *Every HR tab, checked on 2026-10-01*). Every tab was read for
 its mount-time fetches. Announcements, S-Wall, Notifications and My Team's **New Hire
-Check List** and **Orientation** inner tabs still loaded cold. They are wired now. Leaves
-is held for Kane (see *Not cached, on purpose*).
+Check List** and **Orientation** inner tabs still loaded cold. They are wired now, and so
+is Leaves, once Kane had ruled on it (below).
+
+- **The Leaves tab caches its list. Kane chose this on 2026-10-01** (*"B"*, session log
+  item 304). This section used to forbid it. Its rule, *"The company-wide leave-request
+  list … caching the list would spend the whole `sessionStorage` budget on rows nothing
+  reads"*, was written for the shell's badge read, and the tab does read the rows.
+  Measured that day: `leave_requests` held **4 rows, 2,239 bytes**, and a quota failure
+  degrades to memory. The tab paints from `leaves` and still refetches on every mount.
+  **The badge keeps its own `pendingLeaveCount`**, so it repaints whether or not Leaves
+  was ever opened, and a test pins the two as separate keys. The delete permission is
+  never cached, because it decides who sees the trash button.
 
 - **The shared panels take `managerPaintCache`.** It is `get`/`has`/`set` over this store
   and nothing else, so the panels paint and then refetch on every mount, which is this
@@ -281,21 +292,20 @@ department. Same shape as the KPI store's `presumedWeek`.
 - **Signed evidence URLs** on time-adjustment rows. They expire; a cached one paints a
   broken image where an uncached one paints nothing. The rows are cached, the
   `signedUrls` map is not.
-- **The company-wide leave-request list.** `?scope=all` returns every request in the
-  company and the shell reads one number off it, so caching the list would spend the
-  whole `sessionStorage` budget on rows nothing reads. The badge **count** is cached
-  instead — and because the cached value *is* the state there, no second derivation
-  exists to drift.
+- **The leave-request list, as the SHELL reads it.** The shell reads one number off
+  `?scope=all`, so the badge **count** is cached, not derived from a list. Because the
+  cached value *is* the state there, no second derivation exists to drift. **Since
+  2026-10-01 the Leaves TAB caches the list under its own `leaves` key** (Kane's ruling,
+  above). This line used to forbid caching the list at all, and the reason it gave was
+  *"would spend the whole `sessionStorage` budget"*. That measured 4 rows / 2,239 bytes
+  on the day it was changed.
 - **Anything carrying a pay rate.** Managers see no compensation on any My Team surface
   (`manager-my-team.md`); nothing cached here may become the back door that
   reintroduces one. A test asserts no key is spelled after presence or a signed URL.
   Where a payload that IS cached can carry one (the staged-hire rows, a notification's
   before/after block), the cached copy is a projection without it.
-- **The Leaves tab's list — held for Kane, 2026-10-01 (session log item 304).** The rule
-  above about the company-wide leave list was written for the shell's badge read, and it
-  names the list itself. Caching the Leaves TAB means rewriting it, so that is Kane's call.
-  Measured read-only on 2026-10-01: `leave_requests` holds **4 rows, 2,239 bytes**. Until
-  he answers, the tab mounts cold.
+- **The Leaves delete permission** (`/api/employee-roles`). It decides who sees the trash
+  button, so it is re-read on every mount.
 - **Scheduling.** `migrated` decides whether an edit can be stored
   (`manager-scheduling.md` § *Deploy notes*), and a painted list would have to assume it.
 - **The second-approver candidate pools** on Time Adjustments. They decide who can be
@@ -316,10 +326,11 @@ roster rather than leaving a previous team on screen under an error banner.
   client-side paint optimisation and changes no route's freshness.
 - **`usePayWeeks` still costs one round trip** on every Overview mount — it is shared
   with the QC Overview, so short-circuiting it is a wider change than this one.
-- **Leaves and Scheduling still mount cold** (both above). Announcements, S-Wall,
-  Notifications and Orientation were wired on 2026-10-01, together with the New Hire
-  Check List. **That sweep is not verified in a browser either.** `tsc` is clean and
-  5251/5253 tests pass. The two failures are pre-existing: they failed identically before
-  this change, and neither flags a line it touches.
+- **Scheduling still mounts cold** (above, on purpose). Announcements, S-Wall,
+  Notifications and Orientation were wired on 2026-10-01, together with the New Hire Check
+  List, and Leaves followed the same day once Kane ruled. **That sweep is not verified in
+  a browser either.** `tsc` is clean and 5251/5253 tests passed at the first commit. The
+  two failures are pre-existing: they failed identically before this change, and neither
+  flags a line it touches.
 - **Not verified in a browser.** `tsc` is clean and 2188 tests pass, but the live
   tab-switch behaviour was not clicked through (needs Google SSO + Supabase auth).
