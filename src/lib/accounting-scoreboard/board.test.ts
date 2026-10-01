@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { sectionHeadline, summarizeSection, type BoardContext } from './board';
 import { buildLookup, type StoredEntry } from './scoring';
 import { resolveSections, type SectionKey } from './sections';
-import type { PayrollEvent } from './payroll-cycle';
+import { eventCycleStart, type PayrollEvent } from './payroll-cycle';
 
 const sections = resolveSections([]);
 const sec = (k: SectionKey) => sections.find((s) => s.key === k)!;
@@ -16,6 +16,7 @@ function ctx(over: Partial<BoardContext> & { entries?: StoredEntry[] } = {}): Bo
     lookup: buildLookup(over.entries ?? []),
     collections: over.collections ?? [],
     payrollEvents: over.payrollEvents ?? [],
+    firstClosedPeriodEnd: over.firstClosedPeriodEnd ?? '2026-08-08',
     today: over.today ?? '2026-10-03',
     nowIso: over.nowIso ?? '2026-10-03T16:00:00Z',
   };
@@ -56,11 +57,17 @@ test('payroll problems: over the goal is not green; a below goal gets amber when
   assert.equal(problems.lastLight, 'none');
 });
 
-test('payroll timing comes from the audit events, not from rows', () => {
+test('payroll timing comes from the Wizard and close-out events, not from rows', () => {
+  const ev = (action: PayrollEvent['action'], at: string, sourceFile: string): PayrollEvent => ({
+    action,
+    at,
+    sourceFile,
+    cycleStart: eventCycleStart(null, sourceFile),
+  });
   const events: PayrollEvent[] = [
-    { action: 'payroll.dispatch.locked', at: '2026-09-22T17:21:00Z', sourceFile: null },
-    { action: 'payment_cycle.closed', at: '2026-09-25T19:50:00Z', sourceFile: 'simple-biz_daily_report_2026-09-13_to_2026-09-19.csv' },
-    { action: 'payroll.dispatch.locked', at: '2026-09-29T15:01:00Z', sourceFile: null },
+    ev('dispatch.lock_acquired', '2026-09-22T17:21:00Z', 'simple-biz_daily_report_2026-09-13_to_2026-09-19.csv'),
+    ev('payment_cycle.closed', '2026-09-25T19:50:00Z', 'simple-biz_daily_report_2026-09-13_to_2026-09-19.csv'),
+    ev('dispatch.lock_acquired', '2026-09-29T15:01:00Z', 'simple-biz_daily_report_2026-09-20_to_2026-09-26.csv'),
   ];
   const s = summarizeSection(sec('payroll_timing'), [], ctx({ payrollEvents: events, nowIso: '2026-10-01T18:00:00Z', today: '2026-10-01' }), WEEK, LAST);
   assert.equal(s.headline, null, 'this week is not scored until Friday noon');

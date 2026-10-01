@@ -85,7 +85,7 @@ export function SectionGrid({ section, rows, weekStart, lastWeekStart, today, lo
       summarizeSection(
         section,
         rowIds,
-        { lookup, collections: [], payrollEvents: [], today, nowIso: new Date().toISOString() },
+        { lookup, collections: [], payrollEvents: [], firstClosedPeriodEnd: null, today, nowIso: new Date().toISOString() },
         weekStart,
         lastWeekStart,
       ),

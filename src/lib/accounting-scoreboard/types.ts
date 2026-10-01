@@ -48,11 +48,14 @@ export interface BoardPayload {
   members: BoardMember[] | null;
   bonus: PreviewVerdict;
   /**
-   * HRIS's own Start Processing locks and pay-cycle closes/reopens, from two weeks before the week
-   * shown to two weeks after it (audit_log; action, time and cycle file only). Payroll Timing is
-   * computed from these and nothing is typed (payroll-cycle.ts).
+   * The Payroll Wizard's Start Processing stamps (each names the cycle it was on) and the pay-cycle
+   * closes/reopens, from three weeks before the week shown onward (audit_log; action, time, cycle
+   * file and period only). Payroll Timing is computed from these and nothing is typed
+   * (payroll-cycle.ts).
    */
   payrollEvents: PayrollEvent[];
+  /** The period end of the first cycle ever closed; a cycle that ended before it predates Close Pay Cycle. */
+  firstClosedPeriodEnd: string | null;
   generatedAt: string;
 }
 

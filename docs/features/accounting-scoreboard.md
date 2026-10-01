@@ -21,7 +21,7 @@ starts from, covering what every sheet section measures, who is in it and the sh
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
 | One headline and one stop light per section | `src/lib/accounting-scoreboard/board.ts` |
 | The stop light (green / amber / red, paced) | `src/lib/accounting-scoreboard/stoplight.ts` |
-| Payroll Timing from HRIS (cycle, deadlines, score) | `src/lib/accounting-scoreboard/payroll-cycle.ts` |
+| Payroll Timing from the Wizard (cycle match, deadlines, no_record, score) | `src/lib/accounting-scoreboard/payroll-cycle.ts` |
 | Dancing Queen preview | `src/lib/accounting-scoreboard/bonus-preview.ts` |
 | Host rule for the domain | `src/lib/accounting-scoreboard/host.ts`, called from `proxy.ts` |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
@@ -90,7 +90,7 @@ hard-coded subset.
 | Chargebacks | AM/PM | Mon–Fri | net cleared Σ(AM − PM) | — |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | — |
-| Payroll Timing | **from HRIS, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
+| Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
 | Payroll Problems | daily | Mon–Fri | week total | < 20 |
 
 - **The sheet's formulas are kept exactly**, apart from one deliberate change. The sheet's `SUM`
@@ -106,33 +106,70 @@ hard-coded subset.
 - **Absence is not zero** (`ui-standards.md` § 12.5). A cleared cell is a **deleted** entry, never a
   stored 0, and anything never typed prints "—". Nothing logged is "—", not 0 points.
 
-## Payroll Timing fills itself
+## Payroll Timing fills itself, from the Payroll Wizard
 
 Kane, 2026-10-01, with a screenshot of Carla's "Payroll Scoreboard (Timing)": per week, when the cycle
 **started** (goal Tuesday 12:00 PM) and **closed** (goal Friday 12:00 PM), each on time or not, a cycle score,
 and an Average over This week / Last week / Two weeks ago. Every time on that sheet is one of HRIS's **own
-audit events** (read-only check, 2026-10-01: all five sheet times matched to the minute, Eastern), so nobody
-types this section. The same day it replaced a per-person start/end-time grid (goal "< 20 hours").
+audit events**, so nobody types this section (the same day it replaced a per-person start/end-time grid, goal
+"< 20 hours"). Later that day: *"lets connect this to the actual payroll Wizard where we first started
+processing per week and close it"* and *"Make sure to check previous weeks"*.
 
-- **Started = the week's FIRST `payroll.dispatch.locked`.** Start Processing turns on the wizard's
-  `payroll.dispatch_locked` lock (`processing-guard.ts`). A later re-lock in the same week does not move it.
-- **Closed = the `payment_cycle.closed` of the cycle that week PAYS**, the Sunday–Saturday before it, matched on
-  the **parsed date range** in the source file and never on the file name (memory
-  `orphanage-source-file-drift-hides-a-week`). A `payment_cycle.reopened` after the close opens it again
-  (`cycle-closeout.md`), and the close that sticks is the one judged.
+- **Started = the FIRST `dispatch.lock_acquired` whose `details.cycle` names that week's pay cycle**,
+  whenever it happened. The Payroll Wizard writes it on Start Processing, stamped with the file it is on
+  (`handleLockToggle` in `PayrollWizard.tsx`; the cycle context of `cycle-audit.ts`). A cycle processed late
+  belongs to its own week, never to the week the click happened in. A later re-start of the same cycle does
+  not move it.
+- **A start made only from Payment Dispatch does not count.** The processing lock (`payroll.dispatch_locked`)
+  is global and names no week (`cycle-closeout.md` § Permissions). Both Start buttons flip it and write
+  `payroll.dispatch.locked`, but only the Wizard records which cycle it was on. Do not "fix" a missing start
+  by reading `payroll.dispatch.locked` again: until this change that rule put the Jun 14–20 cycle's start at
+  a Payment Dispatch lock (6/24 12:17 PM, the Wizard opened only after it) and the Jul 19–25 cycle's at a
+  lock on Mon 7/27 10:12 PM (on time). The Wizard first started Jul 19–25 on Tue 7/28 4:07 PM (late). That
+  7/27 lock is the one ambiguous week: the same person had opened the Wizard four minutes before it, so it
+  may be a Wizard start whose stamp never saved (see Known gap). It is not counted.
+- **Closed = the `payment_cycle.closed` of the same cycle** (Close Pay Cycle, which lives only in Payment
+  Dispatch's Stop dialog; the Wizard never closes, `cycle-closeout.md` § Downloadable report). A
+  `payment_cycle.reopened` after the close opens it again, and the close that sticks is the one judged.
+- **Every event is matched to its cycle on the parsed period**, by the Sunday the period starts (a cycle is
+  a period, not a file: `diagnostics-performance-tabs.md` § A cycle is a PERIOD; memory
+  `orphanage-source-file-drift-hides-a-week`). The " (1).csv" and " 4.csv" names and June's two 8-day
+  files all land on their own week.
 - Deadlines are noon **Eastern**, and on the dot is on time. Each check is `on_time`, `late`, `pending` (not
-  yet, deadline still ahead) or `missed` (not yet, deadline passed, so it counts as late). Pending prints "—",
-  never Late.
-- **Cycle score = 25% for starting on time + 75% for closing on time**, scored only once both are decided.
-  This is CHOSEN, not read from the sheet: it reproduces the sheet's two scored rows (start on time, close
-  late = 25%; both late = 0%). The panel prints the formula. If Carla's real formula differs, change
+  yet, deadline still ahead), `missed` (not yet, deadline passed: counts as late) or **`no_record`**. Pending
+  prints "—", never Late.
+- **`no_record` is never judged**: never late, never in a score or an average, no colour. This copies
+  Diagnostics' rule that a week the feature could not have measured is never flagged
+  (`diagnostics-performance-tabs.md` § Three statuses, § `not_run`):
+  - **"Not in Wizard"**: the processing week is over and the Wizard never started that cycle. Payroll ran
+    outside HRIS (Jun 7–13 and Jun 28 – Jul 11 have no Start Processing of any kind), or it was started only
+    from Payment Dispatch. While the week is still running, no start after Tuesday noon is `missed`, in red.
+  - **"Before close-outs"**: the cycle ended before the first close-out was ever filed, so it could not have
+    been closed. The boundary is `firstClosedPeriodEnd`, the earliest period end among every
+    `payment_cycle.closed` ever written: Aug 8. It is read from the close events, not the live records,
+    because a reopen frees a record while the close-out feature still existed. The comparison is Diagnostics'
+    own (`periodEnd < firstClosedPeriodEnd`, `cycle-performance.ts`). With no close-out ever filed, nothing is
+    exempt. Aug 23–29 ended after the boundary and was never closed (Open item 261), so it is `missed`.
+- **Cycle score = 25% for starting on time + 75% for closing on time**, scored only once both checks are
+  judged. This is CHOSEN, not read from the sheet: it reproduces the sheet's two scored rows (start on time,
+  close late = 25%; both late = 0%). The panel prints the formula. If Carla's real formula differs, change
   `SCORE_WEIGHTS` and the test that pins it.
-- The Average row is the sheet's: each column over the weeks where it is decided (start 2 of 3 = 67%, close
-  0 of 2 = 0%, score (25 + 0) ÷ 2 = 13%). `payroll-cycle.test.ts` replays the real events and asserts the
-  sheet cell for cell.
-- The board reads four columns (`action`, `created_at`, `resource_id`, `details->>source_file`) of three
-  actions from `audit_log`, two weeks either side of the week shown, paged. It never reads or writes the
-  close-out record. The 3 rows and 1 entry typed under the old grid are kept and not shown.
+- The Average row is the sheet's: each column over the weeks where it is judged (start 2 of 3 = 67%, close
+  0 of 2 = 0%, score (25 + 0) ÷ 2 = 13%).
+- **Measured against production 2026-10-01** (read-only, the board's own query and rules): 62 events, every
+  one naming a readable cycle, over 17 processing weeks from Jun 7 to Sep 27. `payroll-cycle.test.ts`
+  replays them and asserts every week, starting with Carla's sheet cell for cell.
+- The board reads six columns (`action`, `created_at`, `resource_id`, `details->>source_file`,
+  `details->cycle->>source_file`, `details->cycle->>period_start`) of three actions from `audit_log`. The
+  window starts three weeks before the week shown and has **no upper bound**, so a late start or close of a
+  past week still lands. It also reads the file of every `payment_cycle.closed` for the boundary. Both reads
+  are paged. It never reads or writes the close-out record, which holds unpaid payees. The 3 rows and 1
+  entry typed under the old grid are kept and not shown.
+- **Known gap (Open item 318):** the Wizard writes its stamp from the browser, fire-and-forget (`logAudit`
+  in `client-log.ts`, `keepalive`; the POST needs only a signed-in session). If the write fails, that start
+  is unrecorded, and the week shows the next stamped start or "Not in Wizard". Most weeks also hold global
+  locks with no stamp beside them, which are Payment Dispatch's own starts. A lost stamp and a Dispatch start
+  look the same, so the gap cannot be measured from the log.
 
 ## Stop light
 
@@ -146,8 +183,8 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
 - **This week's running totals are judged on PACE**, against goal × the share of the section's days that are
   over (Thursday = 3 of 5). Without it every Monday is red. A past week is judged on the full goal. Scores
   and averages are never paced. For a "below" goal, going over the FULL goal is final whatever the pace.
-- Payroll Timing's light comes from its checks: every decided check on time = green, none = red, a mix =
-  amber. So a cycle that started on time is green until Friday decides the close.
+- Payroll Timing's light comes from its checks: every judged check on time = green, none = red, a mix =
+  amber, and a `no_record` check is left out. So a cycle that started on time is green until Friday decides the close.
 - An Overview card shows the light as a real stop light (a dark housing, the live lamp glows) **and** the
   word (On track / Close / Behind). Colour is never the only signal. A card tints its border and background,
   never with a thick side border (the craft floor). Each card carries its KPI's own icon (`SECTION_ICON`)

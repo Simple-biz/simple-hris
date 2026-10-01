@@ -2,8 +2,8 @@
 
 /**
  * Payroll Timing: Carla's "Payroll Scoreboard (Timing)" table, filled from HRIS itself.
- * Nothing on it is typed. Started = the week's first Start Processing (the wizard's processing
- * lock); Closed = Close Pay Cycle for the week it pays. See payroll-cycle.ts for the rules and
+ * Nothing on it is typed. Started = the Payroll Wizard's first Start Processing on the week's pay
+ * cycle; Closed = Close Pay Cycle for that cycle. See payroll-cycle.ts for the rules and
  * docs/features/accounting-scoreboard.md § Payroll Timing fills itself.
  */
 
@@ -29,6 +29,8 @@ interface Props {
   weekStart: string;
   today: string;
   events: PayrollEvent[];
+  /** The period end of the first cycle ever closed (BoardPayload.firstClosedPeriodEnd). */
+  firstClosedPeriodEnd: string | null;
 }
 
 const TH = cn(TINY_CAPS, 'whitespace-nowrap px-3 py-2 text-zinc-500 dark:text-zinc-400');
@@ -39,7 +41,7 @@ function pct(n: number | null): string {
 }
 
 function CheckChip({ state }: { state: CheckState }) {
-  if (state === 'pending') return <span className={DIM}>—</span>;
+  if (state === 'pending' || state === 'no_record') return <span className={DIM}>—</span>;
   const good = state === 'on_time';
   return (
     <span
@@ -53,7 +55,23 @@ function CheckChip({ state }: { state: CheckState }) {
   );
 }
 
-function When({ at, state, reopened }: { at: string | null; state: CheckState; reopened?: boolean }) {
+/** What a week with nothing to judge says, and why. Neither ever counts against anyone. */
+const NO_RECORD = {
+  start: { label: 'Not in Wizard', why: 'No Start Processing in the Payroll Wizard on this pay cycle: payroll ran outside HRIS, or was started only from Payment Dispatch.' },
+  close: { label: 'Before close-outs', why: 'Close Pay Cycle did not exist yet when this pay week ended.' },
+} as const;
+
+function When({
+  at,
+  state,
+  kind,
+  reopened,
+}: {
+  at: string | null;
+  state: CheckState;
+  kind: 'start' | 'close';
+  reopened?: boolean;
+}) {
   if (at) {
     return (
       <span className="whitespace-nowrap font-mono text-[13px] tabular-nums text-zinc-800 dark:text-zinc-200">
@@ -62,15 +80,22 @@ function When({ at, state, reopened }: { at: string | null; state: CheckState; r
     );
   }
   if (reopened) return <span className={cn('text-xs font-semibold', LIGHT_STYLE.amber.text)}>Reopened</span>;
+  if (state === 'no_record') {
+    return (
+      <span className="whitespace-nowrap text-xs text-zinc-500 dark:text-zinc-400" title={NO_RECORD[kind].why}>
+        {NO_RECORD[kind].label}
+      </span>
+    );
+  }
   if (state === 'missed') return <span className={cn('text-xs font-semibold', LIGHT_STYLE.red.text)}>Not yet</span>;
   return <span className={DIM}>—</span>;
 }
 
-export function PayrollCyclePanel({ section, weekStart, today, events }: Props) {
+export function PayrollCyclePanel({ section, weekStart, today, events, firstClosedPeriodEnd }: Props) {
   // Recomputed every render (three weeks of a few dozen events): "now" decides pending vs missed, so a
   // deadline that passes while the page is open turns the cycle red on the next refresh.
   const nowIso = new Date().toISOString();
-  const weeks = [0, -7, -14].map((offset) => cycleWeek(events, addDays(weekStart, offset), nowIso));
+  const weeks = [0, -7, -14].map((offset) => cycleWeek(events, addDays(weekStart, offset), nowIso, firstClosedPeriodEnd));
   const avg = cycleAverages(weeks);
   const isCurrent = weekStart === weekStartOf(today);
   const label = (w: CycleWeek, i: number) =>
@@ -133,10 +158,10 @@ export function PayrollCyclePanel({ section, weekStart, today, events }: Props) 
                     </div>
                   </td>
                   <td className={cn(TD, 'text-center')}>
-                    <When at={w.startedAt} state={w.start} />
+                    <When at={w.startedAt} state={w.start} kind="start" />
                   </td>
                   <td className={cn(TD, 'text-center')}>
-                    <When at={w.closedAt} state={w.close} reopened={w.reopened} />
+                    <When at={w.closedAt} state={w.close} kind="close" reopened={w.reopened} />
                   </td>
                   <td className={cn(TD, 'text-center')}>
                     <CheckChip state={w.start} />
@@ -146,7 +171,7 @@ export function PayrollCyclePanel({ section, weekStart, today, events }: Props) 
                   </td>
                   <td className={cn(TD, 'text-right')}>
                     <span
-                      className={cn('font-mono text-lg font-semibold tabular-nums', light === 'none' ? DIM : LIGHT_STYLE[light].text)}
+                      className={cn('font-mono text-lg font-semibold tabular-nums', w.score === null || light === 'none' ? DIM : LIGHT_STYLE[light].text)}
                       title={w.score === null ? LIGHT_LABEL[light] : undefined}
                     >
                       {pct(w.score)}
@@ -161,18 +186,19 @@ export function PayrollCyclePanel({ section, weekStart, today, events }: Props) 
               <td className={cn(TD, TINY_CAPS, 'text-zinc-500')} colSpan={3}>
                 Average
               </td>
-              <td className={cn(TD, 'text-center font-mono font-semibold tabular-nums')}>{pct(avg.startOnTime)}</td>
-              <td className={cn(TD, 'text-center font-mono font-semibold tabular-nums')}>{pct(avg.closeOnTime)}</td>
-              <td className={cn(TD, 'text-right font-mono text-lg font-semibold tabular-nums')}>{pct(avg.score)}</td>
+              <td className={cn(TD, 'text-center font-mono font-semibold tabular-nums', avg.startOnTime === null && DIM)}>{pct(avg.startOnTime)}</td>
+              <td className={cn(TD, 'text-center font-mono font-semibold tabular-nums', avg.closeOnTime === null && DIM)}>{pct(avg.closeOnTime)}</td>
+              <td className={cn(TD, 'text-right font-mono text-lg font-semibold tabular-nums', avg.score === null && DIM)}>{pct(avg.score)}</td>
             </tr>
           </tfoot>
         </table>
       </div>
 
       <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-        Filled from HRIS, nothing to type. <strong className="font-semibold">Started</strong> is the week&rsquo;s first Start
-        Processing in the Payroll Wizard. <strong className="font-semibold">Closed</strong> is Close Pay Cycle in Payment
-        Dispatch for the week it pays. Times are Eastern. Cycle score: {SCORE_WEIGHTS.start}% for starting by{' '}
+        Filled from HRIS, nothing to type. <strong className="font-semibold">Started</strong> is the first Start Processing in
+        the Payroll Wizard on that week&rsquo;s pay cycle, whenever it happened. <strong className="font-semibold">Closed</strong> is
+        Close Pay Cycle in Payment Dispatch for the same cycle. Times are Eastern. &ldquo;Not in Wizard&rdquo; and
+        &ldquo;Before close-outs&rdquo; are weeks with nothing to judge, and never count against anyone. Cycle score: {SCORE_WEIGHTS.start}% for starting by{' '}
         {START_DEADLINE.label} + {SCORE_WEIGHTS.close}% for closing by {CLOSE_DEADLINE.label}, once both are in.
       </p>
     </div>

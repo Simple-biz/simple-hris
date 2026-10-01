@@ -22,6 +22,8 @@ export interface BoardContext {
   lookup: EntryLookup;
   collections: readonly Pick<CollectionEntry, 'date' | 'rowId' | 'points'>[];
   payrollEvents: readonly PayrollEvent[];
+  /** The period end of the first cycle ever closed; cycles that ended before it predate Close Pay Cycle. */
+  firstClosedPeriodEnd: string | null;
   /** US Eastern date. */
   today: string;
   /** Now, for Payroll Timing's deadlines. */
@@ -57,7 +59,7 @@ export function sectionHeadline(
       return s.week.accounts === 0 ? null : s.week.points;
     }
     case 'payroll_cycle':
-      return cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso).score;
+      return cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso, ctx.firstClosedPeriodEnd).score;
   }
 }
 
@@ -85,8 +87,8 @@ export function summarizeSection(
     return {
       headline,
       lastHeadline,
-      light: cycleLight(cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso)),
-      lastLight: cycleLight(cycleWeek(ctx.payrollEvents, lastWeekStart, ctx.nowIso)),
+      light: cycleLight(cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso, ctx.firstClosedPeriodEnd)),
+      lastLight: cycleLight(cycleWeek(ctx.payrollEvents, lastWeekStart, ctx.nowIso, ctx.firstClosedPeriodEnd)),
     };
   }
   const pace = weekPace(datesFor(weekStart, section.days), ctx.today);

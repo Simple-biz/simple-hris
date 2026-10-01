@@ -193,7 +193,7 @@ export const SECTIONS: readonly SectionDef[] = [
     days: ['tue', 'fri'],
     goal: { value: 100, direction: 'at_least', measure: 'cycle_score', unit: '%' },
     rowNoun: 'cycle',
-    help: 'Filled from HRIS: the first Start Processing of the week, and Close Pay Cycle in Payment Dispatch.',
+    help: "Filled from HRIS: the Payroll Wizard's first Start Processing on each week's pay cycle, and Close Pay Cycle in Payment Dispatch.",
   },
   {
     key: 'payroll_problems',

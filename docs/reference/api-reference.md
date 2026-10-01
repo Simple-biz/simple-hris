@@ -3221,8 +3221,10 @@ Every `*_by` is the session email. Nothing here writes pay.
 
 Members. The board for one week (default: this week, US Eastern): rows (live, plus archived rows that have numbers in the
 two weeks shown), this and last week's entries and collections, all-time points per rep and the record week, section
-switches, the Dancing Queen preview candidate, and `payrollEvents` (Start Processing locks and pay-cycle closes/reopens
-from `audit_log`, two weeks either side; action, time and cycle file only). Members list for managers only. All lists paged.
+switches, the Dancing Queen preview candidate, and `payrollEvents` (the Payroll Wizard's Start Processing stamps, `dispatch.lock_acquired` with
+the cycle it was on, plus pay-cycle closes/reopens, from `audit_log` starting three weeks before the week with no upper bound;
+action, time, cycle file and period only, each with its `cycleStart` Sunday) and `firstClosedPeriodEnd` (the period end of
+the first cycle ever closed, or null). Members list for managers only. All lists paged.
 
 ### `PUT /api/accounting-scoreboard/entries`
 

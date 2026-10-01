@@ -397,6 +397,7 @@ export default function ScoreboardApp() {
                     weekStart={board.weekStart}
                     today={board.today}
                     events={board.payrollEvents}
+                    firstClosedPeriodEnd={board.firstClosedPeriodEnd}
                   />
                 ) : activeTab === 'collections' ? (
                   <CollectionsPanel
@@ -458,6 +459,7 @@ function summarizeAll(board: BoardPayload, sections: ResolvedSection[], lookup: 
     lookup,
     collections: board.collections,
     payrollEvents: board.payrollEvents,
+    firstClosedPeriodEnd: board.firstClosedPeriodEnd,
     today: board.today,
     nowIso,
   };
@@ -489,7 +491,7 @@ export function Overview({
   const cards = summarizeAll(board, sections, lookup, nowIso);
   const tally = { green: 0, amber: 0, red: 0 };
   for (const c of cards) if (c.summary.light !== 'none') tally[c.summary.light]++;
-  const cycle = cycleWeek(board.payrollEvents, board.weekStart, nowIso);
+  const cycle = cycleWeek(board.payrollEvents, board.weekStart, nowIso, board.firstClosedPeriodEnd);
 
   return (
     <div className="space-y-5">

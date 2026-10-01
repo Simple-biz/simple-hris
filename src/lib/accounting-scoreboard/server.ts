@@ -24,7 +24,13 @@ import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
 import { isSectionKey, type SectionKey, type SectionSetting, type Slot } from './sections';
 import { addDays, easternToUtc, todayEastern, weekStartOf } from './week';
-import { PAYROLL_EVENT_ACTIONS, type PayrollEvent, type PayrollEventAction } from './payroll-cycle';
+import {
+  PAYROLL_EVENT_ACTIONS,
+  firstClosedPeriodEnd,
+  payrollEventFromAudit,
+  type PayrollAuditRow,
+  type PayrollEvent,
+} from './payroll-cycle';
 import { collectionsHistory, type CollectionEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
 import type { BoardMember, BoardPayload, BoardRow, RosterPerson } from './types';
@@ -240,10 +246,11 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
   const lastWeekStart = addDays(weekStart, -7);
   const weekEnd = addDays(weekStart, 6);
 
-  const eventsFrom = easternToUtc(addDays(weekStart, -14), 0).toISOString();
-  const eventsTo = easternToUtc(addDays(weekStart, 14), 0).toISOString();
+  // Payroll Timing shows the cycles paid by this week and the two before it; the oldest starts three
+  // weeks back. No upper bound: a past cycle started or closed late still lands on its own week.
+  const eventsFrom = easternToUtc(addDays(weekStart, -21), 0).toISOString();
 
-  const [liveRows, entries, collections, history, settings, bonus, payroll] = await Promise.all([
+  const [liveRows, entries, collections, history, settings, bonus, payroll, closes] = await Promise.all([
     selectAllPaged<RowRecord>((from, to) =>
       sb.from(ROWS).select(ROW_COLS).is('archived_at', null).order('id').range(from, to),
     ),
@@ -280,21 +287,34 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
     ),
     sb.from(SECTIONS_TABLE).select('section_key, enabled, goal'),
     readBonusCandidates(),
-    // Payroll Timing: HRIS's own Start Processing locks and pay-cycle closes/reopens. Only the action,
-    // the time and the cycle's file name are read; the close-out record itself is never touched.
-    selectAllPaged<{ action: string; created_at: string; resource_id: string | null; src: string | null }>((from, to) =>
+    // Payroll Timing: the Wizard's own Start Processing stamps (each names the cycle it was on) and
+    // the pay-cycle closes/reopens. Only the action, the time and the cycle's file and period are
+    // read; the close-out record (which holds unpaid payees) is never touched.
+    selectAllPaged<PayrollAuditRow>((from, to) =>
       sb
         .from('audit_log')
-        .select('action, created_at, resource_id, src:details->>source_file')
+        .select(
+          'action, created_at, resource_id, src:details->>source_file, csrc:details->cycle->>source_file, cps:details->cycle->>period_start',
+        )
         .in('action', [...PAYROLL_EVENT_ACTIONS])
         .gte('created_at', eventsFrom)
-        .lt('created_at', eventsTo)
         .order('created_at')
+        .order('id')
+        .range(from, to),
+    ),
+    // Every close ever filed, for the boundary before which Close Pay Cycle did not exist.
+    selectAllPaged<Pick<PayrollAuditRow, 'src' | 'resource_id'>>((from, to) =>
+      sb
+        .from('audit_log')
+        .select('resource_id, src:details->>source_file')
+        .eq('action', 'payment_cycle.closed')
+        .order('created_at')
+        .order('id')
         .range(from, to),
     ),
   ]);
 
-  for (const r of [liveRows, entries, collections, history, payroll]) {
+  for (const r of [liveRows, entries, collections, history, payroll, closes]) {
     if (r.error) return dbFailure({ message: r.error }, 'Could not read the scoreboard');
   }
   if (settings.error) return dbFailure(settings.error, 'Could not read the scoreboard');
@@ -365,17 +385,8 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
       history: { allTimeByRow: Object.fromEntries(hist.allTimeByRow), record: hist.record, liveSince },
       members,
       bonus,
-      payrollEvents: payroll.rows
-        .filter((e): e is typeof e & { action: PayrollEventAction } =>
-          (PAYROLL_EVENT_ACTIONS as readonly string[]).includes(e.action),
-        )
-        .map(
-          (e): PayrollEvent => ({
-            action: e.action,
-            at: e.created_at,
-            sourceFile: e.action === 'payroll.dispatch.locked' ? null : e.src ?? e.resource_id,
-          }),
-        ),
+      payrollEvents: payroll.rows.map(payrollEventFromAudit).filter((e): e is PayrollEvent => e !== null),
+      firstClosedPeriodEnd: firstClosedPeriodEnd(closes.rows),
       generatedAt: new Date().toISOString(),
     },
   };
