@@ -29,7 +29,11 @@
  *
  * Routes deliberately ABSENT (open to any authenticated user): `/`,
  * `/auth-callback` (dispatchers), `/employee` and `/contractor` (personal portals
- * scoped to the session owner server-side), `/login`, `/onboarding/*` (public).
+ * scoped to the session owner server-side), `/login`, `/onboarding/*` (public),
+ * `/accounting-scoreboard` (gated by the board's own MEMBER list in its page and
+ * API, because most of the team who type its numbers hold no HRIS role; see
+ * src/lib/accounting-scoreboard/server.ts). The `/accounting` prefix below must
+ * never be widened to swallow it: host.test.ts pins that.
  */
 export const ROUTE_REQUIRED_ROLES: ReadonlyArray<{ prefix: string; roles: readonly string[] }> = [
   { prefix: '/admin',         roles: ['admin'] },

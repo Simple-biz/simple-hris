@@ -22,6 +22,7 @@
 import { getToken } from 'next-auth/jwt';
 import { NextResponse, type NextRequest } from 'next/server';
 import { evaluateRouteAccess } from '@/lib/auth/route-access';
+import { decideScoreboardHost } from '@/lib/accounting-scoreboard/host';
 
 // ---------------------------------------------------------------------------
 // In-memory sliding-window rate limiter for public onboarding routes.
@@ -228,6 +229,35 @@ export async function proxy(req: NextRequest) {
       return NextResponse.redirect(url);
     }
     // /api/gift-address/* — fall through to the rate-limit handling below.
+  }
+
+  // -------------------------------------------------------------------------
+  // Accounting Scoreboard host isolation (ACCOUNTING_SCOREBOARD_HOST, e.g.
+  // "accounting-bonus.vercel.app"). Same position and purpose as the two blocks
+  // above, with one difference: this host is SIGNED-IN. A path that exists there
+  // (the board, its API, /login, /auth-callback, /api/auth/*) falls through to
+  // the normal pipeline below, so the session gate still runs. Every other page
+  // goes to the board, and every other API is a 403 (not a 404, so HRIS's global
+  // pollers stop instead of retrying). The decision is the pure, tested
+  // decideScoreboardHost() in src/lib/accounting-scoreboard/host.ts. Inert until
+  // the env var is set, and only when the host matches.
+  // -------------------------------------------------------------------------
+  const scoreboardHost = decideScoreboardHost({
+    host: req.headers.get('host'),
+    configuredHost: process.env.ACCOUNTING_SCOREBOARD_HOST,
+    pathname,
+  });
+  if (scoreboardHost.action === 'forbid_api') {
+    return NextResponse.json(
+      { error: 'Not available on this host', code: 'host_scoped' },
+      { status: 403 },
+    );
+  }
+  if (scoreboardHost.action === 'redirect') {
+    const url = req.nextUrl.clone();
+    url.pathname = scoreboardHost.pathname;
+    url.search = '';
+    return NextResponse.redirect(url);
   }
 
   if (PUBLIC_PATHS.has(pathname)) return NextResponse.next();
