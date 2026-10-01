@@ -4,6 +4,8 @@ import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { auditActor } from "@/lib/audit/context";
+import { selectAllPaged } from "@/lib/supabase/select-all-paged";
+import { submissionsAlreadyNotified } from "@/lib/notifications/onboarding-backfill";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,8 +15,9 @@ export const runtime = "nodejs";
  *
  * Creates missing `onboarding.submitted` notifications for all `submitted`
  * onboarding forms that don't already have one. Idempotent — deduped via
- * the submission_id stored in the details JSONB so re-running is safe.
- * Gated to elevated (HR/admin) sessions.
+ * the submission_id stored in the details JSONB, asked PER SUBMISSION (see
+ * `submissionsAlreadyNotified`), so re-running is safe. Runs on every HR
+ * Notifications open. Gated to elevated (HR/admin) sessions.
  */
 export async function POST() {
   const authz = await requireFeatureEdit('hr', 'onboarding');
@@ -25,31 +28,51 @@ export async function POST() {
     return NextResponse.json({ created: 0, error: "DB unavailable" }, { status: 500 });
   }
 
-  // 1. All submitted forms
-  const { data: submissions, error: subErr } = await supabase
-    .from("hr_onboarding_submissions")
-    .select("id, full_name, invite_personal_email, email, invite_department, submitted_at")
-    .eq("status", "submitted")
-    .order("submitted_at", { ascending: false });
+  type SubmissionRow = {
+    id: string;
+    full_name?: string | null;
+    invite_personal_email?: string | null;
+    email?: string | null;
+    invite_department?: string | null;
+    submitted_at?: string | null;
+  };
+
+  // 1. All submitted forms (paged — PostgREST stops at 1000 rows)
+  const { rows: submissions, error: subErr } = await selectAllPaged<SubmissionRow>((from, to) =>
+    supabase
+      .from("hr_onboarding_submissions")
+      .select("id, full_name, invite_personal_email, email, invite_department, submitted_at")
+      .eq("status", "submitted")
+      .order("submitted_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   if (subErr) {
-    return NextResponse.json({ created: 0, error: subErr.message }, { status: 500 });
+    return NextResponse.json({ created: 0, error: subErr }, { status: 500 });
   }
-  if (!submissions || submissions.length === 0) {
+  if (submissions.length === 0) {
     return NextResponse.json({ created: 0 });
   }
 
-  // 2. Already-notified submission IDs (avoid duplicates)
-  const { data: existing } = await supabase
-    .from("employee_notifications")
-    .select("details")
-    .eq("type", "onboarding.submitted");
-
-  const alreadyNotified = new Set<string>(
-    (existing ?? [])
-      .map((r: { details?: { submission_id?: string } | null }) => r.details?.submission_id)
-      .filter((id): id is string => !!id),
+  // 2. Which of THESE submissions already have a notification — one probe each.
+  //    Never one read of every onboarding.submitted row: it stopped at 1000 of
+  //    186,581 and re-sent all 7 pending submissions on every open (item 305).
+  //    A failed probe inserts nothing.
+  const already = await submissionsAlreadyNotified(
+    submissions.map((s) => s.id),
+    (submissionId) =>
+      supabase
+        .from("employee_notifications")
+        .select("id")
+        .eq("type", "onboarding.submitted")
+        .eq("details->>submission_id", submissionId)
+        .limit(1),
   );
+  if (!already.ok) {
+    return NextResponse.json({ created: 0, error: already.error }, { status: 500 });
+  }
+  const alreadyNotified = already.notified;
 
   // 3. HR/admin recipient emails
   const { data: roleRows } = await supabase
@@ -81,14 +104,7 @@ export async function POST() {
     created_at?: string;
   }[] = [];
 
-  for (const sub of submissions as {
-    id: string;
-    full_name?: string | null;
-    invite_personal_email?: string | null;
-    email?: string | null;
-    invite_department?: string | null;
-    submitted_at?: string | null;
-  }[]) {
+  for (const sub of submissions) {
     if (alreadyNotified.has(sub.id)) continue;
     const fullName = sub.full_name?.trim() || "Unknown";
     const dept = sub.invite_department ?? null;

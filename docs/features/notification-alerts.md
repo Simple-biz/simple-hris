@@ -132,7 +132,11 @@ state, not a row (the header's "N active" pill still counts it, as before).
 - **One submission, ticket or request counts once**, however many notifications
   point at it. Not hypothetical: one HR account held 11,573
   `onboarding.submitted` rows for 1,328 submissions, up to 49 per submission
-  (item 305).
+  (item 305). The cause was the HR backfill, which deduped against one unpaged
+  read (1000 of 186,581 rows) and re-sent every pending submission on each HR
+  Notifications open. Since 2026-10-01 it asks **per submission** and inserts
+  nothing when a probe fails (`src/lib/notifications/onboarding-backfill.ts`).
+  The duplicates already written stay until Kane rules on a cleanup.
 - It counts the loaded list (never a search result or a page), and says *"in the
   newest 1,000"* when that list is capped.
 
