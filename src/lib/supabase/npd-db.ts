@@ -1,7 +1,13 @@
 /**
  * NPD (Accounting → New Payroll Dashboard) persistence. Server-only (service role).
- * Tables + function: references/sql/create/2026-10-01_npd_sheets.sql.
+ * Tables + function: references/sql/create/2026-10-01_npd_sheets.sql; Lock in:
+ * references/sql/alter/2026-10-01_npd_sheets_lock.sql.
  * Governing doc: docs/features/npd-dashboard.md.
+ *
+ * The header is read with `select('*')` and the lock fields are optional, so the
+ * page still loads and saves in the window between deploying this code and
+ * applying the Lock in migration. With no lock columns nothing can be locked, so
+ * "unlocked" is the truth, not a guess.
  *
  * Every read pages (`selectAllPaged`, total order on `row_no`): PostgREST cuts a
  * result at 1000 rows even with `.range()`, and a sheet may hold up to 2,000.
@@ -22,6 +28,9 @@ export type NpdSheetMeta = {
   rowCount: number;
   updatedAt: string | null;
   updatedBy: string | null;
+  /** Lock in: both set or both null. */
+  lockedAt: string | null;
+  lockedBy: string | null;
 };
 
 export type NpdWeekEntry = {
@@ -31,6 +40,7 @@ export type NpdWeekEntry = {
   rowCount: number;
   updatedAt: string;
   updatedBy: string;
+  lockedAt: string | null;
 };
 
 export type NpdFailure = { ok: false; missing: boolean; error: string };
@@ -38,7 +48,18 @@ export type NpdFailure = { ok: false; missing: boolean; error: string };
 export const NPD_NOT_SET_UP =
   'NPD is not set up yet: its tables are not in the database. Run scripts/apply-npd-sheets-migration.mts --apply.';
 
-type HeaderRow = { id: string; version: number; row_count: number; updated_at: string; updated_by: string };
+export const NPD_LOCK_NOT_SET_UP =
+  'Lock in is not set up yet: its database functions are missing. Run scripts/apply-npd-sheets-lock-migration.mts --apply.';
+
+type HeaderRow = {
+  id: string;
+  version: number;
+  row_count: number;
+  updated_at: string;
+  updated_by: string;
+  locked_at?: string | null;
+  locked_by?: string | null;
+};
 
 function failure(error: { code?: string | null; message: string }): NpdFailure {
   // PGRST202 = the function is not in PostgREST's schema cache.
@@ -46,7 +67,15 @@ function failure(error: { code?: string | null; message: string }): NpdFailure {
   return { ok: false, missing, error: missing ? NPD_NOT_SET_UP : error.message };
 }
 
-const EMPTY_META: NpdSheetMeta = { sheetId: null, version: 0, rowCount: 0, updatedAt: null, updatedBy: null };
+const EMPTY_META: NpdSheetMeta = {
+  sheetId: null,
+  version: 0,
+  rowCount: 0,
+  updatedAt: null,
+  updatedBy: null,
+  lockedAt: null,
+  lockedBy: null,
+};
 
 function metaOf(h: HeaderRow): NpdSheetMeta {
   return {
@@ -55,6 +84,8 @@ function metaOf(h: HeaderRow): NpdSheetMeta {
     rowCount: Number(h.row_count),
     updatedAt: h.updated_at,
     updatedBy: h.updated_by,
+    lockedAt: h.locked_at ?? null,
+    lockedBy: h.locked_by ?? null,
   };
 }
 
@@ -66,7 +97,8 @@ export async function readNpdSheetMeta(
   if (!supabase) return { ok: false, missing: false, error: 'Supabase client unavailable' };
   const { data, error } = await supabase
     .from('npd_sheets')
-    .select('id, version, row_count, updated_at, updated_by')
+    // `*`, not a column list: see the header note on the lock columns.
+    .select('*')
     .eq('sheet', sheet)
     .eq('week_start', week)
     .maybeSingle();
@@ -116,7 +148,7 @@ export async function listNpdWeeks(): Promise<{ ok: true; weeks: NpdWeekEntry[] 
   const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
     supabase
       .from('npd_sheets')
-      .select('id, sheet, week_start, version, row_count, updated_at, updated_by')
+      .select('*')
       .order('week_start', { ascending: false })
       .order('id', { ascending: true })
       .range(from, to),
@@ -131,14 +163,16 @@ export async function listNpdWeeks(): Promise<{ ok: true; weeks: NpdWeekEntry[] 
       rowCount: Number(r.row_count),
       updatedAt: String(r.updated_at),
       updatedBy: String(r.updated_by),
+      lockedAt: typeof r.locked_at === 'string' ? r.locked_at : null,
     })),
   };
 }
 
 export type NpdSaveOutcome =
   | { ok: true; meta: NpdSheetMeta }
-  | { ok: false; conflict: true; currentVersion: number }
-  | (NpdFailure & { conflict?: false });
+  | { ok: false; conflict: true; currentVersion: number; locked?: false }
+  | { ok: false; locked: true; conflict?: false }
+  | (NpdFailure & { conflict?: false; locked?: false });
 
 /** Replace one sheet's rows atomically under the version check (npd_save_sheet). */
 export async function saveNpdSheet(args: {
@@ -158,6 +192,8 @@ export async function saveNpdSheet(args: {
     p_rows: toDbRecords(args.sheet, args.rows),
   });
   if (error) {
+    // Locked first: npd_save_sheet checks the lock before the version.
+    if (/npd_sheet_locked/.test(error.message)) return { ok: false, locked: true };
     const conflict = /npd_version_conflict:(\d+)/.exec(error.message);
     if (conflict) return { ok: false, conflict: true, currentVersion: Number(conflict[1]) };
     return failure(error);
@@ -174,6 +210,78 @@ export async function saveNpdSheet(args: {
       rowCount: Number(row.row_count),
       updatedAt: row.updated_at,
       updatedBy: row.updated_by,
+      // A save never runs on a locked sheet, so a saved sheet is unlocked.
+      lockedAt: null,
+      lockedBy: null,
     },
   };
+}
+
+// ─── Lock in ─────────────────────────────────────────────────────────────────
+
+export type NpdLockRefusal = 'locked' | 'conflict' | 'empty' | 'not_locked' | 'missing';
+
+type LockFailure = { ok: false; refusal: NpdLockRefusal | null; currentVersion?: number; error: string };
+
+function lockFailure(error: { code?: string | null; message: string }): LockFailure {
+  const m = error.message;
+  if (/npd_sheet_locked/.test(m)) return { ok: false, refusal: 'locked', error: m };
+  const conflict = /npd_version_conflict:(\d+)/.exec(m);
+  if (conflict) return { ok: false, refusal: 'conflict', currentVersion: Number(conflict[1]), error: m };
+  if (/npd_sheet_empty/.test(m)) return { ok: false, refusal: 'empty', error: m };
+  if (/npd_sheet_not_locked/.test(m)) return { ok: false, refusal: 'not_locked', error: m };
+  // PGRST202: the function is not in PostgREST's schema cache — the Lock in
+  // migration has not been applied (or the cache has not reloaded since).
+  if (error.code === 'PGRST202' || classifyTableProbe(error) === 'MISSING') {
+    return { ok: false, refusal: 'missing', error: NPD_LOCK_NOT_SET_UP };
+  }
+  return { ok: false, refusal: null, error: m };
+}
+
+/** Lock one sheet at the version the editor saw (npd_lock_sheet). */
+export async function lockNpdSheet(args: {
+  sheet: NpdSheetKind;
+  week: string;
+  expectedVersion: number;
+  lockedBy: string;
+}): Promise<{ ok: true; version: number; rowCount: number; lockedAt: string; lockedBy: string } | LockFailure> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { ok: false, refusal: null, error: 'Supabase client unavailable' };
+  const { data, error } = await supabase.rpc('npd_lock_sheet', {
+    p_sheet: args.sheet,
+    p_week_start: args.week,
+    p_expected_version: args.expectedVersion,
+    p_locked_by: args.lockedBy,
+  });
+  if (error) return lockFailure(error);
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { version: number; row_count: number; locked_at: string; locked_by: string }
+    | undefined;
+  if (!row) return { ok: false, refusal: null, error: 'The lock returned nothing' };
+  return {
+    ok: true,
+    version: Number(row.version),
+    rowCount: Number(row.row_count),
+    lockedAt: row.locked_at,
+    lockedBy: row.locked_by,
+  };
+}
+
+/** Clear a sheet's lock (npd_unlock_sheet). The route audits the reason BEFORE calling this. */
+export async function unlockNpdSheet(args: {
+  sheet: NpdSheetKind;
+  week: string;
+  unlockedBy: string;
+}): Promise<{ ok: true; version: number } | LockFailure> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { ok: false, refusal: null, error: 'Supabase client unavailable' };
+  const { data, error } = await supabase.rpc('npd_unlock_sheet', {
+    p_sheet: args.sheet,
+    p_week_start: args.week,
+    p_unlocked_by: args.unlockedBy,
+  });
+  if (error) return lockFailure(error);
+  const row = (Array.isArray(data) ? data[0] : data) as { version: number } | undefined;
+  if (!row) return { ok: false, refusal: null, error: 'The unlock returned nothing' };
+  return { ok: true, version: Number(row.version) };
 }

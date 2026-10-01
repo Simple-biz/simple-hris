@@ -147,6 +147,7 @@ paths the audit write is awaited and **the delete is abandoned if it fails**:
 | `DELETE /api/payment-catalog/system-bonuses` | `system_bonus.deleted` | the custom variant |
 | `DELETE /api/hsl-bonus/period` | `hsl_bonus.period_deleted` | every scored entry, the dept-period total, the status rows |
 | `PUT /api/accounting/npd` *(a save that drops filled rows; 2026-10-01)* | `npd.rows.removed` | every removed row's filled cells, by column; the save is refused if this write fails. Then `npd.sheet.saved` on every save, `npd.sheet.save_failed` if a recorded removal did not happen ([npd-dashboard.md](./npd-dashboard.md)) |
+| `PATCH /api/accounting/npd` `{ action: 'unlock' }` *(2026-10-01)* | `npd.sheet.unlocked` | the required reason, who had locked it and when; the sheet stays locked if this write fails. `npd.sheet.unlock_failed` if the recorded unlock then did not happen. Lock-ins write `npd.sheet.locked` after the fact (nothing is removed) |
 | `DELETE /api/audit-log` | `audit.purged` | cutoff + row count (§5) |
 
 `DELETE /api/hsl-bonus/entries` (one person) snapshots the scored row but does

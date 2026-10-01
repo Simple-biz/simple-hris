@@ -25,15 +25,30 @@ import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/s
  *    edits: the old session finishes saving itself, and only the CURRENT session
  *    ever touches React state. The dashboard still `flush()`es before a switch so
  *    a failure is shown while the sheet is on screen.
+ *  - LOCK IN: a locked sheet (meta.lockedAt) takes no edit and no save. `lock()`
+ *    saves pending edits first and locks the version on screen; a 409 there is the
+ *    same conflict as a save's (someone saved after you opened it). A save the
+ *    server refuses with 423 (someone locked it meanwhile) keeps the edits on
+ *    screen, UNSAVED, and says so. `unlock(reason)` reloads the sheet afterwards,
+ *    so nothing typed before the lock is saved without being seen again.
  */
 
 export const SAVE_DEBOUNCE_MS = 1200;
 const UNDO_LIMIT = 50;
 
-export type NpdMeta = { version: number; rowCount: number; updatedAt: string | null; updatedBy: string | null };
+export type NpdMeta = {
+  version: number;
+  rowCount: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  lockedAt: string | null;
+  lockedBy: string | null;
+};
 export type NpdConflict = { version: number; updatedBy: string | null; updatedAt: string | null };
 export type LoadState = 'loading' | 'ready' | 'error' | 'missing';
-export type SaveState = 'idle' | 'pending' | 'saving' | 'error' | 'conflict';
+/** `locked` = a save the server refused because the sheet was locked meanwhile. */
+export type SaveState = 'idle' | 'pending' | 'saving' | 'error' | 'conflict' | 'locked';
+export type LockResult = { ok: boolean; message?: string };
 
 export function newRowId(): string {
   return crypto.randomUUID();
@@ -55,6 +70,7 @@ type Session = {
 };
 
 const isDirty = (s: Session) => s.saved !== null && s.rows !== s.saved;
+const isLocked = (s: Session) => !!s.meta?.lockedAt;
 
 function clearTimer(s: Session) {
   if (s.timer != null) {
@@ -69,7 +85,23 @@ function metaFrom(j: Record<string, unknown>): NpdMeta {
     rowCount: Number(j.rowCount),
     updatedAt: (j.updatedAt as string | null) ?? null,
     updatedBy: (j.updatedBy as string | null) ?? null,
+    lockedAt: (j.lockedAt as string | null) ?? null,
+    lockedBy: (j.lockedBy as string | null) ?? null,
   };
+}
+
+async function patchLock(body: Record<string, unknown>): Promise<{ status: number; ok: boolean; j: Record<string, unknown> }> {
+  try {
+    const res = await fetch('/api/accounting/npd', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return { status: res.status, ok: res.ok, j };
+  } catch (e) {
+    return { status: 0, ok: false, j: { error: e instanceof Error ? e.message : 'Request failed' } };
+  }
 }
 
 export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: boolean) {
@@ -101,7 +133,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       // Once the current save lands, save whatever is newer.
       return s.inFlight.then(() => (isDirty(s) && !s.blocked ? saveNow(s) : !isDirty(s)));
     }
-    if (!s.meta || !canEditRef.current || s.blocked) return Promise.resolve(!isDirty(s));
+    if (!s.meta || !canEditRef.current || s.blocked || isLocked(s)) return Promise.resolve(!isDirty(s));
     if (!isDirty(s)) return Promise.resolve(true);
 
     const sent = s.rows;
@@ -121,6 +153,20 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
           body: JSON.stringify(body),
         });
         const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (res.status === 423) {
+          // Locked in by someone while these edits were waiting. They are NOT saved.
+          s.blocked = true;
+          s.meta = {
+            ...s.meta!,
+            lockedAt: (j.lockedAt as string | null) ?? new Date().toISOString(),
+            lockedBy: (j.lockedBy as string | null) ?? null,
+          };
+          if (live(s)) {
+            setMeta(s.meta);
+            setSaveState('locked');
+          }
+          return false;
+        }
         if (res.status === 409) {
           s.blocked = true;
           if (live(s)) {
@@ -175,7 +221,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   }, []);
 
   const scheduleSave = useCallback((s: Session) => {
-    if (!canEditRef.current || s.blocked) return;
+    if (!canEditRef.current || s.blocked || isLocked(s)) return;
     clearTimer(s);
     if (live(s)) setSaveState((st) => (st === 'saving' ? st : 'pending'));
     s.timer = window.setTimeout(() => {
@@ -288,7 +334,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
 
   const commit = useCallback((next: NpdRow[]) => {
     const s = sessionRef.current;
-    if (!s || !s.meta || !canEditRef.current) return;
+    if (!s || !s.meta || !canEditRef.current || isLocked(s)) return;
     s.undo.push(s.rows);
     if (s.undo.length > UNDO_LIMIT) s.undo.shift();
     s.redo = [];
@@ -298,8 +344,9 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
 
   const undo = useCallback(() => {
     const s = sessionRef.current;
-    const prev = s?.undo.pop();
-    if (!s || !prev || !canEditRef.current) return;
+    if (!s || isLocked(s)) return;
+    const prev = s.undo.pop();
+    if (!prev || !canEditRef.current) return;
     s.redo.push(s.rows);
     apply(s, prev);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -307,8 +354,9 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
 
   const redo = useCallback(() => {
     const s = sessionRef.current;
-    const next = s?.redo.pop();
-    if (!s || !next || !canEditRef.current) return;
+    if (!s || isLocked(s)) return;
+    const next = s.redo.pop();
+    if (!next || !canEditRef.current) return;
     s.undo.push(s.rows);
     apply(s, next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,11 +401,67 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     void saveNow(s);
   }, [conflict, saveNow]);
 
+  /** Lock in the sheet on screen: save pending edits, then lock exactly that version. */
+  const lock = useCallback(async (): Promise<LockResult> => {
+    const s = sessionRef.current;
+    if (!s || !s.meta || !canEditRef.current) return { ok: false, message: 'The sheet is not loaded.' };
+    if (isLocked(s)) return { ok: true };
+    const saved = await flush();
+    if (!saved) {
+      return { ok: false, message: 'Your latest edits are not saved yet, so nothing was locked. Resolve the message above first.' };
+    }
+    if (!s.meta || s.meta.version === 0 || s.meta.rowCount === 0) {
+      return { ok: false, message: 'Nothing to lock: this sheet has no saved rows yet.' };
+    }
+    const { status, ok, j } = await patchLock({ action: 'lock', sheet: s.sheet, week: s.week, expectedVersion: s.meta.version });
+    if (ok || status === 423) {
+      s.meta = { ...s.meta, lockedAt: (j.lockedAt as string | null) ?? null, lockedBy: (j.lockedBy as string | null) ?? null };
+      clearTimer(s);
+      if (live(s)) {
+        setMeta(s.meta);
+        setSaveState('idle');
+      }
+      return ok ? { ok: true } : { ok: true, message: `Already locked in by ${String(j.lockedBy ?? 'someone')}.` };
+    }
+    if (status === 409) {
+      // Someone saved after this sheet was opened: what is on screen is not what would be locked.
+      s.blocked = true;
+      if (live(s)) {
+        setConflict({
+          version: Number(j.version),
+          updatedBy: (j.updatedBy as string | null) ?? null,
+          updatedAt: (j.updatedAt as string | null) ?? null,
+        });
+        setSaveState('conflict');
+      }
+      return { ok: false, message: 'Not locked: someone saved this sheet after you opened it. Choose a version, then lock it in.' };
+    }
+    return { ok: false, message: typeof j.error === 'string' ? j.error : `Lock in failed (${status})` };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flush]);
+
+  /** Unlock with a reason. The sheet is reloaded afterwards, fresh from the server. */
+  const unlock = useCallback(async (reason: string): Promise<LockResult> => {
+    const s = sessionRef.current;
+    if (!s || !s.meta || !canEditRef.current) return { ok: false, message: 'The sheet is not loaded.' };
+    const { status, ok, j } = await patchLock({ action: 'unlock', sheet: s.sheet, week: s.week, reason });
+    if (ok || status === 409) {
+      s.blocked = false;
+      void load(s);
+      return ok ? { ok: true } : { ok: true, message: 'It was already unlocked.' };
+    }
+    return { ok: false, message: typeof j.error === 'string' ? j.error : `Unlock failed (${status})` };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
+
   return {
     loadState,
     loadError,
     rows,
     meta,
+    locked: !!meta?.lockedAt,
+    lock,
+    unlock,
     saveState,
     saveError,
     conflict,

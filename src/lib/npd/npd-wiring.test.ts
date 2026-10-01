@@ -69,7 +69,10 @@ describe('NPD is registered as an Accounting tab, right below the Payroll Wizard
 describe('the NPD route', () => {
   const src = read('app', 'api', 'accounting', 'npd', 'route.ts');
   const get = src.slice(src.indexOf('export async function GET'), src.indexOf('export async function PUT'));
-  const put = src.slice(src.indexOf('export async function PUT'), src.indexOf('function conflictResponse'));
+  const put = src.slice(src.indexOf('export async function PUT'), src.indexOf('export async function PATCH'));
+  const patch = src.slice(src.indexOf('export async function PATCH'), src.indexOf('function lockedResponse'));
+  const lockBranch = patch.slice(0, patch.indexOf('// Unlock.'));
+  const unlockBranch = patch.slice(patch.indexOf('// Unlock.'));
 
   test('GET is gated on npd VIEW, PUT on npd EDIT, each as its first statement', () => {
     assert.match(get, /^export async function GET\(req: Request\) \{\n\s+const authz = await requireFeatureAccess\('accounting', 'npd', 'view'\);\n\s+if \(!authz\.ok\) return deniedResponse\(authz\);/);
@@ -105,11 +108,85 @@ describe('the NPD route', () => {
     assert.match(put, /if \(!current\.ok\) return failed\(current\);/);
   });
 
+  test('PATCH (lock / unlock) is gated on npd EDIT as its first statement', () => {
+    assert.match(patch, /^export async function PATCH\(req: Request\) \{\n\s+const authz = await requireFeatureEdit\('accounting', 'npd'\);\n\s+if \(!authz\.ok\) return deniedResponse\(authz\);/);
+  });
+
+  test('a save to a LOCKED sheet is refused before the version check and before any audit', () => {
+    const lockCheck = put.indexOf('if (current.meta.lockedAt) return lockedResponse(');
+    assert.ok(lockCheck > 0, 'PUT checks the lock');
+    assert.ok(lockCheck < put.indexOf('current.meta.version !== expectedVersion'), 'lock before version (the database checks in the same order)');
+    assert.ok(lockCheck < put.indexOf("action: 'npd.rows.removed'"), 'a refused save writes no removal audit');
+    assert.match(put, /if \(saved\.locked\) \{/, 'a lock that lands between the read and the save is still a 423');
+    assert.match(src, /status: 423/);
+  });
+
+  test('who locked and who unlocked is the SESSION email', () => {
+    assert.match(lockBranch, /lockedBy: authz\.sessionEmail/);
+    assert.match(unlockBranch, /unlockedBy: authz\.sessionEmail/);
+  });
+
+  test('an unlock is audited WITH ITS REASON first, and refused if that audit fails', () => {
+    const audit = unlockBranch.indexOf("action: 'npd.sheet.unlocked'");
+    const call = unlockBranch.indexOf('await unlockNpdSheet(');
+    assert.ok(audit > 0 && call > audit, 'the unlock audit comes before the unlock');
+    const between = unlockBranch.slice(audit, call);
+    assert.match(between, /reason: body\.reason/);
+    assert.match(between, /if \(audit\.error\) \{\s*return NextResponse\.json\([\s\S]*?status: 500/);
+  });
+
+  test('the DB layer reads the lock refusal before the version conflict', () => {
+    const db = read('src', 'lib', 'supabase', 'npd-db.ts');
+    const save = db.slice(db.indexOf('export async function saveNpdSheet'));
+    assert.ok(save.indexOf('npd_sheet_locked') < save.indexOf('npd_version_conflict'));
+    assert.match(db, /\.select\('\*'\)/, 'header reads tolerate the lock columns not existing yet');
+  });
+
   test('every action the route writes has an audit family', () => {
-    for (const action of ['npd.sheet.saved', 'npd.rows.removed', 'npd.sheet.save_failed']) {
+    for (const action of ['npd.sheet.saved', 'npd.rows.removed', 'npd.sheet.save_failed', 'npd.sheet.locked', 'npd.sheet.unlocked', 'npd.sheet.unlock_failed']) {
       assert.ok(src.includes(`'${action}'`), `route writes ${action}`);
       assert.equal(familyForAction(action)?.match, 'npd.', `${action} lands in the npd. family`);
     }
+  });
+});
+
+describe('the Lock in migration', () => {
+  const sql = read('references', 'sql', 'alter', '2026-10-01_npd_sheets_lock.sql');
+
+  test('the replaced save function refuses a locked sheet BEFORE the version check, under the row lock', () => {
+    const fn = sql.slice(sql.indexOf('create or replace function public.npd_save_sheet('), sql.indexOf('create or replace function public.npd_lock_sheet('));
+    const forUpdate = fn.indexOf('for update;');
+    const lockCheck = fn.indexOf("raise exception 'npd_sheet_locked'");
+    const versionCheck = fn.indexOf("raise exception 'npd_version_conflict:%'");
+    assert.ok(forUpdate > 0 && forUpdate < lockCheck && lockCheck < versionCheck);
+  });
+
+  test('a lock only freezes the version the editor saw, and never an empty sheet', () => {
+    const fn = sql.slice(sql.indexOf('create or replace function public.npd_lock_sheet('), sql.indexOf('create or replace function public.npd_unlock_sheet('));
+    assert.match(fn, /if v_version is distinct from p_expected_version then\s+raise exception 'npd_version_conflict:%'/);
+    assert.match(fn, /if v_rows = 0 then\s+raise exception 'npd_sheet_empty'/);
+    assert.doesNotMatch(fn, /set version|row_count =/, 'locking changes no version and no rows');
+  });
+
+  test('every NPD function is service-role only and pins search_path', () => {
+    for (const sig of ['npd_save_sheet(text, date, integer, text, jsonb)', 'npd_lock_sheet(text, date, integer, text)', 'npd_unlock_sheet(text, date, text)']) {
+      assert.ok(sql.includes(`revoke all on function public.${sig} from public, anon, authenticated;`), sig);
+      assert.ok(sql.includes(`grant execute on function public.${sig} to service_role;`), sig);
+    }
+    assert.equal((sql.match(/language plpgsql\nset search_path = ''/g) ?? []).length, 3);
+    assert.doesNotMatch(sql, /create policy|alter publication/i);
+  });
+
+  test('the base create migration is untouched (it is applied; the lock ships as an ALTER)', () => {
+    const create = read('references', 'sql', 'create', '2026-10-01_npd_sheets.sql');
+    assert.doesNotMatch(create, /locked_at|npd_lock_sheet/);
+  });
+
+  test('the apply script points at the ALTER, needs the base tables, and defaults to a dry run', () => {
+    const script = read('scripts', 'apply-npd-sheets-lock-migration.mts');
+    assert.match(script, /const SQL_RELATIVE = 'references\/sql\/alter\/2026-10-01_npd_sheets_lock\.sql';/);
+    assert.match(script, /const dryRun = wantDry \|\| \(!wantVerify && !wantApply\);/);
+    assert.match(script, /to_regclass\('public\.npd_sheets'\) IS NOT NULL/);
   });
 });
 

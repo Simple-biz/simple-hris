@@ -8,6 +8,8 @@ import {
   CloudAlert,
   Eye,
   LoaderCircle,
+  Lock,
+  LockOpen,
   RefreshCw,
   Sheet,
   TriangleAlert,
@@ -16,18 +18,29 @@ import {
 import { cn } from '@/lib/utils';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, NPD_SHEETS, NPD_SHEET_LABELS, isNpdSheetKind, type NpdSheetKind } from '@/lib/npd/columns';
-import { defaultNpdWeek, shiftWeek, weekLabel } from '@/lib/npd/sheet';
+import { NPD_UNLOCK_REASON_MAX, defaultNpdWeek, shiftWeek, weekLabel } from '@/lib/npd/sheet';
 import NpdSheetGrid from './NpdSheetGrid';
-import { useNpdSheet } from './useNpdSheet';
+import { useNpdSheet, type LockResult } from './useNpdSheet';
 
 /**
  * Accounting → NPD (New Payroll Dashboard). The manual version of the Payroll
  * Wizard: a sheet per tab (All Departments | HSL) per pay week that Accounting
  * pastes from Google Sheets. Nothing is imported from HRIS and nothing here pays
  * anyone. Governing doc: docs/features/npd-dashboard.md.
+ *
+ * Lock in freezes the tab on screen for the week on screen. The database refuses
+ * every save on a locked sheet; this page only mirrors that (read-only grid, the
+ * Locked in pill) and never decides it.
  */
 
-type WeekEntry = { sheet: NpdSheetKind; week: string; rowCount: number; updatedAt: string; updatedBy: string };
+type WeekEntry = {
+  sheet: NpdSheetKind;
+  week: string;
+  rowCount: number;
+  updatedAt: string;
+  updatedBy: string;
+  lockedAt: string | null;
+};
 
 const SHEET_STORAGE_KEY = 'accounting.npd.sheet';
 
@@ -109,21 +122,53 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
   }, [savedVersion, loadWeeks]);
 
   const weekOptions = useMemo(() => {
-    const byWeek = new Map<string, Partial<Record<NpdSheetKind, number>>>();
+    const byWeek = new Map<string, Partial<Record<NpdSheetKind, { rows: number; locked: boolean }>>>();
     for (const w of weeks ?? []) {
       if (w.rowCount <= 0) continue;
       const e = byWeek.get(w.week) ?? {};
-      e[w.sheet] = w.rowCount;
+      e[w.sheet] = { rows: w.rowCount, locked: !!w.lockedAt };
       byWeek.set(w.week, e);
     }
     if (week && !byWeek.has(week)) byWeek.set(week, {});
     return [...byWeek.entries()]
       .sort((x, y) => (x[0] < y[0] ? 1 : -1))
       .map(([wk, counts]) => {
-        const parts = NPD_SHEETS.filter((s) => counts[s]).map((s) => `${NPD_SHEET_LABELS[s]} ${counts[s]}`);
+        const parts = NPD_SHEETS.filter((s) => counts[s]).map(
+          (s) => `${NPD_SHEET_LABELS[s]} ${counts[s]!.rows}${counts[s]!.locked ? ' (locked)' : ''}`,
+        );
         return { week: wk, label: `${weekLabel(wk)}${parts.length ? ` · ${parts.join(' · ')}` : ' · no sheet yet'}` };
       });
   }, [weeks, week]);
+
+  // ── Lock in ─────────────────────────────────────────────────────────────
+  const onLock = useCallback(async (): Promise<LockResult> => {
+    const r = await ctl.lock();
+    if (r.message) showNotice(r.message);
+    if (r.ok) void loadWeeks();
+    return r;
+  }, [ctl, showNotice, loadWeeks]);
+
+  const onUnlock = useCallback(
+    async (reason: string): Promise<LockResult> => {
+      const r = await ctl.unlock(reason);
+      if (r.message) showNotice(r.message);
+      if (r.ok) void loadWeeks();
+      return r;
+    },
+    [ctl, showNotice, loadWeeks],
+  );
+
+  const hasSavedRows = !!ctl.meta && ctl.meta.version > 0 && ctl.meta.rowCount > 0;
+  const lockBlockedBy =
+    ctl.loadState !== 'ready'
+      ? 'The sheet is still loading.'
+      : !hasSavedRows
+        ? 'Nothing to lock yet: paste or type the sheet first.'
+        : ctl.saveState === 'conflict' || ctl.saveState === 'error' || ctl.saveState === 'locked'
+          ? 'Resolve the message below first.'
+          : switching
+            ? 'Saving…'
+            : null;
 
   // ── Switching tab or week: save first, never drop edits ─────────────────
   const switchTo = useCallback(
@@ -169,6 +214,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
         </div>
         <SaveStatus
           readOnly={readOnly}
+          locked={ctl.locked}
           loading={ctl.loadState === 'loading'}
           saveState={ctl.saveState}
           version={ctl.meta?.version ?? 0}
@@ -218,7 +264,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             value={week ?? ''}
             disabled={!week || switching}
             onChange={(e) => void switchTo({ week: e.target.value })}
-            className="h-8 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-sm font-medium text-zinc-800 sm:max-w-[22rem] sm:flex-none dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-sm font-medium text-zinc-800 sm:max-w-[27rem] sm:flex-none dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
           >
             {!week && <option value="">Loading weeks…</option>}
             {weekOptions.map((o) => (
@@ -255,6 +301,17 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             The week list could not be loaded ({weeksError}). The arrows still work.
           </p>
         )}
+        {ctl.loadState === 'ready' && week && (
+          <LockControl
+            key={`${sheet}:${week}`}
+            locked={ctl.locked}
+            canEdit={canEdit}
+            blockedBy={lockBlockedBy}
+            what={`the ${NPD_SHEET_LABELS[sheet]} sheet for ${weekLabel(week)}`}
+            onLock={onLock}
+            onUnlock={onUnlock}
+          />
+        )}
       </div>
 
       {/* ── Messages ────────────────────────────────────────────────────── */}
@@ -290,6 +347,27 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           </div>
         </Banner>
       )}
+      {ctl.saveState === 'locked' && (
+        <Banner tone="red" icon={<Lock className="h-4 w-4" />}>
+          <p className="font-semibold">
+            {ctl.meta?.lockedBy ?? 'Someone'} locked this sheet in while your edits were waiting to save.
+          </p>
+          <p>Your latest edits were NOT saved. They are still on screen; the locked values are what the sheet holds.</p>
+          <button type="button" onClick={ctl.reload} className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700">
+            <RefreshCw className="h-3.5 w-3.5" /> Show the locked sheet
+          </button>
+        </Banner>
+      )}
+      {ctl.locked && ctl.saveState !== 'locked' && (
+        <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 text-sm text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-100" role="status">
+          <Lock className="h-4 w-4 shrink-0" />
+          <p>
+            Locked in{ctl.meta?.lockedBy ? <> by <span className="font-semibold">{ctl.meta.lockedBy}</span></> : null}
+            {ctl.meta?.lockedAt ? ` · ${formatStamp(ctl.meta.lockedAt)}` : ''}. Every value on this sheet is read-only
+            until it is unlocked.
+          </p>
+        </div>
+      )}
       {ctl.saveState === 'error' && (
         <Banner tone="red" icon={<CloudAlert className="h-4 w-4" />}>
           <p className="font-semibold">Your latest edits are not saved.</p>
@@ -309,7 +387,8 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           key={`${sheet}:${week}`}
           columns={columns}
           rows={ctl.rows}
-          readOnly={readOnly || !!ctl.conflict}
+          readOnly={readOnly || !!ctl.conflict || ctl.locked}
+          readOnlyNotice={ctl.locked ? 'This sheet is locked in. Unlock it to make changes.' : undefined}
           canUndo={ctl.canUndo}
           canRedo={ctl.canRedo}
           onCommit={ctl.commit}
@@ -328,12 +407,14 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
 
 function SaveStatus({
   readOnly,
+  locked,
   loading,
   saveState,
   version,
   onRetry,
 }: {
   readOnly: boolean;
+  locked: boolean;
   loading: boolean;
   saveState: ReturnType<typeof useNpdSheet>['saveState'];
   version: number;
@@ -348,6 +429,13 @@ function SaveStatus({
     );
   }
   if (loading) return null;
+  if (locked && saveState !== 'locked') {
+    return (
+      <span className={cn(base, 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300')} role="status">
+        <Lock className="h-3.5 w-3.5" /> Locked in
+      </span>
+    );
+  }
   if (saveState === 'saving') {
     return (
       <span className={cn(base, 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300')} role="status">
@@ -362,7 +450,7 @@ function SaveStatus({
       </span>
     );
   }
-  if (saveState === 'error' || saveState === 'conflict') {
+  if (saveState === 'error' || saveState === 'conflict' || saveState === 'locked') {
     return (
       <button type="button" onClick={saveState === 'error' ? onRetry : undefined} className={cn(base, 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300')} role="status">
         <CloudAlert className="h-3.5 w-3.5" /> Not saved
@@ -381,6 +469,153 @@ function SaveStatus({
     <span className={cn(base, 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300')} role="status">
       <CircleCheck className="h-3.5 w-3.5" /> Saved
     </span>
+  );
+}
+
+/**
+ * Lock in / Unlock for the tab and week on screen. Both are inline two-step
+ * actions (never `window.confirm`). Unlock needs a written reason, which the route
+ * records before it unlocks anything.
+ */
+function LockControl({
+  locked,
+  canEdit,
+  blockedBy,
+  what,
+  onLock,
+  onUnlock,
+}: {
+  locked: boolean;
+  canEdit: boolean;
+  /** Why Lock in is unavailable right now, or null. */
+  blockedBy: string | null;
+  what: string;
+  onLock: () => Promise<LockResult>;
+  onUnlock: (reason: string) => Promise<LockResult>;
+}) {
+  const [mode, setMode] = useState<'idle' | 'confirm' | 'unlock'>('idle');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async (fn: () => Promise<LockResult>) => {
+    setBusy(true);
+    setError(null);
+    const r = await fn();
+    setBusy(false);
+    if (r.ok) {
+      setMode('idle');
+      setReason('');
+    } else {
+      setError(r.message ?? 'That did not work.');
+    }
+  };
+
+  const btn =
+    'inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50';
+
+  if (locked) {
+    // Who and when are on the locked bar above the grid; this only offers Unlock.
+    if (!canEdit) return null;
+    return (
+      <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+        {mode !== 'unlock' && (
+          <button
+            type="button"
+            onClick={() => setMode('unlock')}
+            className={cn(btn, 'border border-zinc-200 bg-white text-zinc-700 enabled:hover:border-indigo-300 enabled:hover:text-indigo-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300')}
+          >
+            <LockOpen className="h-3.5 w-3.5" /> Unlock…
+          </button>
+        )}
+        {mode === 'unlock' && (
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const r = reason.trim();
+              if (!r || busy) return;
+              void run(() => onUnlock(r));
+            }}
+          >
+            <label htmlFor="npd-unlock-reason" className="sr-only">
+              Reason for unlocking
+            </label>
+            <input
+              id="npd-unlock-reason"
+              autoFocus
+              value={reason}
+              maxLength={NPD_UNLOCK_REASON_MAX}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why unlock it? (required)"
+              className="h-8 w-64 max-w-full rounded-lg border border-zinc-300 bg-white px-2.5 text-xs text-zinc-900 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/30 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            />
+            <button type="submit" disabled={!reason.trim() || busy} className={cn(btn, 'bg-indigo-600 text-white enabled:hover:bg-indigo-700')}>
+              {busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <LockOpen className="h-3.5 w-3.5" />} Unlock
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('idle');
+                setReason('');
+                setError(null);
+              }}
+              className={cn(btn, 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800')}
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+        {error && (
+          <p className="w-full text-xs text-red-700 dark:text-red-300" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (!canEdit) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+      {mode === 'confirm' ? (
+        <>
+          <span className="text-xs text-zinc-700 dark:text-zinc-300">
+            Lock in {what}? Nobody can change it until it is unlocked.
+          </span>
+          <button type="button" disabled={busy} onClick={() => void run(onLock)} className={cn(btn, 'bg-indigo-600 text-white enabled:hover:bg-indigo-700')}>
+            {busy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Lock className="h-3.5 w-3.5" />} Lock in
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setMode('idle');
+              setError(null);
+            }}
+            className={cn(btn, 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800')}
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          disabled={!!blockedBy}
+          title={blockedBy ?? `Lock in ${what}`}
+          onClick={() => setMode('confirm')}
+          className={cn(btn, 'border border-indigo-200 bg-indigo-50 text-indigo-700 enabled:hover:border-indigo-300 enabled:hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300')}
+        >
+          <Lock className="h-3.5 w-3.5" /> Lock in
+        </button>
+      )}
+      {error && (
+        <p className="w-full text-xs text-red-700 dark:text-red-300" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

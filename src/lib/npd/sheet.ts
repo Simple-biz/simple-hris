@@ -363,6 +363,41 @@ export function validateSaveBody(raw: unknown): Validation<NpdSaveBody> {
   return { ok: true, value: { sheet: b.sheet, week: b.week, expectedVersion: b.expectedVersion, rows: trimmed } };
 }
 
+// ─── Lock in (route side) ────────────────────────────────────────────────────
+
+/** An unlock says why. Long enough for a sentence, short enough for an audit row. */
+export const NPD_UNLOCK_REASON_MAX = 500;
+
+export type NpdLockBody =
+  | { action: 'lock'; sheet: NpdSheetKind; week: string; expectedVersion: number }
+  | { action: 'unlock'; sheet: NpdSheetKind; week: string; reason: string };
+
+/**
+ * The PATCH body. Lock carries the version the editor is looking at (a lock
+ * only freezes what was seen). Unlock carries a reason — required, trimmed,
+ * never blank — because unlocking lets locked-in values change again.
+ */
+export function validateLockBody(raw: unknown): Validation<NpdLockBody> {
+  if (!raw || typeof raw !== 'object') return { ok: false, error: 'Body must be a JSON object' };
+  const b = raw as Record<string, unknown>;
+  if (b.action !== 'lock' && b.action !== 'unlock') return { ok: false, error: 'action must be lock or unlock' };
+  if (!isNpdSheetKind(b.sheet)) return { ok: false, error: 'sheet must be all_departments or hsl' };
+  if (!isSundayIso(b.week)) return { ok: false, error: 'week must be a Sunday (YYYY-MM-DD)' };
+  if (b.action === 'lock') {
+    if (typeof b.expectedVersion !== 'number' || !Number.isInteger(b.expectedVersion) || b.expectedVersion < 1) {
+      return { ok: false, error: 'expectedVersion must be the saved version you are looking at (a whole number ≥ 1)' };
+    }
+    return { ok: true, value: { action: 'lock', sheet: b.sheet, week: b.week, expectedVersion: b.expectedVersion } };
+  }
+  if (typeof b.reason !== 'string') return { ok: false, error: 'An unlock needs a reason' };
+  const reason = b.reason.trim();
+  if (reason === '') return { ok: false, error: 'An unlock needs a reason' };
+  if (reason.length > NPD_UNLOCK_REASON_MAX) {
+    return { ok: false, error: `A reason is limited to ${NPD_UNLOCK_REASON_MAX} characters` };
+  }
+  return { ok: true, value: { action: 'unlock', sheet: b.sheet, week: b.week, reason } };
+}
+
 /** Rows the save will remove, by id. Blank rows are not worth a record. */
 export function removedRows(before: readonly NpdRow[], after: readonly NpdRow[]): NpdRow[] {
   const kept = new Set(after.map((r) => r.id.toLowerCase()));

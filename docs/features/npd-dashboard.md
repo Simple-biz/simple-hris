@@ -7,14 +7,16 @@ Accounting supplied. **Nothing is imported from HRIS, nothing is computed, and n
 anyone.** It sits in the Accounting rail directly below Payroll Wizard; the label reads **NPD** and
 wipes to **New Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief
 (blueprint, CHOSEN 1–7, no NEEDS); session log item 309. Plan:
-`docs/superpowers/plans/2026-10-01-npd-dashboard.md`.
+`docs/superpowers/plans/2026-10-01-npd-dashboard.md`. **Lock in** added the same day (item 310).
 
 ## Key files
 
 | Piece | File |
 | --- | --- |
-| Tables + save function | `references/sql/create/2026-10-01_npd_sheets.sql` |
+| Tables + save function | `references/sql/create/2026-10-01_npd_sheets.sql` (applied; never edit it) |
 | Apply / verify script (dry by default) | `scripts/apply-npd-sheets-migration.mts` |
+| Lock in: columns, save refusal, lock / unlock functions | `references/sql/alter/2026-10-01_npd_sheets_lock.sql` |
+| Lock in apply / verify script (dry by default) | `scripts/apply-npd-sheets-lock-migration.mts` |
 | The two column lists (= the pasted headers) | `src/lib/npd/columns.ts` |
 | Google Sheets clipboard ⇄ grid | `src/lib/npd/clipboard.ts` |
 | Row model, paste, weeks, save contract | `src/lib/npd/sheet.ts` |
@@ -79,6 +81,43 @@ cell Accounting pastes. It is never checked against the sheet's week, and that i
 - `saved_by` / `updated_by` is the **session** email (`authz.sessionEmail`), never the body.
   Source-guarded in `npd-wiring.test.ts`.
 
+## Lock in
+
+Kane, 2026-10-01: *"Lets add a lock in button on this where we can lock in the values on here for
+the current week"*. **Lock in** freezes **the tab on screen for the week on screen** (All
+Departments and HSL lock separately; one sheet = one lock).
+
+- **The database enforces it, not the page.** `npd_sheets.locked_at` / `locked_by` (both or
+  neither, CHECK). While `locked_at` is set, `npd_save_sheet` raises `npd_sheet_locked` for
+  **every** save at **any** version, so no path can change a locked cell. The check runs under the
+  same row lock `npd_lock_sheet` takes, **before** the version check, so a save and a lock racing
+  each other cannot both win. Never move the lock check out of the function or after the version
+  check. The route answers **423** before trying, so a refused save writes no audit row.
+- **A lock freezes exactly what the editor saw.** The page saves pending edits first, then sends the
+  version on screen. `npd_lock_sheet` refuses a stale version (409, the same conflict banner as a
+  save), a week with no sheet, and a sheet with no rows. It changes **no cell and no version**.
+- **Unlock needs a written reason** (1–500 characters, trimmed). The route writes
+  `npd.sheet.unlocked` — the reason, who had locked it, and when — **before** it unlocks, and the
+  sheet **stays locked** if that audit cannot be written. The reason is the only record of why
+  locked-in values may change again, so it is never optional and never written after the fact. A
+  recorded unlock that then failed writes `npd.sheet.unlock_failed`. Locks write `npd.sheet.locked`.
+- **Who** is the session email for both, never the body (source-guarded).
+- Lock and unlock need the `npd` **edit** grant, the same as saving (no separate approver). View-only
+  users see the lock and no Unlock button.
+- **Someone locks while you have edits waiting:** the save comes back 423, and the page says who
+  locked it and that **your latest edits were NOT saved**. They stay on screen until
+  *Show the locked sheet* reloads it. They are never retried and never saved silently after an
+  unlock: an unlock reloads the sheet from the server.
+- On screen: the **Locked in** pill, a bar naming who and when, a read-only grid ("This sheet is
+  locked in. Unlock it to make changes." on a keystroke or paste), disabled row tools, and
+  "(locked)" beside that tab in the week menu. Lock in and Unlock are inline two-step actions,
+  never `window.confirm`.
+- **Before the Lock in migration is applied**, header reads use `select('*')` and treat missing lock
+  columns as unlocked. That is true, because nothing can be locked without `npd_lock_sheet`. Saves
+  keep working, and Lock in answers 503 *"Lock in is not set up yet"*.
+- Locked does not mean "sent" or "paid". Nothing reads the lock yet. The HRIS vs NPD step still takes
+  its own paste.
+
 ## Removed rows are audited first
 
 Rows carry a client-minted UUID that stays stable across saves, so the route can say **which**
@@ -92,13 +131,13 @@ is left.
 
 ## Access: service role only, behind the `npd` grant
 
-- The route gates the **`npd`** accounting feature: `view` to read and `edit` to save, with the
-  admin bypass inside `requireFeatureAccess`. It is **hidden until granted**: an Accounting user
+- The route gates the **`npd`** accounting feature: `view` to read, and `edit` to save, lock and
+  unlock, with the admin bypass inside `requireFeatureAccess`. It is **hidden until granted**: an Accounting user
   with the Payroll Wizard does **not** get NPD automatically (CHOSEN 1). Grant it in Admin → Roles.
 - The rows carry per-person pay and bank last-4s. All three tables have RLS on with **zero
   policies**, privileges revoked from `anon`/`authenticated`, and they are not in
-  `supabase_realtime`. The function's EXECUTE is revoked from PUBLIC/anon/authenticated and it pins
-  `search_path`. **Never add a policy, a realtime publication or a client-side Supabase read.**
+  `supabase_realtime`. All three functions (`npd_save_sheet`, `npd_lock_sheet`,
+  `npd_unlock_sheet`) have EXECUTE revoked from PUBLIC/anon/authenticated and pin `search_path`. **Never add a policy, a realtime publication or a client-side Supabase read.**
   The apply script proves each of these against the live catalog.
 - **Not** `app_settings`: that family is readable by every signed-in user
   ([[app-settings-final-pay-readable-by-every-employee]]). This is the "share it on QC Compare's
@@ -132,16 +171,22 @@ column must be parsed and refused exactly as that step's paste contract says.
 
 ## Deploy notes
 
-- **Migration PENDING:** `node --import tsx scripts/apply-npd-sheets-migration.mts --apply` (needs
-  `DATABASE_URL`, session pooler; see [[migration-apply-needs-database-url]]). The **dry run passed
-  against production 2026-10-01** (46/46 checks; rolled back, nothing committed). Until it is
-  applied, the route answers 503 and the page says *NPD is not set up yet*. Re-running `--apply`
-  is safe. PostgREST picks the new tables up on its schema reload; a 503 straight after applying
-  means the cache has not reloaded yet.
+- **Base migration APPLIED.** Not applied by this session; found applied by a read-only catalog query
+  on 2026-10-01: the three tables exist with RLS on and **0 rows**, and `npd_save_sheet` exists. Its
+  dry run had passed 46/46 earlier that day. The create file is the applied record and is **never
+  edited**; later changes ship as `references/sql/alter/` files.
+- **Lock in migration PENDING:** `node --import tsx scripts/apply-npd-sheets-lock-migration.mts --apply`
+  (needs `DATABASE_URL`, session pooler; see [[migration-apply-needs-database-url]]). **Dry run against
+  production 2026-10-01: 39/39** (objects, privileges, and a lock that really refuses saves); rolled
+  back, and a re-probe confirmed nothing changed. The script refuses to run without the base tables.
+  It is safe before or after the code deploys (see § Lock in, the last-but-one bullet).
 - **Grant PENDING:** Admin → Roles → Accounting → **NPD (New Payroll Dashboard)** → Edit for each
-  person who will paste (Aliviah). Admins see it already.
+  person who will paste (Aliviah). Measured 2026-10-01: **0** active `npd` grants. Admins see it
+  already.
 - No env vars, no n8n, no cron.
 - Verified 2026-10-01 in a bundled client fixture driven by Playwright with a mocked API (40/40:
   paste with header skip, multi-line cells, edit/undo/redo, copy, delete, insert, 409 → Keep mine,
-  failed save → Retry, tab switch flushes, week stepping, view-only, phone width, nav hover). **Not
-  clicked through signed in** against the real route.
+  failed save → Retry, tab switch flushes, week stepping, view-only, phone width, nav hover). Lock in
+  added 17 more checks (57 in all) (confirm, the locked version sent, read-only grid and row tools, paste refused,
+  week-menu marker, reason required, unlock, a save refused by a lock meanwhile). **Not clicked
+  through signed in** against the real route.

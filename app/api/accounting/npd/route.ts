@@ -4,9 +4,18 @@ import { auditFrom } from '@/lib/audit/context';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { isNpdSheetKind } from '@/lib/npd/columns';
-import { isSundayIso, removedRows, rowForAudit, validateSaveBody } from '@/lib/npd/sheet';
+import { isSundayIso, removedRows, rowForAudit, validateLockBody, validateSaveBody } from '@/lib/npd/sheet';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
-import { listNpdWeeks, readNpdSheet, readNpdSheetMeta, saveNpdSheet, type NpdFailure } from '@/lib/supabase/npd-db';
+import {
+  NPD_LOCK_NOT_SET_UP,
+  listNpdWeeks,
+  lockNpdSheet,
+  readNpdSheet,
+  readNpdSheetMeta,
+  saveNpdSheet,
+  unlockNpdSheet,
+  type NpdFailure,
+} from '@/lib/supabase/npd-db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,8 +25,13 @@ export const runtime = 'nodejs';
  * pastes from Google Sheets: one sheet per tab (All Departments | HSL) per pay
  * week. Governing doc: docs/features/npd-dashboard.md.
  *
- * Gate: the `npd` accounting feature — `view` to read, `edit` to save — admin
- * bypass inside `requireFeatureAccess`. Nothing else reads these tables.
+ * Gate: the `npd` accounting feature — `view` to read, `edit` to save, lock and
+ * unlock — admin bypass inside `requireFeatureAccess`. Nothing else reads these
+ * tables.
+ *
+ * Lock in (PATCH): a locked sheet takes no save. The database enforces it
+ * (npd_save_sheet raises npd_sheet_locked under the row lock), and this route
+ * answers 423 before it even tries, so a refused save writes no audit row.
  *
  * Why a route of its own and not `/api/app-settings`: the rows carry per-person
  * pay figures and bank last-4s, and the `app_settings` family is readable by every
@@ -69,6 +83,8 @@ export async function GET(req: Request) {
       rowCount: r.meta.rowCount,
       updatedAt: r.meta.updatedAt,
       updatedBy: r.meta.updatedBy,
+      lockedAt: r.meta.lockedAt,
+      lockedBy: r.meta.lockedBy,
       rows: r.rows,
     },
     { headers: NO_STORE },
@@ -79,11 +95,12 @@ export async function GET(req: Request) {
  * PUT `{ sheet, week, expectedVersion, rows: [{ id, values }] }` — replace the
  * sheet. `expectedVersion` is the version the editor loaded; a mismatch is 409.
  *
- * Order matters and is source-guarded (npd-route.test.ts):
+ * Order matters and is source-guarded (npd-wiring.test.ts):
  *   1. validate · 2. read the current sheet (refuse if it cannot be read — we
- *   could not say what this save removes) · 3. early 409 on a stale version ·
+ *   could not say what this save removes) · 3. 423 if it is LOCKED, then 409 on
+ *   a stale version (the database checks in the same order) ·
  *   4. AUDIT THE REMOVED ROWS FIRST, refusing the save if that audit fails ·
- *   5. the atomic save (which re-checks the version under a row lock) ·
+ *   5. the atomic save (which re-checks lock and version under a row lock) ·
  *   6. `npd.sheet.saved`.
  * `saved_by` is the SESSION email, never anything from the body.
  */
@@ -104,6 +121,7 @@ export async function PUT(req: Request) {
 
   const current = await readNpdSheet(sheet, week);
   if (!current.ok) return failed(current);
+  if (current.meta.lockedAt) return lockedResponse(current.meta.lockedBy, current.meta.lockedAt);
   if (current.meta.version !== expectedVersion) {
     return conflictResponse(current.meta.version, current.meta.updatedBy, current.meta.updatedAt);
   }
@@ -135,6 +153,21 @@ export async function PUT(req: Request) {
 
   const saved = await saveNpdSheet({ sheet, week, expectedVersion, savedBy: authz.sessionEmail, rows });
   if (!saved.ok) {
+    if (saved.locked) {
+      // Locked between the read above and the save. Nothing was written; a
+      // removal recorded above did not happen, so say so on the record.
+      if (removed.length > 0) {
+        await insertAuditLog({
+          ...auditFrom(req, authz),
+          action: 'npd.sheet.save_failed',
+          resource: 'npd_sheet',
+          resource_id: resourceId,
+          details: { sheet, week, from_version: current.meta.version, error: 'npd_sheet_locked' },
+        });
+      }
+      const meta = await readNpdSheetMeta(sheet, week);
+      return lockedResponse(meta.ok ? meta.meta.lockedBy : null, meta.ok ? meta.meta.lockedAt : null);
+    }
     if (saved.conflict) {
       const meta = await readNpdSheetMeta(sheet, week);
       return conflictResponse(
@@ -179,6 +212,132 @@ export async function PUT(req: Request) {
       updatedBy: saved.meta.updatedBy,
     },
     { headers: NO_STORE },
+  );
+}
+
+/**
+ * PATCH `{ action: 'lock', sheet, week, expectedVersion }` — lock the sheet at the
+ * version the editor is looking at. Needs a saved sheet with rows.
+ * PATCH `{ action: 'unlock', sheet, week, reason }` — clear the lock. The reason is
+ * required, and the unlock is AUDITED FIRST: if that audit cannot be written the
+ * sheet stays locked (the reason is the whole record of why locked-in values may
+ * change again). Who locked / unlocked is the SESSION email, never the body.
+ */
+export async function PATCH(req: Request) {
+  const authz = await requireFeatureEdit('accounting', 'npd');
+  if (!authz.ok) return deniedResponse(authz);
+
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  const parsed = validateLockBody(raw);
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  const body = parsed.value;
+  const { sheet, week } = body;
+  const resourceId = `${sheet}:${week}`;
+
+  if (body.action === 'lock') {
+    const locked = await lockNpdSheet({
+      sheet,
+      week,
+      expectedVersion: body.expectedVersion,
+      lockedBy: authz.sessionEmail,
+    });
+    if (!locked.ok) {
+      if (locked.refusal === 'conflict') {
+        const meta = await readNpdSheetMeta(sheet, week);
+        return conflictResponse(
+          locked.currentVersion ?? (meta.ok ? meta.meta.version : 0),
+          meta.ok ? meta.meta.updatedBy : null,
+          meta.ok ? meta.meta.updatedAt : null,
+        );
+      }
+      if (locked.refusal === 'locked') {
+        const meta = await readNpdSheetMeta(sheet, week);
+        return lockedResponse(meta.ok ? meta.meta.lockedBy : null, meta.ok ? meta.meta.lockedAt : null);
+      }
+      if (locked.refusal === 'empty') {
+        return NextResponse.json({ error: 'Nothing to lock: this sheet has no saved rows yet.' }, { status: 400 });
+      }
+      if (locked.refusal === 'missing') {
+        return NextResponse.json({ error: NPD_LOCK_NOT_SET_UP, missing: true }, { status: 503 });
+      }
+      return NextResponse.json({ error: locked.error }, { status: 500 });
+    }
+    await insertAuditLog({
+      ...auditFrom(req, authz),
+      action: 'npd.sheet.locked',
+      resource: 'npd_sheet',
+      resource_id: resourceId,
+      details: { sheet, week, version: locked.version, row_count: locked.rowCount },
+    });
+    return NextResponse.json(
+      { locked: true, lockedAt: locked.lockedAt, lockedBy: locked.lockedBy, version: locked.version },
+      { headers: NO_STORE },
+    );
+  }
+
+  // Unlock. Read first: an unlock of a sheet that is not locked records nothing.
+  const current = await readNpdSheetMeta(sheet, week);
+  if (!current.ok) return failed(current);
+  if (!current.meta.lockedAt) {
+    return NextResponse.json({ error: 'This sheet is not locked.', locked: false }, { status: 409, headers: NO_STORE });
+  }
+
+  const audit = await insertAuditLog({
+    ...auditFrom(req, authz),
+    action: 'npd.sheet.unlocked',
+    resource: 'npd_sheet',
+    resource_id: resourceId,
+    details: {
+      sheet,
+      week,
+      version: current.meta.version,
+      reason: body.reason,
+      locked_by: current.meta.lockedBy,
+      locked_at: current.meta.lockedAt,
+    },
+  });
+  if (audit.error) {
+    return NextResponse.json(
+      { error: 'The reason for this unlock could not be recorded, so the sheet stays locked. Try again.' },
+      { status: 500 },
+    );
+  }
+
+  const unlocked = await unlockNpdSheet({ sheet, week, unlockedBy: authz.sessionEmail });
+  if (!unlocked.ok) {
+    // The unlock recorded above did not happen. Say so on the record.
+    await insertAuditLog({
+      ...auditFrom(req, authz),
+      action: 'npd.sheet.unlock_failed',
+      resource: 'npd_sheet',
+      resource_id: resourceId,
+      details: { sheet, week, error: unlocked.error },
+    });
+    if (unlocked.refusal === 'not_locked') {
+      return NextResponse.json({ error: 'This sheet is not locked.', locked: false }, { status: 409, headers: NO_STORE });
+    }
+    if (unlocked.refusal === 'missing') {
+      return NextResponse.json({ error: NPD_LOCK_NOT_SET_UP, missing: true }, { status: 503 });
+    }
+    return NextResponse.json({ error: unlocked.error }, { status: 500 });
+  }
+  return NextResponse.json({ locked: false, version: unlocked.version }, { headers: NO_STORE });
+}
+
+function lockedResponse(lockedBy: string | null, lockedAt: string | null) {
+  return NextResponse.json(
+    {
+      error: 'This sheet is locked in. Nothing on it can change until it is unlocked.',
+      locked: true,
+      lockedBy,
+      lockedAt,
+    },
+    { status: 423, headers: NO_STORE },
   );
 }
 

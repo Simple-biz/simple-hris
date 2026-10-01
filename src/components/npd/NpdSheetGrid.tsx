@@ -59,6 +59,8 @@ type Props = {
   columns: readonly NpdColumn[];
   rows: readonly NpdRow[];
   readOnly: boolean;
+  /** Why the grid is read-only, said when someone tries to type or paste. */
+  readOnlyNotice?: string;
   canUndo: boolean;
   canRedo: boolean;
   onCommit: (next: NpdRow[]) => void;
@@ -80,6 +82,7 @@ export default function NpdSheetGrid({
   columns,
   rows,
   readOnly,
+  readOnlyNotice = 'View only — this sheet cannot be changed from your account.',
   canUndo,
   canRedo,
   onCommit,
@@ -137,7 +140,11 @@ export default function NpdSheetGrid({
   // ── Editing ───────────────────────────────────────────────────────────────
   const startEdit = useCallback(
     (pos: CellPos, initial: string | null) => {
-      if (readOnly) return;
+      if (readOnly) {
+        // Typing into a locked sheet says why nothing happens; a double-click does not.
+        if (initial !== null) onNotice(readOnlyNotice);
+        return;
+      }
       const row = rowsRef.current[pos.row];
       if (!row) return;
       setEditing({
@@ -147,7 +154,7 @@ export default function NpdSheetGrid({
         mode: initial === null ? 'edit' : 'type',
       });
     },
-    [readOnly],
+    [readOnly, readOnlyNotice, onNotice],
   );
 
   /** Commit the open editor (if any). Idempotent: blur after a key commit is a no-op. */
@@ -219,7 +226,7 @@ export default function NpdSheetGrid({
   const doPaste = useCallback(
     (text: string, at: CellPos, selection: CellRange | null) => {
       if (readOnly) {
-        onNotice('View only — this sheet cannot be changed from your account.');
+        onNotice(readOnlyNotice);
         return;
       }
       const matrix = parseClipboardGrid(text);
@@ -240,7 +247,7 @@ export default function NpdSheetGrid({
         onNotice(notes.join(' ') || 'Nothing to paste.');
       }
     },
-    [readOnly, columns, lastCol, onCommit, onNotice],
+    [readOnly, readOnlyNotice, columns, lastCol, onCommit, onNotice],
   );
 
   const onPaste = (ev: React.ClipboardEvent<HTMLDivElement>) => {

@@ -163,7 +163,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'npd.',
     surfaces: ['accounting', 'payroll'],
     label: 'NPD (New Payroll Dashboard)',
-    note: 'sheet.saved (one per save: tab, week, version, row counts), rows.removed (written BEFORE the save, with the full contents of every row it removes), sheet.save_failed (a recorded removal that did not happen). resource_id = <tab>:<week Sunday>',
+    note: 'sheet.saved (one per save: tab, week, version, row counts), rows.removed (written BEFORE the save, with the full contents of every row it removes), sheet.save_failed (a recorded removal that did not happen), sheet.locked (Lock in), sheet.unlocked (written BEFORE the unlock, with the required reason and who had locked it), sheet.unlock_failed. resource_id = <tab>:<week Sunday>',
   },
   {
     match: 'bonus_catalog.',

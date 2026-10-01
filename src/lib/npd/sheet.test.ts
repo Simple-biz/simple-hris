@@ -26,7 +26,9 @@ import {
   shiftWeek,
   toDbRecords,
   trimTrailingBlankRows,
+  validateLockBody,
   validateSaveBody,
+  NPD_UNLOCK_REASON_MAX,
   weekLabel,
   type NpdRow,
 } from './sheet';
@@ -330,6 +332,39 @@ describe('validateSaveBody', () => {
     const newId = ids();
     const rows = Array.from({ length: NPD_MAX_ROWS + 1 }, () => ({ id: newId(), values: HSL.map(() => 'x') }));
     assert.equal(validateSaveBody({ ...good(), rows }).ok, false);
+  });
+});
+
+describe('validateLockBody (Lock in / Unlock)', () => {
+  test('a lock carries the saved version the editor is looking at', () => {
+    const v = validateLockBody({ action: 'lock', sheet: 'hsl', week: '2026-09-20', expectedVersion: 4 });
+    assert.deepEqual(v, { ok: true, value: { action: 'lock', sheet: 'hsl', week: '2026-09-20', expectedVersion: 4 } });
+  });
+
+  test('a lock of an unsaved sheet (version 0) or a non-integer version is refused', () => {
+    for (const expectedVersion of [0, -1, 1.5, '4', null, undefined]) {
+      assert.equal(validateLockBody({ action: 'lock', sheet: 'hsl', week: '2026-09-20', expectedVersion }).ok, false, String(expectedVersion));
+    }
+  });
+
+  test('an unlock needs a reason: missing, blank or whitespace is refused', () => {
+    for (const reason of [undefined, null, '', '   ', 5]) {
+      assert.equal(validateLockBody({ action: 'unlock', sheet: 'hsl', week: '2026-09-20', reason }).ok, false, String(reason));
+    }
+  });
+
+  test('the reason is trimmed and capped', () => {
+    const v = validateLockBody({ action: 'unlock', sheet: 'all_departments', week: '2026-09-20', reason: '  Fix Jane\'s OT  ' });
+    assert.ok(v.ok && v.value.action === 'unlock' && v.value.reason === "Fix Jane's OT");
+    const long = 'x'.repeat(NPD_UNLOCK_REASON_MAX + 1);
+    assert.equal(validateLockBody({ action: 'unlock', sheet: 'hsl', week: '2026-09-20', reason: long }).ok, false);
+  });
+
+  test('unknown action, sheet or a non-Sunday week is refused', () => {
+    assert.equal(validateLockBody({ action: 'freeze', sheet: 'hsl', week: '2026-09-20', expectedVersion: 1 }).ok, false);
+    assert.equal(validateLockBody({ action: 'lock', sheet: 'payroll', week: '2026-09-20', expectedVersion: 1 }).ok, false);
+    assert.equal(validateLockBody({ action: 'lock', sheet: 'hsl', week: '2026-09-21', expectedVersion: 1 }).ok, false);
+    assert.equal(validateLockBody(null).ok, false);
   });
 });
 
