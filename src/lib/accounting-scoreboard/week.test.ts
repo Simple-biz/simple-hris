@@ -5,6 +5,9 @@ import {
   addDays,
   datesFor,
   dayHeader,
+  easternToUtc,
+  formatEasternDateTime,
+  rangeLabel,
   isIsoDate,
   isWeekStart,
   todayEastern,
@@ -67,4 +70,13 @@ test('labels read like the sheet', () => {
   assert.equal(weekLabel('2026-09-20'), 'Sep 21 – 25, 2026');
   assert.equal(weekLabel('2026-12-27'), 'Dec 28 – Jan 1, 2027');
   assert.deepEqual(dayHeader('2026-09-28'), { weekday: 'Mon', short: '9/28' });
+  assert.equal(rangeLabel('2026-09-20', '2026-09-26'), 'Sep 20 – 26');
+  assert.equal(rangeLabel('2026-09-27', '2026-10-03'), 'Sep 27 – Oct 3');
+});
+
+test('Eastern wall-clock instants, summer and winter', () => {
+  assert.equal(easternToUtc('2026-09-29', 12).toISOString(), '2026-09-29T16:00:00.000Z');
+  assert.equal(easternToUtc('2026-01-13', 12).toISOString(), '2026-01-13T17:00:00.000Z');
+  assert.equal(easternToUtc('2026-09-27', 0).toISOString(), '2026-09-27T04:00:00.000Z');
+  assert.equal(formatEasternDateTime('2026-09-29T15:01:00Z'), '9/29 11:01 AM');
 });

@@ -48,8 +48,8 @@ test("entryAllowed: the slot must be the section's and the day must be on its bo
   assert.equal(entryAllowed('buckets', 'am', '2026-09-28').ok, true);
   assert.equal(entryAllowed('buckets', 'day', '2026-09-28').ok, false);
   assert.equal(entryAllowed('buckets', 'am', '2026-09-27').ok, false, 'no Sunday on the buckets board');
-  assert.equal(entryAllowed('payroll_timing', 'start', '2026-09-27').ok, true, 'payroll runs on Sunday');
-  assert.equal(entryAllowed('payroll_timing', 'start', '2026-10-02').ok, false, 'no Friday on payroll timing');
+  assert.equal(entryAllowed('payroll_timing', 'start', '2026-09-29').ok, false, 'Payroll Timing fills itself from HRIS: nothing is typed');
+  assert.equal(entryAllowed('payroll_timing', 'day', '2026-10-02').ok, false);
   assert.equal(entryAllowed('pm_buckets', 'mtg', '2026-09-28').ok, true);
   assert.equal(entryAllowed('collections', 'day', '2026-09-28').ok, false, 'collections come from the log only');
 });
@@ -67,6 +67,23 @@ test('collections: a legal log line, cleaned', () => {
   assert.equal(noAmount.ok && noAmount.value.amountUsd, null);
 });
 
+test('each refusal names the real problem (the old message blamed decimals for a range error)', () => {
+  const msg = (r: { ok: boolean; error?: string }) => (r.ok ? '' : r.error ?? '');
+  const entry = (value: unknown) => parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'am', value }, TODAY);
+  assert.match(msg(entry(-1)), /can't be negative/);
+  assert.match(msg(entry(100_001)), /can't be more than 100,000/);
+  assert.match(msg(entry(1.234)), /at most 2 decimals/);
+  assert.equal(entry(100_000).ok, true, 'the limit itself is allowed');
+
+  const coll = (over: Record<string, unknown>) =>
+    parseCollectionCreate({ rowId: ROW, date: '2026-09-29', businessName: 'X', points: 1, ...over }, TODAY);
+  assert.match(msg(coll({ points: 94.05 })), /whole number.*Amount \(USD\)/, 'a dollar figure in Points says where it belongs');
+  assert.match(msg(coll({ points: 101 })), /0 to 100/);
+  assert.match(msg(coll({ amountUsd: 144.144 })), /dollars and cents/);
+  assert.match(msg(coll({ amountUsd: 20_000_000 })), /can't be more than 10,000,000/);
+  assert.equal(coll({ points: 11, amountUsd: 657 }).ok, true);
+});
+
 test('collections: refused lines', () => {
   const base = { rowId: ROW, date: '2026-09-29', businessName: 'X', points: 1 };
   const bad: unknown[] = [
@@ -78,6 +95,8 @@ test('collections: refused lines', () => {
     { ...base, points: -1 },
     { ...base, points: 101 },
     { ...base, points: 0.333 },
+    { ...base, points: 1.5 }, // points are whole numbers
+    { ...base, points: '1' },
     { ...base, amountUsd: -5 },
     { ...base, amountUsd: 'ten' },
   ];

@@ -45,10 +45,14 @@ export const WEEKDAY_LABEL: Record<Weekday, string> = {
  * - `am_pm`       two counts a day: start of day and end of day (buckets, chargebacks, inbox)
  * - `daily`       one count a day (onboarding, compliance, cancellations, payroll problems)
  * - `daily_flag`  one count a day plus a "had a meeting" tick (PM buckets)
- * - `time_span`   a start and an end time a day, giving hours (payroll timing)
+ * - `time_span`   a start and an end time a day, giving hours. No section uses it since 2026-10-01
+ *                 (Payroll Timing moved to `payroll_cycle`). It is kept because the SQL slot CHECK
+ *                 still allows `start`/`end` and one entry of that shape exists (measured 10-01).
  * - `collections` nothing typed in a grid: points come from the collections log
+ * - `payroll_cycle` nothing typed at all: started/closed come from HRIS's own audit log
+ *                 (payroll-cycle.ts)
  */
-export type SectionKind = 'am_pm' | 'daily' | 'daily_flag' | 'time_span' | 'collections';
+export type SectionKind = 'am_pm' | 'daily' | 'daily_flag' | 'time_span' | 'collections' | 'payroll_cycle';
 
 export const SLOTS_BY_KIND: Record<SectionKind, readonly Slot[]> = {
   am_pm: ['am', 'pm'],
@@ -56,14 +60,16 @@ export const SLOTS_BY_KIND: Record<SectionKind, readonly Slot[]> = {
   daily_flag: ['day', 'mtg'],
   time_span: ['start', 'end'],
   collections: [],
+  payroll_cycle: [],
 };
 
 /**
  * - `avg_score`  the section's average 1–10 score (buckets: AVERAGE of the row scores; inbox: the
  *                score of the team's average end-of-day count, the sheet's R59)
  * - `team_week`  the section's whole-team total for the week
+ * - `cycle_score` Payroll Timing's 0–100 cycle score (payroll-cycle.ts)
  */
-export type GoalMeasure = 'avg_score' | 'team_week';
+export type GoalMeasure = 'avg_score' | 'team_week' | 'cycle_score';
 export type GoalDirection = 'at_least' | 'below';
 
 export interface GoalRule {
@@ -180,11 +186,14 @@ export const SECTIONS: readonly SectionDef[] = [
     key: 'payroll_timing',
     title: 'Payroll Scoreboard — Timing',
     tab: 'Payroll Timing',
-    kind: 'time_span',
-    days: ['sun', 'mon', 'tue', 'wed', 'thu'],
-    goal: { value: 20, direction: 'below', measure: 'team_week', unit: 'hours' },
-    rowNoun: 'person',
-    help: 'When payroll processing started and finished on each of your processing days.',
+    // Kane, 2026-10-01 (Carla's sheet): one row per pay CYCLE, started by Tuesday noon and closed by
+    // Friday noon, filled from HRIS's own Start Processing and Close Pay Cycle. Replaced the same
+    // day's per-person start/end times (kind `time_span`, goal "< 20 hours").
+    kind: 'payroll_cycle',
+    days: ['tue', 'fri'],
+    goal: { value: 100, direction: 'at_least', measure: 'cycle_score', unit: '%' },
+    rowNoun: 'cycle',
+    help: 'Filled from HRIS: the first Start Processing of the week, and Close Pay Cycle in Payment Dispatch.',
   },
   {
     key: 'payroll_problems',

@@ -23,7 +23,9 @@ import { Input } from '@/components/ui/input';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import type { ResolvedSection } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader, weekLabel } from '@/lib/accounting-scoreboard/week';
-import { collectionsWeekStats, goalMet, type CollectionEntry } from '@/lib/accounting-scoreboard/scoring';
+import { collectionsWeekStats, type CollectionEntry } from '@/lib/accounting-scoreboard/scoring';
+import { goalLight, weekPace } from '@/lib/accounting-scoreboard/stoplight';
+import { MAX_POINTS } from '@/lib/accounting-scoreboard/validate';
 import { previewBoth, DAY_VARIABLES } from '@/lib/accounting-scoreboard/bonus-preview';
 import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
 import {
@@ -33,6 +35,7 @@ import {
   EmptyRows,
   Flash,
   GoalChip,
+  LIGHT_STYLE,
   SectionHeader,
   TINY_CAPS,
   fmtNum,
@@ -103,14 +106,38 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
   const preview = board.bonus.ok ? previewBoth(board.bonus.bonus.formula, week.byDay) : null;
   const lastPreview = board.bonus.ok ? previewBoth(board.bonus.bonus.formula, last.byDay) : null;
   const headline = week.week.accounts === 0 ? null : week.week.points;
-  const met = goalMet(section.goal, headline);
+  const light = goalLight(section.goal, headline, weekPace(dates, board.today));
+  const lastHeadline = last.week.accounts ? last.week.points : null;
+  const lastLight = goalLight(section.goal, lastHeadline, 1);
+  const [fieldError, setFieldError] = useState<{ field: 'points' | 'amount' | 'business'; message: string } | null>(null);
+
+  /** The same rules the server applies (validate.ts), checked first so the message lands under the right box. */
+  function checkFields(): { points: number; amount: number | null } | null {
+    if (!business.trim()) {
+      setFieldError({ field: 'business', message: 'Type the business name' });
+      return null;
+    }
+    const p = Number(points);
+    if (points.trim() === '' || !Number.isInteger(p) || p < 0 || p > MAX_POINTS) {
+      setFieldError({ field: 'points', message: `Points are a whole number from 0 to ${MAX_POINTS}, usually 1` });
+      return null;
+    }
+    const a = amount.trim() === '' ? null : Number(amount);
+    if (a !== null && (!Number.isFinite(a) || a < 0 || Math.abs(a * 100 - Math.round(a * 100)) > 1e-6)) {
+      setFieldError({ field: 'amount', message: 'Dollars and cents, like 94.05' });
+      return null;
+    }
+    setFieldError(null);
+    return { points: p, amount: a };
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    const p = Number(points);
-    const a = amount.trim() === '' ? null : Number(amount);
-    if (!effectiveRow || !effectiveDate || !business.trim()) return;
-    if (!Number.isFinite(p) || (a !== null && !Number.isFinite(a))) return;
+    if (!effectiveRow || !effectiveDate) return;
+    const checked = checkFields();
+    if (!checked) return;
+    const p = checked.points;
+    const a = checked.amount;
     setBusy(true);
     const ok = await onLog({ rowId: effectiveRow, date: effectiveDate, businessName: business, points: p, amountUsd: a });
     setBusy(false);
@@ -128,9 +155,10 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
       help={section.help}
       right={
         <>
-          <GoalChip goal={section.goal} met={met} value={headline} unitFormat={fmtNum} />
+          <GoalChip goal={section.goal} light={light} value={headline} unitFormat={fmtNum} />
           <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            Last week <span className="font-mono tabular-nums">{last.week.accounts ? fmtNum(last.week.points) : '—'}</span>
+            Last week{' '}
+            <span className={cn('font-mono tabular-nums', LIGHT_STYLE[lastLight].text)}>{fmtNum(lastHeadline)}</span>
           </span>
           {board.history.record ? (
             <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -202,15 +230,20 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
             onChange={(e) => setBusiness(e.target.value)}
             maxLength={200}
             placeholder="e.g. Chocolate Fountain Heaven"
+            aria-invalid={fieldError?.field === 'business' || undefined}
             className={FIELD}
           />
         </label>
         <label className="grid min-w-0 gap-1">
           <span className={FIELD_LABEL}>Points</span>
+          {/* Whole numbers only (every point ever logged is one). A dot is not even typeable here, so a
+              dollar figure cannot land in Points by mistake. */}
           <Input
             value={points}
-            inputMode="decimal"
-            onChange={(e) => setPoints(e.target.value.replace(/[^0-9.]/g, ''))}
+            inputMode="numeric"
+            title="A whole number, usually 1"
+            aria-invalid={fieldError?.field === 'points' || undefined}
+            onChange={(e) => setPoints(e.target.value.replace(/[^0-9]/g, ''))}
             className={cn(FIELD, 'text-right font-mono tabular-nums')}
           />
         </label>
@@ -220,6 +253,7 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
             value={amount}
             inputMode="decimal"
             placeholder="optional"
+            aria-invalid={fieldError?.field === 'amount' || undefined}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
             className={cn(FIELD, 'text-right font-mono tabular-nums')}
           />
@@ -241,6 +275,11 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
         </Button>
         {!loggable.length ? (
           <p className="col-span-2 text-xs text-zinc-500 lg:col-span-6">This week has no day you can log yet.</p>
+        ) : null}
+        {fieldError ? (
+          <p role="alert" className="col-span-2 text-xs font-medium text-rose-600 lg:col-span-6 dark:text-rose-400">
+            {fieldError.field === 'business' ? 'Business name' : fieldError.field === 'points' ? 'Points' : 'Amount'}: {fieldError.message}
+          </p>
         ) : null}
       </form>
 
@@ -423,14 +462,15 @@ function LogLine({
       </span>
       <span className="min-w-0 flex-1 truncate font-medium text-zinc-800 sm:w-28 sm:flex-none dark:text-zinc-200">{rep}</span>
       {/* On a phone the business gets its own full-width line (it is what people scan for); from sm it sits inline. */}
-      <span
-        className="order-last w-full min-w-0 truncate text-zinc-700 sm:order-none sm:w-auto sm:flex-1 dark:text-zinc-300"
-        title={entry.businessName}
-      >
+      {/* The full name always shows: it wraps instead of cutting off (Carla, 2026-10-01: "the text cuts off"). */}
+      <span className="order-last w-full min-w-0 break-words text-zinc-700 sm:order-none sm:w-auto sm:flex-1 dark:text-zinc-300">
         {entry.businessName}
       </span>
-      <span className="w-14 shrink-0 text-right font-mono tabular-nums">{fmtNum(entry.points)} pt</span>
-      <span className="shrink-0 text-right font-mono tabular-nums text-zinc-500 sm:w-24">{fmtUsd(entry.amountUsd)}</span>
+      <span className="w-14 shrink-0 whitespace-nowrap text-right font-mono tabular-nums">{fmtNum(entry.points)} pt</span>
+      {/* Never truncated either: wide enough for $10,000,000.00, the largest amount the log takes. */}
+      <span className="shrink-0 whitespace-nowrap text-right font-mono tabular-nums text-zinc-500 sm:min-w-28">
+        {fmtUsd(entry.amountUsd)}
+      </span>
       <span className="hidden w-24 shrink-0 truncate font-mono text-[11px] text-zinc-400 sm:block" title={entry.createdBy}>
         {handle(entry.createdBy)}
       </span>

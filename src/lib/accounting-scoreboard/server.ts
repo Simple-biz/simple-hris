@@ -23,7 +23,8 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
 import { isSectionKey, type SectionKey, type SectionSetting, type Slot } from './sections';
-import { addDays, todayEastern, weekStartOf } from './week';
+import { addDays, easternToUtc, todayEastern, weekStartOf } from './week';
+import { PAYROLL_EVENT_ACTIONS, type PayrollEvent, type PayrollEventAction } from './payroll-cycle';
 import { collectionsHistory, type CollectionEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
 import type { BoardMember, BoardPayload, BoardRow, RosterPerson } from './types';
@@ -237,7 +238,10 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
   const lastWeekStart = addDays(weekStart, -7);
   const weekEnd = addDays(weekStart, 6);
 
-  const [liveRows, entries, collections, history, settings, bonus] = await Promise.all([
+  const eventsFrom = easternToUtc(addDays(weekStart, -14), 0).toISOString();
+  const eventsTo = easternToUtc(addDays(weekStart, 14), 0).toISOString();
+
+  const [liveRows, entries, collections, history, settings, bonus, payroll] = await Promise.all([
     selectAllPaged<RowRecord>((from, to) =>
       sb.from(ROWS).select(ROW_COLS).is('archived_at', null).order('id').range(from, to),
     ),
@@ -267,9 +271,21 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
     ),
     sb.from(SECTIONS_TABLE).select('section_key, enabled, goal'),
     readBonusCandidates(),
+    // Payroll Timing: HRIS's own Start Processing locks and pay-cycle closes/reopens. Only the action,
+    // the time and the cycle's file name are read; the close-out record itself is never touched.
+    selectAllPaged<{ action: string; created_at: string; resource_id: string | null; src: string | null }>((from, to) =>
+      sb
+        .from('audit_log')
+        .select('action, created_at, resource_id, src:details->>source_file')
+        .in('action', [...PAYROLL_EVENT_ACTIONS])
+        .gte('created_at', eventsFrom)
+        .lt('created_at', eventsTo)
+        .order('created_at')
+        .range(from, to),
+    ),
   ]);
 
-  for (const r of [liveRows, entries, collections, history]) {
+  for (const r of [liveRows, entries, collections, history, payroll]) {
     if (r.error) return dbFailure({ message: r.error }, 'Could not read the scoreboard');
   }
   if (settings.error) return dbFailure(settings.error, 'Could not read the scoreboard');
@@ -339,6 +355,17 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
       history: { allTimeByRow: Object.fromEntries(hist.allTimeByRow), record: hist.record, liveSince },
       members,
       bonus,
+      payrollEvents: payroll.rows
+        .filter((e): e is typeof e & { action: PayrollEventAction } =>
+          (PAYROLL_EVENT_ACTIONS as readonly string[]).includes(e.action),
+        )
+        .map(
+          (e): PayrollEvent => ({
+            action: e.action,
+            at: e.created_at,
+            sourceFile: e.action === 'payroll.dispatch.locked' ? null : e.src ?? e.resource_id,
+          }),
+        ),
       generatedAt: new Date().toISOString(),
     },
   };

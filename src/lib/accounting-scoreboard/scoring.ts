@@ -437,5 +437,6 @@ export function goalMet(goal: GoalRule | undefined, value: number | null): boole
 }
 
 export function goalText(goal: GoalRule): string {
-  return `${goal.direction === 'at_least' ? '≥' : '<'} ${goal.value} ${goal.unit}`;
+  const amount = goal.unit === '%' ? `${goal.value}%` : `${goal.value} ${goal.unit}`;
+  return `${goal.direction === 'at_least' ? '≥' : '<'} ${amount}`;
 }

@@ -254,7 +254,18 @@ function RowsArea({ board, sections, onChanged }: Props) {
             triggerClassName="text-sm"
           />
         </div>
-        {rows.length ? (
+        {section.kind === 'payroll_cycle' ? (
+          <div className="rounded-xl border border-dashed border-zinc-200 px-4 py-5 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+            <p className="font-medium text-zinc-800 dark:text-zinc-200">This section fills itself from HRIS. There are no rows to add.</p>
+            <p className="mt-1 text-xs leading-relaxed">
+              Started is the week&rsquo;s first Start Processing in the Payroll Wizard. Closed is Close Pay Cycle in Payment
+              Dispatch.
+              {rows.length
+                ? ` The ${rows.length} row${rows.length === 1 ? '' : 's'} from the earlier per-person timing ${rows.length === 1 ? 'is' : 'are'} kept, but no longer shown.`
+                : ''}
+            </p>
+          </div>
+        ) : rows.length ? (
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
             <AnimatePresence initial={false}>
               {rows.map((r, i) => (
@@ -275,6 +286,7 @@ function RowsArea({ board, sections, onChanged }: Props) {
             No rows on {section.title} yet.
           </p>
         )}
+        {section.kind === 'payroll_cycle' ? null : (
         <form
           className="flex flex-wrap items-end gap-2"
           onSubmit={async (e) => {
@@ -304,12 +316,15 @@ function RowsArea({ board, sections, onChanged }: Props) {
             <Plus /> Add
           </Button>
         </form>
+        )}
       </div>
-      <RosterPicker
-        disabled={busy}
-        taken={new Set(rows.map((r) => r.workEmail).filter((e): e is string => !!e))}
-        onPick={(p) => void addRow(shortNameFromRoster(p.name) || p.workEmail, p.workEmail)}
-      />
+      {section.kind === 'payroll_cycle' ? null : (
+        <RosterPicker
+          disabled={busy}
+          taken={new Set(rows.map((r) => r.workEmail).filter((e): e is string => !!e))}
+          onPick={(p) => void addRow(shortNameFromRoster(p.name) || p.workEmail, p.workEmail)}
+        />
+      )}
     </div>
   );
 }

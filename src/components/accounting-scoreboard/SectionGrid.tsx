@@ -18,11 +18,14 @@ import {
 } from '@/lib/accounting-scoreboard/scoring';
 import type { BoardRow } from '@/lib/accounting-scoreboard/types';
 import { summarizeSection } from '@/lib/accounting-scoreboard/board';
+import { goalLight } from '@/lib/accounting-scoreboard/stoplight';
+import type { GoalRule } from '@/lib/accounting-scoreboard/sections';
 import {
   DIM,
   EmptyRows,
   Flash,
   GoalChip,
+  LIGHT_STYLE,
   NumberCell,
   SectionHeader,
   TimeCell,
@@ -78,7 +81,14 @@ export function SectionGrid({ section, rows, weekStart, lastWeekStart, today, lo
   const lastDates = useMemo(() => datesFor(lastWeekStart, section.days), [lastWeekStart, section.days]);
   const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
   const summary = useMemo(
-    () => summarizeSection(section, rowIds, lookup, [], weekStart, lastWeekStart, today),
+    () =>
+      summarizeSection(
+        section,
+        rowIds,
+        { lookup, collections: [], payrollEvents: [], today, nowIso: new Date().toISOString() },
+        weekStart,
+        lastWeekStart,
+      ),
     [section, rowIds, lookup, weekStart, lastWeekStart, today],
   );
 
@@ -89,9 +99,12 @@ export function SectionGrid({ section, rows, weekStart, lastWeekStart, today, lo
       help={section.help}
       right={
         <>
-          <GoalChip goal={section.goal} met={summary.met} value={summary.headline} unitFormat={unitFormat} />
+          <GoalChip goal={section.goal} light={summary.light} value={summary.headline} unitFormat={unitFormat} />
           <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            Last week <span className="font-mono tabular-nums">{unitFormat(summary.lastHeadline)}</span>
+            Last week{' '}
+            <span className={cn('font-mono tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>
+              {unitFormat(summary.lastHeadline)}
+            </span>
           </span>
         </>
       }
@@ -228,7 +241,7 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
               {section.score ? (
                 <td className={cn(TD, NUM, 'font-semibold')}>
                   <Flash value={s.score} scope={scope}>
-                    <ScoreText score={s.score} goal={section.goal?.value} />
+                    <ScoreText score={s.score} goal={section.goal} />
                   </Flash>
                 </td>
               ) : null}
@@ -262,7 +275,7 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
           {section.score ? (
             <td className={cn(TD, NUM, 'font-semibold')}>
               <Flash value={stats.headline} scope={scope}>
-                <ScoreText score={stats.headline} goal={section.goal?.value} />
+                <ScoreText score={stats.headline} goal={section.goal} />
               </Flash>
             </td>
           ) : null}
@@ -291,22 +304,18 @@ function FragmentPair() {
 
 /** A footer number shaped like a NumberCell (w-14; 1px border + px-1.5 = 7px), so its digits line up with the box's. */
 function BoxAligned({ children }: { children: ReactNode }) {
-  return <span className="inline-block w-14 pr-[7px] text-right font-mono tabular-nums">{children}</span>;
+  return <span className="inline-block min-w-14 pr-[7px] text-right font-mono tabular-nums">{children}</span>;
 }
 
 function FragmentCells({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function ScoreText({ score, goal }: { score: number | null; goal?: number }) {
+/** A row score in its stop-light colour: the same thresholds as the Overview (stoplight.ts). */
+function ScoreText({ score, goal }: { score: number | null; goal?: GoalRule }) {
   if (score === null) return <span className={DIM}>—</span>;
-  const tone =
-    goal === undefined
-      ? 'text-zinc-800 dark:text-zinc-200'
-      : score >= goal
-        ? 'text-emerald-700 dark:text-emerald-400'
-        : 'text-amber-700 dark:text-amber-400';
-  return <span className={tone}>{fmtScore(score)}</span>;
+  const light = goalLight(goal, score);
+  return <span className={light === 'none' ? 'text-zinc-800 dark:text-zinc-200' : LIGHT_STYLE[light].text}>{fmtScore(score)}</span>;
 }
 
 function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {

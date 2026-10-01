@@ -1,7 +1,7 @@
 /**
- * One number per section for a week, the number its goal is judged on. The overview tiles and the
- * section headers both read it, so they can never disagree.
- * Pure. Governing doc: docs/features/accounting-scoreboard.md § Scoring.
+ * One number and one stop light per section for a week: what its goal is judged on. The overview
+ * tiles and the section headers both read it, so they can never disagree.
+ * Pure. Governing doc: docs/features/accounting-scoreboard.md § Scoring, § Stop light.
  */
 
 import type { ResolvedSection } from './sections';
@@ -10,62 +10,90 @@ import {
   amPmSectionStats,
   collectionsWeekStats,
   dailySectionStats,
-  goalMet,
   timeSpanSectionHours,
   type CollectionEntry,
   type EntryLookup,
 } from './scoring';
+import { cycleLight, cycleWeek, type PayrollEvent } from './payroll-cycle';
+import { goalLight, weekPace, type Light } from './stoplight';
+
+/** Everything a headline can be computed from. */
+export interface BoardContext {
+  lookup: EntryLookup;
+  collections: readonly Pick<CollectionEntry, 'date' | 'rowId' | 'points'>[];
+  payrollEvents: readonly PayrollEvent[];
+  /** US Eastern date. */
+  today: string;
+  /** Now, for Payroll Timing's deadlines. */
+  nowIso: string;
+}
 
 /**
  * - buckets / inbox → the section's 1–10 score
  * - chargebacks     → net cleared, Σ(AM − PM)
  * - collections     → team points
  * - PM buckets      → Σ of the PMs' daily averages (the sheet's WTD AVG total)
- * - payroll timing  → team hours
+ * - payroll timing  → the cycle score, once both checks are decided
  * - other daily     → the team's week total
  */
 export function sectionHeadline(
   section: ResolvedSection,
   rowIds: readonly string[],
-  lookup: EntryLookup,
-  collections: readonly Pick<CollectionEntry, 'date' | 'rowId' | 'points'>[],
+  ctx: BoardContext,
   weekStart: string,
-  today: string,
 ): number | null {
   const dates = datesFor(weekStart, section.days);
   switch (section.kind) {
     case 'am_pm':
-      return amPmSectionStats(rowIds, dates, lookup, section.score, today).headline;
+      return amPmSectionStats(rowIds, dates, ctx.lookup, section.score, ctx.today).headline;
     case 'daily':
-      return dailySectionStats(rowIds, dates, lookup).weekTotal;
+      return dailySectionStats(rowIds, dates, ctx.lookup).weekTotal;
     case 'daily_flag':
-      return dailySectionStats(rowIds, dates, lookup).averageTotal;
+      return dailySectionStats(rowIds, dates, ctx.lookup).averageTotal;
     case 'time_span':
-      return timeSpanSectionHours(rowIds, dates, lookup).total;
+      return timeSpanSectionHours(rowIds, dates, ctx.lookup).total;
     case 'collections': {
-      const s = collectionsWeekStats(rowIds, collections, dates);
+      const s = collectionsWeekStats(rowIds, ctx.collections, dates);
       return s.week.accounts === 0 ? null : s.week.points;
     }
+    case 'payroll_cycle':
+      return cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso).score;
   }
 }
 
 export interface SectionSummary {
   headline: number | null;
   lastHeadline: number | null;
-  met: boolean | null;
-  lastMet: boolean | null;
+  /** This week, judged on pace for running totals. */
+  light: Light;
+  /** Last week, judged on the full goal. */
+  lastLight: Light;
 }
 
 export function summarizeSection(
   section: ResolvedSection,
   rowIds: readonly string[],
-  lookup: EntryLookup,
-  collections: readonly Pick<CollectionEntry, 'date' | 'rowId' | 'points'>[],
+  ctx: BoardContext,
   weekStart: string,
   lastWeekStart: string,
-  today: string,
 ): SectionSummary {
-  const headline = sectionHeadline(section, rowIds, lookup, collections, weekStart, today);
-  const lastHeadline = sectionHeadline(section, rowIds, lookup, collections, lastWeekStart, today);
-  return { headline, lastHeadline, met: goalMet(section.goal, headline), lastMet: goalMet(section.goal, lastHeadline) };
+  const headline = sectionHeadline(section, rowIds, ctx, weekStart);
+  const lastHeadline = sectionHeadline(section, rowIds, ctx, lastWeekStart);
+  if (section.kind === 'payroll_cycle') {
+    // A cycle's light comes from its two checks, so "started on time, close not due yet" is green
+    // even though the score is not decided.
+    return {
+      headline,
+      lastHeadline,
+      light: cycleLight(cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso)),
+      lastLight: cycleLight(cycleWeek(ctx.payrollEvents, lastWeekStart, ctx.nowIso)),
+    };
+  }
+  const pace = weekPace(datesFor(weekStart, section.days), ctx.today);
+  return {
+    headline,
+    lastHeadline,
+    light: goalLight(section.goal, headline, pace),
+    lastLight: goalLight(section.goal, lastHeadline, 1),
+  };
 }

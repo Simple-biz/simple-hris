@@ -4,6 +4,7 @@
  */
 
 import type { PreviewVerdict } from './bonus-preview';
+import type { PayrollEvent } from './payroll-cycle';
 import type { CollectionEntry, StoredEntry } from './scoring';
 import type { SectionKey, SectionSetting } from './sections';
 
@@ -46,6 +47,12 @@ export interface BoardPayload {
   /** Managers only. */
   members: BoardMember[] | null;
   bonus: PreviewVerdict;
+  /**
+   * HRIS's own Start Processing locks and pay-cycle closes/reopens, from two weeks before the week
+   * shown to two weeks after it (audit_log; action, time and cycle file only). Payroll Timing is
+   * computed from these and nothing is typed (payroll-cycle.ts).
+   */
+  payrollEvents: PayrollEvent[];
   generatedAt: string;
 }
 

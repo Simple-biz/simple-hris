@@ -86,6 +86,41 @@ export function todayEastern(now: Date = new Date()): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+/**
+ * The UTC instant of a US Eastern wall-clock time on `date`, e.g. Tuesday 12:00 PM ET (DST aware).
+ * Reads the Eastern clock at a first guess and corrects by the difference; exact away from the
+ * 2 AM switch hour, which no deadline here uses.
+ */
+export function easternToUtc(date: string, hour: number, minute = 0): Date {
+  const d = toUtc(date);
+  const guess = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), hour, minute);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SCOREBOARD_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date(guess));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const wall = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'));
+  return new Date(guess - (wall - guess));
+}
+
+/** "9/29 11:01 AM" in US Eastern, the way the sheet prints a cycle time. */
+export function formatEasternDateTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: SCOREBOARD_TIME_ZONE,
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+    .format(new Date(iso))
+    .replace(',', '');
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** "Sep 28 – Oct 2, 2026": the week's Monday to Friday, as the sheet labels it. */
@@ -98,6 +133,15 @@ export function weekLabel(weekStart: string): string {
       ? `${fri.getUTCDate()}`
       : `${MONTHS[fri.getUTCMonth()]} ${fri.getUTCDate()}`;
   return `${left} – ${right}, ${fri.getUTCFullYear()}`;
+}
+
+/** "Sep 20 – 26" (or "Sep 27 – Oct 3") for an inclusive date range, e.g. the work week a cycle pays. */
+export function rangeLabel(start: string, end: string): string {
+  const a = toUtc(start);
+  const b = toUtc(end);
+  const left = `${MONTHS[a.getUTCMonth()]} ${a.getUTCDate()}`;
+  const right = a.getUTCMonth() === b.getUTCMonth() ? `${b.getUTCDate()}` : `${MONTHS[b.getUTCMonth()]} ${b.getUTCDate()}`;
+  return `${left} – ${right}`;
 }
 
 /** "Mon 9/28" for a column header. */

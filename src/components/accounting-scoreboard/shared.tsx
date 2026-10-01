@@ -8,9 +8,109 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
+import {
+  FolderKanban,
+  HandCoins,
+  Handshake,
+  Headphones,
+  Layers,
+  Mail,
+  ShieldAlert,
+  ShieldCheck,
+  Timer,
+  TriangleAlert,
+  type LucideIcon,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { GoalRule } from '@/lib/accounting-scoreboard/sections';
+import type { GoalRule, SectionKey } from '@/lib/accounting-scoreboard/sections';
 import { goalText, minutesToTimeInput, timeInputToMinutes } from '@/lib/accounting-scoreboard/scoring';
+import { LIGHT_LABEL, type Light } from '@/lib/accounting-scoreboard/stoplight';
+
+/** One icon per KPI card (Kane: "add like icons that match the kpi card"). */
+export const SECTION_ICON: Record<SectionKey, LucideIcon> = {
+  buckets: Layers,
+  collections: HandCoins,
+  pm_buckets: FolderKanban,
+  onboarding: Handshake,
+  inbox: Mail,
+  chargebacks: ShieldAlert,
+  compliance: ShieldCheck,
+  cancellations: Headphones,
+  payroll_timing: Timer,
+  payroll_problems: TriangleAlert,
+};
+
+/**
+ * The stop light's tones (stoplight.ts): emerald = on track, amber = close (the stop light's middle,
+ * ui-standards § 6.3 "caution"), rose = behind. `none` stays neutral: absence is not a colour.
+ */
+export const LIGHT_STYLE: Record<Light, { tile: string; number: string; icon: string; chip: string; text: string; dot: string }> = {
+  green: {
+    tile: 'border-emerald-200 bg-emerald-50/70 hover:bg-emerald-50 dark:border-emerald-900/70 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40',
+    number: 'text-emerald-700 dark:text-emerald-300',
+    icon: 'from-emerald-500 to-teal-600 shadow-emerald-600/25',
+    chip: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300',
+    text: 'text-emerald-700 dark:text-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  amber: {
+    tile: 'border-amber-200 bg-amber-50/70 hover:bg-amber-50 dark:border-amber-900/70 dark:bg-amber-950/25 dark:hover:bg-amber-950/40',
+    number: 'text-amber-700 dark:text-amber-300',
+    icon: 'from-amber-400 to-orange-500 shadow-amber-600/25',
+    chip: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
+    text: 'text-amber-700 dark:text-amber-300',
+    dot: 'bg-amber-400',
+  },
+  red: {
+    tile: 'border-rose-200 bg-rose-50/80 hover:bg-rose-50 dark:border-rose-900/70 dark:bg-rose-950/30 dark:hover:bg-rose-950/45',
+    number: 'text-rose-700 dark:text-rose-300',
+    icon: 'from-rose-500 to-red-600 shadow-rose-600/25',
+    chip: 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300',
+    text: 'text-rose-700 dark:text-rose-300',
+    dot: 'bg-rose-500',
+  },
+  none: {
+    tile: 'border-zinc-200 bg-white/80 hover:bg-orange-50/40 dark:border-zinc-800 dark:bg-zinc-950/70 dark:hover:bg-zinc-900/60',
+    number: 'text-zinc-900 dark:text-zinc-100',
+    icon: 'from-zinc-400 to-zinc-500 shadow-zinc-500/20',
+    chip: 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400',
+    text: 'text-zinc-500 dark:text-zinc-400',
+    dot: 'bg-zinc-300 dark:bg-zinc-700',
+  },
+};
+
+/**
+ * A literal stop light: a dark housing with red, amber and green lamps; the live one glows.
+ * Colour is never the only signal: the label is in aria-label and printed beside it.
+ */
+export function StopLight({ light, className }: { light: Light; className?: string }) {
+  const lamps: { key: Exclude<Light, 'none'>; on: string; glow: string }[] = [
+    { key: 'red', on: 'bg-rose-500', glow: 'shadow-[0_0_10px_2px_rgba(244,63,94,0.65)]' },
+    { key: 'amber', on: 'bg-amber-400', glow: 'shadow-[0_0_10px_2px_rgba(251,191,36,0.6)]' },
+    { key: 'green', on: 'bg-emerald-500', glow: 'shadow-[0_0_10px_2px_rgba(16,185,129,0.6)]' },
+  ];
+  return (
+    <span
+      role="img"
+      aria-label={LIGHT_LABEL[light]}
+      title={LIGHT_LABEL[light]}
+      className={cn(
+        'inline-flex shrink-0 flex-col items-center gap-1 rounded-full bg-zinc-900 px-1 py-1.5 shadow-inner ring-1 ring-zinc-800 dark:bg-black dark:ring-zinc-800',
+        className,
+      )}
+    >
+      {lamps.map((l) => (
+        <span
+          key={l.key}
+          className={cn(
+            'size-2.5 rounded-full transition-[background-color,box-shadow] duration-300',
+            light === l.key ? cn(l.on, l.glow) : 'bg-zinc-700/80 dark:bg-zinc-800',
+          )}
+        />
+      ))}
+    </span>
+  );
+}
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string; code: string };
 
@@ -162,20 +262,29 @@ export function Flash({
   );
 }
 
-/** Goal chip: the sheet's goal and whether this week meets it. Absence is neutral, never "met". */
-export function GoalChip({ goal, met, value, unitFormat }: { goal?: GoalRule; met: boolean | null; value: number | null; unitFormat: (n: number | null) => string }) {
+/** Goal chip: the sheet's goal, this week's number, and the stop light's call on it. */
+export function GoalChip({
+  goal,
+  light,
+  value,
+  unitFormat,
+}: {
+  goal?: GoalRule;
+  light: Light;
+  value: number | null;
+  unitFormat: (n: number | null) => string;
+}) {
   if (!goal) return null;
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors duration-300',
-        met === true && 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300',
-        met === false && 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
-        met === null && 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400',
+        LIGHT_STYLE[light].chip,
       )}
     >
       <span className="font-mono tabular-nums">{unitFormat(value)}</span>
       <span className="opacity-70">goal {goalText(goal)}</span>
+      {light !== 'none' ? <span className="font-semibold">· {LIGHT_LABEL[light]}</span> : null}
     </span>
   );
 }
@@ -291,7 +400,9 @@ export function NumberCell({
       }}
       className={cn(
         CELL,
-        'w-14',
+        // A box holds up to 100,000 (validate.ts MAX_COUNT); it widens past 4 characters so a big
+        // number is never cut off. Most counts are 1–3 digits (measured max 94 on 10-01).
+        draft.length > 4 ? 'w-20' : 'w-14',
         warn && 'border-amber-400 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-950/30',
         saving && 'opacity-70',
         className,

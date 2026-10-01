@@ -2054,6 +2054,9 @@ date: `payroll-clerk/AutoThresholdNotice.tsx` (`c7a437ff`) and `src/hooks/useKpi
 with the `.ts` helper `payroll-clerk/useAutoThreshold.ts`, for 326 rows. `manager/ManagerBonusHistory.tsx` was deleted by
 `31fd9c0a` and its row went with it. Diffed both directions against the tree: every `.tsx` and hook is below. Sep 29 log item 289.
 
+**2026-10-01:** the seven `accounting-scoreboard/` files were added with their build (Sep 29 log items 315 and 317). The table
+holds 341 rows. It was not re-diffed against the whole tree on this date.
+
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
 not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
 2026-09-29, a count of cells — the matches were not re-run).
@@ -2069,6 +2072,13 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/SystemDiagnostics.tsx` | component | *this file* · [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) · [diagnostics-service-maps](../features/diagnostics-service-maps.md) |
 | `src/components/SystemSettings.tsx` | component | *this file* |
 | `src/components/ThemeProvider.tsx` | component | *this file* |
+| `src/components/accounting-scoreboard/CollectionsPanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/PayrollCyclePanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/ScoreboardApp.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/SectionGrid.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/SectionsDrawer.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/SetupPanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/shared.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting/AccountingCollabLayer.tsx` | component | [accounting-cobrowse](../features/accounting-cobrowse.md) |
 | `src/components/accounting/AccountingDocuments.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [documents-tab](../features/documents-tab.md) |
 | `src/components/accounting/AccountingTransfers.tsx` | component | [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [department-transfers](../features/department-transfers.md) |

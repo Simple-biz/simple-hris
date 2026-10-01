@@ -3207,12 +3207,57 @@ lock. `{ action: 'unlock', sheet, week, reason }` (reason required, ≤ 500) →
 
 ---
 
+## 24. Accounting Scoreboard *(added 2026-10-01)*
+
+Carla's team scoreboard at `/accounting-scoreboard` (and the whole site on `ACCOUNTING_SCOREBOARD_HOST`).
+Governing doc: [accounting-scoreboard.md](../features/accounting-scoreboard.md). Tables `accounting_scoreboard_*`,
+migration `references/sql/create/2026-10-01_accounting_scoreboard.sql` (**applied** 2026-10-01). **Every route gates on the
+board's MEMBER list, not an HRIS role** (`resolveAccess` in `src/lib/accounting-scoreboard/server.ts`): members are live
+person rows + `accounting_scoreboard_members`; `accounting` / `admin` are managers. Errors are `{ error, code }`:
+`401 auth_required`, `403 not_member | not_manager`, `503 not_set_up` (tables missing), `400 bad_request`, `409`, `422 refused`.
+Every `*_by` is the session email. Nothing here writes pay.
+
+### `GET /api/accounting-scoreboard?week=<Sunday>`
+
+Members. The board for one week (default: this week, US Eastern): rows (live, plus archived rows that have numbers in the
+two weeks shown), this and last week's entries and collections, all-time points per rep and the record week, section
+switches, the Dancing Queen preview candidate, and `payrollEvents` (Start Processing locks and pay-cycle closes/reopens
+from `audit_log`, two weeks either side; action, time and cycle file only). Members list for managers only. All lists paged.
+
+### `PUT /api/accounting-scoreboard/entries`
+
+Members. `{ rowId, date, slot, value | null }`: set or clear one cell (`null` deletes; 0 is a real count). Counts 0–100,000,
+≤ 2 decimals; refused: a future date, a slot or weekday the row's section does not keep, an archived row, any Payroll Timing write.
+
+### `POST /api/accounting-scoreboard/collections` · `DELETE ?id=`
+
+Members. POST `{ rowId, date (Mon–Fri), businessName, points (WHOLE number 0–100), amountUsd? (≤ 2 decimals) }` → 201. DELETE soft-deletes
+(the logger or a manager only). The log is append-only: a trigger refuses every other UPDATE.
+
+### `POST /api/accounting-scoreboard/rows` · `PATCH`
+
+Managers. POST `{ sectionKey, label, workEmail? }` (a work email must be on `active_employees`); PATCH `{ id, label?, sortOrder?, archived?: true }` (never un-archived).
+
+### `POST /api/accounting-scoreboard/members` · `DELETE ?email=`
+
+Managers. Extra members (removal is a stamp).
+
+### `PATCH /api/accounting-scoreboard/sections`
+
+Managers. `{ sectionKey, enabled?, goal? }` (`goal: null` = the sheet's goal; a goal-less section cannot get one).
+
+### `GET /api/accounting-scoreboard/roster`
+
+Managers. The people picker: `{ people: [{ name, department, workEmail }] }` from `active_employees`, paged; no other column.
+
+---
+
 ## Route index — every `app/api/**/route.ts` in the tree
 
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3259,6 +3304,13 @@ of cells — the matches were not re-run).
 
 | Route | Verbs | Gate | Mentioned in |
 |---|---|---|---|
+| `/api/accounting-scoreboard` | GET | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/collections` | POST, DELETE | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/entries` | PUT | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/members` | POST, DELETE | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/roster` | GET | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/rows` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/sections` | PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting/documents` | GET | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/[id]` | GET, PATCH, DELETE | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/coe` | POST | `requireFeatureEdit` | — **no doc** |

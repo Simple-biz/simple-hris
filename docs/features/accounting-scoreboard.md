@@ -19,7 +19,9 @@ starts from, covering what every sheet section measures, who is in it and the sh
 | The 10 sections (kind, days, slots, goals) | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
-| One headline per section | `src/lib/accounting-scoreboard/board.ts` |
+| One headline and one stop light per section | `src/lib/accounting-scoreboard/board.ts` |
+| The stop light (green / amber / red, paced) | `src/lib/accounting-scoreboard/stoplight.ts` |
+| Payroll Timing from HRIS (cycle, deadlines, score) | `src/lib/accounting-scoreboard/payroll-cycle.ts` |
 | Dancing Queen preview | `src/lib/accounting-scoreboard/bonus-preview.ts` |
 | Host rule for the domain | `src/lib/accounting-scoreboard/host.ts`, called from `proxy.ts` |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
@@ -27,8 +29,8 @@ starts from, covering what every sheet section measures, who is in it and the sh
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
 | Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board · `entries` PUT · `collections` POST/DELETE · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
-| UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` · `SectionGrid` · `CollectionsPanel` · `SetupPanel` · `shared`) |
-| Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring, board, bonus preview, host, validate, names) |
+| UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
+| Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
 
 ## Who may open it: the board's member list, never an HRIS role
 
@@ -88,7 +90,7 @@ hard-coded subset.
 | Chargebacks | AM/PM | Mon–Fri | net cleared Σ(AM − PM) | — |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | — |
-| Payroll Timing | start/end times | **Sun–Thu** | team hours | < 20 |
+| Payroll Timing | **from HRIS, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
 | Payroll Problems | daily | Mon–Fri | week total | < 20 |
 
 - **The sheet's formulas are kept exactly**, apart from one deliberate change. The sheet's `SUM`
@@ -104,11 +106,59 @@ hard-coded subset.
 - **Absence is not zero** (`ui-standards.md` § 12.5). A cleared cell is a **deleted** entry, never a
   stored 0, and anything never typed prints "—". Nothing logged is "—", not 0 points.
 
+## Payroll Timing fills itself
+
+Kane, 2026-10-01, with a screenshot of Carla's "Payroll Scoreboard (Timing)": per week, when the cycle
+**started** (goal Tuesday 12:00 PM) and **closed** (goal Friday 12:00 PM), each on time or not, a cycle score,
+and an Average over This week / Last week / Two weeks ago. Every time on that sheet is one of HRIS's **own
+audit events** (read-only check, 2026-10-01: all five sheet times matched to the minute, Eastern), so nobody
+types this section. The same day it replaced a per-person start/end-time grid (goal "< 20 hours").
+
+- **Started = the week's FIRST `payroll.dispatch.locked`.** Start Processing turns on the wizard's
+  `payroll.dispatch_locked` lock (`processing-guard.ts`). A later re-lock in the same week does not move it.
+- **Closed = the `payment_cycle.closed` of the cycle that week PAYS**, the Sunday–Saturday before it, matched on
+  the **parsed date range** in the source file and never on the file name (memory
+  `orphanage-source-file-drift-hides-a-week`). A `payment_cycle.reopened` after the close opens it again
+  (`cycle-closeout.md`), and the close that sticks is the one judged.
+- Deadlines are noon **Eastern**, and on the dot is on time. Each check is `on_time`, `late`, `pending` (not
+  yet, deadline still ahead) or `missed` (not yet, deadline passed, so it counts as late). Pending prints "—",
+  never Late.
+- **Cycle score = 25% for starting on time + 75% for closing on time**, scored only once both are decided.
+  This is CHOSEN, not read from the sheet: it reproduces the sheet's two scored rows (start on time, close
+  late = 25%; both late = 0%). The panel prints the formula. If Carla's real formula differs, change
+  `SCORE_WEIGHTS` and the test that pins it.
+- The Average row is the sheet's: each column over the weeks where it is decided (start 2 of 3 = 67%, close
+  0 of 2 = 0%, score (25 + 0) ÷ 2 = 13%). `payroll-cycle.test.ts` replays the real events and asserts the
+  sheet cell for cell.
+- The board reads four columns (`action`, `created_at`, `resource_id`, `details->>source_file`) of three
+  actions from `audit_log`, two weeks either side of the week shown, paged. It never reads or writes the
+  close-out record. The 3 rows and 1 entry typed under the old grid are kept and not shown.
+
+## Stop light
+
+Kane, 2026-10-01: *"if its performing badly lets make the feel look that we are failing kind of RED and if its
+GOOD then its green and orange is for middle … kinda like a stop light"*. One rule (`stoplight.ts`) feeds the
+Overview cards, every goal chip and every row score, so a card and its tab can never disagree.
+
+- **green** = goal met, or on pace. **amber** = close: at least 80% of an "at least" goal, or under 120% of
+  a "below" goal. Amber is the stop light's middle and ui-standards § 6.3's caution tone. **red** = behind.
+  **none** = no numbers, no goal, or too early to call. Absence is never a colour.
+- **This week's running totals are judged on PACE**, against goal × the share of the section's days that are
+  over (Thursday = 3 of 5). Without it every Monday is red. A past week is judged on the full goal. Scores
+  and averages are never paced. For a "below" goal, going over the FULL goal is final whatever the pace.
+- Payroll Timing's light comes from its checks: every decided check on time = green, none = red, a mix =
+  amber. So a cycle that started on time is green until Friday decides the close.
+- An Overview card shows the light as a real stop light (a dark housing, the live lamp glows) **and** the
+  word (On track / Close / Behind). Colour is never the only signal. A card tints its border and background,
+  never with a thick side border (the craft floor). Each card carries its KPI's own icon (`SECTION_ICON`)
+  and a 5xl number (Kane, same day: *"make the numbers bigger … add like icons that match the kpi card"*).
+  Until Payroll Timing is scored, its card shows when this week's cycle started.
+
 ## Weeks and days
 
 - A week is keyed by its **Sunday**, the HRIS pay week and the `period_start` the KPI calculator uses, so
-  a board week and the Dancing Queen week it feeds share a key. The board shows Mon–Fri, and Payroll
-  Timing also shows Sunday.
+  a board week and the Dancing Queen week it feeds share a key. The board shows Mon–Fri, and no section
+  keeps a weekend (`sections.test.ts`).
 - Days are **US Eastern** dates (`todayEastern()`). A Manila evening shift entering Monday's numbers is
   still on Monday. Future dates are refused at write and disabled on screen.
 - "Last week", WTD, All Time and the record are **computed from stored entries and never typed**. That
@@ -142,9 +192,19 @@ hard-coded subset.
 
 ## Writes
 
-- Every body is parsed in `validate.ts` first, and the SQL CHECKs are the last line. Counts are 0–100000
-  with 2 decimals, times are whole minutes 0–1440, the meeting tick is 0/1, points are 0–100, and dates
-  run from 2024-01-01 to today.
+- Every body is parsed in `validate.ts` first, and the SQL CHECKs are the last line. Counts are 0–100,000
+  (`MAX_COUNT`; the biggest typed by 2026-10-01 was 94) with at most 2 decimals, times are whole minutes
+  0–1440, the meeting tick is 0/1, and dates run from 2024-01-01 to today.
+- **Points are WHOLE numbers, 0–100.** Every point on the sheet's 9,984-row log and on the board is an
+  integer, so a decimal in Points is a dollar amount typed into the wrong box. That was the "error
+  mentioning decimals" Carla hit (meeting, 2026-10-01). The Points field takes digits only, and the server
+  refuses a decimal with *"Points are a whole number, usually 1. The dollar amount goes in Amount (USD)."*
+  Amounts are dollars and cents (at most 2 decimals, at most $10,000,000).
+- **Every refusal names the rule it broke** (negative, too big, too many decimals), never a catch-all. The
+  old single message blamed decimals for a range error. The Collections form checks the same rules before
+  it sends and shows one line under the form naming the field, whose box gets the red `aria-invalid`
+  border, so an error never pushes the boxes out of line.
+- **Payroll Timing takes no writes**: it has no slots, so `entryAllowed()` refuses every one.
 - `entryAllowed()` refuses a slot the row's section does not have, or a day that section does not keep.
   Archived rows are read-only.
 - A row with a work email **is** that HRIS person, so the address must be on `active_employees`.
@@ -178,6 +238,11 @@ hard-coded subset.
 - Log lines, Setup rows and members rise in and drift out while the rest close the gap
   (`layout="position"`), and the podium re-orders by gliding. All movement is gated on
   `useReducedMotion()`.
+- **A box widens past 4 characters** (`w-14` → `w-20`), so a number up to the 100,000 limit is never cut
+  off, and a day total sits in a box-wide span (`min-w-14`) that grows with it. That answers Carla's
+  question about AM/PM limits (meeting, 2026-10-01).
+- **A log line never cuts text off**: the business name wraps and the amount is never truncated (Carla:
+  *"the text cuts off"*).
 - **A failed week change** keeps the last good board under the "Couldn't refresh" bar, the same as a
   failed background refresh. It never shows the old week silently.
 - **AM/PM columns share one centre line** (`PAIR_CELL` in `SectionGrid.tsx`): the AM/PM label, the
@@ -190,8 +255,25 @@ hard-coded subset.
   smeared the orange gradient over the orange-tinted form in dark mode (Kane's "Collections UI bug").
   The text fields' focus ring is orange, matching the dropdowns beside them. On a phone a log line
   gives the business name its own full-width line, and the "by" handle shows from `sm`.
+- **Below `md` (768 px) the tabs are in a burger menu** (Kane, 2026-10-01: *"The mobile view please make
+  sure the tabs are in burger"*). The tab row is `hidden md:flex`. On a phone the header has the burger,
+  the title and the **name of the tab you are on** (the signed-in email moves to the menu's footer).
+  `SectionsDrawer` is the dashboard shell's mobile drawer (ui-standards § 1.1, § 2, § 3.1, § 16): it slides
+  in from the left over a backdrop, with `id="acct-sb-sidebar-nav"` and `role="navigation"`. The burger
+  carries `aria-expanded` and `aria-controls`, and the burger and the close-X are outline icon Buttons.
+  - **While it is open the page behind it is `inert`** (no focus, no clicks, nothing read out). Escape,
+    the backdrop, the X and picking a tab all close it. Opening focuses the tab you are on, and closing
+    hands focus back to the burger.
+  - **Growing past `md` closes it.** The menu is `md:hidden`, so one left open across a resize would
+    leave an inert page with no visible way out. Do not drop the `matchMedia` listener.
+  - Each section in the menu carries its stop-light dot (with the word for screen readers) from
+    `summarizeAll`, the same call as the Overview cards, so the menu and the cards never disagree.
+    Overview and Setup carry none.
+  - Reduced motion drops the slide and keeps a fade.
 - Verified in headless Chromium against the compiled Tailwind stylesheet at 1360 px, 1100 px and a
-  390 px frame (not signed in: the panels rendered on fixture data).
+  390 px frame (not signed in: the panels rendered on fixture data). The burger menu was verified on
+  2026-10-01 against the real `ScoreboardApp`, bundled with a mocked board GET, with 26 scripted checks at
+  390, 700, 1024 and 1360 px, light and dark, and under reduced motion.
 
 ## Live refresh
 

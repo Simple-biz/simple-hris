@@ -134,6 +134,15 @@
         ],
         "createdAt": "2026-10-01T18:21:16.482Z",
         "reason": "Claude, verified: SlidingPill idle text is zinc on a transparent background; the hover state that adds bg-orange-50 also sets text-orange-900 (ui-standards § 11.1 pill anatomy)"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/accounting-scoreboard/SectionsDrawer.tsx"
+        ],
+        "createdAt": "2026-10-01T21:04:26.964Z",
+        "reason": "Claude, verified: the idle drawer item is zinc text on a transparent ground; the hover that adds bg-orange-50 also sets text-orange-900 (same pill anatomy as SlidingPill, ui-standards 11.1)"
       }
     ]
   }

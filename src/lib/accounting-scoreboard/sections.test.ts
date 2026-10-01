@@ -49,22 +49,27 @@ test('every key has exactly one section, in tab order, and nothing extra', () =>
   assert.equal(new Set(SECTIONS.map((s) => s.key)).size, SECTIONS.length);
 });
 
-test('every section keeps real weekdays, and only Payroll Timing keeps a Sunday', () => {
+test('every section keeps real weekdays and never a weekend; Payroll Timing keeps its two deadline days', () => {
   for (const s of SECTIONS) {
     assert.ok(s.days.length > 0, s.key);
     for (const d of s.days) assert.ok(WEEKDAYS.includes(d), `${s.key}:${d}`);
-    assert.equal(s.days.includes('sun'), s.key === 'payroll_timing', s.key);
-    assert.ok(!s.days.includes('sat'), s.key);
+    assert.ok(!s.days.includes('sat') && !s.days.includes('sun'), s.key);
   }
+  assert.deepEqual(sectionDef('payroll_timing').days, ['tue', 'fri']);
 });
 
-test('the sheet goals are kept: buckets ≥ 8, inbox ≥ 9, collections ≥ 85, compliance ≥ 30, payroll < 20', () => {
+test('Payroll Timing is typed by nobody: it has no slots, so every write to it is refused', () => {
+  assert.equal(sectionDef('payroll_timing').kind, 'payroll_cycle');
+  assert.deepEqual(slotsFor('payroll_timing'), []);
+});
+
+test('the sheet goals are kept: buckets ≥ 8, inbox ≥ 9, collections ≥ 85, compliance ≥ 30, problems < 20, a full cycle score', () => {
   const g = (k: (typeof SECTION_KEYS)[number]) => sectionDef(k).goal;
   assert.deepEqual([g('buckets')?.value, g('buckets')?.direction, g('buckets')?.measure], [8, 'at_least', 'avg_score']);
   assert.deepEqual([g('inbox')?.value, g('inbox')?.direction, g('inbox')?.measure], [9, 'at_least', 'avg_score']);
   assert.deepEqual([g('collections')?.value, g('collections')?.direction], [85, 'at_least']);
   assert.deepEqual([g('compliance')?.value, g('compliance')?.direction], [30, 'at_least']);
-  assert.deepEqual([g('payroll_timing')?.value, g('payroll_timing')?.direction], [20, 'below']);
+  assert.deepEqual([g('payroll_timing')?.value, g('payroll_timing')?.direction, g('payroll_timing')?.measure], [100, 'at_least', 'cycle_score']);
   assert.deepEqual([g('payroll_problems')?.value, g('payroll_problems')?.direction], [20, 'below']);
   for (const k of ['chargebacks', 'pm_buckets', 'onboarding', 'cancellations'] as const) assert.equal(g(k), undefined, k);
 });
@@ -73,7 +78,7 @@ test('slots follow the kind; collections has no grid slot', () => {
   assert.deepEqual(slotsFor('buckets'), ['am', 'pm']);
   assert.deepEqual(slotsFor('inbox'), ['am', 'pm']);
   assert.deepEqual(slotsFor('pm_buckets'), ['day', 'mtg']);
-  assert.deepEqual(slotsFor('payroll_timing'), ['start', 'end']);
+  assert.deepEqual(SLOTS_BY_KIND.time_span, ['start', 'end'], 'kept for the SQL slot contract');
   assert.deepEqual(slotsFor('collections'), []);
   const used = new Set(Object.values(SLOTS_BY_KIND).flat());
   assert.deepEqual([...used].sort(), [...SLOTS].sort(), 'every SQL slot is used by some kind');
