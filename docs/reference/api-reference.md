@@ -3173,12 +3173,12 @@ Accounting → NPD, the manual payroll sheet. Governing doc: [npd-dashboard.md](
 Route: [app/api/accounting/npd/route.ts](../../app/api/accounting/npd/route.ts). Service-role tables
 `npd_sheets` + `npd_all_departments_rows` / `npd_hsl_rows`, migration
 `references/sql/create/2026-10-01_npd_sheets.sql` (**applied**); Lock in
-`references/sql/alter/2026-10-01_npd_sheets_lock.sql` (**PENDING**).
+`references/sql/alter/2026-10-01_npd_sheets_lock.sql` and formulas `references/sql/alter/2026-10-01_npd_formulas.sql` (both **PENDING**, in that order).
 
 ### `GET /api/accounting/npd?sheet=all_departments|hsl&week=<Sunday>`
 
 Gate `requireFeatureAccess('accounting', 'npd', 'view')`. **200** `{ sheet, week, version, rowCount, updatedAt,
-updatedBy, lockedAt, lockedBy, rows: [{ id, values: string[] }] }`, `values` in `columns.ts` order (30 / 32 cells, `''` = empty).
+updatedBy, lockedAt, lockedBy, usdPerPhp, columnFormulas, rows: [{ id, values: string[], overrides: string[], formulas: { key: formula } }] }`, `values` in `columns.ts` order (30 / 32 cells, `''` = empty).
 A week nobody saved is `version: 0, rows: []`. `400` bad sheet or a week that is not a Sunday. **`503 { missing: true }`
 until the migration is applied; `500` on a failed read. Neither is ever an empty sheet.** Rows are paged.
 
@@ -3188,9 +3188,11 @@ Same gate. `{ weeks: [{ sheet, week, version, rowCount, updatedAt, updatedBy, lo
 
 ### `PUT /api/accounting/npd`
 
-Gate `requireFeatureEdit('accounting', 'npd')`. Body `{ sheet, week, expectedVersion, rows: [{ id (uuid), values }] }`,
-every cell a string ≤ 5,000 chars, ≤ 2,000 rows after trailing blank rows are trimmed; nothing is coerced. Replaces the
-whole sheet through `npd_save_sheet` (atomic, row-locked). **200** `{ version, rowCount, updatedAt, updatedBy }`.
+Gate `requireFeatureEdit('accounting', 'npd')`. Body `{ sheet, week, expectedVersion, usdPerPhp ("0.0162575" | null; > 0 and < 1),
+columnFormulas ({ key: "=…" | "" }), rows: [{ id (uuid), values, overrides?, formulas? }] }`. Formulas are stored by key
+(`={regular_rate}*1.5`) and must parse. **The server recalculates every formula cell before anything else** (only cells in
+`overrides` keep their text). Every cell a string ≤ 5,000 chars, ≤ 2,000 rows after trailing blank rows are trimmed; nothing is coerced. Replaces the
+whole sheet through `npd_save_sheet_v2` (atomic, row-locked; **503** `{ missing: true }` until the formulas migration is applied). **200** `{ version, rowCount, updatedAt, updatedBy }`.
 **409** `{ conflict: true, version, updatedBy, updatedAt }` when `expectedVersion` is stale. **423** `{ locked: true,
 lockedBy, lockedAt }` when the sheet is locked in (checked first). Order (source-guarded): read current → 423 → early 409 → **audit `npd.rows.removed` with the full removed rows, refusing with 500 if that audit
 fails** → save → `npd.sheet.saved`. `updated_by` is the session email.

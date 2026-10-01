@@ -121,6 +121,22 @@ describe('the NPD route', () => {
     assert.match(src, /status: 423/);
   });
 
+  test('formulas are recalculated ON THE SERVER before anything is audited or saved', () => {
+    const recompute = put.indexOf('recomputeSheet(sheet, parsed.value.rows');
+    assert.ok(recompute > 0, 'PUT recalculates the rows it was sent');
+    assert.ok(recompute < put.indexOf('removedRows(current.rows, rows)'), 'the removal diff sees the recalculated rows');
+    assert.ok(recompute < put.indexOf('await saveNpdSheet('), 'what is stored is the recalculated rows');
+    assert.match(put, /usdPerPhp,\s*columnFormulas,\s*\}\);/, 'the rate and column formulas are saved with the rows');
+    const get = src.slice(src.indexOf('export async function GET'), src.indexOf('export async function PUT'));
+    assert.match(get, /usdPerPhp: r\.meta\.usdPerPhp,\s*columnFormulas: r\.meta\.columnFormulas,/);
+  });
+
+  test('the DB layer saves through npd_save_sheet_v2 and names a missing v2 exactly', () => {
+    const db = read('src', 'lib', 'supabase', 'npd-db.ts');
+    assert.match(db, /supabase\.rpc\('npd_save_sheet_v2'/);
+    assert.match(db, /if \(error\.code === 'PGRST202'\) return \{ ok: false, missing: true, error: NPD_FORMULAS_NOT_SET_UP \};/);
+  });
+
   test('who locked and who unlocked is the SESSION email', () => {
     assert.match(lockBranch, /lockedBy: authz\.sessionEmail/);
     assert.match(unlockBranch, /unlockedBy: authz\.sessionEmail/);
@@ -187,6 +203,39 @@ describe('the Lock in migration', () => {
     assert.match(script, /const SQL_RELATIVE = 'references\/sql\/alter\/2026-10-01_npd_sheets_lock\.sql';/);
     assert.match(script, /const dryRun = wantDry \|\| \(!wantVerify && !wantApply\);/);
     assert.match(script, /to_regclass\('public\.npd_sheets'\) IS NOT NULL/);
+  });
+});
+
+describe('the formulas migration', () => {
+  const sql = read('references', 'sql', 'alter', '2026-10-01_npd_formulas.sql');
+  const fn = sql.slice(sql.indexOf('create or replace function public.npd_save_sheet_v2('));
+
+  test('it refuses to run before Lock in, and v2 keeps the lock check before the version check', () => {
+    assert.match(sql, /Apply references\/sql\/alter\/2026-10-01_npd_sheets_lock\.sql first/);
+    const lockCheck = fn.indexOf("raise exception 'npd_sheet_locked'");
+    assert.ok(fn.indexOf('for update;') < lockCheck && lockCheck < fn.indexOf("raise exception 'npd_version_conflict:%'"));
+  });
+
+  test('the rate is exact numeric with the pesos-per-dollar guard, and v2 is service-role only', () => {
+    assert.match(sql, /add column if not exists usd_per_php numeric;/);
+    assert.match(sql, /check \(usd_per_php is null or \(usd_per_php > 0 and usd_per_php < 1\)\)/);
+    const sig = 'npd_save_sheet_v2(text, date, integer, text, jsonb, numeric, jsonb)';
+    assert.ok(sql.includes(`revoke all on function public.${sig} from public, anon, authenticated;`));
+    assert.ok(sql.includes(`grant execute on function public.${sig} to service_role;`));
+    assert.match(sql, /language plpgsql\nset search_path = ''/);
+    assert.doesNotMatch(sql, /create policy|alter publication|drop function/i, 'the original save function stays for the deploy window');
+  });
+
+  test('the apply script defaults to a dry run and refuses --apply before Lock in', () => {
+    const script = read('scripts', 'apply-npd-formulas-migration.mts');
+    assert.match(script, /const dryRun = wantDry \|\| \(!wantVerify && !wantApply\);/);
+    assert.match(script, /Lock in is not applied\. Run scripts\/apply-npd-sheets-lock-migration\.mts --apply first\./);
+  });
+
+  test('the engine check against the live Google Sheet stays read-only', () => {
+    const script = read('scripts', 'verify-npd-formulas-against-sheet.mts');
+    assert.match(script, /spreadsheets\.readonly/);
+    assert.doesNotMatch(script, /method:\s*'(POST|PUT|PATCH|DELETE)'/);
   });
 });
 

@@ -1,7 +1,9 @@
 /**
  * NPD (Accounting → New Payroll Dashboard) persistence. Server-only (service role).
  * Tables + function: references/sql/create/2026-10-01_npd_sheets.sql; Lock in:
- * references/sql/alter/2026-10-01_npd_sheets_lock.sql.
+ * references/sql/alter/2026-10-01_npd_sheets_lock.sql; formulas (rate, column
+ * formulas, typed-over cells, a row's own formulas, npd_save_sheet_v2):
+ * references/sql/alter/2026-10-01_npd_formulas.sql.
  * Governing doc: docs/features/npd-dashboard.md.
  *
  * The header is read with `select('*')` and the lock fields are optional, so the
@@ -31,6 +33,10 @@ export type NpdSheetMeta = {
   /** Lock in: both set or both null. */
   lockedAt: string | null;
   lockedBy: string | null;
+  /** Dollars per peso as text ("0.0162575"), or null when the sheet has none. */
+  usdPerPhp: string | null;
+  /** Column formulas that differ from the defaults: key → stored formula, or "" for none. */
+  columnFormulas: Record<string, string>;
 };
 
 export type NpdWeekEntry = {
@@ -48,6 +54,9 @@ export type NpdFailure = { ok: false; missing: boolean; error: string };
 export const NPD_NOT_SET_UP =
   'NPD is not set up yet: its tables are not in the database. Run scripts/apply-npd-sheets-migration.mts --apply.';
 
+export const NPD_FORMULAS_NOT_SET_UP =
+  'NPD formulas are not set up yet: npd_save_sheet_v2 is missing. Run scripts/apply-npd-formulas-migration.mts --apply.';
+
 export const NPD_LOCK_NOT_SET_UP =
   'Lock in is not set up yet: its database functions are missing. Run scripts/apply-npd-sheets-lock-migration.mts --apply.';
 
@@ -59,7 +68,18 @@ type HeaderRow = {
   updated_by: string;
   locked_at?: string | null;
   locked_by?: string | null;
+  usd_per_php?: number | string | null;
+  column_formulas?: unknown;
 };
+
+/** Only string → string entries survive; anything else in the column is ignored. */
+function formulaMapOf(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string') out[k] = v;
+  }
+  return out;
+}
 
 function failure(error: { code?: string | null; message: string }): NpdFailure {
   // PGRST202 = the function is not in PostgREST's schema cache.
@@ -75,6 +95,8 @@ const EMPTY_META: NpdSheetMeta = {
   updatedBy: null,
   lockedAt: null,
   lockedBy: null,
+  usdPerPhp: null,
+  columnFormulas: {},
 };
 
 function metaOf(h: HeaderRow): NpdSheetMeta {
@@ -86,6 +108,8 @@ function metaOf(h: HeaderRow): NpdSheetMeta {
     updatedBy: h.updated_by,
     lockedAt: h.locked_at ?? null,
     lockedBy: h.locked_by ?? null,
+    usdPerPhp: h.usd_per_php === null || h.usd_per_php === undefined ? null : String(h.usd_per_php),
+    columnFormulas: formulaMapOf(h.column_formulas),
   };
 }
 
@@ -174,24 +198,33 @@ export type NpdSaveOutcome =
   | { ok: false; locked: true; conflict?: false }
   | (NpdFailure & { conflict?: false; locked?: false });
 
-/** Replace one sheet's rows atomically under the version check (npd_save_sheet). */
+/**
+ * Replace one sheet atomically under the lock + version check (npd_save_sheet_v2):
+ * rows, typed-over cells, a row's own formulas, the rate and the column formulas.
+ */
 export async function saveNpdSheet(args: {
   sheet: NpdSheetKind;
   week: string;
   expectedVersion: number;
   savedBy: string;
   rows: readonly NpdRow[];
+  usdPerPhp: number | null;
+  columnFormulas: Record<string, string>;
 }): Promise<NpdSaveOutcome> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { ok: false, missing: false, error: 'Supabase client unavailable' };
-  const { data, error } = await supabase.rpc('npd_save_sheet', {
+  const { data, error } = await supabase.rpc('npd_save_sheet_v2', {
     p_sheet: args.sheet,
     p_week_start: args.week,
     p_expected_version: args.expectedVersion,
     p_saved_by: args.savedBy,
     p_rows: toDbRecords(args.sheet, args.rows),
+    p_usd_per_php: args.usdPerPhp,
+    p_column_formulas: args.columnFormulas,
   });
   if (error) {
+    // The formulas migration is not applied: say exactly that, never "not set up" for all of NPD.
+    if (error.code === 'PGRST202') return { ok: false, missing: true, error: NPD_FORMULAS_NOT_SET_UP };
     // Locked first: npd_save_sheet checks the lock before the version.
     if (/npd_sheet_locked/.test(error.message)) return { ok: false, locked: true };
     const conflict = /npd_version_conflict:(\d+)/.exec(error.message);
@@ -213,6 +246,8 @@ export async function saveNpdSheet(args: {
       // A save never runs on a locked sheet, so a saved sheet is unlocked.
       lockedAt: null,
       lockedBy: null,
+      usdPerPhp: args.usdPerPhp === null ? null : String(args.usdPerPhp),
+      columnFormulas: { ...args.columnFormulas },
     },
   };
 }

@@ -8,6 +8,10 @@
  * Invariants the rest of NPD leans on:
  *  - A cell is a string, verbatim. Nothing here parses, rounds or reformats a
  *    figure. `''` is an empty cell; it is stored as NULL and read back as `''`.
+ *    Formula cells hold their formula's figure as text too; formulas.ts writes it.
+ *  - A row also carries `overrides` (formula cells TYPED over) and `formulas`
+ *    (this row's own formulas). Both ride along every edit unchanged unless the
+ *    edit is about them (formulas.ts decides that).
  *  - A row's id is stable across saves (the client mints it once). That is what
  *    lets the route say WHICH rows a save removes, and audit their contents
  *    before they are gone.
@@ -17,8 +21,16 @@
 
 import { sundayOf } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, isNpdSheetKind, normalizeHeaderText, type NpdColumn, type NpdSheetKind } from './columns';
+import { checkStoredFormula, parseUsdPerPhp } from './formulas';
 
-export type NpdRow = { readonly id: string; readonly values: readonly string[] };
+export type NpdRow = {
+  readonly id: string;
+  readonly values: readonly string[];
+  /** Formula cells holding a TYPED value instead of their formula (column keys). */
+  readonly overrides: readonly string[];
+  /** This row's own formulas: column key → stored formula (`={regular_rate}*1.5`). */
+  readonly formulas: Readonly<Record<string, string>>;
+};
 export type CellPos = { readonly row: number; readonly col: number };
 /** Inclusive, normalised (r0 ≤ r1, c0 ≤ c1). */
 export type CellRange = { readonly r0: number; readonly c0: number; readonly r1: number; readonly c1: number };
@@ -35,7 +47,7 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // ─── Rows ────────────────────────────────────────────────────────────────────
 
 export function blankRow(id: string, width: number): NpdRow {
-  return { id, values: Array.from({ length: width }, () => '') };
+  return { id, values: Array.from({ length: width }, () => ''), overrides: [], formulas: {} };
 }
 
 /** Whitespace-only cells count as empty: a row of spaces is not data. */
@@ -73,7 +85,7 @@ export function normalizeRange(a: CellPos, b: CellPos): CellRange {
 }
 
 function withValues(row: NpdRow, values: string[]): NpdRow {
-  return { id: row.id, values };
+  return { ...row, values };
 }
 
 export function setCell(rows: readonly NpdRow[], pos: CellPos, value: string): NpdRow[] {
@@ -317,6 +329,10 @@ export type NpdSaveBody = {
   expectedVersion: number;
   /** Trailing blank rows already trimmed. */
   rows: NpdRow[];
+  /** Dollars per peso for this sheet, or null (no rate yet). */
+  usdPerPhp: number | null;
+  /** This sheet's column formulas: key → stored formula, or "" for "no formula in this column". */
+  columnFormulas: Record<string, string>;
 };
 
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -333,6 +349,39 @@ export function validateSaveBody(raw: unknown): Validation<NpdSaveBody> {
   if (!Array.isArray(b.rows)) return { ok: false, error: 'rows must be an array' };
 
   const width = NPD_COLUMNS[b.sheet].length;
+  const keys = new Set(NPD_COLUMNS[b.sheet].map((c) => c.key));
+  const sheet = b.sheet;
+
+  let usdPerPhp: number | null = null;
+  if (b.usdPerPhp !== undefined && b.usdPerPhp !== null) {
+    if (typeof b.usdPerPhp !== 'string') return { ok: false, error: 'usdPerPhp must be text, like "0.0162575"' };
+    const rate = parseUsdPerPhp(b.usdPerPhp);
+    if (!rate.ok) return { ok: false, error: rate.error };
+    usdPerPhp = rate.rate;
+  }
+
+  const formulaMap = (raw: unknown, where: string, allowEmpty: boolean): Validation<Record<string, string>> => {
+    if (raw === undefined) return { ok: true, value: {} };
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: `${where} must be an object` };
+    const out: Record<string, string> = {};
+    for (const [key, f] of Object.entries(raw as Record<string, unknown>)) {
+      if (!keys.has(key)) return { ok: false, error: `${where}: "${key}" is not a column of this sheet` };
+      if (typeof f !== 'string') return { ok: false, error: `${where}: the formula for ${key} is not text` };
+      if (f === '') {
+        if (!allowEmpty) return { ok: false, error: `${where}: the formula for ${key} is empty` };
+        out[key] = '';
+        continue;
+      }
+      const problem = checkStoredFormula(f, sheet);
+      if (problem) return { ok: false, error: `${where}: ${key}: ${problem}` };
+      out[key] = f;
+    }
+    return { ok: true, value: out };
+  };
+
+  const columnFormulas = formulaMap(b.columnFormulas, 'columnFormulas', true);
+  if (!columnFormulas.ok) return columnFormulas;
+
   const seen = new Set<string>();
   const rows: NpdRow[] = [];
   for (let i = 0; i < b.rows.length; i += 1) {
@@ -354,13 +403,32 @@ export function validateSaveBody(raw: unknown): Validation<NpdSaveBody> {
         return { ok: false, error: `${at}, column ${c + 1} is over ${NPD_MAX_CELL_LENGTH} characters` };
       }
     }
-    rows.push({ id, values: r.values as string[] });
+    let overrides: string[] = [];
+    if (r.overrides !== undefined) {
+      if (!Array.isArray(r.overrides) || r.overrides.some((k) => typeof k !== 'string' || !keys.has(k))) {
+        return { ok: false, error: `${at}: overrides must be a list of this sheet's columns` };
+      }
+      overrides = [...new Set(r.overrides as string[])];
+    }
+    const formulas = formulaMap(r.formulas, `${at} formulas`, false);
+    if (!formulas.ok) return formulas;
+    rows.push({ id, values: r.values as string[], overrides, formulas: formulas.value });
   }
   const trimmed = trimTrailingBlankRows(rows);
   if (trimmed.length > NPD_MAX_ROWS) {
     return { ok: false, error: `A sheet holds at most ${NPD_MAX_ROWS} rows (this one has ${trimmed.length})` };
   }
-  return { ok: true, value: { sheet: b.sheet, week: b.week, expectedVersion: b.expectedVersion, rows: trimmed } };
+  return {
+    ok: true,
+    value: {
+      sheet: b.sheet,
+      week: b.week,
+      expectedVersion: b.expectedVersion,
+      rows: trimmed,
+      usdPerPhp,
+      columnFormulas: columnFormulas.value,
+    },
+  };
 }
 
 // ─── Lock in (route side) ────────────────────────────────────────────────────
@@ -406,13 +474,23 @@ export function removedRows(before: readonly NpdRow[], after: readonly NpdRow[])
 
 // ─── Database records ────────────────────────────────────────────────────────
 
-export type NpdDbRecord = { id: string; row_no: number } & Record<string, string | number | null>;
+export type NpdDbRecord = {
+  id: string;
+  row_no: number;
+  formula_overrides: string[];
+  formula_cells: Record<string, string>;
+} & Record<string, string | number | null | string[] | Record<string, string>>;
 
-/** Rows → the objects npd_save_sheet takes. `''` → NULL; row_no is the position, 1-based. */
+/** Rows → the objects npd_save_sheet_v2 takes. `''` → NULL; row_no is the position, 1-based. */
 export function toDbRecords(sheet: NpdSheetKind, rows: readonly NpdRow[]): NpdDbRecord[] {
   const cols = NPD_COLUMNS[sheet];
   return rows.map((row, i) => {
-    const rec: NpdDbRecord = { id: row.id, row_no: i + 1 };
+    const rec: NpdDbRecord = {
+      id: row.id,
+      row_no: i + 1,
+      formula_overrides: [...row.overrides],
+      formula_cells: { ...row.formulas },
+    };
     cols.forEach((col, c) => {
       const v = row.values[c] ?? '';
       rec[col.key] = v === '' ? null : v;
@@ -423,22 +501,37 @@ export function toDbRecords(sheet: NpdSheetKind, rows: readonly NpdRow[]): NpdDb
 
 export function fromDbRecord(sheet: NpdSheetKind, rec: Record<string, unknown>): NpdRow {
   const cols = NPD_COLUMNS[sheet];
+  const keys = new Set(cols.map((c) => c.key));
+  // Both columns arrive with the formulas migration; before it they are absent and mean "none".
+  const overrides = Array.isArray(rec.formula_overrides)
+    ? (rec.formula_overrides as unknown[]).filter((k): k is string => typeof k === 'string' && keys.has(k))
+    : [];
+  const formulas: Record<string, string> = {};
+  if (rec.formula_cells && typeof rec.formula_cells === 'object' && !Array.isArray(rec.formula_cells)) {
+    for (const [k, f] of Object.entries(rec.formula_cells as Record<string, unknown>)) {
+      if (keys.has(k) && typeof f === 'string' && f !== '') formulas[k] = f;
+    }
+  }
   return {
     id: String(rec.id),
     values: cols.map((col) => {
       const v = rec[col.key];
       return typeof v === 'string' ? v : '';
     }),
+    overrides,
+    formulas,
   };
 }
 
-/** A row as an audit entry carries it: only the filled cells, by column key. */
-export function rowForAudit(sheet: NpdSheetKind, row: NpdRow): Record<string, string> {
+/** A row as an audit entry carries it: only the filled cells, by column key, plus its own formulas. */
+export function rowForAudit(sheet: NpdSheetKind, row: NpdRow): Record<string, unknown> {
   const cols = NPD_COLUMNS[sheet];
-  const out: Record<string, string> = {};
+  const out: Record<string, unknown> = {};
   cols.forEach((col, c) => {
     const v = row.values[c] ?? '';
     if (v !== '') out[col.key] = v;
   });
+  if (row.overrides.length) out._typed_over_formula = [...row.overrides];
+  if (Object.keys(row.formulas).length) out._own_formulas = { ...row.formulas };
   return out;
 }

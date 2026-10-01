@@ -8,13 +8,26 @@ import {
   ClipboardPaste,
   Eraser,
   Redo2,
+  RotateCcw,
   Trash2,
   Undo2,
+  X,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import type { NpdColumn } from '@/lib/npd/columns';
+import type { NpdColumn, NpdSheetKind } from '@/lib/npd/columns';
 import { parseClipboardGrid, serializeClipboardGrid } from '@/lib/npd/clipboard';
+import {
+  columnLetter,
+  defaultFormula,
+  evaluateRow,
+  formulaBehind,
+  referencedKeys,
+  toDisplayFormula,
+  toStoredFormula,
+  type CellResult,
+  type NpdFormulaContext,
+} from '@/lib/npd/formulas';
 import {
   applyPaste,
   clearRange,
@@ -44,6 +57,14 @@ import { newRowId } from './useNpdSheet';
  * redo · Ctrl/⌘+A selects all · Ctrl/⌘+C / X / V copy, cut and paste TSV, which
  * is what Google Sheets puts on the clipboard.
  *
+ * Formulas (formulas.ts): a calculated cell is tinted; a cell TYPED over its
+ * formula is amber and its tooltip gives the formula's figure; an own-formula cell
+ * has a corner mark; errors are red. RIGHT-CLICK (or Shift+F10 / the menu key) a
+ * cell to see its formula beneath it and edit it — for this cell, or the whole
+ * column on this sheet. F2 / Enter / double-click on a formula cell edits the
+ * formula text. Column letters (A, B, …) sit above the headers so `=H5*1.5` reads
+ * like the Google Sheet.
+ *
  * Phone-table traps (memory payroll-wizard-hris-vs-npd), all handled here: the
  * table opts out of the global responsive card layout (`table-keep`), its width
  * is an explicit `width` (a `min-width` on a fixed table is ignored), and the
@@ -53,10 +74,28 @@ import { newRowId } from './useNpdSheet';
 const ROW_HEAD_W = 52;
 const SHEET_FONT = 'text-[13px]';
 
-type Editing = { row: number; col: number; draft: string; mode: 'type' | 'edit' };
+type Editing = { row: number; col: number; draft: string; initial: string; mode: 'type' | 'edit' };
+
+/** One cell's formula facts, for styling and the editor. null = no formula behind the cell. */
+type CellInfo = {
+  source: 'override' | 'cell' | 'column' | 'default';
+  /** The stored formula behind the cell (for a typed-over cell, the one it replaced). */
+  formula: string;
+  /** What that formula gives. */
+  result: CellResult | undefined;
+};
+type RowInfo = readonly (CellInfo | null)[];
 
 type Props = {
+  sheet: NpdSheetKind;
   columns: readonly NpdColumn[];
+  /** The sheet's formula settings (rate + column formulas). Memoise it: rows re-derive when it changes. */
+  ctx: NpdFormulaContext;
+  /** Set one cell's own formula, typed as shown (`=H5*1.5`). Returns an error message or null. */
+  onCellFormula: (rowIndex: number, key: string, typed: string) => string | null;
+  /** Set the whole column's formula on this sheet; '' = none; null = back to the Google Sheet's. */
+  onColumnFormula: (key: string, typed: string | null, rowIndex: number) => string | null;
+  onUseFormulaAgain: (rowIndex: number, key: string) => void;
   rows: readonly NpdRow[];
   readOnly: boolean;
   /** Why the grid is read-only, said when someone tries to type or paste. */
@@ -79,7 +118,12 @@ function plural(n: number, one: string, many = `${one}s`) {
 }
 
 export default function NpdSheetGrid({
+  sheet,
   columns,
+  ctx,
+  onCellFormula,
+  onColumnFormula,
+  onUseFormulaAgain,
   rows,
   readOnly,
   readOnlyNotice = 'View only — this sheet cannot be changed from your account.',
@@ -94,6 +138,8 @@ export default function NpdSheetGrid({
   const [focus, setFocus] = useState<CellPos>({ row: 0, col: 0 });
   const [editing, setEditing] = useState<Editing | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [menu, setMenu] = useState<CellPos | null>(null);
+  const [menuAt, setMenuAt] = useState<{ top: number; left: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rowsRef = useRef(rows);
@@ -115,6 +161,27 @@ export default function NpdSheetGrid({
   const filledRows = useMemo(() => trimTrailingBlankRows(rows).length, [rows]);
 
   const totalWidth = useMemo(() => ROW_HEAD_W + columns.reduce((s, c) => s + c.width, 0), [columns]);
+
+  // Formula facts per row, cached by row identity (an edit changes one row).
+  const infoOf = useMemo(() => {
+    const cache = new WeakMap<NpdRow, RowInfo>();
+    return (row: NpdRow): RowInfo => {
+      const hit = cache.get(row);
+      if (hit) return hit;
+      const results = evaluateRow(sheet, row, ctx);
+      const info: RowInfo = columns.map((c) => {
+        const behind = formulaBehind(sheet, row, c.key, ctx);
+        if (!behind) return null;
+        return { source: row.overrides.includes(c.key) ? 'override' : behind.source, formula: behind.formula, result: results[c.key] };
+      });
+      cache.set(row, info);
+      return info;
+    };
+  }, [sheet, ctx, columns]);
+  const columnHasFormula = useMemo(
+    () => columns.map((c) => !!formulaBehind(sheet, { formulas: {} }, c.key, ctx)),
+    [sheet, ctx, columns],
+  );
   const stickyLeft = ROW_HEAD_W; // the Work Email column
 
   const focusGrid = () => containerRef.current?.focus({ preventScroll: true });
@@ -147,29 +214,44 @@ export default function NpdSheetGrid({
       }
       const row = rowsRef.current[pos.row];
       if (!row) return;
-      setEditing({
-        row: pos.row,
-        col: pos.col,
-        draft: initial ?? row.values[pos.col] ?? '',
-        mode: initial === null ? 'edit' : 'type',
-      });
+      // Editing a formula cell edits its FORMULA, as in the sheet (typing still replaces).
+      const info = infoOf(row)[pos.col];
+      const start =
+        initial ??
+        (info && info.source !== 'override' ? toDisplayFormula(info.formula, pos.row + 1, columns) : (row.values[pos.col] ?? ''));
+      setEditing({ row: pos.row, col: pos.col, draft: start, initial: start, mode: initial === null ? 'edit' : 'type' });
     },
-    [readOnly, readOnlyNotice, onNotice],
+    [readOnly, readOnlyNotice, onNotice, infoOf, columns],
   );
 
-  /** Commit the open editor (if any). Idempotent: blur after a key commit is a no-op. */
+  /**
+   * Commit the open editor (if any). Idempotent: blur after a key commit is a no-op.
+   * An unreadable `=…` keeps the editor open on Enter / Tab and says why; on blur it
+   * is kept as the text that was typed (the sheet would show #ERROR!).
+   */
   const commitEdit = useCallback(
-    (move?: { dr: number; dc: number }) => {
+    (move?: { dr: number; dc: number }, fromBlur = false) => {
       const e = editingRef.current;
       if (!e) return;
+      if (e.draft !== e.initial && e.draft.trim().startsWith('=')) {
+        try {
+          toStoredFormula(e.draft, e.row + 1, columns);
+        } catch (err) {
+          const why = err instanceof Error ? err.message : 'Unreadable formula.';
+          if (!fromBlur) {
+            onNotice(`Formula not applied: ${why}`);
+            return;
+          }
+          onNotice(`Kept as text, not a formula: ${why}`);
+        }
+      }
       editingRef.current = null;
       setEditing(null);
-      const current = rowsRef.current[e.row]?.values[e.col] ?? '';
-      if (e.draft !== current) onCommit(setCell(rowsRef.current, { row: e.row, col: e.col }, e.draft));
+      if (e.draft !== e.initial) onCommit(setCell(rowsRef.current, { row: e.row, col: e.col }, e.draft));
       if (move) moveTo({ row: e.row + move.dr, col: e.col + move.dc }, false);
       focusGrid();
     },
-    [onCommit, moveTo],
+    [onCommit, moveTo, columns, onNotice],
   );
 
   const cancelEdit = useCallback(() => {
@@ -220,7 +302,57 @@ export default function NpdSheetGrid({
     [commitEdit, cancelEdit, onDraft],
   );
 
-  const onEditBlur = useCallback(() => commitEdit(), [commitEdit]);
+  const onEditBlur = useCallback(() => commitEdit(undefined, true), [commitEdit]);
+
+  // ── Formula editor (right-click) ──────────────────────────────────────────
+  const openMenu = useCallback(
+    (pos: CellPos) => {
+      if (editingRef.current) commitEdit(undefined, true);
+      setAnchor(pos);
+      setFocus(pos);
+      setMenu(pos);
+    },
+    [commitEdit],
+  );
+  const closeMenu = useCallback(() => {
+    setMenu(null);
+    setMenuAt(null);
+    focusGrid();
+  }, []);
+
+  // Beneath the cell, inside the scroller (so it scrolls with the sheet).
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const box = containerRef.current;
+    const td = box?.querySelector<HTMLElement>(`[data-cell="${menu.row}:${menu.col}"]`);
+    if (!box || !td) {
+      setMenu(null);
+      return;
+    }
+    const b = box.getBoundingClientRect();
+    const c = td.getBoundingClientRect();
+    const width = Math.min(440, box.clientWidth - 16);
+    const left = Math.max(8, Math.min(c.left - b.left + box.scrollLeft, box.scrollLeft + box.clientWidth - width - 8));
+    setMenuAt({ top: c.bottom - b.top + box.scrollTop + 4, left });
+  }, [menu, rows]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('[data-npd-formula-menu]')) return;
+      setMenu(null);
+      setMenuAt(null);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [menu]);
+
+  const onContextMenu = (ev: React.MouseEvent) => {
+    const pos = cellFromEvent(ev);
+    if (!pos) return;
+    ev.preventDefault();
+    openMenu(pos);
+  };
 
   // ── Paste / copy ──────────────────────────────────────────────────────────
   const doPaste = useCallback(
@@ -372,6 +504,11 @@ export default function NpdSheetGrid({
       moveTo({ row: f.row + (k === 'PageDown' ? page : -page), col: f.col }, ev.shiftKey);
       return;
     }
+    if (k === 'ContextMenu' || (k === 'F10' && ev.shiftKey)) {
+      ev.preventDefault();
+      openMenu(f);
+      return;
+    }
     if (k === 'Enter' || k === 'F2') {
       ev.preventDefault();
       startEdit(f, null);
@@ -452,6 +589,9 @@ export default function NpdSheetGrid({
 
   const activeColumn = columns[f.col]!;
   const activeValue = rows[f.row]?.values[f.col] ?? '';
+  const activeInfo = rows[f.row] ? infoOf(rows[f.row]!)[f.col] : null;
+  const menuRow = menu ? rows[menu.row] : undefined;
+  const menuKey = menu ? columns[menu.col]?.key : undefined;
   const selCells = (sel.r1 - sel.r0 + 1) * (sel.c1 - sel.c0 + 1);
 
   return (
@@ -532,8 +672,31 @@ export default function NpdSheetGrid({
             </span>
           )}
         </div>
+        {activeInfo && !editing && (
+          <div
+            className={cn(
+              'flex max-w-[45%] shrink-0 items-center gap-1.5 border-r border-zinc-200 px-2.5 font-mono text-[11.5px] dark:border-zinc-800',
+              activeInfo.source === 'override' ? 'text-amber-800 line-through decoration-amber-400/70 dark:text-amber-300' : 'text-sky-800 dark:text-sky-300',
+            )}
+            title={activeInfo.source === 'override' ? 'Typed over this formula' : 'This cell’s formula — right-click the cell to edit it'}
+          >
+            <span className="font-sans font-semibold italic">ƒ</span>
+            <span className="truncate">{toDisplayFormula(activeInfo.formula, f.row + 1, columns)}</span>
+          </div>
+        )}
         <div className="max-h-16 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-2.5 py-2 text-zinc-800 dark:text-zinc-200">
-          {editing ? editing.draft : activeValue || <span className="text-zinc-400 dark:text-zinc-600">Empty cell</span>}
+          {editing ? (
+            editing.draft
+          ) : activeInfo?.source === 'override' ? (
+            <>
+              {activeValue}{' '}
+              <span className="text-amber-700 dark:text-amber-300">
+                · typed over the formula, which gives {activeInfo.result?.text || 'nothing yet'}
+              </span>
+            </>
+          ) : (
+            activeValue || <span className="text-zinc-400 dark:text-zinc-600">Empty cell</span>
+          )}
         </div>
       </div>
 
@@ -564,10 +727,27 @@ export default function NpdSheetGrid({
             ))}
           </colgroup>
           <thead>
+            {/* Column letters, as in the Google Sheet, so a formula like =H5*1.5 reads the same. */}
+            <tr aria-hidden>
+              <th className="sticky left-0 top-0 z-30 h-[22px] border-b border-r border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900" />
+              {columns.map((c, i) => (
+                <th
+                  key={c.key}
+                  className={cn(
+                    'sticky top-0 z-20 h-[22px] border-b border-r border-zinc-200 bg-zinc-100 px-1 text-center text-[10.5px] font-medium tabular-nums text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500',
+                    i === 0 && 'z-30',
+                  )}
+                  style={i === 0 ? { left: stickyLeft } : undefined}
+                >
+                  {columnLetter(i)}
+                  {columnHasFormula[i] && <span className="ml-1 font-semibold italic text-sky-600 dark:text-sky-400">ƒ</span>}
+                </th>
+              ))}
+            </tr>
             <tr>
               <th
                 scope="col"
-                className="sticky left-0 top-0 z-30 border-b border-r border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
+                className="sticky left-0 top-[22px] z-30 border-b border-r border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900"
                 onMouseDown={(e) => {
                   e.preventDefault();
                   if (editingRef.current) commitEdit();
@@ -590,7 +770,7 @@ export default function NpdSheetGrid({
                       selectColumn(i, e.shiftKey);
                     }}
                     className={cn(
-                      'sticky top-0 z-20 cursor-pointer whitespace-pre-line border-b border-r border-zinc-200 px-2 py-1.5 text-center align-bottom text-[11px] font-semibold leading-tight text-zinc-700 dark:border-zinc-800 dark:text-zinc-300',
+                      'sticky top-[22px] z-20 cursor-pointer whitespace-pre-line border-b border-r border-zinc-200 px-2 py-1.5 text-center align-bottom text-[11px] font-semibold leading-tight text-zinc-700 dark:border-zinc-800 dark:text-zinc-300',
                       inSel ? 'bg-orange-100 dark:bg-[#2a2016]' : 'bg-zinc-100 dark:bg-zinc-900',
                       i === 0 && 'z-30',
                     )}
@@ -602,7 +782,7 @@ export default function NpdSheetGrid({
               })}
             </tr>
           </thead>
-          <tbody onMouseDown={onMouseDown} onMouseOver={onMouseOver} onDoubleClick={onDoubleClick}>
+          <tbody onMouseDown={onMouseDown} onMouseOver={onMouseOver} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}>
             {rows.map((row, r) => {
               const rowSelected = r >= sel.r0 && r <= sel.r1;
               const isEditRow = editing?.row === r;
@@ -610,6 +790,7 @@ export default function NpdSheetGrid({
                 <GridRow
                   key={row.id}
                   row={row}
+                  info={infoOf(row)}
                   r={r}
                   columns={columns}
                   selC0={rowSelected ? sel.c0 : -1}
@@ -628,6 +809,28 @@ export default function NpdSheetGrid({
             })}
           </tbody>
         </table>
+        {menu && menuAt && menuRow && menuKey && (
+          <FormulaPopover
+            key={`${menu.row}:${menu.col}`}
+            sheet={sheet}
+            columns={columns}
+            rowIndex={menu.row}
+            colIndex={menu.col}
+            row={menuRow}
+            info={infoOf(menuRow)[menu.col] ?? null}
+            ctx={ctx}
+            readOnly={readOnly}
+            readOnlyNotice={readOnlyNotice}
+            columnExceptions={rows.filter((r) => menuKey in r.formulas || r.overrides.includes(menuKey)).length}
+            top={menuAt.top}
+            left={menuAt.left}
+            onApplyCell={(typed) => onCellFormula(menu.row, menuKey, typed)}
+            onApplyColumn={(typed) => onColumnFormula(menuKey, typed, menu.row)}
+            onResetColumn={() => onColumnFormula(menuKey, null, menu.row)}
+            onUseFormulaAgain={() => onUseFormulaAgain(menu.row, menuKey)}
+            onClose={closeMenu}
+          />
+        )}
       </div>
 
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500 dark:text-zinc-500">
@@ -635,7 +838,11 @@ export default function NpdSheetGrid({
           <ClipboardPaste className="h-3 w-3" aria-hidden />
           Click a cell, then paste (Ctrl+V) rows copied from the Google Sheet. A copied header row is skipped.
         </span>
-        <span>Enter edits · Alt+Enter is a line break · Delete clears · Ctrl+Z undoes</span>
+        <span>Enter edits · Alt+Enter is a line break · Delete clears · Ctrl+Z undoes · right-click a cell for its formula</span>
+        <span className="inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-sky-100 ring-1 ring-sky-200 dark:bg-sky-950/60 dark:ring-sky-900" /> calculated</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-100 ring-1 ring-amber-300 dark:bg-amber-950/60 dark:ring-amber-800" /> typed over a formula</span>
+        </span>
         <span className="ml-auto tabular-nums">
           {plural(filledRows, 'row')} · {columns.length} columns · last row {lastRow + 1}
         </span>
@@ -672,6 +879,7 @@ function ToolButton({
 
 type RowProps = {
   row: NpdRow;
+  info: RowInfo;
   r: number;
   columns: readonly NpdColumn[];
   selC0: number;
@@ -689,6 +897,7 @@ type RowProps = {
 
 const GridRow = memo(function GridRow({
   row,
+  info,
   r,
   columns,
   selC0,
@@ -728,26 +937,46 @@ const GridRow = memo(function GridRow({
         const selected = rowSelected && c >= selC0 && c <= selC1;
         const active = activeCol === c;
         const isEditing = editCol === c;
+        const fi = info[c];
+        const typedOver = fi?.source === 'override';
+        const calculated = !!fi && !typedOver;
+        const isError = calculated && fi.result?.kind === 'error';
+        const tip = typedOver
+          ? `Typed over the formula. The formula gives ${fi.result?.text || 'nothing yet'}.`
+          : v.length > 18 && !isEditing
+            ? v
+            : undefined;
         return (
           <td
             key={col.key}
             data-cell={`${r}:${c}`}
             role="gridcell"
             aria-selected={selected}
-            title={v.length > 18 && !isEditing ? v : undefined}
+            title={tip}
             className={cn(
-              'relative h-8 max-w-0 scroll-mt-24 truncate border-b border-r border-zinc-200 px-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200',
+              'relative h-8 max-w-0 scroll-mt-28 truncate border-b border-r border-zinc-200 px-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200',
               col.align === 'right' && 'text-right tabular-nums',
               c === 0 ? 'sticky z-10' : 'scroll-ml-[290px]',
               selected
                 ? 'bg-orange-50 dark:bg-[#1d1812]'
-                : c === 0
-                  ? 'bg-white dark:bg-[#0d1117]'
-                  : undefined,
+                : typedOver
+                  ? 'bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100'
+                  : calculated && !spare
+                    ? 'bg-sky-50/60 dark:bg-sky-950/20'
+                    : c === 0
+                      ? 'bg-white dark:bg-[#0d1117]'
+                      : undefined,
+              isError && 'text-red-600 dark:text-red-400',
               active && !isEditing && 'ring-2 ring-inset ring-orange-500 dark:ring-orange-400',
             )}
             style={c === 0 ? { left: stickyLeft } : undefined}
           >
+            {fi?.source === 'cell' && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute right-0 top-0 h-0 w-0 border-l-[6px] border-t-[6px] border-l-transparent border-t-indigo-500 dark:border-t-indigo-400"
+              />
+            )}
             {isEditing ? (
               <CellEditor value={editDraft} align={col.align} onDraft={onDraft} onKeyDown={onEditKeyDown} onBlur={onEditBlur} />
             ) : (
@@ -807,5 +1036,226 @@ function CellEditor({
         align === 'right' && 'text-right tabular-nums',
       )}
     />
+  );
+}
+
+/**
+ * The formula behind one cell, shown beneath it on right-click. Editable unless the
+ * sheet is read-only (locked, or a view grant). "This cell" sets the cell's own
+ * formula; "Whole column" sets the column's formula on this sheet and replaces
+ * every own formula and typed value in that column (the sheet's fill-down).
+ */
+function FormulaPopover({
+  sheet,
+  columns,
+  rowIndex,
+  colIndex,
+  row,
+  info,
+  ctx,
+  readOnly,
+  readOnlyNotice,
+  columnExceptions,
+  top,
+  left,
+  onApplyCell,
+  onApplyColumn,
+  onResetColumn,
+  onUseFormulaAgain,
+  onClose,
+}: {
+  sheet: NpdSheetKind;
+  columns: readonly NpdColumn[];
+  rowIndex: number;
+  colIndex: number;
+  row: NpdRow;
+  info: CellInfo | null;
+  ctx: NpdFormulaContext;
+  readOnly: boolean;
+  readOnlyNotice: string;
+  columnExceptions: number;
+  top: number;
+  left: number;
+  onApplyCell: (typed: string) => string | null;
+  onApplyColumn: (typed: string) => string | null;
+  onResetColumn: () => string | null;
+  onUseFormulaAgain: () => void;
+  onClose: () => void;
+}) {
+  const col = columns[colIndex]!;
+  const key = col.key;
+  const rowNo = rowIndex + 1;
+  const initial = info ? toDisplayFormula(info.formula, rowNo, columns) : '';
+  const [draft, setDraft] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmColumn, setConfirmColumn] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true });
+    inputRef.current?.select();
+  }, []);
+
+  const preview = useMemo((): { kind: 'none' } | { kind: 'ok'; stored: string; text: string } | { kind: 'error'; message: string } => {
+    const t = draft.trim();
+    if (t === '') return { kind: 'none' };
+    try {
+      const stored = toStoredFormula(t, rowNo, columns);
+      const temp = { ...row, formulas: { ...row.formulas, [key]: stored }, overrides: row.overrides.filter((k) => k !== key) };
+      const r = evaluateRow(sheet, temp, ctx)[key];
+      const text = !r ? '' : r.kind === 'blank' ? 'blank until this sheet has a PHP→USD rate' : r.text;
+      return { kind: 'ok', stored, text };
+    } catch (e) {
+      return { kind: 'error', message: e instanceof Error ? e.message : 'Unreadable formula.' };
+    }
+  }, [draft, rowNo, columns, row, key, sheet, ctx]);
+
+  const legend =
+    preview.kind === 'ok'
+      ? referencedKeys(preview.stored).map((k) => {
+          const i = columns.findIndex((c) => c.key === k);
+          return `${columnLetter(i)} = ${columns[i]!.header.replace(/\s*\n\s*/g, ' ')}`;
+        })
+      : [];
+  const def = defaultFormula(sheet, key);
+  const columnChanged = Object.prototype.hasOwnProperty.call(ctx.columnFormulas, key);
+  const source =
+    info?.source === 'override'
+      ? `Typed over. The formula gives ${info.result?.text || 'nothing yet'}.`
+      : info?.source === 'cell'
+        ? 'This cell’s own formula.'
+        : info?.source === 'column'
+          ? 'This sheet’s formula for the column (changed from the Google Sheet’s).'
+          : info?.source === 'default'
+            ? 'The Google Sheet’s formula for this column.'
+            : 'No formula: a typed cell.';
+
+  const run = (fn: () => string | null) => {
+    const problem = fn();
+    if (problem) setError(problem);
+    else onClose();
+  };
+
+  const btn =
+    'inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40';
+
+  return (
+    <div
+      data-npd-formula-menu
+      role="dialog"
+      aria-label={`Formula for ${columnLetter(colIndex)}${rowNo}`}
+      className="absolute z-50 w-[440px] max-w-[calc(100%-16px)] rounded-xl border border-zinc-200 bg-white p-3 text-xs shadow-2xl shadow-black/15 dark:border-zinc-700 dark:bg-zinc-950"
+      style={{ top, left }}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+        }
+      }}
+      onPaste={(e) => e.stopPropagation()}
+      onCopy={(e) => e.stopPropagation()}
+      onCut={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+    >
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold text-zinc-900 dark:text-zinc-100">
+            <span className="font-mono">{columnLetter(colIndex)}{rowNo}</span> · {col.header.replace(/\s*\n\s*/g, ' ')}
+          </p>
+          <p className={cn('mt-0.5', info?.source === 'override' ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400')}>{source}</p>
+        </div>
+        <button type="button" aria-label="Close" onClick={onClose} className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <label className="sr-only" htmlFor="npd-formula-input">Formula</label>
+      <div className="flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-50 px-2 focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-400/30 dark:border-zinc-700 dark:bg-zinc-900">
+        <span className="font-semibold italic text-sky-600 dark:text-sky-400">ƒx</span>
+        <input
+          id="npd-formula-input"
+          ref={inputRef}
+          value={draft}
+          readOnly={readOnly}
+          spellCheck={false}
+          placeholder={readOnly ? 'No formula' : `e.g. =${columnLetter(Math.max(0, colIndex - 1))}${rowNo}*1.5`}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setError(null);
+            setConfirmColumn(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !readOnly) {
+              e.preventDefault();
+              run(() => onApplyCell(draft));
+            }
+          }}
+          className="h-8 min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-zinc-900 outline-none read-only:text-zinc-600 dark:text-zinc-100 dark:read-only:text-zinc-400"
+        />
+      </div>
+
+      <div className="mt-1.5 min-h-4">
+        {preview.kind === 'ok' && (
+          <p className="text-zinc-600 dark:text-zinc-400">
+            = <span className="font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{preview.text || '—'}</span>
+            {legend.length > 0 && <span className="text-zinc-400 dark:text-zinc-500"> · {legend.join(' · ')}</span>}
+          </p>
+        )}
+        {preview.kind === 'error' && draft !== initial && <p className="text-red-600 dark:text-red-400">{preview.message}</p>}
+        {error && <p className="text-red-600 dark:text-red-400" role="alert">{error}</p>}
+      </div>
+
+      {readOnly ? (
+        <p className="mt-2 text-zinc-500 dark:text-zinc-400">{readOnlyNotice}</p>
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            disabled={preview.kind === 'error' || draft === initial}
+            onClick={() => run(() => onApplyCell(draft))}
+            className={cn(btn, 'bg-sky-600 text-white enabled:hover:bg-sky-700')}
+          >
+            This cell
+          </button>
+          {confirmColumn ? (
+            <>
+              <span className="text-zinc-700 dark:text-zinc-300">
+                Replaces {columnExceptions} typed value{columnExceptions === 1 ? '' : 's'} and own formulas in column {columnLetter(colIndex)}.
+              </span>
+              <button type="button" onClick={() => run(() => onApplyColumn(draft))} className={cn(btn, 'bg-amber-600 text-white enabled:hover:bg-amber-700')}>
+                Replace them
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={preview.kind === 'error'}
+              onClick={() => (columnExceptions > 0 ? setConfirmColumn(true) : run(() => onApplyColumn(draft)))}
+              className={cn(btn, 'border border-sky-200 bg-sky-50 text-sky-800 enabled:hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-200')}
+              title={`Every row of column ${columnLetter(colIndex)} on this sheet`}
+            >
+              Whole column
+            </button>
+          )}
+          {info?.source === 'override' && (
+            <button type="button" onClick={() => { onUseFormulaAgain(); onClose(); }} className={cn(btn, 'text-amber-800 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/40')}>
+              Use the formula again
+            </button>
+          )}
+          {columnChanged && def && (
+            <button
+              type="button"
+              onClick={() => run(onResetColumn)}
+              className={cn(btn, 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800')}
+              title="Back to the Google Sheet’s formula for this column"
+            >
+              <RotateCcw className="h-3 w-3" /> Sheet’s formula
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

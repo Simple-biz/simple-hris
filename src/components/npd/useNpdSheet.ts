@@ -3,6 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { NPD_COLUMNS, type NpdSheetKind } from '@/lib/npd/columns';
+import {
+  applyFormulasToEdit,
+  defaultFormula,
+  formulaBehind,
+  parseUsdPerPhp,
+  recomputeAfterSettingsChange,
+  recomputeRow,
+  recomputeSheet,
+  toStoredFormula,
+  type NpdFormulaContext,
+} from '@/lib/npd/formulas';
 import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/sheet';
 
 /**
@@ -31,6 +42,12 @@ import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/s
  *    server refuses with 423 (someone locked it meanwhile) keeps the edits on
  *    screen, UNSAVED, and says so. `unlock(reason)` reloads the sheet afterwards,
  *    so nothing typed before the lock is saved without being seen again.
+ *  - FORMULAS: every edit goes through formulas.ts `applyFormulasToEdit` (typing
+ *    `=…` makes a cell's own formula; a different figure in a formula cell is a
+ *    typed value over it; blank gives it back to the formula). The rate and the
+ *    column formulas are part of the sheet: saved with it, undone with it (an undo
+ *    step is rows AND settings together), and never carried over from another
+ *    week. The server recalculates every formula cell on save, with the same module.
  */
 
 export const SAVE_DEBOUNCE_MS = 1200;
@@ -49,6 +66,15 @@ export type LoadState = 'loading' | 'ready' | 'error' | 'missing';
 /** `locked` = a save the server refused because the sheet was locked meanwhile. */
 export type SaveState = 'idle' | 'pending' | 'saving' | 'error' | 'conflict' | 'locked';
 export type LockResult = { ok: boolean; message?: string };
+/** The sheet's formula settings. Replaced (never mutated) on change, so identity = dirty. */
+export type NpdSettings = { readonly rateText: string; readonly columnFormulas: Readonly<Record<string, string>> };
+const NO_SETTINGS: NpdSettings = { rateText: '', columnFormulas: {} };
+type Snapshot = { rows: NpdRow[]; settings: NpdSettings };
+
+export function contextOf(settings: NpdSettings): NpdFormulaContext {
+  const rate = parseUsdPerPhp(settings.rateText);
+  return { columnFormulas: settings.columnFormulas, rate: rate.ok ? rate.rate : null };
+}
 
 export function newRowId(): string {
   return crypto.randomUUID();
@@ -58,18 +84,20 @@ type Session = {
   sheet: NpdSheetKind;
   week: string;
   rows: NpdRow[];
-  /** The rows the server last confirmed, by identity. Dirty = rows !== saved. */
+  /** The rows the server last confirmed, by identity. Dirty = rows !== saved (or settings). */
   saved: NpdRow[] | null;
+  settings: NpdSettings;
+  savedSettings: NpdSettings | null;
   meta: NpdMeta | null;
   inFlight: Promise<boolean> | null;
   timer: number | null;
   /** An unresolved conflict: no autosave until the editor chooses. */
   blocked: boolean;
-  undo: NpdRow[][];
-  redo: NpdRow[][];
+  undo: Snapshot[];
+  redo: Snapshot[];
 };
 
-const isDirty = (s: Session) => s.saved !== null && s.rows !== s.saved;
+const isDirty = (s: Session) => s.saved !== null && (s.rows !== s.saved || s.settings !== s.savedSettings);
 const isLocked = (s: Session) => !!s.meta?.lockedAt;
 
 function clearTimer(s: Session) {
@@ -113,6 +141,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   const [saveError, setSaveError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<NpdConflict | null>(null);
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
+  const [settings, setSettingsState] = useState<NpdSettings>(NO_SETTINGS);
 
   const sessionRef = useRef<Session | null>(null);
   const mountedRef = useRef(true);
@@ -137,11 +166,14 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     if (!isDirty(s)) return Promise.resolve(true);
 
     const sent = s.rows;
+    const sentSettings = s.settings;
     const body = {
       sheet: s.sheet,
       week: s.week,
       expectedVersion: s.meta.version,
-      rows: trimTrailingBlankRows(sent).map((r) => ({ id: r.id, values: r.values })),
+      usdPerPhp: sentSettings.rateText.trim() === '' ? null : sentSettings.rateText.trim(),
+      columnFormulas: sentSettings.columnFormulas,
+      rows: trimTrailingBlankRows(sent).map((r) => ({ id: r.id, values: r.values, overrides: r.overrides, formulas: r.formulas })),
     };
     if (live(s)) setSaveState('saving');
 
@@ -188,10 +220,11 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
         }
         s.meta = metaFrom(j);
         s.saved = sent;
+        s.savedSettings = sentSettings;
         if (live(s)) {
           setMeta(s.meta);
           setSaveError(null);
-          setSaveState(s.rows === sent ? 'idle' : 'pending');
+          setSaveState(s.rows === sent && s.settings === sentSettings ? 'idle' : 'pending');
         }
         return true;
       } catch (e) {
@@ -248,11 +281,23 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
         setLoadState(j.missing === true ? 'missing' : 'error');
         return;
       }
-      const loaded = (Array.isArray(j.rows) ? j.rows : []) as NpdRow[];
+      const loaded = ((Array.isArray(j.rows) ? j.rows : []) as Partial<NpdRow>[]).map((r) => ({
+        id: String(r.id),
+        values: (r.values ?? []) as string[],
+        overrides: Array.isArray(r.overrides) ? r.overrides : [],
+        formulas: r.formulas && typeof r.formulas === 'object' ? r.formulas : {},
+      }));
       const padded = ensureSpareRows(loaded, NPD_COLUMNS[s.sheet].length, newRowId);
       s.meta = metaFrom(j);
       s.rows = padded;
       s.saved = padded;
+      s.settings = {
+        rateText: j.usdPerPhp === null || j.usdPerPhp === undefined ? '' : String(j.usdPerPhp),
+        columnFormulas:
+          j.columnFormulas && typeof j.columnFormulas === 'object' ? (j.columnFormulas as Record<string, string>) : {},
+      };
+      s.savedSettings = s.settings;
+      setSettingsState(s.settings);
       s.undo = [];
       s.redo = [];
       s.blocked = false;
@@ -279,6 +324,8 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       week,
       rows: [],
       saved: null,
+      settings: NO_SETTINGS,
+      savedSettings: null,
       meta: null,
       inFlight: null,
       timer: null,
@@ -289,6 +336,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     sessionRef.current = s;
     setMeta(null);
     setRowsState([]);
+    setSettingsState(NO_SETTINGS);
     setConflict(null);
     setSaveError(null);
     setSaveState('idle');
@@ -325,39 +373,148 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   }, []);
 
   // ── Edits ───────────────────────────────────────────────────────────────
-  const apply = (s: Session, next: NpdRow[]) => {
+  const apply = (s: Session, next: NpdRow[], nextSettings: NpdSettings = s.settings) => {
     s.rows = next;
+    s.settings = nextSettings;
     setRowsState(next);
+    setSettingsState(nextSettings);
     syncHistory(s);
     scheduleSave(s);
   };
 
-  const commit = useCallback((next: NpdRow[]) => {
+  /** The session an edit may touch, or null (none, not loaded, view-only, locked). */
+  const editable = (): Session | null => {
     const s = sessionRef.current;
-    if (!s || !s.meta || !canEditRef.current || isLocked(s)) return;
-    s.undo.push(s.rows);
+    if (!s || !s.meta || !canEditRef.current || isLocked(s)) return null;
+    return s;
+  };
+
+  const pushUndo = (s: Session) => {
+    s.undo.push({ rows: s.rows, settings: s.settings });
     if (s.undo.length > UNDO_LIMIT) s.undo.shift();
     s.redo = [];
-    apply(s, ensureSpareRows(next, NPD_COLUMNS[s.sheet].length, newRowId));
+  };
+
+  const commit = useCallback((next: NpdRow[]) => {
+    const s = editable();
+    if (!s) return;
+    const withFormulas = applyFormulasToEdit(s.sheet, s.rows, next, contextOf(s.settings));
+    pushUndo(s);
+    apply(s, ensureSpareRows(withFormulas, NPD_COLUMNS[s.sheet].length, newRowId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const undo = useCallback(() => {
-    const s = sessionRef.current;
-    if (!s || isLocked(s)) return;
-    const prev = s.undo.pop();
-    if (!prev || !canEditRef.current) return;
-    s.redo.push(s.rows);
-    apply(s, prev);
+    const s = editable();
+    const prev = s?.undo.pop();
+    if (!s || !prev) return;
+    s.redo.push({ rows: s.rows, settings: s.settings });
+    apply(s, prev.rows, prev.settings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const redo = useCallback(() => {
-    const s = sessionRef.current;
-    if (!s || isLocked(s)) return;
-    const next = s.redo.pop();
-    if (!next || !canEditRef.current) return;
-    s.undo.push(s.rows);
+    const s = editable();
+    const next = s?.redo.pop();
+    if (!s || !next) return;
+    s.undo.push({ rows: s.rows, settings: s.settings });
+    apply(s, next.rows, next.settings);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Formula settings ────────────────────────────────────────────────────
+
+  /** Type this sheet's PHP→USD rate. Returns an error message, or null when applied. */
+  const setRate = useCallback((text: string): string | null => {
+    const s = editable();
+    if (!s) return 'This sheet cannot be changed.';
+    const parsed = parseUsdPerPhp(text);
+    if (!parsed.ok) return parsed.error;
+    const rateText = text.trim();
+    if (rateText === s.settings.rateText) return null;
+    const nextSettings: NpdSettings = { ...s.settings, rateText };
+    pushUndo(s);
+    apply(s, recomputeAfterSettingsChange(s.sheet, s.rows, contextOf(nextSettings)), nextSettings);
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * One cell's own formula, typed as the sheet shows it (`=H5*1.5`). Empty removes
+   * the cell's own formula. Returns an error message, or null when applied.
+   */
+  const setCellFormula = useCallback((rowIndex: number, key: string, typed: string): string | null => {
+    const s = editable();
+    const row = s?.rows[rowIndex];
+    if (!s || !row) return 'This sheet cannot be changed.';
+    const ctx = contextOf(s.settings);
+    const formulas = { ...row.formulas };
+    if (typed.trim() === '') delete formulas[key];
+    else {
+      let stored: string;
+      try {
+        stored = toStoredFormula(typed, rowIndex + 1, NPD_COLUMNS[s.sheet]);
+      } catch (e) {
+        return e instanceof Error ? e.message : 'Unreadable formula.';
+      }
+      // The same as the column's formula: no need for an own copy.
+      const { [key]: _own, ...rest } = formulas;
+      void _own;
+      if (formulaBehind(s.sheet, { formulas: rest }, key, ctx)?.formula === stored) delete formulas[key];
+      else formulas[key] = stored;
+    }
+    const nextRow = recomputeRow(s.sheet, { ...row, formulas, overrides: row.overrides.filter((k) => k !== key) }, ctx);
+    const next = [...s.rows];
+    next[rowIndex] = nextRow;
+    pushUndo(s);
+    apply(s, ensureSpareRows(next, NPD_COLUMNS[s.sheet].length, newRowId));
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * The whole column's formula on THIS sheet (the sheet's "fill down"): typed as in
+   * row `rowIndex`. Every cell in the column follows it — its own formulas and typed
+   * values are replaced. `''` means "no formula in this column"; `null` resets the
+   * column to the Google Sheet's formula. Returns an error message, or null.
+   */
+  const setColumnFormula = useCallback((key: string, typed: string | null, rowIndex: number): string | null => {
+    const s = editable();
+    if (!s) return 'This sheet cannot be changed.';
+    const columnFormulas = { ...s.settings.columnFormulas };
+    if (typed === null) delete columnFormulas[key];
+    else if (typed.trim() === '') columnFormulas[key] = '';
+    else {
+      let stored: string;
+      try {
+        stored = toStoredFormula(typed, rowIndex + 1, NPD_COLUMNS[s.sheet]);
+      } catch (e) {
+        return e instanceof Error ? e.message : 'Unreadable formula.';
+      }
+      if (stored === defaultFormula(s.sheet, key)) delete columnFormulas[key];
+      else columnFormulas[key] = stored;
+    }
+    const nextSettings: NpdSettings = { ...s.settings, columnFormulas };
+    const cleared = s.rows.map((r) => {
+      if (!(key in r.formulas) && !r.overrides.includes(key)) return r;
+      const { [key]: _drop, ...formulas } = r.formulas;
+      void _drop;
+      return { ...r, formulas, overrides: r.overrides.filter((k) => k !== key) };
+    });
+    pushUndo(s);
+    apply(s, recomputeSheet(s.sheet, cleared, contextOf(nextSettings)), nextSettings);
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Give a typed-over cell back to its formula. */
+  const useFormulaAgain = useCallback((rowIndex: number, key: string) => {
+    const s = editable();
+    const row = s?.rows[rowIndex];
+    if (!s || !row || !row.overrides.includes(key)) return;
+    const next = [...s.rows];
+    next[rowIndex] = recomputeRow(s.sheet, { ...row, overrides: row.overrides.filter((k) => k !== key) }, contextOf(s.settings));
+    pushUndo(s);
     apply(s, next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -459,6 +616,11 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     loadError,
     rows,
     meta,
+    settings,
+    setRate,
+    setCellFormula,
+    setColumnFormula,
+    useFormulaAgain,
     locked: !!meta?.lockedAt,
     lock,
     unlock,

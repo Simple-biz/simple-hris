@@ -3,11 +3,12 @@
 The manual version of the Payroll Wizard: a spreadsheet Accounting fills by pasting from the Google
 Sheet it replaces (or by typing), one sheet per tab per pay week, saved to Supabase. Two tabs,
 **All Departments** (30 columns) and **HSL** (32 columns), each with exactly the header row
-Accounting supplied. **Nothing is imported from HRIS, nothing is computed, and nothing here pays
-anyone.** It sits in the Accounting rail directly below Payroll Wizard; the label reads **NPD** and
-wipes to **New Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief
-(blueprint, CHOSEN 1–7, no NEEDS); session log item 309. Plan:
-`docs/superpowers/plans/2026-10-01-npd-dashboard.md`. **Lock in** added the same day (item 310).
+Accounting supplied. **Nothing is imported from HRIS and nothing here pays anyone.** The calculated
+columns use **the Google Sheet's own formulas**, editable per cell or per column (§ Formulas). It sits
+in the Accounting rail directly below Payroll Wizard; the label reads **NPD** and wipes to **New
+Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief (blueprint, CHOSEN
+1–7, no NEEDS); session log item 309. Plan: `docs/superpowers/plans/2026-10-01-npd-dashboard.md`.
+**Lock in** added the same day (item 310), **formulas** the same day (item 313).
 
 ## Key files
 
@@ -20,7 +21,11 @@ wipes to **New Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 fro
 | The two column lists (= the pasted headers) | `src/lib/npd/columns.ts` |
 | Google Sheets clipboard ⇄ grid | `src/lib/npd/clipboard.ts` |
 | Row model, paste, weeks, save contract | `src/lib/npd/sheet.ts` |
-| Tests (pure + wiring source guards) | `src/lib/npd/clipboard.test.ts` · `sheet.test.ts` · `npd-wiring.test.ts` |
+| Formula engine, the Google Sheet's formulas, the rate | `src/lib/npd/formulas.ts` |
+| Formulas: columns, rate, typed-over cells, save v2 | `references/sql/alter/2026-10-01_npd_formulas.sql` |
+| Formulas apply / verify script (dry by default) | `scripts/apply-npd-formulas-migration.mts` |
+| Engine vs the live Google Sheet (read-only) | `scripts/verify-npd-formulas-against-sheet.mts` |
+| Tests (pure + wiring source guards) | `src/lib/npd/clipboard.test.ts` · `sheet.test.ts` · `formulas.test.ts` · `npd-wiring.test.ts` |
 | DB layer (service role) | `src/lib/supabase/npd-db.ts` |
 | Route | `app/api/accounting/npd/route.ts` |
 | Page · grid · client save logic | `src/components/npd/NpdDashboard.tsx` · `NpdSheetGrid.tsx` · `useNpdSheet.ts` |
@@ -29,15 +34,20 @@ wipes to **New Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 fro
 
 ## Every cell is text, exactly as pasted
 
-`₱1,234.56`, `$20.00`, `#N/A`, `Yes`, a two-line note: each is stored byte for byte in a `text`
-column (NULL = empty cell). **Never retype a cell column to `numeric`**, never trim, never reformat
-on paste or save. The sheet this replaces mixes currencies, symbols and words in the same columns,
-and a typed column would refuse or quietly coerce them, which changes what Accounting recorded. A
-future feature that needs numbers (an HRIS-vs-NPD read, a total) parses them **with its own tested
-parser**, and refuses rather than guesses. The right-alignment of figure columns is display only.
+`₱1,234.56`, `$20.00`, `#N/A`, `Yes`, a two-line note: each **typed or pasted** cell is stored byte for
+byte in a `text` column (NULL = empty cell). **Never retype a cell column to `numeric`**, never trim,
+never reformat on paste or save. The sheet this replaces mixes currencies, symbols and words in the
+same columns, and a typed column would refuse or quietly coerce them, which changes what Accounting
+recorded. A **formula cell** holds its formula's figure as text too, in the Google Sheet's display
+format (§ Formulas). Anything that needs numbers reads cells **with a tested parser**
+(`parseSheetNumber`) and refuses rather than guesses. The right-alignment of figure columns is display
+only.
 
-There are **no formulas and no totals**. "Manual version" is the brief. Adding a computed column
-or a footer total is a new feature, not a fix, and summing pasted money is a money ruling.
+**Formulas: yes. Footer totals: still none.** The first build said *"There are no formulas and no
+totals"* (blueprint CHOSEN 3). **Kane overturned the formulas half on 2026-10-01:** *"Copy the formulas
+in respective of the Columns please this is to ensure we have the values calculated"* (item 313). The
+totals half stands: a footer that sums a column of pay is a new feature and a money ruling, and nobody
+has asked for it.
 
 ## The columns are the pasted header rows
 
@@ -80,6 +90,97 @@ cell Accounting pastes. It is never checked against the sheet's week, and that i
   saves its edits, with its own version, and never into another week's state.
 - `saved_by` / `updated_by` is the **session** email (`authz.sessionEmail`), never the body.
   Source-guarded in `npd-wiring.test.ts`.
+
+## Formulas
+
+Kane, 2026-10-01: *"Copy the formulas in respective of the Columns please this is to ensure we have
+the values calculated"*, then *"when we right click on the cell it should show the formula beneath that
+cell please and should be editable"*. The formulas were read that day from the NEW Payroll Dashboard
+Google Sheet (spreadsheet `1VPPYSF0HFoLRpXiZB3Bjm-277_tO77-gm1xeUs0atX4`, tabs **All Dept** gid 0 and
+**Hogan** gid 406220700), through the HRIS service account with the **read-only** Sheets scope.
+
+**The engine reproduces the sheet exactly.** `scripts/verify-npd-formulas-against-sheet.mts` rebuilds
+every row of both tabs (6,808 + 7,136 person-rows, every week since July) as NPD rows and compares each
+formula cell with the sheet's own figure. On 2026-10-01: **0 mismatches** in about 97,000 formula
+cells, every one identical to the last bit, not just to the cent. Re-run it after touching
+`formulas.ts`; it writes nothing.
+
+| Tab | Column (sheet letter) | The Google Sheet's formula |
+| --- | --- | --- |
+| All Departments | OT Rate (AF) | `=AD*1.5` (Regular Rate × 1.5) |
+| | Hours Until OT (AG) | `=IF(AC<40,(40-AC),0)` |
+| | Orphan Hours Total Pay (AI) | `=IF(AC>=40,(AH*AF),IF((AH+AC)<=40,AH*AD,(AG*AD)+(AH-AG)*AF))` |
+| | Total Hourly Pay (AM) | `=((AC*AD)+(AE*AF)+(AI)+(AJ*AK))` |
+| both | Total Pay PHP (AU) | `=AM+AO+AP+AQ+AR+AS+AN`: hourly + bonuses + MESA |
+| both | PHP USD Conversion (AV) | `=AU*<that week's rate>` → NPD `={total_pay_php}*RATE` |
+| HSL | Hogan WE Rate (AD) | `=AB+15` |
+| | Total OT Hours (AE) | `=MAX(0,((AA+AC)-40))` |
+| | OT Differential (AF) | `=AB*0.5` |
+| | Hours Until OT (AG) | `=MAX(0,IF((AC+AA)<40,(40-(AA+AC)),0))` |
+| | Orphan Hours Total Pay (AI) | `=IF((AA+AC)>=40,AH*(AB+AF),IF((AH+AC+AA)<40,AH*AB,(AG*AB)+(AH-AG)*(AB+AF)))` |
+| | Total Hourly Pay (AM) | `=((AA*AB)+(AC*AD))+(AE*AF)+AI+(AJ*AK)` |
+
+Rules, each pinned by `formulas.test.ts` and checked against the live sheet:
+
+- **The defaults keep the sheet's exact expression and order.** Sheets and JavaScript both use IEEE
+  doubles, so the same expression in the same order gives the same bits. **Never "simplify" a
+  default**: that can move a figure by a cent. A test maps each default back to the sheet's letters and
+  compares it with the sheet's formula character for character. The one recorded difference: the
+  sheet's `+AO` ("Orphan pay") is dropped. NPD has no such column, the sheet never filled it (0 of
+  ~13,900 rows), and x + 0 is exactly x.
+- **Hours and bonuses are inputs, not formulas.** In the sheet they are XLOOKUPs into an hours tab
+  that NPD does not have, so they are pasted like any other cell.
+- **MESA is added, as in the sheet.** It is typed negative there (1,372 negative vs 21 positive on
+  2026-10-01). Never "correct" it to a subtraction.
+- **Sheets semantics:** empty = 0. Text (a space included) is text: arithmetic on it is `#VALUE!`,
+  but in a comparison text ranks above every number, so a "Salary" in the hours gives Hours Until OT
+  0, exactly as the sheet's Salary rows do. Errors (`#N/A` …) spread. `IF` is lazy. A range inside
+  `MAX`/`MIN`/`SUM` skips empty cells and text. A formula that reaches itself is `#REF!`. A row with
+  nothing typed in it shows no figures (no column of 0.00s).
+- **The PHP→USD rate is per tab per week.** The sheet typed a different constant into each week's
+  formula (13 distinct values). NPD's is the **PHP→USD rate** box (dollars per peso, e.g.
+  `0.0162575`), stored exactly (`numeric`) on that sheet and **never carried over from another week**
+  ([[fx-no-cross-check-npd-divergence]]). With no rate, the USD column is blank, not $0.00. A value
+  ≥ 1 is refused (pesos per dollar typed the wrong way round would make every USD figure ~3,800×
+  too large), and so is 0. The database has the same check.
+
+**Where a cell's formula comes from**, first that applies: (1) **typed over**, so no formula; (2) the
+**cell's own formula**; (3) the **sheet's column formula** (`npd_sheets.column_formulas`; `""` = none
+in that column); (4) the **Google Sheet's default** above. Formulas are stored by column key
+(`={regular_rate}*1.5`), so inserted rows and reordered columns can't break them. They are shown and
+typed in the sheet's notation, column letter + this row (`=H5*1.5`), with a letter row above the
+headers. **A formula can only use its own row's cells**: anything else is refused, with the reason.
+
+**Typing works as in the sheet:**
+- `=…` typed or pasted into a cell becomes that cell's formula. An unreadable one keeps the editor
+  open on Enter and says why.
+- A **different figure** typed or pasted into a formula cell is **typed over** it. The cell keeps the
+  text verbatim, turns **amber**, and its tooltip gives the formula's figure. Later formulas read the
+  typed value, as the sheet's would.
+- A pasted figure **equal to the formula's result at 2 decimals** stays a formula. That is what pasting
+  the sheet's own computed columns looks like, so a full-row paste flags only real differences.
+- **Delete** gives the cell back to its formula.
+- Setting the rate folds back any typed USD figure that now matches.
+
+**Right-click a cell** (or Shift+F10 / the menu key) to see its formula **beneath the cell**, with a
+live result and what each letter refers to. With an edit grant on an unlocked sheet it is editable:
+- **This cell** gives the cell its own formula (corner mark).
+- **Whole column** sets the column's formula on this sheet, the sheet's fill-down. It replaces every
+  own formula and typed value in that column, and says how many before doing so.
+- **Sheet's formula** resets the column to the Google Sheet's.
+- **Use the formula again** clears a typed-over cell.
+
+F2 / Enter / double-click on a formula cell edits its formula text. A locked sheet or a view grant
+shows the formula read-only. Column changes and the rate are part of an undo step, together with the
+rows.
+
+**The server recalculates every formula cell on every save** (`recomputeSheet` in the PUT, before the
+removal audit and the save), so what is stored in a formula cell is always what its formula gives. The
+browser's figures are never trusted; only cells the row lists as typed over keep the browser's text.
+Each row stores `formula_overrides` and `formula_cells`. `npd.sheet.saved` records a changed rate or
+changed column formulas (from → to).
+
+Not connected to anything yet: the HRIS vs NPD step still takes its own paste.
 
 ## Lock in
 
@@ -180,6 +281,12 @@ column must be parsed and refused exactly as that step's paste contract says.
   production 2026-10-01: 39/39** (objects, privileges, and a lock that really refuses saves); rolled
   back, and a re-probe confirmed nothing changed. The script refuses to run without the base tables.
   It is safe before or after the code deploys (see § Lock in, the last-but-one bullet).
+- **Formulas migration PENDING, AFTER Lock in:** `node --import tsx scripts/apply-npd-formulas-migration.mts --apply`.
+  **Dry run against production 2026-10-01: 32/32.** Lock in was not applied yet, so the dry run
+  rehearsed Lock in + formulas together and rolled both back. `--apply` refuses to run before Lock in.
+  **Order: Lock in `--apply` → formulas `--apply` → push.** The formulas code saves through
+  `npd_save_sheet_v2`. Until that exists, a save fails loudly (*NPD formulas are not set up yet*) with
+  the edits kept on screen. The original `npd_save_sheet` is kept, so older code still saves.
 - **Grant PENDING:** Admin → Roles → Accounting → **NPD (New Payroll Dashboard)** → Edit for each
   person who will paste (Aliviah). Measured 2026-10-01: **0** active `npd` grants. Admins see it
   already.
@@ -188,5 +295,9 @@ column must be parsed and refused exactly as that step's paste contract says.
   paste with header skip, multi-line cells, edit/undo/redo, copy, delete, insert, 409 → Keep mine,
   failed save → Retry, tab switch flushes, week stepping, view-only, phone width, nav hover). Lock in
   added 17 more checks (57 in all) (confirm, the locked version sent, read-only grid and row tools, paste refused,
-  week-menu marker, reason required, unlock, a save refused by a lock meanwhile). **Not clicked
-  through signed in** against the real route.
+  week-menu marker, reason required, unlock, a save refused by a lock meanwhile). Formulas added 30
+  more (87 in all): a pasted figure equal to the formula stays a formula and a different one turns
+  amber; the right-click editor opens beneath the cell in the sheet's notation; this cell vs whole
+  column (with its confirmation); reset; undo across a column change; the rate refused the wrong way
+  round, then applied; `=` typed into a cell; F2 on a formula cell; another row's reference refused;
+  locked and view-only read-only. **Not clicked through signed in** against the real route.

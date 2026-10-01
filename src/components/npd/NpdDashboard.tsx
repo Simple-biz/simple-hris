@@ -20,13 +20,17 @@ import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, NPD_SHEETS, NPD_SHEET_LABELS, isNpdSheetKind, type NpdSheetKind } from '@/lib/npd/columns';
 import { NPD_UNLOCK_REASON_MAX, defaultNpdWeek, shiftWeek, weekLabel } from '@/lib/npd/sheet';
 import NpdSheetGrid from './NpdSheetGrid';
-import { useNpdSheet, type LockResult } from './useNpdSheet';
+import { contextOf, useNpdSheet, type LockResult } from './useNpdSheet';
 
 /**
  * Accounting → NPD (New Payroll Dashboard). The manual version of the Payroll
  * Wizard: a sheet per tab (All Departments | HSL) per pay week that Accounting
  * pastes from Google Sheets. Nothing is imported from HRIS and nothing here pays
  * anyone. Governing doc: docs/features/npd-dashboard.md.
+ *
+ * Formulas: every calculated column follows the Google Sheet's formula (right-click
+ * a cell to see or edit it); this sheet's PHP→USD rate is typed here, per tab per
+ * week, never carried over (the Google Sheet typed it into each week's formula).
  *
  * Lock in freezes the tab on screen for the week on screen. The database refuses
  * every save on a locked sheet; this page only mirrors that (read-only grid, the
@@ -72,6 +76,17 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
   const ctl = useNpdSheet(sheet, week, canEdit);
   const columns = NPD_COLUMNS[sheet];
   const readOnly = !canEdit;
+  // Memoised: the grid re-derives every row's formulas when this changes.
+  const ctx = useMemo(() => contextOf(ctl.settings), [ctl.settings]);
+  const [rateDraft, setRateDraft] = useState<string | null>(null);
+  const [rateError, setRateError] = useState<string | null>(null);
+  const rateEditable = canEdit && !ctl.locked && !ctl.conflict && ctl.loadState === 'ready';
+  const commitRate = () => {
+    if (rateDraft === null) return;
+    const problem = ctl.setRate(rateDraft);
+    setRateError(problem);
+    if (!problem) setRateDraft(null);
+  };
 
   const showNotice = useCallback((message: string) => {
     setNotice(message);
@@ -207,8 +222,8 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-300">NPD</p>
             <h2 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">New Payroll Dashboard</h2>
             <p className="mt-1 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              The manual payroll sheet, one per pay week. Paste it in from Google Sheets or type it here. Nothing is
-              imported from HRIS, and every cell keeps exactly what was pasted.
+              The payroll sheet, one per pay week. Paste it in from Google Sheets or type it here. Nothing is imported
+              from HRIS. The calculated columns use the Google Sheet’s own formulas: right-click a cell to see or edit one.
             </p>
           </div>
         </div>
@@ -301,6 +316,51 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             The week list could not be loaded ({weeksError}). The arrows still work.
           </p>
         )}
+        {ctl.loadState === 'ready' && (
+          <div className="flex flex-col gap-0.5" data-readonly-allow>
+            <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
+              <span className="whitespace-nowrap" title="Dollars per peso. Total Pay PHP × this rate = PHP USD Conversion. Typed for this tab and week only.">
+                PHP→USD rate
+              </span>
+              <input
+                value={rateDraft ?? ctl.settings.rateText}
+                disabled={!rateEditable}
+                inputMode="decimal"
+                placeholder="e.g. 0.0162575"
+                onChange={(e) => {
+                  setRateDraft(e.target.value);
+                  setRateError(null);
+                }}
+                onBlur={commitRate}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitRate();
+                  }
+                  if (e.key === 'Escape') {
+                    setRateDraft(null);
+                    setRateError(null);
+                  }
+                }}
+                aria-invalid={!!rateError}
+                className={cn(
+                  'h-8 w-32 rounded-lg border bg-white px-2 font-mono text-xs text-zinc-900 outline-none focus:ring-2 disabled:opacity-60 dark:bg-zinc-950 dark:text-zinc-100',
+                  rateError
+                    ? 'border-red-400 focus:ring-red-400/30'
+                    : 'border-zinc-200 focus:border-sky-400 focus:ring-sky-400/30 dark:border-zinc-800',
+                )}
+              />
+              {!ctl.settings.rateText && !rateError && (
+                <span className="text-[11px] text-amber-700 dark:text-amber-300">none yet: USD stays blank</span>
+              )}
+            </label>
+            {rateError && (
+              <p className="max-w-md text-[11px] text-red-700 dark:text-red-300" role="alert">
+                {rateError}
+              </p>
+            )}
+          </div>
+        )}
         {ctl.loadState === 'ready' && week && (
           <LockControl
             key={`${sheet}:${week}`}
@@ -385,6 +445,11 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
       {ctl.loadState === 'ready' ? (
         <NpdSheetGrid
           key={`${sheet}:${week}`}
+          sheet={sheet}
+          ctx={ctx}
+          onCellFormula={ctl.setCellFormula}
+          onColumnFormula={ctl.setColumnFormula}
+          onUseFormulaAgain={ctl.useFormulaAgain}
           columns={columns}
           rows={ctl.rows}
           readOnly={readOnly || !!ctl.conflict || ctl.locked}

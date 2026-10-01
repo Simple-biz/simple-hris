@@ -4,6 +4,7 @@ import { auditFrom } from '@/lib/audit/context';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { isNpdSheetKind } from '@/lib/npd/columns';
+import { recomputeSheet } from '@/lib/npd/formulas';
 import { isSundayIso, removedRows, rowForAudit, validateLockBody, validateSaveBody } from '@/lib/npd/sheet';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import {
@@ -85,6 +86,8 @@ export async function GET(req: Request) {
       updatedBy: r.meta.updatedBy,
       lockedAt: r.meta.lockedAt,
       lockedBy: r.meta.lockedBy,
+      usdPerPhp: r.meta.usdPerPhp,
+      columnFormulas: r.meta.columnFormulas,
       rows: r.rows,
     },
     { headers: NO_STORE },
@@ -92,8 +95,13 @@ export async function GET(req: Request) {
 }
 
 /**
- * PUT `{ sheet, week, expectedVersion, rows: [{ id, values }] }` — replace the
- * sheet. `expectedVersion` is the version the editor loaded; a mismatch is 409.
+ * PUT `{ sheet, week, expectedVersion, usdPerPhp, columnFormulas, rows: [{ id,
+ * values, overrides, formulas }] }` — replace the sheet. `expectedVersion` is the
+ * version the editor loaded; a mismatch is 409.
+ *
+ * FORMULAS ARE RECALCULATED HERE, on every save (src/lib/npd/formulas.ts), so a
+ * stored formula cell always holds what its formula gives. The browser's figures
+ * are never trusted; only a cell it lists as typed over keeps the browser's text.
  *
  * Order matters and is source-guarded (npd-wiring.test.ts):
  *   1. validate · 2. read the current sheet (refuse if it cannot be read — we
@@ -116,7 +124,8 @@ export async function PUT(req: Request) {
   }
   const parsed = validateSaveBody(raw);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-  const { sheet, week, expectedVersion, rows } = parsed.value;
+  const { sheet, week, expectedVersion, usdPerPhp, columnFormulas } = parsed.value;
+  const rows = recomputeSheet(sheet, parsed.value.rows, { columnFormulas, rate: usdPerPhp });
   const resourceId = `${sheet}:${week}`;
 
   const current = await readNpdSheet(sheet, week);
@@ -151,7 +160,15 @@ export async function PUT(req: Request) {
     }
   }
 
-  const saved = await saveNpdSheet({ sheet, week, expectedVersion, savedBy: authz.sessionEmail, rows });
+  const saved = await saveNpdSheet({
+    sheet,
+    week,
+    expectedVersion,
+    savedBy: authz.sessionEmail,
+    rows,
+    usdPerPhp,
+    columnFormulas,
+  });
   if (!saved.ok) {
     if (saved.locked) {
       // Locked between the read above and the save. Nothing was written; a
@@ -201,6 +218,13 @@ export async function PUT(req: Request) {
       row_count: saved.meta.rowCount,
       previous_row_count: current.meta.rowCount,
       removed_count: removed.length,
+      // Formula settings are part of what pays out on paper: record when they move.
+      ...(String(usdPerPhp ?? '') !== String(current.meta.usdPerPhp ?? '')
+        ? { usd_per_php: { from: current.meta.usdPerPhp, to: usdPerPhp === null ? null : String(usdPerPhp) } }
+        : {}),
+      ...(JSON.stringify(columnFormulas) !== JSON.stringify(current.meta.columnFormulas)
+        ? { column_formulas: { from: current.meta.columnFormulas, to: columnFormulas } }
+        : {}),
     },
   });
 
@@ -210,6 +234,8 @@ export async function PUT(req: Request) {
       rowCount: saved.meta.rowCount,
       updatedAt: saved.meta.updatedAt,
       updatedBy: saved.meta.updatedBy,
+      usdPerPhp: saved.meta.usdPerPhp,
+      columnFormulas: saved.meta.columnFormulas,
     },
     { headers: NO_STORE },
   );

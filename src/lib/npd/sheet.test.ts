@@ -47,7 +47,7 @@ function ids() {
 function rowsOf(width: number, data: string[][], newId = ids()): NpdRow[] {
   return data.map((cells) => {
     const values = Array.from({ length: width }, (_, i) => cells[i] ?? '');
-    return { id: newId(), values };
+    return { id: newId(), values, overrides: [], formulas: {} };
   });
 }
 
@@ -383,7 +383,10 @@ describe('removed rows and records', () => {
     assert.equal(rec!.work_email, 'jane@simple.biz');
     assert.equal(rec!.name, null);
     assert.equal(rec!.department, 'HSL');
-    assert.equal(Object.keys(rec!).length, HSL.length + 2);
+    // id, row_no, formula_overrides, formula_cells + one per column.
+    assert.equal(Object.keys(rec!).length, HSL.length + 4);
+    assert.deepEqual(rec!.formula_overrides, []);
+    assert.deepEqual(rec!.formula_cells, {});
   });
 
   test('fromDbRecord reads NULL back as an empty cell', () => {
