@@ -5,6 +5,14 @@
 > **Scope:** Full codebase audit — Authentication, Authorization, API Security, Database, Frontend, Infrastructure, HRIS-Specific Risks, Compliance
 > **Raw Findings Collected:** 151 (deduplicated to 80 below)
 
+> ## ⚠ SUPERSEDED FOR CURRENT STATE — OWASP Top 10:2025 audit, 2026-10-01
+>
+> Read [`docs/audits/owasp-2026-10-01.md`](docs/audits/owasp-2026-10-01.md) first (52 findings, OW-1 … OW-52).
+> Three rows below are **wrong**: **#26 RESOLVED** (`GET /api/employee-ids` with no `?email=` still returns
+> every bank row, OW-2), **#4 RESOLVED** (`hubstaff-hours` non-`live` branches are open, OW-16), and the
+> **#1** note that no `.env*` exists (both `.env` and `.env.local` are on disk, OW-49). The rows are left
+> unedited here; correcting this document row by row is a `hardening` job.
+
 > ## ⚠ READ THIS FIRST — this report is substantially STALE (re-verified 2026-08-10)
 >
 > **Every "no authentication — curl it with zero credentials" scenario below is

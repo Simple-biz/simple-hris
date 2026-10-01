@@ -1,5 +1,10 @@
 # Pre-release security readiness
 
+> **2026-10-01:** the OWASP audit [`../audits/owasp-2026-10-01.md`](../audits/owasp-2026-10-01.md) supersedes this
+> doc's counts. §1–§5 below still hold, but the "six ungated routes" in §2 undercount by about 20 handlers, and
+> two new blockers sit above all of them: the repo is **public**, with bank numbers on `origin/main` (OW-1),
+> and `GET /api/employee-ids` with no `?email=` returns every bank row to any signed-in user (OW-2).
+
 **Status: OPEN. Every finding below was re-verified in the working tree on 2026-09-09 and is still
 present.** Nothing here has been fixed. This doc exists because the findings were made in session
 `1a6b84b8` (2026-09-08 19:14) and lived only in that transcript.
