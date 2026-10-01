@@ -108,7 +108,7 @@ export default function NpdFiguresStep({ pasteText, onPasteChange, parse, hrisPe
           </ul>
         )}
         <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-          Nothing is saved: the paste stays with this week until the page is reloaded.
+          The paste stays with this week until the page is reloaded. Save output, on the output, keeps a copy on file.
         </p>
       </div>
 

@@ -17,7 +17,7 @@ Shipped **2026-08-21**. Source: `src/lib/payroll/manual-validation.ts`,
 `Final Pay | HRIS vs NPD` strip on the step. Final Pay is the default, and nothing on it
 changed. The other section is the NPD comparison
 ([payroll-wizard-hris-vs-npd.md](./payroll-wizard-hris-vs-npd.md)), which reads the same
-Validation rows and writes nothing. The header, the summary cards and the Validation Checks
+Validation rows. Its only write is its own Save output, to its own tables (2026-10-01). The header, the summary cards and the Validation Checks
 sit outside the swap. The full-screen overlay carries **both** sections (§ Full screen is a
 portal, not a route).
 

@@ -13,8 +13,11 @@
  *     (`NpdFiguresStep`), takes the paste; **Load output** shows step 2, and the input is
  *     hidden there. Step 2 exists only while a line is read. Its rail summary always
  *     carries the skipped count, so a refused line is never out of sight.
- *   - DISPLAY ONLY. It writes nothing, anywhere: no route, no app_settings key, no audit.
- *     The paste lives in the wizard's state for the week on screen and is gone on reload.
+ *   - It writes nothing ITSELF. The one write is **Save output** (Kane, 2026-10-01), which
+ *     calls the wizard's `save.onSave`: the wizard builds the snapshot from the same
+ *     comparison this panel renders and POSTs it to /api/payroll-wizard/npd-comparison
+ *     (append-only, service-role tables). Saving restores nothing: the paste still lives in
+ *     the wizard's state for the week on screen and is gone on reload.
  *   - Every row, count, total and verdict comes from `compareHrisNpd` — this file never
  *     decides a match. The search and the status chips are `filterHrisNpdRows`, and they
  *     never narrow the totals.
@@ -36,6 +39,7 @@ import {
   Loader2,
   Maximize2,
   PowerOff,
+  Save,
   SearchX,
   X,
 } from 'lucide-react';
@@ -62,12 +66,32 @@ import {
   type HrisNpdStatus,
   type NpdPasteParse,
 } from '@/lib/payroll/hris-npd-compare';
+import type { HrisNpdSaveMeta } from '@/lib/payroll/hris-npd-snapshot';
 
 /**
  * The tab's two steps (Kane, 2026-09-30): `input` = step 1, **NPD Figures** (the paste);
  * `output` = step 2, the comparison, with the input hidden.
  */
 export type HrisNpdStep = 'input' | 'output';
+
+/**
+ * **Save output** (Kane, 2026-10-01: "save the output for the current week"). The WIZARD
+ * owns all of it — the read of the week's newest save, the POST, and why the button is off —
+ * and hands it in through `HrisNpdPanelProps`, so the step and full screen show the same.
+ */
+export type HrisNpdSaveProps = {
+  /** The week's newest saved output. A failed read is an error, never "not saved yet". */
+  latest:
+    | { state: 'loading' }
+    | { state: 'ready'; meta: HrisNpdSaveMeta | null }
+    | { state: 'error'; message: string; notSetUp: boolean };
+  /** Why Save output can't be clicked now (held verdicts, a replay, migration pending), or null. */
+  disabledReason: string | null;
+  saving: boolean;
+  /** The output on screen is exactly what was saved (or confirmed unchanged) this session. */
+  savedThisOutput: boolean;
+  onSave: () => void;
+};
 
 /**
  * Everything the panel shows. The wizard builds ONE of these per render and hands the same
@@ -106,6 +130,8 @@ export type HrisNpdPanelProps = {
   onSearchChange: (next: string) => void;
   filter: HrisNpdFilter;
   onFilterChange: (next: HrisNpdFilter) => void;
+  /** Save output and the week's last save. */
+  save: HrisNpdSaveProps;
 };
 
 type Props = HrisNpdPanelProps & {
@@ -379,6 +405,93 @@ function ToleranceControl({ value, onChange }: { value: number; onChange: (next:
   );
 }
 
+// ─── Save output ───────────────────────────────────────────────────────────────
+
+function savedAtLabel(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * Save output (Kane, 2026-10-01). One line: the week's last save on the left — version, who,
+ * when, and what it held — and the button on the right. Each save is a NEW version; nothing
+ * saved is ever replaced. The button is off, with the reason beside it, while the verdicts
+ * are held, on a replay, or before the migration lands; it reads "Saved" once this exact
+ * output is the one on file.
+ */
+function SaveOutputBar({ save }: { save: HrisNpdSaveProps }) {
+  const { latest, disabledReason, saving, savedThisOutput, onSave } = save;
+  const meta = latest.state === 'ready' ? latest.meta : null;
+  const c = meta?.counts;
+  const disabled = saving || savedThisOutput || disabledReason != null;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-700 shadow-sm dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+      <div role="status" className="flex min-w-0 items-start gap-2">
+        {latest.state === 'loading' ? (
+          <>
+            <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-zinc-400 motion-reduce:animate-none" aria-hidden />
+            <span className="text-zinc-500 dark:text-zinc-400">Checking for a saved output this week…</span>
+          </>
+        ) : latest.state === 'error' ? (
+          <>
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+            <span className="text-amber-800 dark:text-amber-300">
+              {latest.notSetUp
+                ? 'Saving the output is not set up yet: the database migration is pending.'
+                : `Couldn't read this week's saved output: ${latest.message}`}
+            </span>
+          </>
+        ) : meta && c ? (
+          <>
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" strokeWidth={3} aria-hidden />
+            <span className="min-w-0">
+              <strong className="font-semibold">Saved v{meta.version}</strong>
+              <span className="text-zinc-500 dark:text-zinc-400">
+                {' '}by {meta.savedBy}, {savedAtLabel(meta.savedAt)}
+              </span>
+              <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">
+                {c.match} match · {c.mismatch} mismatch · {c.not_in_hris} not in HRIS · {c.not_in_npd} not in NPD
+                {meta.leftOutCount > 0 ? ` · ${meta.leftOutCount} not compared` : ''} · off by {meta.toleranceCents}¢
+              </span>
+            </span>
+          </>
+        ) : (
+          <>
+            <Save className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden />
+            <span className="text-zinc-500 dark:text-zinc-400">Not saved yet for this week.</span>
+          </>
+        )}
+      </div>
+      <div className="flex min-w-0 items-center gap-2">
+        {disabledReason && !saving && (
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{disabledReason}</span>
+        )}
+        <Button
+          type="button"
+          size="sm"
+          variant={savedThisOutput ? 'outline' : 'default'}
+          className="h-8 shrink-0 gap-1.5 text-xs"
+          onClick={onSave}
+          disabled={disabled}
+          title={disabledReason ?? (savedThisOutput ? 'This output is the one on file.' : 'Save this output as the week’s next version')}
+        >
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+          ) : savedThisOutput ? (
+            <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden />
+          ) : (
+            <Save className="h-3.5 w-3.5" aria-hidden />
+          )}
+          {saving ? 'Saving…' : savedThisOutput ? 'Saved' : 'Save output'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Not compared ──────────────────────────────────────────────────────────────
 
 /**
@@ -461,6 +574,7 @@ export default function HrisNpdComparison({
   onSearchChange,
   filter,
   onFilterChange,
+  save,
   fillHeight = false,
   onOpenFullScreen,
 }: Props) {
@@ -598,6 +712,8 @@ export default function HrisNpdComparison({
           <div className="flex shrink-0 flex-col gap-3">
             {/* At the top of the output, first thing after Load output (Kane, 2026-09-30). */}
             <ToleranceControl value={toleranceCents} onChange={onToleranceChange} />
+            {/* Save output (Kane, 2026-10-01), right under the setting it saves with. */}
+            <SaveOutputBar save={save} />
             {fxRate > 0 && (
               <p className="text-[12px] text-zinc-600 dark:text-zinc-400">
                 HRIS&apos;s dollar figure is what Payment Dispatch will be sent: final pay ÷{' '}

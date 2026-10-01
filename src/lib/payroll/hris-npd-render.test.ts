@@ -5,7 +5,7 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import HrisNpdComparison, { type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
+import HrisNpdComparison, { type HrisNpdSaveProps, type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
   parseNpdPaste,
@@ -36,6 +36,16 @@ type Mount = {
   filter?: HrisNpdFilter;
   fillHeight?: boolean;
   onOpenFullScreen?: () => void;
+  /** Save output's state; defaults to a week with nothing saved and the button live. */
+  save?: Partial<HrisNpdSaveProps>;
+};
+
+const NOT_SAVED: HrisNpdSaveProps = {
+  latest: { state: 'ready', meta: null },
+  disabledReason: null,
+  saving: false,
+  savedThisOutput: false,
+  onSave: () => {},
 };
 
 function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: Mount = {}): string {
@@ -69,6 +79,7 @@ function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: M
       onSearchChange: () => {},
       filter: mount.filter ?? 'all',
       onFilterChange: () => {},
+      save: { ...NOT_SAVED, ...mount.save },
       fillHeight: mount.fillHeight,
       onOpenFullScreen: mount.onOpenFullScreen,
     }),
@@ -286,6 +297,76 @@ describe('HRIS vs NPD — step 1 NPD Figures, then step 2 Output', () => {
 // `fillHeight` — the rule the Final Pay table's full screen already keeps
 // (payroll-wizard-manual-validation.md § Full screen is a portal). The search and the
 // chip are the wizard's, so both mounts show the same slice.
+
+describe('HRIS vs NPD — Save output (Kane, 2026-10-01)', () => {
+  const META = {
+    id: 'u',
+    version: 2,
+    savedAt: '2026-10-01T15:04:00Z',
+    savedBy: 'alivia@simple.biz',
+    toleranceCents: 3,
+    rowCount: 4,
+    leftOutCount: 1,
+    counts: { match: 1, mismatch: 1, not_in_hris: 1, not_in_npd: 1 },
+  };
+  const button = (html: string) => {
+    const m = /<button[^>]*>(?:(?!<\/button>)[\s\S])*?(Save output|Saved|Saving…)<\/button>/.exec(html);
+    assert.ok(m, 'no Save output button');
+    return m![0];
+  };
+
+  it('sits on the output, right under the "off by" box, and not on step 1', () => {
+    const html = render(PASTE);
+    const box = html.indexOf('Count as a match when HRIS and NPD are off by at most');
+    const save = html.indexOf('Save output');
+    const table = html.indexOf('<table');
+    assert.ok(box > 0 && save > box && table > save, 'off-by box → Save output → table');
+    // Step 1 may MENTION Save output in its copy; the bar and its button are output-only.
+    const input = render(PASTE, {}, { step: 'input' });
+    assert.doesNotMatch(input, /Save output<\/button>/);
+    assert.doesNotMatch(input, /Not saved yet for this week/);
+  });
+
+  it('a week with nothing saved says so, and the button is live', () => {
+    const html = render(PASTE);
+    assert.match(html, /Not saved yet for this week\./);
+    assert.doesNotMatch(button(html), /\sdisabled=""/);
+  });
+
+  it('names the last save: version, who, and what it held', () => {
+    const html = render(PASTE, {}, { save: { latest: { state: 'ready', meta: META } } });
+    assert.match(html, /Saved v2/);
+    assert.match(html, /by alivia@simple\.biz/);
+    assert.match(html, /1 match · 1 mismatch · 1 not in HRIS · 1 not in NPD · 1 not compared · off by 3¢/);
+  });
+
+  it('is OFF, with the reason beside it, when the output cannot be saved', () => {
+    const html = render(PASTE, {}, { save: { disabledReason: 'This is a replay of a past week, so nothing is saved.' } });
+    assert.match(button(html), /\sdisabled=""/);
+    assert.match(html, /This is a replay of a past week, so nothing is saved\./);
+  });
+
+  it('reads "Saved" (and is off) once this exact output is the one on file', () => {
+    const html = render(PASTE, {}, { save: { latest: { state: 'ready', meta: META }, savedThisOutput: true } });
+    const b = button(html);
+    assert.match(b, />Saved<\/button>|Saved<\/button>/);
+    assert.match(b, /\sdisabled=""/);
+  });
+
+  it('a failed read is an error, never "not saved yet"', () => {
+    const html = render(PASTE, {}, { save: { latest: { state: 'error', message: 'HTTP 500', notSetUp: false } } });
+    assert.match(html, /Couldn&#x27;t read this week&#x27;s saved output: HTTP 500/);
+    assert.doesNotMatch(html, /Not saved yet/);
+    const pending = render(PASTE, {}, { save: { latest: { state: 'error', message: 'x', notSetUp: true } } });
+    assert.match(pending, /the database migration is pending/);
+  });
+
+  it('while saving the button says so and cannot be clicked twice', () => {
+    const b = button(render(PASTE, {}, { save: { saving: true } }));
+    assert.match(b, /Saving…/);
+    assert.match(b, /\sdisabled=""/);
+  });
+});
 
 describe('HRIS vs NPD — full screen', () => {
   it('on the step the table is capped at ~62vh; in the overlay it fills the box instead', () => {

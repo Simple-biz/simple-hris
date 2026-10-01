@@ -3526,6 +3526,7 @@ of cells — the matches were not re-run).
 | `/api/payroll-wizard/audit/export` | GET | `requireRateVisibilityOrFeatureEdit` | — **no doc** |
 | `/api/payroll-wizard/bank-exemptions` | GET, POST, DELETE | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) |
 | `/api/payroll-wizard/manual-validation` | GET, PATCH | `requireFeatureAccess` | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
+| `/api/payroll-wizard/npd-comparison` | GET, POST | `requireFeatureAccess` | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) § Saving the output |
 | `/api/payroll-wizard/notes` | GET, POST, PATCH, DELETE | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |
 | `/api/payroll-wizard/notes/adjustment` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/payroll-wizard/notes/workers` | GET | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |

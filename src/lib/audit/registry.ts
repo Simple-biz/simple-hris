@@ -156,8 +156,8 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
   {
     match: 'accounting.payroll_wizard.',
     surfaces: ['accounting', 'payroll'],
-    label: 'Manual Validation (MV)',
-    note: 'manual_validation.set / .cleared — the per-person MV overrides on the wizard',
+    label: 'Validation step (MV, HRIS vs NPD saves)',
+    note: 'manual_validation.set / .cleared — the per-person MV overrides on the wizard; npd_comparison.saved — one per NEW saved version of the HRIS vs NPD output (week, version, tolerance, FX, counts, totals; resource_id = the payroll_wizard_npd_comparisons row). An identical re-save writes nothing',
   },
   {
     match: 'npd.',

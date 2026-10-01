@@ -375,7 +375,11 @@ import {
   countRedFlags,
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
-import HrisNpdComparison, { type HrisNpdPanelProps, type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
+import HrisNpdComparison, {
+  type HrisNpdPanelProps,
+  type HrisNpdSaveProps,
+  type HrisNpdStep,
+} from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
   DEFAULT_MATCH_TOLERANCE_CENTS,
@@ -383,6 +387,7 @@ import {
   type HrisCompareInput,
   type HrisNpdFilter,
 } from '@/lib/payroll/hris-npd-compare';
+import { buildHrisNpdSnapshot, parseHrisNpdSaveMeta } from '@/lib/payroll/hris-npd-snapshot';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
@@ -2848,7 +2853,8 @@ export default function PayrollWizard({
    * The NPD paste for HRIS vs NPD, stamped with the week it was pasted against. It is
    * read only while that week is on screen (`npdPasteText`), so a paste can never be
    * compared against another week's pay — no clearing effect needed. Session-only on
-   * purpose: nothing about it is ever written (payroll-wizard-hris-vs-npd.md).
+   * purpose: only an explicit **Save output** writes it, inside the saved output, and a
+   * save never restores it on reload (payroll-wizard-hris-vs-npd.md § Saving the output).
    *
    * `step` (1 NPD Figures → 2 Output) rides in the SAME week-stamped object, so another
    * week always starts on step 1 and a paste arriving for it cannot flip straight to the
@@ -2867,6 +2873,19 @@ export default function PayrollWizard({
   /** HRIS vs NPD's "off by at most N¢" setting (Kane, 2026-09-30). Wizard state so step and
    *  full screen agree; never saved, so every load starts at the default 3¢. */
   const [hrisNpdTolerance, setHrisNpdTolerance] = useState<number>(DEFAULT_MATCH_TOLERANCE_CENTS);
+  /**
+   * HRIS vs NPD **Save output** (Kane, 2026-10-01): the week's newest saved output and the
+   * save in flight, stamped with the week like `npdPaste`, so another week's state is never
+   * shown (it reads as "checking" until that week's GET lands). `savedJson` is the snapshot
+   * this tab last saved or was told is unchanged, so the button can say "Saved" for exactly
+   * that output. Saving restores nothing on reload: the paste stays session-only.
+   */
+  const [npdSave, setNpdSave] = useState<{
+    sourceFile: string | null;
+    latest: HrisNpdSaveProps['latest'];
+    saving: boolean;
+    savedJson: string | null;
+  }>({ sourceFile: null, latest: { state: 'loading' }, saving: false, savedJson: null });
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
     work_email: string;
@@ -10335,6 +10354,135 @@ export default function PayrollWizard({
   const hrisNpdAttentionCount = hrisNpdComparison.counts
     ? hrisNpdComparison.counts.mismatch + hrisNpdComparison.counts.not_in_hris + hrisNpdComparison.counts.not_in_npd
     : 0;
+
+  /* ── HRIS vs NPD: Save output ─────────────────────────────────────────────
+     Kane, 2026-10-01: "save the output for the current week". Each save APPENDS the
+     week's next version to two service-role tables through
+     `app/api/payroll-wizard/npd-comparison/route.ts`; nothing saved is ever replaced
+     (payroll-wizard-hris-vs-npd.md § Saving the output). The snapshot is built from the
+     SAME comparison and parse the table renders, so what is saved is what was seen, and
+     `buildHrisNpdSnapshot` refuses while the verdicts are held. */
+  const hrisNpdSnapshot = useMemo(
+    () =>
+      buildHrisNpdSnapshot({
+        comparison: hrisNpdComparison,
+        parse: npdPasteParse,
+        pasteText: npdPasteText,
+        fxRate: usdToPhpRate,
+      }),
+    [hrisNpdComparison, npdPasteParse, npdPasteText, usdToPhpRate],
+  );
+  const npdSaveForThisWeek = calcSourceFile != null && npdSave.sourceFile === calcSourceFile;
+
+  // The week's newest save. A failed read is an error, never "not saved yet".
+  useEffect(() => {
+    if (!calcSourceFile) return;
+    const file = calcSourceFile;
+    let cancelled = false;
+    const ctl = new AbortController();
+    const land = (latest: HrisNpdSaveProps['latest']) =>
+      setNpdSave((prev) =>
+        // A save that landed for this week while the read was in flight is newer: keep it.
+        prev.sourceFile === file && prev.savedJson != null
+          ? prev
+          : { sourceFile: file, latest, saving: prev.sourceFile === file && prev.saving, savedJson: null },
+      );
+    (async () => {
+      try {
+        const res = await fetch(`/api/payroll-wizard/npd-comparison?sourceFile=${encodeURIComponent(file)}`, {
+          cache: 'no-store',
+          signal: ctl.signal,
+        });
+        const json = (await res.json().catch(() => ({}))) as { latest?: unknown; error?: string; missing?: boolean };
+        if (cancelled) return;
+        if (!res.ok) {
+          land({ state: 'error', message: json.error?.trim() || `HTTP ${res.status}`, notSetUp: res.status === 503 && json.missing === true });
+          return;
+        }
+        const meta = json.latest == null ? null : parseHrisNpdSaveMeta(json.latest);
+        if (json.latest != null && meta == null) {
+          land({ state: 'error', message: 'the saved output could not be read', notSetUp: false });
+          return;
+        }
+        land({ state: 'ready', meta });
+      } catch {
+        if (!cancelled) land({ state: 'error', message: 'the server could not be reached', notSetUp: false });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      ctl.abort();
+    };
+  }, [calcSourceFile]);
+
+  const saveHrisNpdOutput = React.useCallback(() => {
+    // A replay saves nothing (the wizard's rule for a past week), exactly like MV.
+    if (!calcSourceFile || isReplay) return;
+    if (!hrisNpdSnapshot.ok) {
+      toast.error(hrisNpdSnapshot.reason);
+      return;
+    }
+    const file = calcSourceFile;
+    const snapshot = hrisNpdSnapshot.snapshot;
+    const json = JSON.stringify(snapshot);
+    setNpdSave((prev) =>
+      prev.sourceFile === file
+        ? { ...prev, saving: true }
+        : { sourceFile: file, latest: { state: 'loading' }, saving: true, savedJson: null },
+    );
+    const settle = (next: Partial<typeof npdSave>) =>
+      setNpdSave((prev) => (prev.sourceFile === file ? { ...prev, saving: false, ...next } : prev));
+    void (async () => {
+      try {
+        const res = await fetch('/api/payroll-wizard/npd-comparison', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceFile: file, snapshot }),
+        });
+        const out = (await res.json().catch(() => ({}))) as { latest?: unknown; unchanged?: boolean; error?: string };
+        const meta = res.ok ? parseHrisNpdSaveMeta(out.latest) : null;
+        if (!meta) {
+          toast.error(out.error?.trim() || `Could not save the output (HTTP ${res.status}).`);
+          settle({});
+          return;
+        }
+        // The server's answer replaces the line — never an optimistic "Saved".
+        settle({ latest: { state: 'ready', meta }, savedJson: json });
+        toast.success(
+          out.unchanged
+            ? `Already saved as v${meta.version}: nothing changed since.`
+            : `Saved the HRIS vs NPD output as v${meta.version}.`,
+        );
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not save the output.');
+        settle({});
+      }
+    })();
+  }, [calcSourceFile, isReplay, hrisNpdSnapshot]);
+
+  const hrisNpdSaveProps = useMemo<HrisNpdSaveProps>(() => {
+    const latest: HrisNpdSaveProps['latest'] = npdSaveForThisWeek ? npdSave.latest : { state: 'loading' };
+    const disabledReason = !calcSourceFile
+      ? 'Pick a week first.'
+      : isReplay
+        ? 'This is a replay of a past week, so nothing is saved.'
+        : latest.state === 'error' && latest.notSetUp
+          ? 'Not available until the migration is applied.'
+          : hrisNpdSnapshot.ok
+            ? null
+            : hrisNpdSnapshot.reason;
+    return {
+      latest,
+      disabledReason,
+      saving: npdSaveForThisWeek && npdSave.saving,
+      savedThisOutput:
+        npdSaveForThisWeek &&
+        npdSave.savedJson != null &&
+        hrisNpdSnapshot.ok &&
+        JSON.stringify(hrisNpdSnapshot.snapshot) === npdSave.savedJson,
+      onSave: saveHrisNpdOutput,
+    };
+  }, [npdSaveForThisWeek, npdSave, calcSourceFile, isReplay, hrisNpdSnapshot, saveHrisNpdOutput]);
 
   /** The one way to change the Validation section — the step's strip and the full-screen
    *  overlay's strip both call it, so the slide direction and the section never disagree. */
@@ -19472,6 +19620,7 @@ export default function PayrollWizard({
           onSearchChange: setHrisNpdSearch,
           filter: hrisNpdFilter,
           onFilterChange: setHrisNpdFilter,
+          save: hrisNpdSaveProps,
         };
 
         return (

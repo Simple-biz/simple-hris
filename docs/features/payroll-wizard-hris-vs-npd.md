@@ -7,8 +7,9 @@ figure beside NPD's. A **green** row with a check means they agree within N cent
 top of the output, default 3). A **red** row
 with an ✗ and the difference means they don't. A red **Not in HRIS** / **Not in NPD** means one
 side has nobody at that address. Nobody on either side is ever dropped, except people configured
-not to be paid this week, who are left out and listed. Display only: it writes
-nothing.
+not to be paid this week, who are left out and listed. The comparison itself writes nothing. The
+one write is **Save output** (2026-10-01), which appends the output on screen as the week's next
+saved version (§ Saving the output).
 
 Kane, 2026-09-30: *"compare their Dollar Values - against their work emails … If they are a match
 then that row will be green along with the Match column that has a check mark and X mark if other
@@ -27,7 +28,11 @@ commit: `git log -- docs/features/payroll-wizard-hris-vs-npd.md`. Plan:
 | The panel: the step rail, and step 2 (rate line, hold banner, chips, the output's search, table) | `src/components/payroll/HrisNpdComparison.tsx` |
 | Step 1, **NPD Figures** — the input (paste box, what was read, refused lines, Clear, Load output) | `src/components/payroll/NpdFiguresStep.tsx` |
 | The full-screen overlay (both sections) + the one `VALIDATION_SECTIONS` definition | `src/components/payroll/ValidationFullScreen.tsx` |
-| Wiring: the strip, `npdPaste` + search/chip state, the memos after `validationRedFlagCount`, `hrisNpdPanelProps`, the one overlay mount | `src/components/PayrollWizard.tsx` |
+| Wiring: the strip, `npdPaste` + search/chip state, the memos after `validationRedFlagCount`, `hrisNpdPanelProps`, the one overlay mount, `npdSave` + `saveHrisNpdOutput` | `src/components/PayrollWizard.tsx` |
+| Save output: the snapshot (built in the browser, validated on the server) + its tests | `src/lib/payroll/hris-npd-snapshot.ts` · `hris-npd-snapshot.test.ts` |
+| Save output: tables, save function, no-UPDATE trigger | `references/sql/create/2026-10-01_payroll_wizard_npd_comparisons.sql` |
+| Save output: apply / verify script (dry by default) | `scripts/apply-payroll-wizard-npd-comparisons-migration.mts` |
+| Save output: DB layer (service role) · route | `src/lib/supabase/hris-npd-snapshot-db.ts` · `app/api/payroll-wizard/npd-comparison/route.ts` |
 
 ## Where it lives
 
@@ -193,7 +198,7 @@ output where the user can set the off by how many cents"*.
 | **Whole cents from 0 to 99 only** (`parseToleranceCents`, `MAX_MATCH_TOLERANCE_CENTS`). Anything else (a fraction, a negative, 100+, blank) marks the box red and **changes nothing**: the verdicts keep the last good N, and the hint says which (`Still using 1¢`). Leaving the box puts that N back | The box can never show a number the verdicts are not using. A value is never rounded or clamped into range, so what applies is exactly what was typed |
 | `0` = only an exact match counts. **Reset to 3¢** appears whenever N is not the default | 0 restores the first build's "equal to the cent" |
 | **One wizard state** (`hrisNpdTolerance`). It builds the comparison and fills the box, and rides in `hrisNpdPanelProps`, so the step's panel and the full-screen overlay always show the same N and the same verdicts. Load output does not reset it | Same rule as the search and the chip. It is a setting, not part of a paste |
-| **Never saved**: every load starts at 3 | § Nothing is saved |
+| **Never restored**: every load starts at 3. A Save output records the N its verdicts were given with, but loading the wizard never reads it back | § Saving the output |
 | The result carries the N it was given with (`comparison.toleranceCents`), and the "within N¢" tooltip reads it | The wording can never disagree with the verdict |
 
 At the default, the measured cases behind the first build's "equal to the cent, no tolerance" (the
@@ -234,30 +239,55 @@ A green or red row painted over a figure that hasn't landed is the defect this p
 make verdicts "optimistic" while loading.** The status chips are disabled while held, and the
 table falls back to All.
 
-## Nothing is saved
+## Saving the output (2026-10-01)
 
-The paste lives in `PayrollWizard` state as `{ sourceFile, text }` and is read only while that
-week is on screen. So a paste can never be compared against another week's pay, and no clearing
-effect is needed. It survives step and Accounting-tab switches (the wizard stays mounted,
-[[payroll-wizard-tab-persist]]). It is **gone on reload**. There is no route, no `app_settings`
-key and no audit row.
+Kane: *"Payroll Wizard - Validation Step - HRIS vs NPD - Give me an SQL Migration for this one so I
+can save the output for the current week"*. Built via `blueprint` (CHOSEN 1–8, no NEEDS). Plan:
+`docs/superpowers/plans/2026-10-01-payroll-wizard-hris-vs-npd-save.md`.
 
-Why not share it like QC Compare (`qc.compare_paste.*`, [[qc-compare-paste-shared]])? That is
-fewer writes, and more reversible. And the `payroll.wizard.*` family is **readable by every
-signed-in user** through `GET /api/app-settings` (OPEN, Sep 16 log item 161,
-[[app-settings-final-pay-readable-by-every-employee]]), so storing the whole company's NPD figures
-there would widen an open exposure. To share it later, copy QC Compare: its own gated route, a key
-family the generic route **refuses** on GET and POST, `by`/`at` stamped server-side, and an audit on
-Clear.
+**Save output** sits on step 2, directly under the "off by" box. Beside it is the week's last
+save: `Saved v2 by <email>, Oct 1, 3:04 PM`, and what it held (`812 match · 4 mismatch · … · off by 3¢`).
 
-**2026-10-01: NPD now has a home of its own, and this step does not read it.** Accounting → NPD
-([npd-dashboard.md](./npd-dashboard.md)) stores the whole NPD sheet per tab per pay week in
-service-role-only tables behind its own `npd` grant. This step still takes its own paste and is
-unchanged. Wiring it to read the stored sheet is a separate decision, and that read would still
-have to apply this step's paste contract to the dollar column (rightmost, fixed, ₱ refused).
+| Rule | Why |
+|---|---|
+| **Each save APPENDS the week's next version** (v1, v2, …). Nothing saved is ever replaced, and the newest version is "the saved output". The database refuses any UPDATE of a saved header or row (triggers `pw_npd_cmp_refuse_update` / `pw_npd_cmp_rows_refuse_update`) | A record of what was checked is worthless if it can be rewritten. Appending also means no save destroys anything, so no audit-before-delete is needed (unlike NPD's sheet saves) |
+| **Saving an identical output returns the existing version** (`unchanged`) and writes nothing. The route hashes the validated snapshot (sha256, canonical key order), and the save function compares that with the newest version's hash under a per-week advisory lock | Two clicks, or two clerks with the same paste, never make duplicate versions. Two clerks with different outputs get v1 and v2, never an error |
+| **Keyed by the wizard's week key** (`source_file`), like Manual Validation, the exclusions and the final-pay snapshot. Not NPD's week Sunday | That Sunday would have to be guessed from the Hubstaff filename |
+| **No save while the verdicts are held** (loading, a failed source, FX 0, nothing pasted). The button is off with the reason beside it, `buildHrisNpdSnapshot` refuses, the route refuses, and the database refuses a row with no verdict (`status` NOT NULL) | An unjudged output is not a result. Same rule as § No verdict before the figures can be judged |
+| **What is saved is the output exactly as shown**: every row (verdict, HRIS and NPD dollars in cents, the difference, HRIS's pesos, the HRIS row counts, the paste lines), the people left out with their reason and NPD's figure, the refused lines, the "off by" N, the cycle FX rate, the counts and totals, and **the paste text verbatim** | So a saved week can be reread, and its NPD side re-derived, without the wizard |
+| **The server re-derives the NPD side from the stored paste** (`validateHrisNpdSnapshot` runs `parseNpdPaste`): every readable line must land exactly once, on a row or a left-out person with that address, and add up to the NPD figure saved. The refused lines must be the paste's own | Nobody can save NPD figures that the paste does not say |
+| **HRIS's figures are the browser's.** The server checks that they are consistent (the difference is NPD − HRIS, every match is within N and every mismatch is not, the counts are the rows' verdicts, the totals are the rows' sums), in the route AND again in the save function. It does not recompute them | The server cannot rerun the wizard, so the record is what the operator saw. This looks like a gap and is on purpose: a server rerun would be a second pay implementation, free to disagree with the screen that certifies it (the Final Pay full-screen rule) |
+| **Live week only.** On a replay the button is off ("This is a replay of a past week, so nothing is saved"), client-side, the same way Manual Validation is | The wizard's rule: a replay saves nothing |
+| **Gate = `payroll_wizard`**: `view` reads the last save, `edit` saves, the same as Manual Validation on this step. **Not** the `npd` grant | The tab lives in the wizard, and its users already see these figures on screen |
+| `saved_by` is the **session** email, stamped by the route, never taken from the body (source-guarded) | A save must never be attributable to someone else |
+| Each **new** version writes `accounting.payroll_wizard.npd_comparison.saved` (week, version, N, FX, counts, totals, hash). An unchanged re-save writes no audit row | Nothing was saved |
+| **Saving restores nothing.** On reload the paste box is still empty and step 1 shows. The "off by" box starts at 3. The Output only shows *that* a save exists | Fewer moving parts. Bringing a saved paste back would need a "Use saved paste" button, which nobody has asked for |
+| A failed read of the last save is an **error** on the bar, never "Not saved yet" | Same rule as the rest of the wizard: a failed read is not absence |
+| `npdSave` is stamped with the week, like `npdPaste`. Another week reads "Checking…" until its own GET lands, and a save that lands while that GET is in flight is kept | The bar can never show another week's save |
 
-Replays can paste too. Nothing is written, so there is nothing to protect, and the HRIS side is
-the Validation step's rows for the replayed week.
+**Storage: service role only.** `payroll_wizard_npd_comparisons` (one row per save) and
+`payroll_wizard_npd_comparison_rows` (one per output row) have RLS on with **zero policies**.
+Privileges are revoked from `anon`/`authenticated`, and the tables are **not** in
+`supabase_realtime`. The save function `payroll_wizard_save_npd_comparison` has EXECUTE revoked
+from PUBLIC/anon/authenticated and pins `search_path`. **Never add a policy, a realtime
+publication or a client-side Supabase read.** The apply script proves each of these against the
+live catalog. DELETE is left to the service role, and a save's rows cascade with it, so any cleanup
+is Kane's call. Reads are header-only and one row, so the PostgREST 1000-row cap cannot bite them.
+
+**Why not `app_settings`.** The `payroll.wizard.*` family is **readable by every signed-in user**
+through `GET /api/app-settings` (OPEN, Sep 16 log item 161,
+[[app-settings-final-pay-readable-by-every-employee]]). Storing the whole company's figures there
+would widen an open exposure. This is the "own route, server-stamped author" pattern the first
+build reserved ([[qc-compare-paste-shared]]).
+
+**NPD's own sheet is still not read here.** Accounting → NPD
+([npd-dashboard.md](./npd-dashboard.md)) stores the whole NPD sheet per tab per pay week, in its own
+service-role tables behind the `npd` grant. This step still takes its own paste. Wiring it to the
+stored sheet is a separate decision, and that read would still have to apply this step's paste
+contract to the dollar column (rightmost, fixed, ₱ refused).
+
+Replays can paste too, and nothing is saved from a replay. The HRIS side is the Validation step's
+rows for the replayed week.
 
 ## The search and the chips never narrow the totals
 
@@ -285,7 +315,8 @@ search bar in the output"*).
 
 ## Not built
 
-- **Sharing the paste** across clerks and reloads (above).
+- **Reading a saved output back into the step.** A save is on file and the bar names it, but no
+  screen lists its rows, and nothing restores its paste (§ Saving the output).
 - **Pulling the NPD sheet directly.** That needs its sheet ID and a Google grant from Kane. The
   paste is the only NPD input.
 - **The FX cross-check.** The implied-rate hint does not validate the typed rate
@@ -338,7 +369,23 @@ counts it; typing 150 marks the box red and changes nothing ("Still using 1¢");
 puts 1 back; 5 set on the step shows as 5 in full screen; Reset brings back 3; no console errors.
 Still **not clicked through signed in**.
 
+*Save output (2026-10-01):* `hris-npd-snapshot.test.ts` (new) plus the two existing files:
+**120/120**. `npm test` **5,422/5,424**, the same 2 pre-existing failures (they name
+`EditBuiltinManagersDialog.tsx`, `KpiCalculatorLoading.tsx`, `ManagerApp.tsx` and a manager test).
+tsc clean apart from the stale `.next/types` errors. The apply script's **dry run** (rolled back)
+passed every object check (RLS, zero policies, no anon/authenticated privilege or EXECUTE, pinned
+search path, not in realtime, constraints, triggers) and all 33 behaviour controls against
+production's schema, the positive control included. Rendered-markup tests pin the bar's states.
+**Not clicked through signed in**, and nothing has been saved for real, because the tables are not
+applied yet.
+
 ## Deploy notes
 
-**No migration.** No env var, no n8n import, no route, no `app_settings` key. Nothing is PENDING
-except the push (Kane).
+**Save output needs a migration: PENDING (Kane).**
+`references/sql/create/2026-10-01_payroll_wizard_npd_comparisons.sql`, applied with
+`node --import tsx scripts/apply-payroll-wizard-npd-comparisons-migration.mts --apply`. With no
+flag the script runs a rolled-back rehearsal; `--verify` only re-checks. It needs `DATABASE_URL`
+(session pooler, [[migration-apply-needs-database-url]]). It is safe before or after deploying the
+code: until it lands, the route answers 503, the bar says *"Saving the output is not set up yet: the
+database migration is pending"*, and the button is off. Everything else on the tab works without
+it. No env var, no n8n import, no `app_settings` key. The push is Kane's.
