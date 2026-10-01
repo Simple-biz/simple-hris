@@ -2055,7 +2055,8 @@ with the `.ts` helper `payroll-clerk/useAutoThreshold.ts`, for 326 rows. `manage
 `31fd9c0a` and its row went with it. Diffed both directions against the tree: every `.tsx` and hook is below. Sep 29 log item 289.
 
 **2026-10-01:** the seven `accounting-scoreboard/` files were added with their build (Sep 29 log items 315 and 317). The table
-holds 341 rows. It was not re-diffed against the whole tree on this date.
+holds 341 rows. It was not re-diffed against the whole tree on this date. Later that day the backfill (Sep 29 log item 319)
+added `accounting-scoreboard/ArchivePanel.tsx`, for 342 rows.
 
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
 not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
@@ -2072,6 +2073,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/SystemDiagnostics.tsx` | component | *this file* · [diagnostics-performance-tabs](../features/diagnostics-performance-tabs.md) · [diagnostics-service-maps](../features/diagnostics-service-maps.md) |
 | `src/components/SystemSettings.tsx` | component | *this file* |
 | `src/components/ThemeProvider.tsx` | component | *this file* |
+| `src/components/accounting-scoreboard/ArchivePanel.tsx` | component | [accounting-scoreboard-backfill](../features/accounting-scoreboard-backfill.md) |
 | `src/components/accounting-scoreboard/CollectionsPanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting-scoreboard/PayrollCyclePanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting-scoreboard/ScoreboardApp.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |

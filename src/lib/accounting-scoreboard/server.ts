@@ -40,6 +40,8 @@ import {
 const ROWS = 'accounting_scoreboard_rows';
 const ENTRIES = 'accounting_scoreboard_entries';
 const COLLECTIONS = 'accounting_scoreboard_collections';
+/** Live points per (rep row, Sunday week): references/sql/create/2026-10-01_accounting_scoreboard_backfill.sql. */
+const COLLECTION_WEEKS = 'accounting_scoreboard_collection_weeks';
 const MEMBERS = 'accounting_scoreboard_members';
 const SECTIONS_TABLE = 'accounting_scoreboard_sections';
 
@@ -93,7 +95,7 @@ function isMissingTable(message: string | undefined): boolean {
 const NOT_SET_UP = fail(
   503,
   'not_set_up',
-  'The Accounting Scoreboard tables are not set up yet. The migration has to be applied first (scripts/apply-accounting-scoreboard-migration.mts).',
+  'The Accounting Scoreboard tables are not set up yet. The migrations have to be applied first (scripts/apply-accounting-scoreboard-migration.mts, then scripts/apply-accounting-scoreboard-backfill-migration.mts).',
 );
 
 function dbFailure(error: { message?: string; code?: string } | null | undefined, fallback: string): Failure {
@@ -266,8 +268,15 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .order('id')
         .range(from, to),
     ),
-    selectAllPaged<{ entry_date: string; row_id: string; points: number | string }>((from, to) =>
-      sb.from(COLLECTIONS).select('entry_date, row_id, points').is('deleted_at', null).order('id').range(from, to),
+    // All Time and the record come from one row per (rep row, week), never from every log line: the
+    // sheet's history (~10k lines, backfilled 2026-10-01) would be 10+ pages on every 45 s refresh.
+    selectAllPaged<{ row_id: string; week_start: string; points: number | string; first_date: string }>((from, to) =>
+      sb
+        .from(COLLECTION_WEEKS)
+        .select('row_id, week_start, points, first_date')
+        .order('row_id')
+        .order('week_start')
+        .range(from, to),
     ),
     sb.from(SECTIONS_TABLE).select('section_key, enabled, goal'),
     readBonusCandidates(),
@@ -311,11 +320,12 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
     }
   }
 
+  // A week's Sunday key is a date in that week, so the week rows give the same totals and record.
   const hist = collectionsHistory(
-    history.rows.map((h) => ({ date: h.entry_date, rowId: h.row_id, points: Number(h.points) })),
+    history.rows.map((h) => ({ date: h.week_start, rowId: h.row_id, points: Number(h.points) })),
   );
   const liveSince = history.rows.reduce<string | null>(
-    (min, h) => (min === null || h.entry_date < min ? h.entry_date : min),
+    (min, h) => (min === null || h.first_date < min ? h.first_date : min),
     null,
   );
 

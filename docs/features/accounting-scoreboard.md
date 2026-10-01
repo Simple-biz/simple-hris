@@ -163,6 +163,11 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   still on Monday. Future dates are refused at write and disabled on screen.
 - "Last week", WTD, All Time and the record are **computed from stored entries and never typed**. That
   is what replaces the sheet's typed "Lst Wk" columns and hand-filled History tabs.
+- **The sheet's past is in those entries** (filled 2026-10-01): collections back to 2024-12-30, the grids back to
+  January 2025, and "Totals - History" kept as typed at `/accounting-scoreboard/archive`. The current week was not
+  filled, by rule. **All Time and the record read `accounting_scoreboard_collection_weeks`** (one row per rep row
+  and week), never every log line: ~10k lines would be 10+ pages on every refresh. Both rules are in
+  [accounting-scoreboard-backfill.md](accounting-scoreboard-backfill.md).
 
 ## The collections log
 
@@ -287,8 +292,6 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
 
 - The sheet's status strip (Working / Lunch / Break) and the per-person task checklists (Carla's
   Tracker). Both are outside the bonus and can come later.
-- Importing the sheet's history (~10k collections log rows and past weeks) is a production write and
-  was not approved, so All Time starts at go-live.
 - Per-person or per-section bonuses after Carla's revamp, and any write to pay (Item 315).
 
 ## Deploy notes

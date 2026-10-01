@@ -57,5 +57,7 @@ test('the board route is NOT role-gated at the edge; membership is checked by th
   // '/accounting' (accounting + admin) must not swallow '/accounting-scoreboard':
   // most PH team members hold no HRIS role at all.
   assert.equal(requiredRolesFor('/accounting-scoreboard'), null);
+  // The archive page (backfill, 2026-10-01) is gated the same way, by its own page.
+  assert.equal(requiredRolesFor('/accounting-scoreboard/archive'), null);
   assert.deepEqual(requiredRolesFor('/accounting'), ['accounting', 'admin']);
 });

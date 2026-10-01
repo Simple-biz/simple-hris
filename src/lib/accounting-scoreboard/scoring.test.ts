@@ -162,6 +162,29 @@ test('collections history: all-time per rep and the record team week', () => {
   assert.equal(collectionsHistory([]).record, null);
 });
 
+test("collections history from the weekly view's rows equals the history from every line", () => {
+  // server.ts reads accounting_scoreboard_collection_weeks (one row per rep row and Sunday week),
+  // not every log line. Feeding a week's Sunday as the date must give the same All Time and record.
+  const lines = [
+    { date: '2026-09-21', rowId: 'a', points: 1 },
+    { date: '2026-09-25', rowId: 'a', points: 12 },
+    { date: '2026-09-22', rowId: 'b', points: 2 },
+    { date: '2026-09-28', rowId: 'a', points: 3 },
+    { date: '2026-10-02', rowId: 'b', points: 14 },
+  ];
+  const weekRows = [
+    { date: '2026-09-20', rowId: 'a', points: 13 },
+    { date: '2026-09-20', rowId: 'b', points: 2 },
+    { date: '2026-09-27', rowId: 'a', points: 3 },
+    { date: '2026-09-27', rowId: 'b', points: 14 },
+  ];
+  const fromLines = collectionsHistory(lines);
+  const fromWeeks = collectionsHistory(weekRows);
+  assert.deepEqual([...fromWeeks.allTimeByRow].sort(), [...fromLines.allTimeByRow].sort());
+  assert.deepEqual(fromWeeks.record, fromLines.record);
+  assert.deepEqual(fromWeeks.record, { weekStart: '2026-09-27', points: 17 });
+});
+
 test('daily sections: week sums, PM Buckets averages and meetings', () => {
   const lookup = buildLookup([
     { rowId: 'adrian', date: MON_FRI[0], slot: 'day', value: 3 },
