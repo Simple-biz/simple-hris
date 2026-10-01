@@ -1,5 +1,7 @@
 'use client';
 
+import type { PaintCache } from '@/lib/dashboard-cache/paint-cache';
+
 /**
  * In-memory, per-page-session cache for the HR dashboard's data-heavy tabs.
  *
@@ -137,7 +139,67 @@ export const HR_TAB_CACHE_KEYS = {
   mesaEligible: 'hr:mesa-eligible',
   /** HR -> MESA -> FPU Classes: the class strip, its counts and the roster map. */
   fpuClasses: 'hr:fpu-classes',
+  /** The viewer's own display name, for the Overview greeting. Suffixed with
+   *  the email by {@link hrViewerNameKey}, never read bare. */
+  viewerName: 'hr:viewer-name',
+  /** New Hire Checklist week selector: which weeks exist, their counts and locks. */
+  newHireChecklistPeriods: 'hr:new-hire-checklist-periods',
+  /** `/api/departments` — the New Hire Checklist's department dropdown. */
+  departments: 'hr:departments',
+  /** `/api/global-master-list/names` — the New Hire Checklist's referrer suggestions. */
+  masterListNames: 'hr:global-master-list-names',
+  /** Onboarding Form: the Workspace licence meter (seats available / total). */
+  workspaceLicenseInfo: 'hr:workspace-license-info',
+  /** HR -> Leaves. Base key for `LeaveRequestsPanel`'s paint cache. */
+  leaves: 'hr:leaves',
+  /** HR -> Announcements. Base key for `AnnouncementWall`; the panel appends the scope. */
+  announcements: 'hr:announcements',
+  /** HR -> S-Wall. Base key for `SWall`; the panel appends the viewer. */
+  swall: 'hr:swall',
+  /** HR -> Notifications. Base key for `NotificationsPanel`; the panel appends view + viewer. */
+  notifications: 'hr:notifications',
 } as const;
+
+/**
+ * The HR store as a {@link PaintCache}, for the shared panels HR hosts
+ * (Leaves, Announcements, S-Wall, Notifications).
+ *
+ * Exposes no freshness predicate on purpose: a shared panel paints from this
+ * and always revalidates — see `src/lib/dashboard-cache/paint-cache.ts` for why.
+ */
+export const hrPaintCache: PaintCache = {
+  get: getHrTabCache,
+  has: hasHrTabCache,
+  set: setHrTabCache,
+};
+
+/** The Overview greeting's name lookup — one entry per viewer, so a swap in the
+ *  same tab can never greet the next person by the previous one's name. */
+export function hrViewerNameKey(email: string): string {
+  return `${HR_TAB_CACHE_KEYS.viewerName}:${email.trim().toLowerCase()}`;
+}
+
+/**
+ * Per-period keys for the Overview's hiring cards and the Referrals section.
+ * `null` is All time. One entry per week, for the same reason as the FPU keys:
+ * stepping between two weeks is the common move, and one shared key would make
+ * the second week evict the first.
+ *
+ * `hrHiringSourcesKey(null)` is ALSO the New Hire Checklist's source-suggestion
+ * list — both read the all-time `/api/hr/new-hire-checklist/sources`, so one
+ * fetch serves both and they cannot disagree.
+ */
+export function hrHiringSourcesKey(periodStart: string | null): string {
+  return `hr:hiring-sources:${periodStart ?? 'all'}`;
+}
+
+export function hrHiringRecruitersKey(periodStart: string | null): string {
+  return `hr:hiring-recruiters:${periodStart ?? 'all'}`;
+}
+
+export function hrReferralsKey(week: string | null): string {
+  return `hr:referrals:${week ?? 'all'}`;
+}
 
 /**
  * Per-class keys for the FPU tab.

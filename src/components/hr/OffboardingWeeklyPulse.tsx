@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
-import { getHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { getHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
@@ -96,30 +96,33 @@ export default function OffboardingWeeklyPulse({
   const [week, setWeek] = useState<string | null>(() => sundayIso(new Date()));
 
   // Active headcount drives the attrition denominator. Seed from the shared HR
-  // roster cache (populated by the Overview tab); fetch once only when cold so
-  // the Offboarding tab doesn't re-pull a roster the Overview already holds.
+  // roster cache (populated by the Overview tab), and skip the re-pull only
+  // while that entry is inside the 30s window. It used to skip whenever ANY
+  // copy was cached — the unconditional skip hr-dashboard-cache.md retired —
+  // so the denominator stayed at the first roster of the session until the
+  // Overview happened to be revisited.
   const [headcount, setHeadcount] = useState<number | null>(() => {
     const cached = getHrTabCache<unknown[]>(HR_TAB_CACHE_KEYS.overviewRoster);
     return Array.isArray(cached) && cached.length > 0 ? cached.length : null;
   });
   useEffect(() => {
-    if (headcount != null) return;
+    if (isHrTabCacheFresh(HR_TAB_CACHE_KEYS.overviewRoster)) return;
     let alive = true;
     fetch('/api/employees', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: { employees?: unknown[] }) => {
-        if (!alive) return;
         const emp = j.employees ?? [];
-        if (emp.length > 0) {
-          setHeadcount(emp.length);
-          setHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster, emp);
-        }
+        if (emp.length === 0) return;
+        // The roster is good for the Overview's entry whether or not this tab
+        // is still on screen; only the headcount needs the mounted check.
+        setHrTabCache(HR_TAB_CACHE_KEYS.overviewRoster, emp);
+        if (alive) setHeadcount(emp.length);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [headcount]);
+  }, []);
 
   // Separations bucketed by Sun-anchored week (one pass over the offboard rows).
   const countsByWeek = useMemo(() => {

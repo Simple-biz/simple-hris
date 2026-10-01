@@ -250,6 +250,15 @@ type SubmissionRow = {
 
 type StatusFilter = 'all' | OnboardingSubmissionBucket;
 
+/** `GET /api/hr/workspace-license-info` — the seat meter above the table. */
+type WorkspaceLicenseInfo = {
+  available_licenses: number | null;
+  total_licenses: number | null;
+  last_updated: string | null;
+  note?: string;
+  error?: string;
+};
+
 /**
  * Designated-work-email state for a submission. Keeps the "do we have a real,
  * provisioned @simple.biz address" question in one place so the column, the
@@ -1044,14 +1053,11 @@ export default function HrOnboardingForm({
   const [bulkWorkEmail, setBulkWorkEmail] = useState<SubmissionRow[] | null>(null);
   // Bulk verify: drives a progress + results modal for multi-selected rows.
   const [bulkVerify, setBulkVerify] = useState<BulkVerifyState | null>(null);
-  // License info display
-  const [licenseInfo, setLicenseInfo] = useState<{
-    available_licenses: number | null;
-    total_licenses: number | null;
-    last_updated: string | null;
-    note?: string;
-    error?: string;
-  } | null>(null);
+  // License info display. Seeded from the HR tab cache so a tab return paints
+  // the meter instead of a grey placeholder; only a real answer is ever cached.
+  const [licenseInfo, setLicenseInfo] = useState<WorkspaceLicenseInfo | null>(
+    () => getHrTabCache<WorkspaceLicenseInfo>(HR_TAB_CACHE_KEYS.workspaceLicenseInfo) ?? null,
+  );
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true);
@@ -1104,16 +1110,30 @@ export default function HrOnboardingForm({
   }, [openSubmission?.nonce]);
 
   // Re-pull the license meter — on mount and after a set consumes seats, so the
-  // "available" count reflects newly-provisioned accounts.
-  const refreshLicenseInfo = useCallback(() => {
+  // "available" count reflects newly-provisioned accounts. A failure or an
+  // `error` body is never cached, so the next visit asks again; on the silent
+  // (tab-return) path it also leaves an already-painted meter alone.
+  const refreshLicenseInfo = useCallback((opts?: { silent?: boolean }) => {
+    const failed: WorkspaceLicenseInfo = { available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' };
     fetch('/api/hr/workspace-license-info', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j) => setLicenseInfo(j))
-      .catch(() => setLicenseInfo({ available_licenses: null, total_licenses: null, last_updated: null, error: 'Could not fetch license info' }));
+      .then((j: WorkspaceLicenseInfo) => {
+        if (!j.error) {
+          setHrTabCache(HR_TAB_CACHE_KEYS.workspaceLicenseInfo, j);
+          setLicenseInfo(j);
+        } else if (!opts?.silent) {
+          setLicenseInfo(j);
+        }
+      })
+      .catch(() => { if (!opts?.silent) setLicenseInfo(failed); });
   }, []);
 
   useEffect(() => {
-    refreshLicenseInfo();
+    // Inside the 30s window a tab return keeps the painted meter; past it, or
+    // after a set (which calls refreshLicenseInfo directly), the count is re-read.
+    const key = HR_TAB_CACHE_KEYS.workspaceLicenseInfo;
+    if (isHrTabCacheFresh(key)) return;
+    refreshLicenseInfo({ silent: hasHrTabCache(key) });
   }, [refreshLicenseInfo]);
 
   const counts = useMemo(() => {

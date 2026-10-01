@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import type { AnnouncementRow } from '@/lib/supabase/announcements';
+import type { PaintCacheProp } from '@/lib/dashboard-cache/paint-cache';
 
 interface AnnouncementWallProps {
   /**
@@ -21,6 +22,15 @@ interface AnnouncementWallProps {
   /** Whether this viewer is admin or CEO (can pin + delete anyone's posts). */
   isElevated?: boolean;
   className?: string;
+  /**
+   * Optional: the host's tab cache (HR passes its store). The feed paints from
+   * it on a tab return and is ALWAYS refetched, silently — a new post reaches
+   * this list only through Realtime or a refetch, and browser
+   * `postgres_changes` is documented dead here, so a skipped fetch could hide
+   * a post the viewer has just made. The panel appends the scope to `key`.
+   * Hosts that omit it keep the uncached feed exactly.
+   */
+  paintCache?: PaintCacheProp;
 }
 
 function buildQueryString(scope: AnnouncementWallProps['scope']): string {
@@ -111,43 +121,76 @@ export default function AnnouncementWall({
   viewerEmail,
   isElevated = false,
   className,
+  paintCache,
 }: AnnouncementWallProps) {
-  const [items, setItems] = useState<AnnouncementRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const deletingRef = useRef<Set<string>>(new Set());
-
   // Latest scope, read inside callbacks/Realtime handlers without forcing them
   // to re-create on every render. Effects key off `scopeKey` (content) instead.
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
   const scopeKey = scopeKeyOf(scope);
 
+  // One cache entry per scope; null when the host passed no cache.
+  const cacheKey = paintCache ? `${paintCache.key}:${scopeKey}` : null;
+  const cacheRef = useRef<{ store: PaintCacheProp['store']; key: string } | null>(null);
+  cacheRef.current = paintCache && cacheKey ? { store: paintCache.store, key: cacheKey } : null;
+
+  const [items, setItems] = useState<AnnouncementRow[]>(
+    () => (paintCache && cacheKey ? paintCache.store.get<AnnouncementRow[]>(cacheKey) : undefined) ?? [],
+  );
+  const [loading, setLoading] = useState(() => !(paintCache && cacheKey && paintCache.store.has(cacheKey)));
+  const [error, setError] = useState<string | null>(null);
+  const deletingRef = useRef<Set<string>>(new Set());
+
   const normalizedEmail = (viewerEmail ?? '').trim().toLowerCase();
 
   // Fetch. `silent` keeps the existing list on screen instead of swapping it for
   // the skeleton -- so a refresh never makes the feed vanish.
+  // A silent fetch that fails also keeps the list and raises no error card —
+  // the only silent caller is the revalidate behind a cache-painted feed.
   const fetchAll = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await fetch(`/api/announcements${buildQueryString(scopeRef.current)}`, {
         cache: 'no-store',
       });
       const json = (await res.json()) as { announcements?: AnnouncementRow[]; error?: string };
       if (json.error) throw new Error(json.error);
-      setItems(json.announcements ?? []);
+      const next = json.announcements ?? [];
+      const cache = cacheRef.current;
+      if (cache) cache.store.set(cache.key, next);
+      setItems(next);
+      setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      if (!silent) setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Initial load + refetch only when the *content* of scope changes.
+  // Initial load + refetch only when the *content* of scope changes. A scope
+  // the cache already holds paints first and revalidates silently behind it.
   useEffect(() => {
-    void fetchAll();
-  }, [fetchAll, scopeKey]);
+    const cache = cacheRef.current;
+    const hit = cache ? cache.store.get<AnnouncementRow[]>(cache.key) : undefined;
+    if (hit !== undefined) {
+      setItems(hit);
+      setLoading(false);
+      setError(null);
+    }
+    void fetchAll(hit !== undefined);
+  }, [fetchAll, scopeKey, cacheKey]);
+
+  // Keep the cached copy in step with what is on screen (a delete, a Realtime
+  // row), so a tab return never repaints a post that is already gone. Only once
+  // a real answer has been cached: an empty list before the first load lands
+  // must not be stored, or the next visit would paint "Nothing here yet".
+  useEffect(() => {
+    const cache = cacheRef.current;
+    if (cache && cache.store.has(cache.key)) cache.store.set(cache.key, items);
+  }, [items]);
 
   // Realtime subscription -- resubscribes only when scope content changes.
   useEffect(() => {

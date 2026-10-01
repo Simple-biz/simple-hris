@@ -59,7 +59,15 @@ import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import SWall from '@/components/swall/SWall';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import type { EmployeeRow } from '@/lib/supabase/employees';
-import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import {
+  getHrTabCache,
+  hasHrTabCache,
+  hrPaintCache,
+  hrViewerNameKey,
+  isHrTabCacheFresh,
+  setHrTabCache,
+  HR_TAB_CACHE_KEYS,
+} from '@/lib/hr/tab-cache';
 import { sundayIso } from '@/lib/hr/hiring-week';
 import DeptFilter from './DeptFilter';
 import HrCollabLayer from './HrCollabLayer';
@@ -277,7 +285,13 @@ export default function HrApp() {
               )}
               {activeTab === 'onboarding' && <HrOnboarding deepLink={onboardingDeepLink} />}
               {activeTab === 'offboarding' && <HrOffboarding />}
-              {activeTab === 'leaves' && <LeaveRequestsPanel />}
+              {activeTab === 'leaves' && (
+                <LeaveRequestsPanel
+                  // The list is scoped by the signed-in viewer's department
+                  // assignments, so the viewer is part of the key.
+                  paintCache={viewerEmail ? { store: hrPaintCache, key: `${HR_TAB_CACHE_KEYS.leaves}:${normEmail(viewerEmail)}` } : undefined}
+                />
+              )}
               {activeTab === 'transfers' && <HrTransfers />}
               {activeTab === 'gift-tracker' && <GiftTracker viewerEmail={viewerEmail} />}
               {activeTab === 'mesa' && <HrMesa />}
@@ -289,6 +303,7 @@ export default function HrApp() {
                   backfillOnboarding
                   view="hr"
                   onNavigate={handleNotificationNavigate}
+                  paintCache={{ store: hrPaintCache, key: HR_TAB_CACHE_KEYS.notifications }}
                 />
               )}
               {activeTab === 's-wall' && <HrSwallTab viewerEmail={viewerEmail} />}
@@ -356,16 +371,27 @@ function HrOverview({ viewerEmail }: { viewerEmail: string | null }) {
 
   // Look up the viewer's real name so the greeting shows their actual first
   // name; the email local part alone is unreliable (e.g. "j.delacruz@…" → "J").
-  const [realName, setRealName] = useState<string | null>(null);
+  // Cached per viewer so returning to Overview greets by name on the first
+  // frame instead of flashing the email-derived name and then swapping it.
+  const [realName, setRealName] = useState<string | null>(
+    () => (viewerEmail ? getHrTabCache<string>(hrViewerNameKey(viewerEmail)) ?? null : null),
+  );
   useEffect(() => {
     if (!viewerEmail) return;
+    const key = hrViewerNameKey(viewerEmail);
+    const hit = getHrTabCache<string>(key);
+    if (hit !== undefined) setRealName(hit);
+    if (isHrTabCacheFresh(key)) return;
     let alive = true;
     fetch(`/api/employees?email=${encodeURIComponent(viewerEmail)}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (!alive) return;
         const n = j?.employees?.[0]?.name;
-        if (typeof n === 'string' && n.trim()) setRealName(n.trim());
+        if (typeof n === 'string' && n.trim()) {
+          setHrTabCache(key, n.trim());
+          setRealName(n.trim());
+        }
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -3046,7 +3072,11 @@ function HrAnnouncements({ viewerEmail }: { viewerEmail: string | null }) {
             departments={[]}
             authorLabel="HR"
           />
-          <AnnouncementWall scope="all" viewerEmail={viewerEmail} />
+          <AnnouncementWall
+            scope="all"
+            viewerEmail={viewerEmail}
+            paintCache={{ store: hrPaintCache, key: HR_TAB_CACHE_KEYS.announcements }}
+          />
         </div>
       </div>
     </div>
@@ -3057,7 +3087,12 @@ function HrSwallTab({ viewerEmail }: { viewerEmail: string | null }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
-        <SWall viewerEmail={viewerEmail} canPost sourceLabel="HR" />
+        <SWall
+          viewerEmail={viewerEmail}
+          canPost
+          sourceLabel="HR"
+          paintCache={{ store: hrPaintCache, key: HR_TAB_CACHE_KEYS.swall }}
+        />
       </div>
     </div>
   );

@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PieChart, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel } from '@/lib/hr/hiring-week';
+import { getHrTabCache, hasHrTabCache, hrHiringSourcesKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
 
 /**
  * HR Overview card: a donut + table of how many hires came from each `source`
@@ -13,6 +14,10 @@ import { formatWeekLabel } from '@/lib/hr/hiring-week';
  */
 
 type SourceCount = { source: string; count: number };
+
+/** The RAW `/sources` payload, as cached under `hrHiringSourcesKey(period)`. The
+ *  New Hire Checklist reads the all-time entry for its source suggestions. */
+export type HiringSourcesPayload = { sources: SourceCount[]; total: number };
 
 // Distinct slice colours; cycled if there are more sources than colours.
 const PALETTE = [
@@ -48,15 +53,26 @@ function slicePath(s: number, e: number) {
 }
 
 export default function HiringSourcesCard({ periodStart }: { periodStart?: string } = {}) {
-  const [sources, setSources] = useState<SourceCount[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  // One HR-cache entry per week (and one for All time), so a tab return or a
+  // step back to a week already viewed paints the donut instead of a skeleton.
+  const cacheKey = hrHiringSourcesKey(periodStart ?? null);
+  const [data, setData] = useState<HiringSourcesPayload | null>(
+    () => getHrTabCache<HiringSourcesPayload>(cacheKey) ?? null,
+  );
+  const [loading, setLoading] = useState(() => !hasHrTabCache(cacheKey));
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  // The period on screen now — a response for a week the selector has since
+  // left still fills its own cache entry, but must not paint over this one.
+  const keyRef = useRef(cacheKey);
+  keyRef.current = cacheKey;
 
-  const load = () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback((opts?: { silent?: boolean }) => {
+    const key = cacheKey;
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     const url = periodStart
       ? `/api/hr/new-hire-checklist/sources?period=${encodeURIComponent(periodStart)}`
       : '/api/hr/new-hire-checklist/sources';
@@ -64,14 +80,38 @@ export default function HiringSourcesCard({ periodStart }: { periodStart?: strin
       .then((r) => r.json())
       .then((j: { sources?: SourceCount[]; total?: number; error?: string }) => {
         if (j.error) throw new Error(j.error);
-        setSources(j.sources ?? []);
-        setTotal(j.total ?? 0);
+        const payload: HiringSourcesPayload = { sources: j.sources ?? [], total: j.total ?? 0 };
+        setHrTabCache(key, payload);
+        if (keyRef.current !== key) return;
+        setData(payload);
+        setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load hiring sources'))
-      .finally(() => setLoading(false));
-  };
+      .catch((e) => {
+        // A background revalidate that blips keeps the painted donut and says
+        // nothing; only a foreground load reports.
+        if (opts?.silent || keyRef.current !== key) return;
+        setError(e instanceof Error ? e.message : 'Failed to load hiring sources');
+      })
+      .finally(() => {
+        if (!opts?.silent && keyRef.current === key) setLoading(false);
+      });
+  }, [cacheKey, periodStart]);
 
-  useEffect(load, [periodStart]);
+  // Paint whatever this period already has, then skip the fetch only while the
+  // entry is inside the 30s window — past it, revalidate silently behind it.
+  useEffect(() => {
+    const hit = getHrTabCache<HiringSourcesPayload>(cacheKey);
+    if (hit !== undefined) {
+      setData(hit);
+      setLoading(false);
+      setError(null);
+    }
+    if (isHrTabCacheFresh(cacheKey)) return;
+    load({ silent: hit !== undefined });
+  }, [cacheKey, load]);
+
+  const sources = useMemo(() => data?.sources ?? [], [data]);
+  const total = data?.total ?? 0;
 
   // Build slices: each named source + an "Unspecified" remainder so counts
   // reconcile with the total tracked hires.
@@ -118,7 +158,7 @@ export default function HiringSourcesCard({ periodStart }: { periodStart?: strin
         </div>
         <button
           type="button"
-          onClick={load}
+          onClick={() => load()}
           disabled={loading}
           aria-label="Refresh hiring sources"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"

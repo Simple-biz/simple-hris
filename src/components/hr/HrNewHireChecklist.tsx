@@ -30,10 +30,12 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   getHrTabCache,
+  hrHiringSourcesKey,
   isHrTabCacheFresh,
   setHrTabCache,
   HR_TAB_CACHE_KEYS,
 } from '@/lib/hr/tab-cache';
+import type { HiringSourcesPayload } from './HiringSourcesCard';
 import { useSession } from 'next-auth/react';
 import type { CellEditEntry, HrNewHireChecklistRow } from '@/lib/supabase/hr-new-hire-checklist';
 import { ONBOARDING_COUNTRIES, resolveOnboardingCountry } from '@/lib/onboarding/countries';
@@ -123,6 +125,27 @@ type CacheVal = {
 };
 
 const CACHE_KEY = HR_TAB_CACHE_KEYS.newHireChecklist;
+const PERIODS_KEY = HR_TAB_CACHE_KEYS.newHireChecklistPeriods;
+const DEPARTMENTS_KEY = HR_TAB_CACHE_KEYS.departments;
+const NAMES_KEY = HR_TAB_CACHE_KEYS.masterListNames;
+/** Shared with the Overview's all-time Hiring sources card — same endpoint, one fetch. */
+const SOURCES_KEY = hrHiringSourcesKey(null);
+
+/** Source dropdown suggestions: the base list ∪ sources already used,
+ *  case-insensitively de-duplicated. Pure, so the seeded and fetched paths agree. */
+function mergeSourceOptions(used: readonly { source: string }[]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const s of [...BASE_SOURCE_OPTIONS, ...used.map((x) => x.source)]) {
+    const t = (s ?? '').trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(t);
+  }
+  return merged;
+}
 
 // Coalesce a burst of peer "changed" broadcasts into a single refetch.
 const REMOTE_REFETCH_DEBOUNCE_MS = 400;
@@ -299,11 +322,16 @@ export default function HrNewHireChecklist({
   const [pendingAction, setPendingAction] = useState<{ period: string; mode: LockDialogMode } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [departments, setDepartments] = useState<string[]>([]);
+  // The three lookups below seed from the HR tab cache so a tab return has its
+  // dropdowns filled on the first frame; each effect revalidates past 30s.
+  const [departments, setDepartments] = useState<string[]>(() => getHrTabCache<string[]>(DEPARTMENTS_KEY) ?? []);
   // Source dropdown suggestions = the base list ∪ sources already used; Referrers
   // = active-employee names from the Global Master List (fed to the modal).
-  const [sourceOptions, setSourceOptions] = useState<string[]>(() => [...BASE_SOURCE_OPTIONS]);
-  const [referrers, setReferrers] = useState<string[]>([]);
+  const [sourceOptions, setSourceOptions] = useState<string[]>(() => {
+    const cachedSources = getHrTabCache<HiringSourcesPayload>(SOURCES_KEY);
+    return cachedSources ? mergeSourceOptions(cachedSources.sources) : [...BASE_SOURCE_OPTIONS];
+  });
+  const [referrers, setReferrers] = useState<string[]>(() => getHrTabCache<string[]>(NAMES_KEY) ?? []);
 
   // Row multiselect (keyed by DB id, so it survives a live refetch).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -320,7 +348,7 @@ export default function HrNewHireChecklist({
   const [search, setSearch] = useState('');
 
   // Period selector
-  const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>([]);
+  const [periodMetas, setPeriodMetas] = useState<PeriodMeta[]>(() => getHrTabCache<PeriodMeta[]>(PERIODS_KEY) ?? []);
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const periodMenuRef = useRef<HTMLDivElement>(null);
   // Export-to-Excel menu (this week / all weeks → one .xlsx sheet per week).
@@ -384,8 +412,13 @@ export default function HrNewHireChecklist({
     try {
       const res = await fetch('/api/hr/new-hire-checklist/periods', { cache: 'no-store' });
       const json = (await res.json()) as { periods?: PeriodMeta[] };
-      setPeriodMetas(json.periods ?? []);
-    } catch { /* selector still works off the generated rolling weeks */ }
+      if (!res.ok || !Array.isArray(json.periods)) throw new Error(`periods: HTTP ${res.status}`);
+      setHrTabCache(PERIODS_KEY, json.periods);
+      setPeriodMetas(json.periods);
+    } catch {
+      // Keep whatever the selector already shows (a cached list, or none); it
+      // still works off the generated rolling weeks.
+    }
   }, []);
 
   // A peer changed the week's data — coalesce a burst into one silent refetch so
@@ -440,7 +473,10 @@ export default function HrNewHireChecklist({
     void fetchPeriod(period, { silent: loaded });
   }, [period, loaded, fetchPeriod]);
 
-  useEffect(() => { void loadPeriods(); }, [loadPeriods]);
+  useEffect(() => {
+    if (isHrTabCacheFresh(PERIODS_KEY)) return;
+    void loadPeriods();
+  }, [loadPeriods]);
 
   /**
    * US holiday calendar, for the orientation date shown in the Lock-in dialog.
@@ -478,33 +514,33 @@ export default function HrNewHireChecklist({
   }, []);
 
   // Department dropdown options (best-effort; used by the modal + bulk bar).
+  // Only a well-formed answer is cached or painted; a failure keeps what is shown.
   useEffect(() => {
+    if (isHrTabCacheFresh(DEPARTMENTS_KEY)) return;
     let cancelled = false;
     fetch('/api/departments', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { departments?: string[] }) => { if (!cancelled) setDepartments(j.departments ?? []); })
+      .then((j: { departments?: string[] }) => {
+        if (!Array.isArray(j.departments)) return;
+        setHrTabCache(DEPARTMENTS_KEY, j.departments);
+        if (!cancelled) setDepartments(j.departments);
+      })
       .catch(() => { /* free-text fallback */ });
     return () => { cancelled = true; };
   }, []);
 
   // Source suggestions: base list ∪ sources already used (case-insensitive).
+  // Reads and writes the SAME entry as the Overview's all-time Hiring sources
+  // card, so the payload is stored whole ({ sources, total }), never merged.
   useEffect(() => {
+    if (isHrTabCacheFresh(SOURCES_KEY)) return;
     let cancelled = false;
     fetch('/api/hr/new-hire-checklist/sources', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { sources?: { source: string }[] }) => {
-        if (cancelled) return;
-        const seen = new Set<string>();
-        const merged: string[] = [];
-        for (const s of [...BASE_SOURCE_OPTIONS, ...((j.sources ?? []).map((x) => x.source))]) {
-          const t = (s ?? '').trim();
-          if (!t) continue;
-          const key = t.toLowerCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-          merged.push(t);
-        }
-        setSourceOptions(merged);
+      .then((j: { sources?: { source: string; count: number }[]; total?: number; error?: string }) => {
+        if (j.error || !Array.isArray(j.sources)) return;
+        setHrTabCache<HiringSourcesPayload>(SOURCES_KEY, { sources: j.sources, total: j.total ?? 0 });
+        if (!cancelled) setSourceOptions(mergeSourceOptions(j.sources));
       })
       .catch(() => { /* keep the base fallback */ });
     return () => { cancelled = true; };
@@ -512,16 +548,37 @@ export default function HrNewHireChecklist({
 
   // Referrer suggestions: active-employee names from the Global Master List.
   useEffect(() => {
+    if (isHrTabCacheFresh(NAMES_KEY)) return;
     let cancelled = false;
     fetch('/api/global-master-list/names', { cache: 'no-store' })
       .then((r) => r.json())
-      .then((j: { names?: string[] }) => { if (!cancelled) setReferrers(j.names ?? []); })
+      .then((j: { names?: string[] }) => {
+        if (!Array.isArray(j.names)) return;
+        setHrTabCache(NAMES_KEY, j.names);
+        if (!cancelled) setReferrers(j.names);
+      })
       .catch(() => { /* free-text fallback */ });
     return () => { cancelled = true; };
   }, []);
 
-  // Mirror state into the per-session tab cache on every change.
+  // Mirror state into the per-session tab cache when it CHANGES. The seeded
+  // mount reproduces the cached entry field for field (the rows by reference),
+  // and re-writing that would restamp it — re-opening the 30s window with no
+  // server answer behind it, so a tab flipped back to inside every 30s would
+  // never revalidate at all.
   useEffect(() => {
+    const prev = getHrTabCache<CacheVal>(CACHE_KEY);
+    if (
+      prev &&
+      prev.period === period &&
+      prev.rows === rows &&
+      prev.locked === locked &&
+      prev.lockedAt === lockedAt &&
+      prev.lockedBy === lockedBy &&
+      prev.loaded === loaded
+    ) {
+      return;
+    }
     setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, locked, lockedAt, lockedBy, loaded });
   }, [period, rows, locked, lockedAt, lockedBy, loaded]);
 

@@ -46,6 +46,7 @@ import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { SWALL_EMOJIS } from '@/lib/supabase/swall';
 import type { SwallComment } from '@/lib/supabase/swall';
+import type { PaintCacheProp } from '@/lib/dashboard-cache/paint-cache';
 
 /* ── Reaction metadata ────────────────────────────────────────────────── */
 
@@ -271,6 +272,25 @@ function SwallAvatar({
 
 /* ── Misc helpers ─────────────────────────────────────────────────────── */
 
+/** What a host's paint cache holds for this feed: the RAW posts and CEO rail.
+ *  Reactions are not stored — they are re-derived from the posts. */
+interface SWallCacheVal {
+  posts: EnrichedPost[];
+  announcements: AnnouncementItem[];
+}
+
+/** The viewer's own reactions, as the feed seeds them from a posts payload.
+ *  Pure and module-scope so the fetched and the cache-painted path agree. */
+function seedReactions(posts: readonly EnrichedPost[], viewer: string): ReactionEntry[] {
+  const seed: ReactionEntry[] = [];
+  for (const p of posts) {
+    for (const emoji of p.my_reactions) {
+      seed.push({ id: `seed-${p.id}-${emoji}`, post_id: p.id, user_email: viewer, emoji });
+    }
+  }
+  return seed;
+}
+
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const s = Math.floor(diff / 1000);
@@ -291,13 +311,33 @@ interface SWallProps {
   canPost: boolean;
   viewerName?: string | null;
   sourceLabel?: string;
+  /**
+   * Optional: the host's tab cache (HR passes its store). The feed paints from
+   * it on a tab return and is ALWAYS refetched, silently — new posts, deletes
+   * and other people's reactions arrive only through Realtime or a refetch,
+   * and browser `postgres_changes` is documented dead here, so a skipped fetch
+   * could hide a post the viewer has just made. The panel appends the viewer to
+   * `key` (`my_reactions` is per viewer). Hosts that omit it keep the uncached
+   * feed exactly.
+   */
+  paintCache?: PaintCacheProp;
 }
 
-export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }: SWallProps) {
-  const [posts, setPosts] = useState<EnrichedPost[]>([]);
-  const [reactions, setReactions] = useState<ReactionEntry[]>([]);
-  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel, paintCache }: SWallProps) {
+  const normalizedEmail = (viewerEmail ?? '').trim().toLowerCase();
+
+  // One entry per viewer; null when the host passed no cache.
+  const cacheKey = paintCache ? `${paintCache.key}:${normalizedEmail}` : null;
+  const cacheRef = useRef<{ store: PaintCacheProp['store']; key: string } | null>(null);
+  cacheRef.current = paintCache && cacheKey ? { store: paintCache.store, key: cacheKey } : null;
+  const [seeded] = useState(() => (paintCache && cacheKey ? paintCache.store.get<SWallCacheVal>(cacheKey) : undefined));
+
+  const [posts, setPosts] = useState<EnrichedPost[]>(() => seeded?.posts ?? []);
+  const [reactions, setReactions] = useState<ReactionEntry[]>(() =>
+    seeded ? seedReactions(seeded.posts, normalizedEmail) : [],
+  );
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(() => seeded?.announcements ?? []);
+  const [loading, setLoading] = useState(seeded === undefined);
   const [error, setError] = useState<string | null>(null);
 
   // Per-(postId, emoji) in-flight guard — blocks double-clicks and tracks optimistic direction
@@ -306,12 +346,14 @@ export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }:
   // Tracks optimistic reactions so the Realtime echo can be suppressed
   const ownPendingRef = useRef<Map<string, 'add' | 'remove'>>(new Map());
 
-  const normalizedEmail = (viewerEmail ?? '').trim().toLowerCase();
-
   /* ── Initial fetch ── */
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // `silent` is the revalidate behind a cache-painted feed: no skeleton, and a
+  // failure keeps the painted posts and raises no error card.
+  const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const [postsRes, annRes] = await Promise.all([
         fetch(`/api/swall/posts?viewer=${encodeURIComponent(normalizedEmail)}`, { cache: 'no-store' }),
@@ -322,27 +364,46 @@ export default function SWall({ viewerEmail, canPost, viewerName, sourceLabel }:
       if (postsJson.error) throw new Error(postsJson.error);
       const fetched = postsJson.posts ?? [];
       setPosts(fetched);
+      setReactions(seedReactions(fetched, normalizedEmail));
 
-      const seed: ReactionEntry[] = [];
-      for (const p of fetched) {
-        for (const emoji of p.my_reactions) {
-          seed.push({ id: `seed-${p.id}-${emoji}`, post_id: p.id, user_email: normalizedEmail, emoji });
-        }
-      }
-      setReactions(seed);
-
+      let rail: AnnouncementItem[] | null = null;
       if (annRes.ok) {
         const annJson = (await annRes.json()) as { announcements?: AnnouncementItem[] };
-        setAnnouncements(annJson.announcements ?? []);
+        rail = annJson.announcements ?? [];
+        setAnnouncements(rail);
       }
+      // Cache the posts only beside a rail that loaded too (a failed rail
+      // keeps the previously cached one), so the two never come from
+      // different answers on a painted return.
+      const cache = cacheRef.current;
+      if (cache) {
+        const prevRail = cache.store.get<SWallCacheVal>(cache.key)?.announcements ?? [];
+        cache.store.set<SWallCacheVal>(cache.key, { posts: fetched, announcements: rail ?? prevRail });
+      }
+      setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load');
+      if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoading(false);
     }
   }, [normalizedEmail]);
 
-  useEffect(() => { void fetchAll(); }, [fetchAll]);
+  // Always fetch; a feed painted from the cache revalidates silently behind it.
+  useEffect(() => {
+    const cache = cacheRef.current;
+    void fetchAll({ silent: cache ? cache.store.has(cache.key) : false });
+  }, [fetchAll]);
+
+  // Keep the cached copy in step with what is on screen — an optimistic
+  // reaction, a Realtime post or delete — so a tab return never repaints a
+  // state the viewer has already moved past. Only once a real answer has been
+  // cached: an empty feed before the first load must never be stored.
+  useEffect(() => {
+    const cache = cacheRef.current;
+    if (cache && cache.store.has(cache.key)) {
+      cache.store.set<SWallCacheVal>(cache.key, { posts, announcements });
+    }
+  }, [posts, announcements]);
 
   /* ── Realtime ── */
   useEffect(() => {

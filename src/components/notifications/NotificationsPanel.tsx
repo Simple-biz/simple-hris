@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt, Info, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -12,6 +12,7 @@ import {
   type NotificationActionTarget,
 } from '@/lib/notifications/notification-actions';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
+import type { PaintCacheProp } from '@/lib/dashboard-cache/paint-cache';
 
 interface EmployeeNotification {
   id: string;
@@ -105,6 +106,15 @@ interface NotificationsPanelProps {
    * referenced entity. Omit to render notifications as read-only cards.
    */
   onNavigate?: (target: NotificationActionTarget) => void;
+  /**
+   * Optional: the host's tab cache (HR passes its store). The list paints from
+   * it on a tab return and is ALWAYS refetched, silently — this panel has to
+   * agree with the chime and the sidebar badge, which are live, so a skipped
+   * fetch could hide the very notification that just rang. The panel appends
+   * view + viewer to `key`. The dispatch-lock banner is never cached. Hosts
+   * that omit it keep the uncached panel exactly.
+   */
+  paintCache?: PaintCacheProp;
 }
 
 function formatLockedAt(iso: string | null): string | null {
@@ -128,10 +138,42 @@ export default function NotificationsPanel({
   backfillOnboarding = false,
   view,
   onNavigate,
+  paintCache,
 }: NotificationsPanelProps) {
   const { state: lockState, loading } = useDispatchLock();
-  const [items, setItems] = useState<EmployeeNotification[]>([]);
-  const [itemsLoading, setItemsLoading] = useState<boolean>(!!viewerEmail);
+
+  const normEmail = useMemo(
+    () => (viewerEmail ? viewerEmail.trim().toLowerCase() : null),
+    [viewerEmail],
+  );
+
+  // One cache entry per (view, viewer) — the server filters by both.
+  const cacheKey = paintCache && normEmail ? `${paintCache.key}:${view ?? 'all'}:${normEmail}` : null;
+  const cacheRef = useRef<{ store: PaintCacheProp['store']; key: string } | null>(null);
+  cacheRef.current = paintCache && cacheKey ? { store: paintCache.store, key: cacheKey } : null;
+  // Ids this panel has PATCHed read, with when. The list on screen keeps them
+  // highlighted for the rest of the visit, as it always has; the CACHED copy
+  // records them read, which is what the server will answer on the way back.
+  const markedReadRef = useRef<Map<string, string>>(new Map());
+  const writeCache = useCallback((list: EmployeeNotification[]) => {
+    const cache = cacheRef.current;
+    if (!cache) return;
+    const marks = markedReadRef.current;
+    cache.store.set(
+      cache.key,
+      marks.size === 0
+        ? list
+        : list.map((n) => (!n.read_at && marks.has(n.id) ? { ...n, read_at: marks.get(n.id)! } : n)),
+    );
+  }, []);
+
+  const [items, setItems] = useState<EmployeeNotification[]>(
+    () => (paintCache && cacheKey ? paintCache.store.get<EmployeeNotification[]>(cacheKey) : undefined) ?? [],
+  );
+  const [painted, setPainted] = useState(() => !!(paintCache && cacheKey && paintCache.store.has(cacheKey)));
+  const [itemsLoading, setItemsLoading] = useState<boolean>(!!viewerEmail && !painted);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   // Live status of the offboarding_queue rows referenced by any
   // `offboarding.requested` notification, so the card can tell HR when the
   // request has already been actioned (offboarded / dismissed / returned /
@@ -140,10 +182,16 @@ export default function NotificationsPanel({
   // Pay-week file for the paystub modal opened from a "Salary Paid" card (null = closed).
   const [paystubFile, setPaystubFile] = useState<string | null>(null);
 
-  const normEmail = useMemo(
-    () => (viewerEmail ? viewerEmail.trim().toLowerCase() : null),
-    [viewerEmail],
-  );
+  // The viewer can resolve after mount; paint their entry the moment it does.
+  useEffect(() => {
+    const cache = cacheRef.current;
+    if (!cache) return;
+    const hit = cache.store.get<EmployeeNotification[]>(cache.key);
+    if (hit === undefined) return;
+    setItems(hit);
+    setPainted(true);
+    setItemsLoading(false);
+  }, [cacheKey]);
 
   const refetch = useCallback(async () => {
     if (!normEmail) return;
@@ -157,13 +205,24 @@ export default function NotificationsPanel({
         { cache: 'no-store' },
       );
       const json = (await res.json()) as { notifications?: EmployeeNotification[] };
-      setItems(json.notifications ?? []);
+      // An error body is a failure too: keep the prior list rather than blank it.
+      if (!res.ok || !Array.isArray(json.notifications)) return;
+      writeCache(json.notifications);
+      setItems(json.notifications);
     } catch {
       /* keep prior list */
     } finally {
       setItemsLoading(false);
     }
-  }, [normEmail, view]);
+  }, [normEmail, view, writeCache]);
+
+  // Keep the cached copy in step with the list (an optimistic delete, Clear
+  // all) — but only once a real answer has been cached, so an empty list before
+  // the first load lands is never stored as "no notifications".
+  useEffect(() => {
+    const cache = cacheRef.current;
+    if (cache && cache.store.has(cache.key)) writeCache(items);
+  }, [items, writeCache]);
 
   useEffect(() => {
     if (backfillOnboarding) {
@@ -212,10 +271,17 @@ export default function NotificationsPanel({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: unreadIds }),
-      });
+      })
+        .then((r) => {
+          if (!r.ok) return;
+          const at = new Date().toISOString();
+          for (const id of unreadIds) markedReadRef.current.set(id, at);
+          writeCache(itemsRef.current);
+        })
+        .catch(() => {});
     }, 2000);
     return () => window.clearTimeout(t);
-  }, [items, normEmail]);
+  }, [items, normEmail, writeCache]);
 
   // Every offboarding_queue id referenced by an offboarding.requested alert.
   const offboardIds = useMemo(() => {
@@ -303,7 +369,15 @@ export default function NotificationsPanel({
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids: [id] }),
-        }).catch(() => {});
+        })
+          .then((r) => {
+            // Usually lands after the panel has unmounted; the cache is
+            // module-level, so the copy the next visit paints still learns it.
+            if (!r.ok) return;
+            markedReadRef.current.set(id, new Date().toISOString());
+            writeCache(itemsRef.current);
+          })
+          .catch(() => {});
       }
       if (target.href) {
         router.push(target.href);
@@ -311,7 +385,7 @@ export default function NotificationsPanel({
       }
       onNavigate?.(target);
     },
-    [normEmail, onNavigate, router],
+    [normEmail, onNavigate, router, writeCache],
   );
 
   const [search, setSearch] = useState('');
@@ -422,7 +496,9 @@ export default function NotificationsPanel({
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50/60 dark:bg-[#0d1117]">
-        {(loading || itemsLoading) ? (
+        {/* A cache-painted list does not wait on the dispatch-lock read; the
+            banner (never cached) simply joins the list when its answer lands. */}
+        {(itemsLoading || (loading && !painted)) ? (
           /* Loading skeleton */
           <div className="space-y-3 px-4 py-5 sm:px-6">
             {[1, 2].map((i) => (

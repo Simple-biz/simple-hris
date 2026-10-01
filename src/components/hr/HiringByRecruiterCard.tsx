@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, RefreshCw, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel } from '@/lib/hr/hiring-week';
+import { getHrTabCache, hasHrTabCache, hrHiringRecruitersKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
 
 /**
  * HR Overview card: a leaderboard of who hired how many people (from the New
@@ -17,6 +18,9 @@ import { formatWeekLabel } from '@/lib/hr/hiring-week';
 
 type Recruiter = { recruiter: string; hires: number; interviewed: number };
 
+/** The RAW `/recruiters` payload, as cached under `hrHiringRecruitersKey(period)`. */
+type RecruitersPayload = { recruiters: Recruiter[]; totalHires: number; totalInterviewed: number };
+
 // RFC-4180-ish escaping: quote when the value carries a comma, quote, or newline.
 function csvCell(v: string | number | null | undefined): string {
   const s = (v ?? '').toString();
@@ -24,16 +28,26 @@ function csvCell(v: string | number | null | undefined): string {
 }
 
 export default function HiringByRecruiterCard({ periodStart }: { periodStart?: string } = {}) {
-  const [recruiters, setRecruiters] = useState<Recruiter[]>([]);
-  const [totalHires, setTotalHires] = useState(0);
-  const [totalInterviewed, setTotalInterviewed] = useState(0);
-  const [loading, setLoading] = useState(true);
+  // One HR-cache entry per week (and one for All time) — same shape as the
+  // Hiring sources card beside it.
+  const cacheKey = hrHiringRecruitersKey(periodStart ?? null);
+  const [data, setData] = useState<RecruitersPayload | null>(
+    () => getHrTabCache<RecruitersPayload>(cacheKey) ?? null,
+  );
+  const [loading, setLoading] = useState(() => !hasHrTabCache(cacheKey));
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // The period on screen now; a late answer for another week fills its own
+  // entry but never paints over this one.
+  const keyRef = useRef(cacheKey);
+  keyRef.current = cacheKey;
 
-  const load = () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback((opts?: { silent?: boolean }) => {
+    const key = cacheKey;
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     const url = periodStart
       ? `/api/hr/new-hire-checklist/recruiters?period=${encodeURIComponent(periodStart)}`
       : '/api/hr/new-hire-checklist/recruiters';
@@ -41,15 +55,42 @@ export default function HiringByRecruiterCard({ periodStart }: { periodStart?: s
       .then((r) => r.json())
       .then((j: { recruiters?: Recruiter[]; totalHires?: number; totalInterviewed?: number; error?: string }) => {
         if (j.error) throw new Error(j.error);
-        setRecruiters(j.recruiters ?? []);
-        setTotalHires(j.totalHires ?? 0);
-        setTotalInterviewed(j.totalInterviewed ?? 0);
+        const payload: RecruitersPayload = {
+          recruiters: j.recruiters ?? [],
+          totalHires: j.totalHires ?? 0,
+          totalInterviewed: j.totalInterviewed ?? 0,
+        };
+        setHrTabCache(key, payload);
+        if (keyRef.current !== key) return;
+        setData(payload);
+        setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load hiring by recruiter'))
-      .finally(() => setLoading(false));
-  };
+      .catch((e) => {
+        // A background blip keeps the painted table; only a foreground load reports.
+        if (opts?.silent || keyRef.current !== key) return;
+        setError(e instanceof Error ? e.message : 'Failed to load hiring by recruiter');
+      })
+      .finally(() => {
+        if (!opts?.silent && keyRef.current === key) setLoading(false);
+      });
+  }, [cacheKey, periodStart]);
 
-  useEffect(load, [periodStart]);
+  // Paint the period's entry if there is one; skip the fetch only inside the
+  // 30s window, otherwise revalidate silently behind the painted rows.
+  useEffect(() => {
+    const hit = getHrTabCache<RecruitersPayload>(cacheKey);
+    if (hit !== undefined) {
+      setData(hit);
+      setLoading(false);
+      setError(null);
+    }
+    if (isHrTabCacheFresh(cacheKey)) return;
+    load({ silent: hit !== undefined });
+  }, [cacheKey, load]);
+
+  const recruiters = useMemo(() => data?.recruiters ?? [], [data]);
+  const totalHires = data?.totalHires ?? 0;
+  const totalInterviewed = data?.totalInterviewed ?? 0;
 
   const maxHires = useMemo(() => Math.max(1, ...recruiters.map((r) => r.hires)), [recruiters]);
   const namedHires = useMemo(() => recruiters.reduce((s, r) => s + r.hires, 0), [recruiters]);
@@ -107,7 +148,7 @@ export default function HiringByRecruiterCard({ periodStart }: { periodStart?: s
           </button>
           <button
             type="button"
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             aria-label="Refresh hiring by recruiter"
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"

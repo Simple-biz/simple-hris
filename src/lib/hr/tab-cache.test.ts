@@ -6,6 +6,11 @@ import {
   HR_TAB_CACHE_KEYS,
   hrFpuEnrollmentsKey,
   hrFpuGroupsKey,
+  hrHiringRecruitersKey,
+  hrHiringSourcesKey,
+  hrPaintCache,
+  hrReferralsKey,
+  hrViewerNameKey,
   __resetHrTabCache,
   clearHrTabCache,
   getHrTabCache,
@@ -162,4 +167,85 @@ test('a per-class key obeys the same freshness window as a fixed one', () => {
   const past = (readHrTabCacheStamp(k) ?? 0) + FRESH_WINDOW_MS + 1;
   assert.equal(isHrTabCacheFresh(k, past), false);
   assert.equal(hasHrTabCache(k), true, 'a stale entry must still paint');
+});
+
+// ── the 2026-10-01 sweep: every HR tab that still loaded cold ───────────────
+
+test('the shared-panel adapter writes into the HR store itself, not a copy', () => {
+  // Leaves / Announcements / S-Wall / Notifications paint from this. If it were
+  // a second Map, a sign-out would drop one and not the other.
+  __resetHrTabCache();
+  hrPaintCache.set(HR_TAB_CACHE_KEYS.leaves, [{ id: 'l1' }]);
+  assert.deepEqual(getHrTabCache(HR_TAB_CACHE_KEYS.leaves), [{ id: 'l1' }]);
+  assert.ok(hasHrTabCache(HR_TAB_CACHE_KEYS.leaves));
+  setHrTabCache(HR_TAB_CACHE_KEYS.swall, { posts: [] });
+  assert.ok(hrPaintCache.has(HR_TAB_CACHE_KEYS.swall));
+  assert.deepEqual(hrPaintCache.get(HR_TAB_CACHE_KEYS.swall), { posts: [] });
+});
+
+test('the shared-panel adapter exposes NO freshness predicate, so a shared panel can never skip', () => {
+  // Announcements and S-Wall see a new post only through Realtime (dead here)
+  // or a refetch, and Notifications must agree with the live chime + badge.
+  // A skip window handed to them would hide a post you just made.
+  assert.deepEqual(Object.keys(hrPaintCache).sort(), ['get', 'has', 'set']);
+});
+
+test('each hiring week gets its own entry, and All time is its own entry too', () => {
+  const weekA = hrHiringSourcesKey('2026-09-27');
+  const weekB = hrHiringSourcesKey('2026-10-04');
+  const all = hrHiringSourcesKey(null);
+  assert.equal(new Set([weekA, weekB, all]).size, 3);
+  __resetHrTabCache();
+  setHrTabCache(weekA, { sources: [], total: 1 });
+  setHrTabCache(weekB, { sources: [], total: 2 });
+  assert.deepEqual(getHrTabCache(weekA), { sources: [], total: 1 }, 'the second week evicted the first');
+});
+
+test('sources, recruiters and referrals for the SAME week never collide', () => {
+  const w = '2026-09-27';
+  const keys = [hrHiringSourcesKey(w), hrHiringRecruitersKey(w), hrReferralsKey(w)];
+  assert.equal(new Set(keys).size, keys.length);
+  const allTime = [hrHiringSourcesKey(null), hrHiringRecruitersKey(null), hrReferralsKey(null)];
+  assert.equal(new Set(allTime).size, allTime.length);
+});
+
+test('the all-time sources entry is ONE key, shared by the Overview card and the checklist', () => {
+  // Both read the all-time /sources payload. Two spellings would mean two
+  // fetches and two answers that can disagree.
+  assert.equal(hrHiringSourcesKey(null), hrHiringSourcesKey(null));
+  assert.equal(hrHiringSourcesKey(null), 'hr:hiring-sources:all');
+});
+
+test('the greeting name is keyed per viewer, case-insensitively', () => {
+  assert.notEqual(hrViewerNameKey('a@simple.biz'), hrViewerNameKey('b@simple.biz'));
+  assert.equal(hrViewerNameKey(' A@Simple.biz '), hrViewerNameKey('a@simple.biz'));
+});
+
+test('every new key is namespaced under hr:', () => {
+  for (const k of [
+    hrViewerNameKey('a@simple.biz'),
+    hrHiringSourcesKey('2026-09-27'),
+    hrHiringRecruitersKey(null),
+    hrReferralsKey('2026-09-27'),
+    HR_TAB_CACHE_KEYS.newHireChecklistPeriods,
+    HR_TAB_CACHE_KEYS.departments,
+    HR_TAB_CACHE_KEYS.masterListNames,
+    HR_TAB_CACHE_KEYS.workspaceLicenseInfo,
+    HR_TAB_CACHE_KEYS.leaves,
+    HR_TAB_CACHE_KEYS.announcements,
+    HR_TAB_CACHE_KEYS.swall,
+    HR_TAB_CACHE_KEYS.notifications,
+  ]) {
+    assert.match(k, /^hr:/);
+  }
+});
+
+test('no key is spelled after presence, a signed URL or a bank field', () => {
+  // The factory's never-cache list (create-tab-cache.ts): presence is a WRONG
+  // answer when stale, a signed URL expires, and bank fields stay out entirely.
+  // GML last-seen, the dispatch lock and the Leaves delete permission are live
+  // reads for the same reason and are deliberately absent from this map.
+  for (const k of Object.values(HR_TAB_CACHE_KEYS)) {
+    assert.doesNotMatch(k, /presence|last-seen|signed|bank|account-number|routing|lock|permission/i, k);
+  }
 });

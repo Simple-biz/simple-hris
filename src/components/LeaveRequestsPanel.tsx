@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays,
   CheckCircle2,
@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils';
 import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 import { LEAVE_DELETE_ROLES } from '@/lib/supabase/leave-requests';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
+import type { PaintCacheProp } from '@/lib/dashboard-cache/paint-cache';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const PAGE_SIZE = 15;
@@ -66,7 +67,18 @@ function formatDateRange(start: string, end: string): string {
   return `${fmt.format(sDate)} - ${fmt.format(eDate)}`;
 }
 
-export default function LeaveRequestsPanel() {
+interface LeaveRequestsPanelProps {
+  /**
+   * Optional: the host's tab cache (HR passes its store). The rows are painted
+   * from it on a tab return and then revalidated silently on every mount — no
+   * skip. The list is scoped by the SIGNED-IN viewer's department assignments,
+   * so the host folds the viewer into `key`. Hosts that omit it keep the
+   * uncached panel exactly.
+   */
+  paintCache?: PaintCacheProp;
+}
+
+export default function LeaveRequestsPanel({ paintCache }: LeaveRequestsPanelProps = {}) {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [canDelete, setCanDelete] = useState(false);
   useEffect(() => {
@@ -100,8 +112,15 @@ export default function LeaveRequestsPanel() {
     };
   }, [currentUser]);
 
-  const [rows, setRows] = useState<LeaveRequestRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The rows paint from the host's cache when it passes one. `canDelete` above
+  // is never cached: it decides who sees the trash button.
+  const cacheRef = useRef(paintCache);
+  cacheRef.current = paintCache;
+  const [rows, setRows] = useState<LeaveRequestRow[]>(
+    () => (paintCache ? paintCache.store.get<LeaveRequestRow[]>(paintCache.key) : undefined) ?? [],
+  );
+  const [painted] = useState(() => paintCache?.store.has(paintCache.key) ?? false);
+  const [loading, setLoading] = useState(!painted);
   const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [searchQuery, setSearchQuery] = useState('');
@@ -116,16 +135,28 @@ export default function LeaveRequestsPanel() {
   const [deleteTarget, setDeleteTarget] = useState<LeaveRequestRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async (showSpinner = true) => {
-    if (showSpinner) setLoading(true); else setRefreshing(true);
+  /**
+   * `foreground` — the cold mount: skeleton, and a failure reports and clears.
+   * `refresh` — the Refresh button and post-action reloads: spinner on the button.
+   * `background` — a tab return over painted rows: no flag at all, and a blip
+   *   keeps the rows on screen and says nothing.
+   */
+  const load = useCallback(async (mode: 'foreground' | 'refresh' | 'background' = 'foreground') => {
+    if (mode === 'foreground') setLoading(true);
+    else if (mode === 'refresh') setRefreshing(true);
     try {
       const res = await fetch('/api/leave-requests?scope=all', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: LeaveRequestRow[]; error?: string | null };
       if (!res.ok) throw new Error(json.error || 'Failed to load');
-      setRows(json.rows ?? []);
+      const next = json.rows ?? [];
+      const cache = cacheRef.current;
+      if (cache) cache.store.set(cache.key, next);
+      setRows(next);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Load failed');
-      setRows([]);
+      if (mode !== 'background') {
+        toast.error(e instanceof Error ? e.message : 'Load failed');
+        setRows([]);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -133,8 +164,9 @@ export default function LeaveRequestsPanel() {
   }, []);
 
   useEffect(() => {
-    void load(true);
-  }, [load]);
+    // Always revalidate: a painted list does it silently behind the rows.
+    void load(painted ? 'background' : 'foreground');
+  }, [load, painted]);
 
   const stats = useMemo(() => ({
     total: rows.length,
@@ -171,7 +203,7 @@ export default function LeaveRequestsPanel() {
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   const handleRefresh = async () => {
-    await load(false);
+    await load('refresh');
     toast.success('Refreshed leave requests');
   };
 
@@ -204,7 +236,7 @@ export default function LeaveRequestsPanel() {
       if (!res.ok) throw new Error(json.error || 'Update failed');
       toast.success(action === 'approve' ? 'Leave approved' : 'Leave rejected');
       setSelected(null);
-      await load(false);
+      await load('refresh');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -223,7 +255,7 @@ export default function LeaveRequestsPanel() {
       if (!res.ok) throw new Error(json.error || 'Delete failed');
       toast.success('Leave request deleted');
       setDeleteTarget(null);
-      await load(false);
+      await load('refresh');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to delete');
     } finally {

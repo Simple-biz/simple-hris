@@ -14,8 +14,81 @@ Key files:
   `HrOnboardingForm.tsx`, `HrOffboarding.tsx`, `HrTransfers.tsx`, `HrScreening.tsx`,
   `HrNewHireChecklist.tsx`, `src/hooks/useHrOrientationAttendance.ts`, and since 2026-09-17
   `HrMesa.tsx` (MESA Eligible), `HrFpuEnrollments.tsx` (classes + per-class enrollments) and
-  `FpuGroupsPanel.tsx` (groups + marks).
+  `FpuGroupsPanel.tsx` (groups + marks). Since 2026-10-01 also `HiringSourcesCard.tsx`,
+  `HiringByRecruiterCard.tsx`, `ReferralsWeekSection.tsx` and `OffboardingWeeklyPulse.tsx`, plus
+  four SHARED panels through `hrPaintCache`: `LeaveRequestsPanel.tsx`, `AnnouncementWall.tsx`,
+  `SWall.tsx` and `NotificationsPanel.tsx`.
+- `src/lib/dashboard-cache/paint-cache.ts` — the `PaintCache` type the shared panels take.
 - Tests: `src/lib/hr/tab-cache.test.ts`.
+
+### Every HR tab, checked on 2026-10-01
+
+Kane: *"HR Dashboard - Check all tabs and see if we have cache in there I dont want it loading
+everytime I check other tabs."* Every tab was read for its mount-time fetches. Seven surfaces
+still loaded cold; they are wired now. **Two rules decide every row below.**
+
+**The HR tabs take the window.** Each paints from its entry and skips the fetch inside 30s, like
+everything above.
+
+**The four SHARED panels paint, and always refetch.** Leaves, Announcements, S-Wall and
+Notifications are mounted by several dashboards. They take an optional `paintCache` prop
+(`{ store, key }`), and HR passes `hrPaintCache`. That adapter has **no freshness predicate**,
+so these panels cannot skip. They seed the first paint and then revalidate silently on every
+mount, which is the `HrScreening` shape. A test pins that the adapter exposes only
+`get`/`has`/`set`. The reason differs per panel:
+
+- **Announcements and S-Wall** see a new post only through Realtime or a refetch, and browser
+  `postgres_changes` is documented dead here. A 30s skip could hide a post the viewer has just
+  made.
+- **Notifications** has to agree with the chime and the sidebar badge, which are live. A skip
+  could hide the notification that just rang.
+- **Leaves** comes along for consistency. A shared panel that can skip would carry HR's
+  freshness policy into the Manager and Accounting mounts.
+
+A host that passes no prop keeps the panel byte-for-byte uncached. Manager, Accounting, CEO,
+Employee, Orphanage, QC and Payroll Clerk are unchanged.
+
+| Tab | What was cold | Now |
+| --- | --- | --- |
+| Overview | the greeting name; Hiring sources; Hiring by recruiter; Referrals | per-viewer `hrViewerNameKey`; **per week** `hrHiringSourcesKey` / `hrHiringRecruitersKey` / `hrReferralsKey` (`null` = All time), so stepping between weeks does not evict |
+| New Hire Checklist | the week list, the department, source and referrer lookups | `newHireChecklistPeriods`, `departments`, `masterListNames`; the source list **shares** `hrHiringSourcesKey(null)` with the Overview card, so one fetch serves both |
+| Onboarding Form | the Workspace licence meter | `workspaceLicenseInfo`. Only a body with no `error` is cached. A set still re-reads it directly |
+| Offboarding | Weekly pulse headcount: it skipped whenever ANY roster was cached | takes the window on `overviewRoster` |
+| Leaves | the whole list (a skeleton every visit) | `paintCache`, key `hr:leaves:<viewer>` (the list is scoped by the signed-in viewer's department assignments) |
+| Announcements | the whole feed | `paintCache`; the panel appends the scope |
+| S-Wall | the feed and the CEO rail | `paintCache`; the panel appends the viewer (`my_reactions` is per viewer). Reactions are re-derived from the posts, never stored |
+| Notifications | the list, and the skeleton also waited on the dispatch-lock read | `paintCache`; the panel appends view + viewer. A painted list no longer waits on the lock; the banner joins it when its answer lands |
+
+**Left live on purpose.** None of these produces a skeleton over a painted tab:
+
+- **The Leaves delete permission.** It decides who sees the trash button.
+- **The dispatch-lock banner.** Lock state never paints from a cache.
+- **The New Hire Checklist's US holiday calendar.** Its effect says it is NOT best-effort, and
+  it has to agree with the lock route.
+- **The Notifications offboarding-queue status.** It decides whether the action button shows.
+- **GML last-seen.** It is presence, and a stale "active now" is a wrong answer, not a stale one.
+- **Gift Tracker.** It is on the Orphanage store, and Orders' lock state is never cached
+  (`orphanage-dashboard-cache.md`).
+- **Every dialog-scoped fetch.**
+
+**Two bugs closed on the way:**
+
+- **The New Hire Checklist restamped its own entry on every mount.** Its mirror effect wrote the
+  seeded state straight back, which re-opened the 30s window with no server answer behind it.
+  A tab flipped back to inside every 30s therefore **never** revalidated. The mirror now writes
+  only when a field actually changed (the rows by reference).
+- **Notifications blanked its list on an HTTP error body.** It did `setItems(json.notifications
+  ?? [])` with no `res.ok` check. An error body is now a failure that keeps the prior list,
+  which is what its own `/* keep prior list */` intended. This one reaches every dashboard.
+
+**Two rules for anything that mirrors state into a cache:**
+
+- **Write only once a real answer is cached** (`store.has(key)`). Otherwise an empty list from
+  before the first load lands gets stored, and the next visit paints "Nothing here yet" instead
+  of a skeleton.
+- **The Notifications cache records what the panel has PATCHed read.** The list on screen keeps
+  those rows highlighted for the rest of the visit, as before. The copy the next visit paints
+  marks them read, which matches what the server will answer.
 
 ### MESA and FPU joined the store on 2026-09-17
 
@@ -140,6 +213,13 @@ replace (`hr-orientation-attendance.md` § *Failure refuses to render*).
 
 ## Not done
 
+- **The 2026-10-01 sweep is not verified in a browser either.** `tsc` is clean and 5241/5243
+  tests pass. The two failures are pre-existing, in files this change does not touch. The tab
+  switches were not clicked through.
+- **The other dashboards' copies of the four shared panels are still cold.** The prop is there
+  and any `TabCache` from `create-tab-cache.ts` satisfies `PaintCache`. Wiring Manager (whose
+  memory lists Leaves, Announcements, S-Wall and Notifications as OPEN), Accounting and the rest
+  is a separate change against each dashboard's own store.
 - **Not verified in a browser.** `tsc` is clean and 2739/2741 tests pass (both failures
   pre-existing and unrelated), but the live tab-switch behaviour was not clicked through
   (needs Google SSO + Supabase auth).

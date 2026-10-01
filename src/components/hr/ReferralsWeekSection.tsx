@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
   Check,
@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
+import { getHrTabCache, hasHrTabCache, hrReferralsKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
 
 /**
  * HR Overview → "Referrals": one row per hire who came in through a referral,
@@ -43,9 +44,16 @@ function csvCell(v: string | number | null | undefined): string {
 export default function ReferralsWeekSection() {
   const [currentSunday] = useState(() => sundayIso(new Date()));
   const [week, setWeek] = useState<string | null>(() => sundayIso(new Date()));
-  const [referrals, setReferrals] = useState<Referral[]>([]);
-  const [loading, setLoading] = useState(true);
+  // One HR-cache entry per week (and one for All time): a tab return, or a step
+  // back to a week already viewed, paints the list instead of a skeleton.
+  const cacheKey = hrReferralsKey(week);
+  const [referrals, setReferrals] = useState<Referral[]>(() => getHrTabCache<Referral[]>(cacheKey) ?? []);
+  const [loading, setLoading] = useState(() => !hasHrTabCache(cacheKey));
   const [error, setError] = useState<string | null>(null);
+  // The week on screen now; a late answer for a week the stepper has left
+  // fills its own entry but never paints over this one.
+  const keyRef = useRef(cacheKey);
+  keyRef.current = cacheKey;
   const [copied, setCopied] = useState(false);
   const [query, setQuery] = useState('');
 
@@ -56,9 +64,12 @@ export default function ReferralsWeekSection() {
     return null;
   }, [week, currentSunday]);
 
-  const load = () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback((opts?: { silent?: boolean }) => {
+    const key = cacheKey;
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     const url = week
       ? `/api/hr/new-hire-checklist/referrals?period=${encodeURIComponent(week)}`
       : '/api/hr/new-hire-checklist/referrals';
@@ -66,13 +77,34 @@ export default function ReferralsWeekSection() {
       .then((r) => r.json())
       .then((j: { referrals?: Referral[]; error?: string }) => {
         if (j.error) throw new Error(j.error);
-        setReferrals(j.referrals ?? []);
+        const rows = j.referrals ?? [];
+        setHrTabCache(key, rows);
+        if (keyRef.current !== key) return;
+        setReferrals(rows);
+        setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load referrals'))
-      .finally(() => setLoading(false));
-  };
+      .catch((e) => {
+        // A background blip keeps the painted list; only a foreground load reports.
+        if (opts?.silent || keyRef.current !== key) return;
+        setError(e instanceof Error ? e.message : 'Failed to load referrals');
+      })
+      .finally(() => {
+        if (!opts?.silent && keyRef.current === key) setLoading(false);
+      });
+  }, [cacheKey, week]);
 
-  useEffect(load, [week]);
+  // Paint the week's entry if there is one; skip the fetch only inside the 30s
+  // window, otherwise revalidate silently behind the painted rows.
+  useEffect(() => {
+    const hit = getHrTabCache<Referral[]>(cacheKey);
+    if (hit !== undefined) {
+      setReferrals(hit);
+      setLoading(false);
+      setError(null);
+    }
+    if (isHrTabCacheFresh(cacheKey)) return;
+    load({ silent: hit !== undefined });
+  }, [cacheKey, load]);
 
   // Filter by new-hire, referrer name, OR referrer email (case-insensitive substring).
   const q = query.trim().toLowerCase();
@@ -150,7 +182,7 @@ export default function ReferralsWeekSection() {
           </button>
           <button
             type="button"
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             aria-label="Refresh referrals"
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
