@@ -18,7 +18,13 @@ Key files:
   at Kane's request: *"Retire the Bonus History tab this is no longer needed"*. Its
   `bonusHistory` key and `buildBonusHistoryRows` were deleted along with it.)
 - `src/components/manager/ManagerSidebar.tsx` — purges it on sign-out.
-- Tests: `src/lib/manager/tab-cache.test.ts`, `src/lib/manager/bonus-scoring-items.test.ts`.
+- Since 2026-10-01: `src/lib/manager/hire-row-cache.ts` (the projection a staged-hire row
+  must go through before it is stored), `NewlyHiredPanel.tsx` and
+  `src/hooks/useOrientationHistory.ts` (My Team's New Hire Check List and Orientation), and
+  `managerPaintCache`, which the shell hands to the shared `AnnouncementWall`, `SWall` and
+  `NotificationsPanel`.
+- Tests: `src/lib/manager/tab-cache.test.ts`, `src/lib/manager/bonus-scoring-items.test.ts`,
+  `src/lib/manager/hire-row-cache.test.ts`.
 
 The KPI Calculator tab has its **own** store, `src/lib/manager/kpi-cache.ts` — see
 `hsl-kpi-calculator-2026-07.md` § *Tab-switch & reload cache*. Two stores, because
@@ -177,6 +183,44 @@ That is why the roster payload is the cached unit and the gate is derived.
 | `deptAppointmentDays(label)` | `GET /api/manager/appointment-rankings/days` | day counts |
 | `deptKpiRankings(label)` | `GET /api/manager/deliverable-rankings` | KPI counts + POSITIONS; the pesos never leave the server |
 | `deptKpiDaily(label)` | `… /deliverable-rankings?basis=daily` | day counts + per-day positions |
+| `pendingHires` | `GET /api/manager/pending-hires` | rows **PROJECTED** through `toCachedHireRows`: no rates, phone or location |
+| `orientationHistory` | `GET /api/manager/orientation-history` | `{ rows, checklistWeeks }`, rows projected the same way; the `Map` is derived |
+| `announcements` (+ scope) | `GET /api/announcements` | the shared `AnnouncementWall`; the panel appends the scope |
+| `swall` (+ viewer) | `GET /api/swall/posts` + the CEO rail | the shared `SWall`; image URLs are `getPublicUrl`, not signed (`swall/upload/route.ts:37`) |
+| `notifications` (+ view + viewer) | `GET /api/employee-notifications` | the shared `NotificationsPanel`; the cached copy has its rate blocks stripped |
+
+### The shared panels and the New Hire Check List (2026-10-01)
+
+Kane: *"Now lets check the managers dashboard"*, the same ask as HR's sweep
+(`hr-dashboard-cache.md` § *Every HR tab, checked on 2026-10-01*). Every tab was read for
+its mount-time fetches. Announcements, S-Wall, Notifications and My Team's **New Hire
+Check List** and **Orientation** inner tabs still loaded cold. They are wired now. Leaves
+is held for Kane (see *Not cached, on purpose*).
+
+- **The shared panels take `managerPaintCache`.** It is `get`/`has`/`set` over this store
+  and nothing else, so the panels paint and then refetch on every mount, which is this
+  store's rule anyway. They are mounted only when a tab is clicked, after the viewer has
+  resolved. `activeTab` starts on `overview`, and the permission fallback that can move it
+  waits for `permsReady`, which needs the viewer. So they never read an inert cache.
+- **A staged-hire row is projected before it is stored.** Both hire routes pass
+  `regular_rate` / `ot_rate` through untouched to a viewer with rate visibility (an admin
+  who manages a department is exactly who opens this tab), and every row carries `phone`
+  and `location`. `hire-row-cache.ts` copies from an allow-list, and the compiler proves
+  that every column of `HrPendingEmployeeRow` is classified. A new column is a type error,
+  not a leak.
+- **A failed read drops the entry, as everywhere here.** `null` is written back, so a
+  previous list never sits under an error card. For Orientation that is also
+  `manager-orientation-attendance.md`'s rule: a history failure clears the state.
+- **The Orientation PDF waits for the live read.** A cache-painted tally may be drawn, but
+  the PDF leaves the app, so the button stays disabled until this visit's read answers
+  (`live`). The cards' actions do **not** wait. They follow Transfers and Time Adjustments:
+  the server is authoritative, and the refetch corrects a painted row within one round
+  trip.
+- **The cached Notifications copy carries no rate.** `details.before` / `details.after`
+  are stripped from every cached notification on every host. No rate-bearing type maps to
+  the manager view today (`rate.change`, `kpi.scored` and `payroll.paid` are
+  employee-only), but unmapped types show on every view, so the rule is enforced in the
+  cached copy and not trusted to the map.
 
 ### Per-department views (`dept:` keys, 2026-09-27)
 
@@ -245,6 +289,17 @@ department. Same shape as the KPI store's `presumedWeek`.
 - **Anything carrying a pay rate.** Managers see no compensation on any My Team surface
   (`manager-my-team.md`); nothing cached here may become the back door that
   reintroduces one. A test asserts no key is spelled after presence or a signed URL.
+  Where a payload that IS cached can carry one (the staged-hire rows, a notification's
+  before/after block), the cached copy is a projection without it.
+- **The Leaves tab's list — held for Kane, 2026-10-01 (session log item 304).** The rule
+  above about the company-wide leave list was written for the shell's badge read, and it
+  names the list itself. Caching the Leaves TAB means rewriting it, so that is Kane's call.
+  Measured read-only on 2026-10-01: `leave_requests` holds **4 rows, 2,239 bytes**. Until
+  he answers, the tab mounts cold.
+- **Scheduling.** `migrated` decides whether an edit can be stored
+  (`manager-scheduling.md` § *Deploy notes*), and a painted list would have to assume it.
+- **The second-approver candidate pools** on Time Adjustments. They decide who can be
+  picked.
 
 A read that fails is also not cached over: a failed roster fetch **drops** the cached
 roster rather than leaving a previous team on screen under an error banner.
@@ -261,7 +316,10 @@ roster rather than leaving a previous team on screen under an error banner.
   client-side paint optimisation and changes no route's freshness.
 - **`usePayWeeks` still costs one round trip** on every Overview mount — it is shared
   with the QC Overview, so short-circuiting it is a wider change than this one.
-- **Leaves, Scheduling, Announcements, S-Wall, Notifications and Orientation** still
-  mount cold. The recipe above is all they need; each is its own review.
+- **Leaves and Scheduling still mount cold** (both above). Announcements, S-Wall,
+  Notifications and Orientation were wired on 2026-10-01, together with the New Hire
+  Check List. **That sweep is not verified in a browser either.** `tsc` is clean and
+  5251/5253 tests pass. The two failures are pre-existing: they failed identically before
+  this change, and neither flags a line it touches.
 - **Not verified in a browser.** `tsc` is clean and 2188 tests pass, but the live
   tab-switch behaviour was not clicked through (needs Google SSO + Supabase auth).

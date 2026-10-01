@@ -117,6 +117,21 @@ interface NotificationsPanelProps {
   paintCache?: PaintCacheProp;
 }
 
+/**
+ * A notification as it may sit in a host's paint cache: without the
+ * before/after RATE blocks. A host store can mirror to `sessionStorage`
+ * (Manager), and "anything carrying a pay rate" is never cached there
+ * (`manager-dashboard-cache.md` § *Not cached, on purpose*). The titles stay.
+ * A painted rate card simply lacks its figures until the live list lands.
+ */
+function toCachedNotification(n: EmployeeNotification): EmployeeNotification {
+  if (!n.details || (n.details.before === undefined && n.details.after === undefined)) return n;
+  const { before: _before, after: _after, ...rest } = n.details;
+  void _before;
+  void _after;
+  return { ...n, details: rest };
+}
+
 function formatLockedAt(iso: string | null): string | null {
   if (!iso) return null;
   try {
@@ -161,9 +176,9 @@ export default function NotificationsPanel({
     const marks = markedReadRef.current;
     cache.store.set(
       cache.key,
-      marks.size === 0
-        ? list
-        : list.map((n) => (!n.read_at && marks.has(n.id) ? { ...n, read_at: marks.get(n.id)! } : n)),
+      list.map((n) =>
+        toCachedNotification(!n.read_at && marks.has(n.id) ? { ...n, read_at: marks.get(n.id)! } : n),
+      ),
     );
   }, []);
 

@@ -425,3 +425,36 @@ test('dept views — no key builder is spelled after pay, presence or a signed U
   assert.ok(spelled.includes('dept:'), 'expected the dept key builders');
   assert.doesNotMatch(spelled, /presence|last-seen|signed|amount|money|pay-rate|rate/i);
 });
+
+// ── 2026-10-01: the shared panels and the New Hire Check List ───────────────
+
+test('the shared-panel adapter is this store, and exposes no way to skip', async () => {
+  const { managerPaintCache } = await import('./tab-cache');
+  assert.deepEqual(Object.keys(managerPaintCache).sort(), ['get', 'has', 'set']);
+  const s = newTab();
+  bindManagerCacheIdentity('mgr@simple.biz');
+  managerPaintCache.set(MANAGER_CACHE_KEYS.swall, { posts: [] });
+  assert.deepEqual(getManagerCache(MANAGER_CACHE_KEYS.swall), { posts: [] });
+  reload(s);
+  bindManagerCacheIdentity('mgr@simple.biz');
+  assert.ok(managerPaintCache.has(MANAGER_CACHE_KEYS.swall), 'a reload repaints the feed');
+});
+
+test('the shared-panel adapter is inert until bound, like every other key', async () => {
+  const { managerPaintCache } = await import('./tab-cache');
+  newTab();
+  managerPaintCache.set(MANAGER_CACHE_KEYS.notifications, ['n1']);
+  assert.equal(managerPaintCache.has(MANAGER_CACHE_KEYS.notifications), false);
+});
+
+test('no new key is spelled after pay, presence or a signed URL', () => {
+  for (const k of [
+    MANAGER_CACHE_KEYS.pendingHires,
+    MANAGER_CACHE_KEYS.orientationHistory,
+    MANAGER_CACHE_KEYS.announcements,
+    MANAGER_CACHE_KEYS.swall,
+    MANAGER_CACHE_KEYS.notifications,
+  ]) {
+    assert.doesNotMatch(k, /rate|pay|peso|presence|last-seen|signed|leave/i, k);
+  }
+});

@@ -15,6 +15,9 @@ import { scopeRowsToDept } from '@/lib/manager/team-dept-rail';
 import type { DeptRailGroup } from '@/lib/payment-catalog/dept-rail';
 import { pickChecklistWeek, weekKeyFromIso } from '@/lib/manager/orientation-weekly';
 import { useOrientationHistory } from '@/hooks/useOrientationHistory';
+import { useManagerCachedState } from '@/hooks/useManagerCachedState';
+import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
+import { toCachedHireRows } from '@/lib/manager/hire-row-cache';
 
 /**
  * Shape returned by `/api/manager/pending-hires`. Subset of
@@ -272,8 +275,20 @@ export default function NewlyHiredPanel({
   rail,
   activeDept,
 }: NewlyHiredPanelProps) {
-  const [rows, setRows] = useState<PendingHireRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Painted from the Manager tab cache, then refetched on every mount (the store
+  // has no skip flag). The rows are PROJECTED before they are stored: the route
+  // passes pay rates through to a rate-visible viewer, and every row carries
+  // phone + location. `null` = nothing to paint.
+  const [cachedRows, setRows] = useManagerCachedState<PendingHireRow[] | null>(
+    MANAGER_CACHE_KEYS.pendingHires,
+    null,
+  );
+  const rows = useMemo(() => cachedRows ?? [], [cachedRows]);
+  // Whether this mount's read has answered. Never reset: the skeleton is for
+  // having nothing to show, not for a request in flight, so a post-action
+  // refresh no longer swaps the cards out for it.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && cachedRows === null;
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [noteDraft, setNoteDraft] = useState<Record<number, string>>({});
@@ -324,20 +339,20 @@ export default function NewlyHiredPanel({
   } | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/manager/pending-hires', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: PendingHireRow[]; error?: string | null };
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      setRows(json.rows ?? []);
+      setRows(toCachedHireRows(json.rows ?? []));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load newly hired list');
-      setRows([]);
+      // Dropped, cache included — a previous list never sits under an error.
+      setRows(null);
     } finally {
-      setLoading(false);
+      setSettled(true);
     }
-  }, []);
+  }, [setRows]);
 
   useEffect(() => {
     void refresh();
@@ -575,7 +590,7 @@ export default function NewlyHiredPanel({
   // idempotent). Runs sequentially so we can publish a live tally to the progress
   // modal and collect a per-hire failure list. The roster only refreshes once the
   // manager dismisses the modal (see closeBulkProgress) — refreshing mid-run would
-  // flip `loading` true and unmount the modal along with its live counter.
+  // reshuffle the cards under the modal's live counter.
   async function bulkApply() {
     const targets = selectedActiveRows.map((r) => ({ id: r.id, name: r.name }));
     if (targets.length === 0) return;
@@ -673,7 +688,7 @@ export default function NewlyHiredPanel({
   }
 
   // Dismiss the progress modal: clear the run, drop the selection, and only now
-  // refresh the roster (which swaps in the loading skeleton).
+  // refresh the roster (in place — the cards stay up while it reloads).
   function closeBulkProgress() {
     setBulkProgress(null);
     setSelected(new Set());

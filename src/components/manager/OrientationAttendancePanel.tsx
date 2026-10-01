@@ -249,6 +249,7 @@ export default function OrientationAttendancePanel({
     loading,
     refreshing,
     error,
+    live,
     refresh,
   } = useOrientationHistory();
   const reduceMotion = useReducedMotion() ?? false;
@@ -486,8 +487,10 @@ export default function OrientationAttendancePanel({
             size="sm"
             className="h-9 gap-1.5 text-xs"
             onClick={() => void exportPdf()}
-            disabled={pdfBusy || t.total === 0}
-            title="Download the weekly orientation attendance report as a PDF"
+            // A cache-painted tally may be DRAWN, but the PDF is a document
+            // that leaves the app, so it waits for this visit's live read.
+            disabled={pdfBusy || t.total === 0 || !live}
+            title={live ? 'Download the weekly orientation attendance report as a PDF' : 'Checking for the latest attendance…'}
           >
             {pdfBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />} Export PDF
           </Button>

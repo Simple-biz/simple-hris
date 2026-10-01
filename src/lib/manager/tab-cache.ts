@@ -1,6 +1,7 @@
 'use client';
 
 import { normEmail } from '@/lib/email/norm-email';
+import type { PaintCache } from '@/lib/dashboard-cache/paint-cache';
 
 /**
  * Remount- and reload-surviving cache for the Manager dashboard shell.
@@ -513,6 +514,31 @@ export const MANAGER_CACHE_KEYS = {
   teamDeptRailKey: 'team:dept-rail-key',
   /** The three `/api/department-transfers` scopes, cached as one raw triple. */
   transfers: 'transfers:scopes',
+  /**
+   * My Team → New Hire Check List: `/api/manager/pending-hires` rows, PROJECTED
+   * through `toCachedHireRows` (`hire-row-cache.ts`). The route passes pay rates
+   * through to a rate-visible viewer, and every row carries phone + location;
+   * none of that may reach `sessionStorage`.
+   */
+  pendingHires: 'team:pending-hires',
+  /**
+   * My Team → Orientation (and the check list's week labels + no-shows):
+   * `/api/manager/orientation-history` as `{ rows, checklistWeeks }`, the rows
+   * PROJECTED like `pendingHires`. `checklistWeeks` stays a plain record; the
+   * `Map` the hook hands out is derived (a `Map` serialises to `{}`).
+   */
+  orientationHistory: 'team:orientation-history',
+  /** Announcements tab: base key for `AnnouncementWall`'s paint cache (the panel appends the scope). */
+  announcements: 'announcements:feed',
+  /** S-Wall tab: base key for `SWall`'s paint cache (the panel appends the viewer). */
+  swall: 'swall:feed',
+  /**
+   * Notifications tab: base key for `NotificationsPanel`'s paint cache (the
+   * panel appends view + viewer). The panel strips the rate fields from every
+   * cached notification, so no pay figure lands here even if a rate-bearing type
+   * is ever mapped to the manager view.
+   */
+  notifications: 'notifications:list',
   /*
    * My Team → <department> → Rankings / Appointments — ONE entry per dataset per RAW
    * department label (Kane, 2026-09-27: *"so when I go to other departments it wont
@@ -536,3 +562,18 @@ export const MANAGER_CACHE_KEYS = {
   /** `/api/manager/deliverable-rankings?basis=daily` — days + the per-day positions. */
   deptKpiDaily: (department: string) => `${DEPT_KEY_PREFIX}kpi-daily:${department}`,
 } as const;
+
+/**
+ * This store as a {@link PaintCache}, for the SHARED panels the Manager shell
+ * hosts (Announcements, S-Wall, Notifications).
+ *
+ * It exposes `get`/`has`/`set` and nothing else, so a shared panel painting from
+ * it cannot skip its fetch, which is this store's rule anyway. Reads miss and
+ * writes no-op until `bindManagerCacheIdentity` runs; the shared panels mount
+ * only when a tab is clicked, which is after the viewer resolves.
+ */
+export const managerPaintCache: PaintCache = {
+  get: getManagerCache,
+  has: hasManagerCache,
+  set: setManagerCache,
+};

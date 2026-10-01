@@ -99,7 +99,7 @@ import NewlyHiredPanel from '@/components/manager/NewlyHiredPanel';
 import OrientationAttendancePanel from '@/components/manager/OrientationAttendancePanel';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import { useFeaturePermissions } from '@/hooks/useFeaturePermissions';
-import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
+import { MANAGER_CACHE_KEYS, managerPaintCache } from '@/lib/manager/tab-cache';
 import {
   useManagerCacheIdentity,
   useManagerCachedState,
@@ -996,7 +996,12 @@ export default function ManagerApp() {
                 );
               })()}
               {activeTab === 'notifications' && (
-                <NotificationsPanel viewerEmail={viewerEmail} accent="blue" view="manager" />
+                <NotificationsPanel
+                  viewerEmail={viewerEmail}
+                  accent="blue"
+                  view="manager"
+                  paintCache={{ store: managerPaintCache, key: MANAGER_CACHE_KEYS.notifications }}
+                />
               )}
               </ReadOnlyTab>
               )}
@@ -1994,7 +1999,12 @@ function ManagerSwallTab({ viewerEmail }: { viewerEmail: string | null }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto bg-[#fafaf8] dark:bg-[#0d1117]">
-        <SWall viewerEmail={viewerEmail} canPost sourceLabel="Manager" />
+        <SWall
+          viewerEmail={viewerEmail}
+          canPost
+          sourceLabel="Manager"
+          paintCache={{ store: managerPaintCache, key: MANAGER_CACHE_KEYS.swall }}
+        />
       </div>
     </div>
   );
@@ -2040,6 +2050,10 @@ function ManagerAnnouncementsTab({
             scope={wallScope}
             viewerEmail={viewerEmail}
             isElevated={teamGate.kind === 'elevated'}
+            // The panel appends the scope, so the brief ['general'] scope a
+            // still-loading team gate produces never shares an entry with the
+            // manager's real department scope.
+            paintCache={{ store: managerPaintCache, key: MANAGER_CACHE_KEYS.announcements }}
           />
         </div>
       </div>

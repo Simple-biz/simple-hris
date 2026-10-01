@@ -89,6 +89,9 @@ Employee, Orphanage, QC and Payroll Clerk are unchanged.
 - **The Notifications cache records what the panel has PATCHed read.** The list on screen keeps
   those rows highlighted for the rest of the visit, as before. The copy the next visit paints
   marks them read, which matches what the server will answer.
+- **The cached Notifications copy carries no rate block** (since the Manager pass, same day).
+  `details.before` / `details.after` are stripped on every host, because a host store can
+  mirror to `sessionStorage`. A painted rate card lacks its figures until the live list lands.
 
 ### MESA and FPU joined the store on 2026-09-17
 
@@ -216,10 +219,12 @@ replace (`hr-orientation-attendance.md` § *Failure refuses to render*).
 - **The 2026-10-01 sweep is not verified in a browser either.** `tsc` is clean and 5241/5243
   tests pass. The two failures are pre-existing, in files this change does not touch. The tab
   switches were not clicked through.
-- **The other dashboards' copies of the four shared panels are still cold.** The prop is there
-  and any `TabCache` from `create-tab-cache.ts` satisfies `PaintCache`. Wiring Manager (whose
-  memory lists Leaves, Announcements, S-Wall and Notifications as OPEN), Accounting and the rest
-  is a separate change against each dashboard's own store.
+- **The other dashboards' copies of the four shared panels are still cold, except Manager.**
+  Manager's Announcements, S-Wall and Notifications were wired on 2026-10-01 through
+  `managerPaintCache`, and its Leaves tab is held for Kane (`manager-dashboard-cache.md`,
+  session log item 304). The prop is there and any `TabCache` from `create-tab-cache.ts`
+  satisfies `PaintCache`. Accounting and the rest are a separate change against each
+  dashboard's own store.
 - **Not verified in a browser.** `tsc` is clean and 2739/2741 tests pass (both failures
   pre-existing and unrelated), but the live tab-switch behaviour was not clicked through
   (needs Google SSO + Supabase auth).

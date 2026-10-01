@@ -98,6 +98,18 @@ Both My Team tabs read the history through **one hook**, `useOrientationHistory`
 cannot disagree about a week or a count. Inner tabs unmount on switch, so that is one fetch
 per visit — the same way every other panel in this dashboard loads.
 
+**Since 2026-10-01 both reads also PAINT from the Manager tab cache** (`pendingHires`,
+`orientationHistory`; `manager-dashboard-cache.md` § *The shared panels and the New Hire
+Check List*). A visit still fetches once. Three holds come with it:
+
+- **The cached rows are a projection** (`src/lib/manager/hire-row-cache.ts`). Both routes
+  pass `regular_rate` / `ot_rate` through to a rate-visible viewer, and every row carries
+  `phone` and `location`. None of that is stored, and the compiler checks the
+  classification of every column.
+- **A history failure still clears**, and it clears the cached copy with it (below).
+- **The PDF waits for the live read.** The painted tally may be drawn, but the export stays
+  disabled until this visit's read answers.
+
 The history route is **not** a widening of the actionable one. That route filters to
 `status in (pending_work_email, ready)` plus recent Bypass rows, which as of 2026-08-24 is
 **3 of the 40 people never marked attended** — `promoted` hires (they attended; that's why
