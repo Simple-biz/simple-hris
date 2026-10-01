@@ -125,6 +125,15 @@
         "value": "jam-wobble",
         "createdAt": "2026-09-28T21:03:09.696Z",
         "reason": "Claude, session 9a92b2cd: jam-wobble is ease-in-out with no overshoot (translateY -1.5px + scaleY 0.92), a literal jellyfish bell-contraction pulse on the playing icon; the detector matched the keyframe name, not bounce/elastic easing"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/accounting-scoreboard/shared.tsx"
+        ],
+        "createdAt": "2026-10-01T18:21:16.482Z",
+        "reason": "Claude, verified: SlidingPill idle text is zinc on a transparent background; the hover state that adds bg-orange-50 also sets text-orange-900 (ui-standards § 11.1 pill anatomy)"
       }
     ]
   }

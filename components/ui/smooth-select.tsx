@@ -12,7 +12,8 @@ const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 /**
  * Accent families. `teal` is the house default; `blue` matches surfaces whose
  * other controls are blue (My Team's Rankings toggles), so the open trigger and the
- * highlighted row read as one control set rather than two.
+ * highlighted row read as one control set rather than two. `orange` is the same
+ * rule for the orange Accounting family (first user: the Accounting Scoreboard).
  */
 const ACCENTS = {
   teal: {
@@ -30,6 +31,14 @@ const ACCENTS = {
     active: 'bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-200',
     check: 'text-blue-600 dark:text-blue-400',
     search: 'focus:border-blue-300 focus:ring-blue-200',
+  },
+  orange: {
+    trigger: 'hover:border-orange-300 focus-visible:border-orange-500 focus-visible:ring-orange-500/20 dark:hover:border-orange-800',
+    open: 'border-orange-400 ring-2 ring-orange-500/20 dark:border-orange-700',
+    chevron: 'text-orange-600 dark:text-orange-400',
+    active: 'bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200',
+    check: 'text-orange-600 dark:text-orange-400',
+    search: 'focus:border-orange-300 focus:ring-orange-200',
   },
 } as const;
 
@@ -77,7 +86,7 @@ interface SmoothSelectProps<T extends string = string> {
   portal?: boolean;
   /** `md` (default) or `sm`, a compact trigger that lines up with segmented toggles. */
   size?: keyof typeof SIZES;
-  /** `teal` (default) or `blue`. */
+  /** `teal` (default), `blue`, or `orange` (the Accounting family). */
   accent?: keyof typeof ACCENTS;
   /** A muted prefix inside the trigger, before the selected label (e.g. "KPI"). */
   leading?: ReactNode;

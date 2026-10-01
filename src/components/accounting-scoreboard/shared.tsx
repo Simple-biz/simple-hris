@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { GoalRule } from '@/lib/accounting-scoreboard/sections';
@@ -63,13 +64,111 @@ export function handle(email: string): string {
 export const DIM = 'text-zinc-400 dark:text-zinc-600';
 export const TINY_CAPS = 'text-[10px] font-semibold uppercase tracking-[0.14em]';
 
+// ---------------------------------------------------------------------------
+// Motion (ui-standards § 11.1, § 14). Two curves only: [0.22, 1, 0.36, 1] for tab swaps and
+// the gliding indicator, [0.16, 1, 0.3, 1] for things that settle. Movement is gated on
+// useReducedMotion(); colour feedback is not, because it IS the confirmation (§ 14.3).
+// ---------------------------------------------------------------------------
+
+export const EASE_TAB = [0.22, 1, 0.36, 1] as const;
+export const EASE_SETTLE = [0.16, 1, 0.3, 1] as const;
+
+/**
+ * A pill whose ONE gradient indicator glides between siblings (shared `layoutId`), the
+ * house pattern for in-page tab rows (§ 11.1). Every pill in a row passes the same
+ * `layoutId`. Use a different id per row, or the indicator flies between rows.
+ */
+export function SlidingPill({
+  layoutId,
+  active,
+  onClick,
+  children,
+  className,
+}: {
+  layoutId: string;
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  const reduce = useReducedMotion() ?? false;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'relative inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60',
+        active
+          ? 'text-white'
+          : 'text-zinc-600 hover:bg-orange-50 hover:text-orange-900 dark:text-zinc-400 dark:hover:bg-orange-950/30 dark:hover:text-orange-200',
+        className,
+      )}
+    >
+      {active ? (
+        <motion.span
+          layoutId={layoutId}
+          aria-hidden
+          className="absolute inset-0 rounded-lg bg-gradient-to-r from-orange-500 to-amber-600 shadow-sm shadow-orange-600/25"
+          transition={{ duration: reduce ? 0 : 0.28, ease: EASE_TAB }}
+        />
+      ) : null}
+      <span className="relative z-10 inline-flex items-center gap-1.5">{children}</span>
+    </button>
+  );
+}
+
+function isDark(): boolean {
+  return typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+}
+
+/** One background sweep that settles to transparent: the Issues-tab flash, as a Web Animation. */
+function sweep(el: HTMLElement, color: string, durationMs: number): void {
+  if (typeof el.animate !== 'function') return;
+  el.animate(
+    [{ backgroundColor: color }, { backgroundColor: color, offset: 0.22 }, { backgroundColor: 'transparent' }],
+    { duration: durationMs, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+  );
+}
+
+/**
+ * A computed number that sweeps orange once when it changes, so typing a count shows WHICH
+ * totals it moved (and a teammate's save shows up on the next refresh). No sweep on first paint
+ * or when `scope` changes: a new week is new data, not a change.
+ */
+export function Flash({
+  value,
+  scope,
+  children,
+  className,
+}: {
+  value: number | string | null;
+  scope: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const last = useRef<{ value: number | string | null; scope: string }>({ value, scope });
+  useEffect(() => {
+    const prev = last.current;
+    last.current = { value, scope };
+    if (prev.scope !== scope || Object.is(prev.value, value)) return;
+    if (ref.current) sweep(ref.current, isDark() ? 'rgb(251 146 60 / 0.22)' : 'rgb(249 115 22 / 0.16)', 1500);
+  }, [value, scope]);
+  return (
+    <span ref={ref} className={cn('-mx-1 rounded px-1', className)}>
+      {children}
+    </span>
+  );
+}
+
 /** Goal chip: the sheet's goal and whether this week meets it. Absence is neutral, never "met". */
 export function GoalChip({ goal, met, value, unitFormat }: { goal?: GoalRule; met: boolean | null; value: number | null; unitFormat: (n: number | null) => string }) {
   if (!goal) return null;
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium',
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors duration-300',
         met === true && 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300',
         met === false && 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
         met === null && 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400',
@@ -97,7 +196,17 @@ export function SectionHeader({ title, help, right }: { title: string; help: str
 export type EditingSignal = (delta: 1 | -1) => void;
 
 const CELL =
-  'h-8 rounded-md border border-zinc-200 bg-white px-1.5 text-right font-mono text-[13px] tabular-nums text-zinc-900 outline-none transition-colors placeholder:text-zinc-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-200 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-700 dark:focus:ring-orange-900/60 dark:disabled:bg-zinc-900';
+  'h-8 rounded-md border border-zinc-200 bg-white px-1.5 text-right font-mono text-[13px] tabular-nums text-zinc-900 outline-none transition-[color,background-color,border-color,opacity] duration-150 placeholder:text-zinc-300 focus:border-orange-400 focus:ring-2 focus:ring-orange-200 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-zinc-400 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100 dark:placeholder:text-zinc-700 dark:focus:ring-orange-900/60 dark:disabled:bg-zinc-900';
+
+/** The cell's answer to a save: a ring that settles out. Emerald = saved, rose = refused. */
+function ringOut(el: HTMLElement | null, outcome: 'saved' | 'failed'): void {
+  if (!el || typeof el.animate !== 'function') return;
+  const rgb = outcome === 'saved' ? '16 185 129' : '244 63 94';
+  el.animate(
+    [{ boxShadow: `0 0 0 2px rgb(${rgb} / 0.55)` }, { boxShadow: `0 0 0 2px rgb(${rgb} / 0)` }],
+    { duration: outcome === 'saved' ? 900 : 1300, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+  );
+}
 
 /**
  * A count that saves itself on blur or Enter. Empty = no number (the entry is deleted), never 0.
@@ -126,6 +235,7 @@ export function NumberCell({
   const [draft, setDraft] = useState(shown);
   const [saving, setSaving] = useState(false);
   const focused = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!focused.current && !saving) setDraft(shown);
@@ -137,6 +247,7 @@ export function NumberCell({
     if (next !== null && (!Number.isFinite(next) || next < 0)) {
       toast.error(`${label}: type a number, or leave it empty`);
       setDraft(shown);
+      ringOut(inputRef.current, 'failed');
       return;
     }
     if (next === value) {
@@ -147,10 +258,12 @@ export function NumberCell({
     const ok = await onCommit(next);
     setSaving(false);
     if (!ok) setDraft(shown);
+    ringOut(inputRef.current, ok ? 'saved' : 'failed');
   }
 
   return (
     <input
+      ref={inputRef}
       type="text"
       inputMode="decimal"
       aria-label={label}
@@ -180,7 +293,7 @@ export function NumberCell({
         CELL,
         'w-14',
         warn && 'border-amber-400 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-950/30',
-        saving && 'opacity-60',
+        saving && 'opacity-70',
         className,
       )}
     />
@@ -207,6 +320,7 @@ export function TimeCell({
   const [draft, setDraft] = useState(shown);
   const [saving, setSaving] = useState(false);
   const focused = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!focused.current && !saving) setDraft(shown);
@@ -216,6 +330,7 @@ export function TimeCell({
     const next = draft === '' ? null : timeInputToMinutes(draft);
     if (draft !== '' && next === null) {
       setDraft(shown);
+      ringOut(inputRef.current, 'failed');
       return;
     }
     if (next === value) return;
@@ -223,10 +338,12 @@ export function TimeCell({
     const ok = await onCommit(next);
     setSaving(false);
     if (!ok) setDraft(shown);
+    ringOut(inputRef.current, ok ? 'saved' : 'failed');
   }
 
   return (
     <input
+      ref={inputRef}
       type="time"
       aria-label={label}
       title={label}
@@ -246,7 +363,7 @@ export function TimeCell({
         CELL,
         'w-[6.5rem] text-left',
         warn && 'border-amber-400 bg-amber-50/60 dark:border-amber-700 dark:bg-amber-950/30',
-        saving && 'opacity-60',
+        saving && 'opacity-70',
       )}
     />
   );

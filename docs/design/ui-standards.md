@@ -1051,6 +1051,10 @@ app theme and renders inconsistently across browsers.
   blue), `leading` (a muted prefix label inside the trigger, e.g. "KPI"), and
   `align="start"` (a left-aligned menu that opens toward the page, not off its
   left edge on a phone). First user of all four: My Team → Rankings' KPI picker.
+  `accent="orange"` (2026-10-01) is the same rule for the orange Accounting family.
+  Its first user is the Accounting Scoreboard, where every dropdown is
+  `accent="orange" align="start" portal`. `portal` is there because the board's
+  content scrolls, and a scroll container would clip an in-flow menu.
 - **Themed collapsible picker** (the "beautifully wrapped dropdown" pattern —
   `HslBonusCalculator.tsx` branch picker): a sticky, `backdrop-blur-md` themed
   header (`sticky top-0 z-10 … bg-white/90 dark:bg-zinc-950/90`) over a body that
@@ -1240,6 +1244,7 @@ sixty-five `layoutId` sites — counted 2026-09-29; "about forty" on 2026-09-15 
 | Section strip (Departments / HSL) — **underline variant** | `PayrollWizard.tsx` (Additions step) | `additions-section-indicator` |
 | `SlidingTab` (My Team inner tabs · Cards/List · People/Scheduling/Rankings) — **spring variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamInnerTab` · `myTeamViewMode` · `myTeamDeptView` |
 | Department rail row (My Team) — **vertical rail variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamDeptRail` |
+| `SlidingPill` (Accounting Scoreboard section tabs · Setup's Rows / Sections / Members) — orange `from-orange-500 to-amber-600`, 0.28s tween, not a spring | `accounting-scoreboard/shared.tsx` | `acct-sb-section-tab` · `acct-sb-setup-area` |
 
 The **underline variant** is the same mechanism with a different indicator: a 2px
 bar (`absolute inset-x-0 bottom-0 h-0.5`) instead of a filled pill, for a strip that

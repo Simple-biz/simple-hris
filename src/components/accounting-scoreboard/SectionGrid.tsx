@@ -21,6 +21,7 @@ import { summarizeSection } from '@/lib/accounting-scoreboard/board';
 import {
   DIM,
   EmptyRows,
+  Flash,
   GoalChip,
   NumberCell,
   SectionHeader,
@@ -111,11 +112,11 @@ export function SectionGrid({ section, rows, weekStart, lastWeekStart, today, lo
       {header}
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         {section.kind === 'am_pm' ? (
-          <AmPmTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} />
+          <AmPmTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} scope={weekStart} />
         ) : section.kind === 'time_span' ? (
-          <TimeTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} />
+          <TimeTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} scope={weekStart} />
         ) : (
-          <DailyTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} />
+          <DailyTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} scope={weekStart} />
         )}
       </div>
     </div>
@@ -131,6 +132,8 @@ interface TableProps {
   lookup: EntryLookup;
   onSave: SaveEntry;
   onEditing: EditingSignal;
+  /** The week key: a computed total flashes when it changes within one week, never across weeks. */
+  scope: string;
 }
 
 function DayHeads({ dates, today, span }: { dates: string[]; today: string; span: number }) {
@@ -148,15 +151,14 @@ function DayHeads({ dates, today, span }: { dates: string[]; today: string; span
   );
 }
 
-function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing }: TableProps) {
+function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
   const ids = rows.map((r) => r.id);
   const stats = amPmSectionStats(ids, dates, lookup, section.score, today);
   const last = amPmSectionStats(ids, lastDates, lookup, section.score, today);
   const isInbox = section.score === 'inbox';
-  const isBucket = section.score === 'bucket';
 
   return (
-    <table className="w-full border-collapse text-sm">
+    <table className="table-keep w-full border-collapse text-sm">
       <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
         <tr>
           <th rowSpan={2} className={cn(TH, 'sticky left-0 z-10 bg-zinc-50 text-left dark:bg-zinc-900')}>
@@ -218,10 +220,16 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                   </FragmentCells>
                 );
               })}
-              <td className={cn(TD, NUM)}>{isInbox ? fmtScore(s.pmAverage) : fmtNum(s.comp)}</td>
+              <td className={cn(TD, NUM)}>
+                <Flash value={isInbox ? s.pmAverage : s.comp} scope={scope}>
+                  {isInbox ? fmtScore(s.pmAverage) : fmtNum(s.comp)}
+                </Flash>
+              </td>
               {section.score ? (
                 <td className={cn(TD, NUM, 'font-semibold')}>
-                  <ScoreText score={s.score} goal={section.goal?.value} />
+                  <Flash value={s.score} scope={scope}>
+                    <ScoreText score={s.score} goal={section.goal?.value} />
+                  </Flash>
                 </td>
               ) : null}
               <td className={cn(TD, NUM, DIM)}>{section.score ? fmtScore(l.score) : fmtNum(l.comp)}</td>
@@ -234,14 +242,24 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
           <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Day total</td>
           {stats.dayTotals.map((t) => (
             <FragmentCells key={t.date}>
-              <td className={cn(TD, NUM, 'pr-2 text-zinc-600 dark:text-zinc-300')}>{fmtNum(t.am)}</td>
-              <td className={cn(TD, NUM, 'pr-2 text-zinc-600 dark:text-zinc-300')}>{fmtNum(t.pm)}</td>
+              <td className={cn(TD, NUM, 'pr-2 text-zinc-600 dark:text-zinc-300')}>
+                <Flash value={t.am} scope={scope}>{fmtNum(t.am)}</Flash>
+              </td>
+              <td className={cn(TD, NUM, 'pr-2 text-zinc-600 dark:text-zinc-300')}>
+                <Flash value={t.pm} scope={scope}>{fmtNum(t.pm)}</Flash>
+              </td>
             </FragmentCells>
           ))}
-          <td className={cn(TD, NUM, 'font-semibold')}>{isInbox ? fmtScore(stats.teamPmAverage) : fmtNum(stats.compTotal)}</td>
+          <td className={cn(TD, NUM, 'font-semibold')}>
+            <Flash value={isInbox ? stats.teamPmAverage : stats.compTotal} scope={scope}>
+              {isInbox ? fmtScore(stats.teamPmAverage) : fmtNum(stats.compTotal)}
+            </Flash>
+          </td>
           {section.score ? (
             <td className={cn(TD, NUM, 'font-semibold')}>
-              <ScoreText score={stats.headline} goal={section.goal?.value} />
+              <Flash value={stats.headline} scope={scope}>
+                <ScoreText score={stats.headline} goal={section.goal?.value} />
+              </Flash>
             </td>
           ) : null}
           <td className={cn(TD, NUM, DIM)}>{section.score ? fmtScore(last.headline) : fmtNum(last.compTotal)}</td>
@@ -275,7 +293,7 @@ function ScoreText({ score, goal }: { score: number | null; goal?: number }) {
   return <span className={tone}>{fmtScore(score)}</span>;
 }
 
-function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing }: TableProps) {
+function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
   const ids = rows.map((r) => r.id);
   const withFlag = section.kind === 'daily_flag';
   const stats = dailySectionStats(ids, dates, lookup);
@@ -283,7 +301,7 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
   const showShare = section.key === 'cancellations';
 
   return (
-    <table className="w-full border-collapse text-sm">
+    <table className="table-keep w-full border-collapse text-sm">
       <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
         <tr>
           <th className={cn(TH, 'sticky left-0 z-10 bg-zinc-50 text-left dark:bg-zinc-900')}>{section.rowNoun}</th>
@@ -342,13 +360,23 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
               })}
               {withFlag ? (
                 <>
-                  <td className={cn(TD, NUM, 'font-semibold')}>{fmtScore(s.average)}</td>
-                  <td className={cn(TD, NUM)}>{s.met.some((m) => m !== null) ? s.meetings : <span className={DIM}>—</span>}</td>
+                  <td className={cn(TD, NUM, 'font-semibold')}>
+                    <Flash value={s.average} scope={scope}>{fmtScore(s.average)}</Flash>
+                  </td>
+                  <td className={cn(TD, NUM)}>
+                    {s.met.some((m) => m !== null) ? (
+                      <Flash value={s.meetings} scope={scope}>{s.meetings}</Flash>
+                    ) : (
+                      <span className={DIM}>—</span>
+                    )}
+                  </td>
                   <td className={cn(TD, NUM, DIM)}>{fmtScore(l.average)}</td>
                 </>
               ) : (
                 <>
-                  <td className={cn(TD, NUM, 'font-semibold')}>{fmtNum(s.week)}</td>
+                  <td className={cn(TD, NUM, 'font-semibold')}>
+                    <Flash value={s.week} scope={scope}>{fmtNum(s.week)}</Flash>
+                  </td>
                   {showShare ? (
                     <td className={cn(TD, NUM)}>
                       {s.week !== null && stats.weekTotal ? `${Math.round((s.week / stats.weekTotal) * 100)}%` : <span className={DIM}>—</span>}
@@ -366,7 +394,7 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
           <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Day total</td>
           {stats.dayTotals.map((t, i) => (
             <td key={dates[i]} className={cn(TD, NUM, 'text-center text-zinc-600 dark:text-zinc-300')}>
-              {fmtNum(t)}
+              <Flash value={t} scope={scope}>{fmtNum(t)}</Flash>
               {withFlag && stats.meetingsByDay[i] ? (
                 <span className="ml-1 text-[10px] text-zinc-400">· {stats.meetingsByDay[i]} met</span>
               ) : null}
@@ -374,13 +402,17 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
           ))}
           {withFlag ? (
             <>
-              <td className={cn(TD, NUM, 'font-semibold')}>{fmtScore(stats.averageTotal)}</td>
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={stats.averageTotal} scope={scope}>{fmtScore(stats.averageTotal)}</Flash>
+              </td>
               <td className={cn(TD, NUM)}>{stats.meetingsByDay.reduce((a, b) => a + b, 0) || <span className={DIM}>—</span>}</td>
               <td className={cn(TD, NUM, DIM)}>{fmtScore(last.averageTotal)}</td>
             </>
           ) : (
             <>
-              <td className={cn(TD, NUM, 'font-semibold')}>{fmtNum(stats.weekTotal)}</td>
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={stats.weekTotal} scope={scope}>{fmtNum(stats.weekTotal)}</Flash>
+              </td>
               {showShare ? <td className={cn(TD, NUM)}>{stats.weekTotal ? '100%' : <span className={DIM}>—</span>}</td> : null}
               <td className={cn(TD, NUM, DIM)}>{fmtNum(last.weekTotal)}</td>
             </>
@@ -391,13 +423,13 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
   );
 }
 
-function TimeTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing }: TableProps) {
+function TimeTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
   const ids = rows.map((r) => r.id);
   const stats = timeSpanSectionHours(ids, dates, lookup);
   const last = timeSpanSectionHours(ids, lastDates, lookup);
 
   return (
-    <table className="w-full border-collapse text-sm">
+    <table className="table-keep w-full border-collapse text-sm">
       <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
         <tr>
           <th className={cn(TH, 'sticky left-0 z-10 bg-zinc-50 text-left dark:bg-zinc-900')}>{section.rowNoun}</th>
@@ -444,7 +476,9 @@ function TimeTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                   </td>
                 );
               })}
-              <td className={cn(TD, NUM, 'font-semibold')}>{fmtNum(s.hours)}</td>
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={s.hours} scope={scope}>{fmtNum(s.hours)}</Flash>
+              </td>
               <td className={cn(TD, NUM, DIM)}>{fmtNum(l.hours)}</td>
             </tr>
           );
@@ -463,7 +497,9 @@ function TimeTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
               </td>
             );
           })}
-          <td className={cn(TD, NUM, 'font-semibold')}>{fmtNum(stats.total)}</td>
+          <td className={cn(TD, NUM, 'font-semibold')}>
+            <Flash value={stats.total} scope={scope}>{fmtNum(stats.total)}</Flash>
+          </td>
           <td className={cn(TD, NUM, DIM)}>{fmtNum(last.total)}</td>
         </tr>
       </tfoot>

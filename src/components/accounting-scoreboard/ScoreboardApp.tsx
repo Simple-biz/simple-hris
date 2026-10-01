@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
 import { AlertTriangle, ChevronLeft, ChevronRight, Loader2, RefreshCw, Settings2, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -22,7 +23,7 @@ import { addDays, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/wee
 import { buildLookup, entryKey, type StoredEntry } from '@/lib/accounting-scoreboard/scoring';
 import { summarizeSection } from '@/lib/accounting-scoreboard/board';
 import type { BoardPayload } from '@/lib/accounting-scoreboard/types';
-import { api, fmtNum, fmtScore, GoalChip, TINY_CAPS } from './shared';
+import { api, EASE_TAB, Flash, fmtNum, fmtScore, GoalChip, SlidingPill, TINY_CAPS } from './shared';
 import { SectionGrid } from './SectionGrid';
 import { CollectionsPanel, type NewCollection } from './CollectionsPanel';
 import { SetupPanel } from './SetupPanel';
@@ -31,7 +32,16 @@ type Tab = 'overview' | SectionKey | 'setup';
 
 const REFRESH_MS = 45_000;
 
+/** The panel slides toward where you moved: a later tab or week from the right, an earlier one from the left. */
+const PANEL_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 28 : -28 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -28 : 28, transition: { duration: 0.14, ease: EASE_TAB } }),
+};
+
 export default function ScoreboardApp() {
+  const reduce = useReducedMotion() ?? false;
+  const [dir, setDir] = useState(1);
   const [week, setWeek] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [fatal, setFatal] = useState<{ message: string; code: string } | null>(null);
@@ -54,7 +64,8 @@ export default function ScoreboardApp() {
       hasBoard.current = true;
       setFatal(null);
       setStale(null);
-    } else if (hasBoard.current && quiet) {
+    } else if (hasBoard.current) {
+      // A failed refresh OR a failed week change keeps the last good board and says so.
       setStale(res.error);
     } else {
       setFatal({ message: res.error, code: res.code });
@@ -175,6 +186,18 @@ export default function ScoreboardApp() {
   const rowsFor = (key: SectionKey) => board.rows.filter((r) => r.sectionKey === key);
   const isThisWeek = week === null;
 
+  // Tab order for the slide direction: Overview, the sections that are on, Setup.
+  const order: Tab[] = ['overview', ...enabled.map((s) => s.key), 'setup'];
+  const selectTab = (next: Tab) => {
+    if (next === activeTab) return;
+    setDir(order.indexOf(next) >= order.indexOf(activeTab) ? 1 : -1);
+    setTab(next);
+  };
+  const goWeek = (next: string | null, direction: 1 | -1) => {
+    setDir(direction);
+    setWeek(next);
+  };
+
   return (
     <Shell>
       <header className="flex flex-wrap items-center gap-3 border-b border-orange-100/80 bg-white/90 px-4 py-3 backdrop-blur-md sm:px-6 dark:border-zinc-800 dark:bg-zinc-950/90">
@@ -194,15 +217,26 @@ export default function ScoreboardApp() {
             size="icon-sm"
             variant="outline"
             aria-label="Previous week"
-            onClick={() => setWeek(addDays(board.weekStart, -7))}
+            onClick={() => goWeek(addDays(board.weekStart, -7), -1)}
           >
             <ChevronLeft />
           </Button>
-          <div className="min-w-[10.5rem] text-center">
-            <div className="text-sm font-medium tabular-nums text-zinc-800 dark:text-zinc-200">{weekLabel(board.weekStart)}</div>
-            <div className={cn(TINY_CAPS, 'text-[9px]', isThisWeek ? 'text-orange-600' : 'text-zinc-400')}>
-              {isThisWeek ? 'This week' : 'Past week'}
-            </div>
+          <div className="min-w-[10.5rem] overflow-hidden text-center">
+            <AnimatePresence mode="popLayout" initial={false} custom={dir}>
+              <motion.div
+                key={board.weekStart}
+                custom={dir}
+                initial={{ opacity: 0, y: reduce ? 0 : dir >= 0 ? 6 : -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: reduce ? 0 : dir >= 0 ? -6 : 6, transition: { duration: 0.12 } }}
+                transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
+              >
+                <div className="text-sm font-medium tabular-nums text-zinc-800 dark:text-zinc-200">{weekLabel(board.weekStart)}</div>
+                <div className={cn(TINY_CAPS, 'text-[9px]', isThisWeek ? 'text-orange-600' : 'text-zinc-400')}>
+                  {isThisWeek ? 'This week' : 'Past week'}
+                </div>
+              </motion.div>
+            </AnimatePresence>
           </div>
           <Button
             size="icon-sm"
@@ -211,69 +245,112 @@ export default function ScoreboardApp() {
             disabled={isThisWeek}
             onClick={() => {
               const next = addDays(board.weekStart, 7);
-              setWeek(next >= weekStartOf(board.today) ? null : next);
+              goWeek(next >= weekStartOf(board.today) ? null : next, 1);
             }}
           >
             <ChevronRight />
           </Button>
           {!isThisWeek ? (
-            <Button size="sm" variant="ghost" onClick={() => setWeek(null)}>
+            <Button size="sm" variant="ghost" onClick={() => goWeek(null, 1)}>
               This week
             </Button>
           ) : null}
-          <span className="ml-1 w-4">{refreshing || loading ? <Loader2 className="size-3.5 animate-spin text-zinc-400" /> : null}</span>
+          <span className="ml-1 flex w-4 justify-center" aria-live="polite">
+            <AnimatePresence>
+              {refreshing || loading ? (
+                <motion.span
+                  key="spin"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  aria-label="Refreshing"
+                >
+                  <Loader2 className="size-3.5 animate-spin text-zinc-400" />
+                </motion.span>
+              ) : null}
+            </AnimatePresence>
+          </span>
         </div>
       </header>
 
-      {stale ? (
-        <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 sm:px-6 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          <AlertTriangle className="size-3.5" />
-          Couldn&rsquo;t refresh ({stale}). You&rsquo;re seeing the board as of the last good load.
-        </div>
-      ) : null}
+      <AnimatePresence initial={false}>
+        {stale ? (
+          <motion.div
+            key="stale"
+            initial={{ opacity: 0, y: reduce ? 0 : -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            transition={{ duration: 0.2, ease: EASE_TAB }}
+            className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 sm:px-6 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+            role="status"
+          >
+            <AlertTriangle className="size-3.5 shrink-0" />
+            Couldn&rsquo;t refresh ({stale}). You&rsquo;re seeing the board as of the last good load.
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
-      <nav className="flex gap-1 overflow-x-auto border-b border-zinc-100 bg-white px-3 py-2 sm:px-5 dark:border-zinc-900 dark:bg-zinc-950" aria-label="Sections">
-        <TabButton active={activeTab === 'overview'} onClick={() => setTab('overview')}>
+      <nav
+        className="flex gap-1 overflow-x-auto border-b border-zinc-100 bg-white/90 px-3 py-2 sm:px-5 dark:border-zinc-900 dark:bg-zinc-950/90"
+        aria-label="Sections"
+      >
+        <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
           Overview
-        </TabButton>
+        </SlidingPill>
         {enabled.map((s) => (
-          <TabButton key={s.key} active={activeTab === s.key} onClick={() => setTab(s.key)}>
+          <SlidingPill key={s.key} layoutId="acct-sb-section-tab" active={activeTab === s.key} onClick={() => selectTab(s.key)}>
             {s.tab}
-          </TabButton>
+          </SlidingPill>
         ))}
         {board.viewer.isManager ? (
-          <TabButton active={activeTab === 'setup'} onClick={() => setTab('setup')}>
+          <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'setup'} onClick={() => selectTab('setup')}>
             <Settings2 className="size-3.5" /> Setup
-          </TabButton>
+          </SlidingPill>
         ) : null}
       </nav>
 
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
-        {activeTab === 'overview' ? (
-          <Overview board={board} sections={enabled} lookup={lookup} onOpen={setTab} />
-        ) : activeTab === 'setup' ? (
-          <SetupPanel board={board} sections={sections} onChanged={() => void load(week, true)} />
-        ) : activeTab === 'collections' ? (
-          <CollectionsPanel
-            section={enabled.find((s) => s.key === 'collections')!}
-            board={board}
-            rows={rowsFor('collections')}
-            onLog={logCollection}
-            onDelete={deleteCollection}
-          />
-        ) : (
-          <SectionGrid
-            section={enabled.find((s) => s.key === activeTab)!}
-            rows={rowsFor(activeTab)}
-            weekStart={board.weekStart}
-            lastWeekStart={board.lastWeekStart}
-            today={board.today}
-            lookup={lookup}
-            isManager={board.viewer.isManager}
-            onSave={saveEntry}
-            onEditing={onEditing}
-          />
-        )}
+        {/* overflow-x-clip, not hidden: the slide never spawns a scrollbar, and sticky headers keep working (§ 11.1). */}
+        <div className="overflow-x-clip">
+          <AnimatePresence mode="wait" initial={false} custom={dir}>
+            <motion.div
+              key={`${activeTab}:${board.weekStart}`}
+              custom={dir}
+              variants={PANEL_VARIANTS}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
+            >
+              {activeTab === 'overview' ? (
+                <Overview board={board} sections={enabled} lookup={lookup} onOpen={selectTab} />
+              ) : activeTab === 'setup' ? (
+                <SetupPanel board={board} sections={sections} onChanged={() => void load(week, true)} />
+              ) : activeTab === 'collections' ? (
+                <CollectionsPanel
+                  section={enabled.find((s) => s.key === 'collections')!}
+                  board={board}
+                  rows={rowsFor('collections')}
+                  onLog={logCollection}
+                  onDelete={deleteCollection}
+                />
+              ) : (
+                <SectionGrid
+                  section={enabled.find((s) => s.key === activeTab)!}
+                  rows={rowsFor(activeTab)}
+                  weekStart={board.weekStart}
+                  lastWeekStart={board.lastWeekStart}
+                  today={board.today}
+                  lookup={lookup}
+                  isManager={board.viewer.isManager}
+                  onSave={saveEntry}
+                  onEditing={onEditing}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
       </main>
     </Shell>
   );
@@ -285,23 +362,6 @@ function Shell({ children }: { children: ReactNode }) {
     <div className="flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
       {children}
     </div>
-  );
-}
-
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors',
-        active
-          ? 'bg-gradient-to-r from-orange-100 to-orange-50 text-orange-900 dark:from-orange-950/70 dark:to-orange-950/30 dark:text-orange-200'
-          : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-900',
-      )}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -339,7 +399,9 @@ function Overview({
             >
               <div className={cn(TINY_CAPS, 'text-zinc-500 group-hover:text-orange-700 dark:group-hover:text-orange-300')}>{s.title}</div>
               <div className="mt-1.5 flex items-baseline gap-2">
-                <span className="font-mono text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{fmt(sum.headline)}</span>
+                <span className="font-mono text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  <Flash value={sum.headline} scope={board.weekStart}>{fmt(sum.headline)}</Flash>
+                </span>
                 <span className="text-xs text-zinc-500">{headlineUnit(s)}</span>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">

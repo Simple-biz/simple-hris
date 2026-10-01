@@ -8,18 +8,38 @@
  * The preview is DISPLAY ONLY. HRIS still pays the bonus from the five day totals typed into the
  * KPI calculator, and whether those should be points or accounts is an open money ruling
  * (Open item 315). So this panel shows both readings and never picks one.
+ *
+ * Motion (ui-standards § 14): a logged line rises into the log and a deleted one drifts out while
+ * the rest close the gap; the podium re-orders by gliding. Totals sweep once when they change (Flash).
+ * Movement is gated on useReducedMotion(); the colour sweep is not, because it is the confirmation.
  */
 
 import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Crown, Loader2, Medal, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import type { ResolvedSection } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader, weekLabel } from '@/lib/accounting-scoreboard/week';
 import { collectionsWeekStats, goalMet, type CollectionEntry } from '@/lib/accounting-scoreboard/scoring';
 import { previewBoth, DAY_VARIABLES } from '@/lib/accounting-scoreboard/bonus-preview';
 import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
-import { DIM, EmptyRows, GoalChip, SectionHeader, TINY_CAPS, fmtNum, fmtPhp, fmtUsd, handle } from './shared';
+import {
+  DIM,
+  EASE_SETTLE,
+  EASE_TAB,
+  EmptyRows,
+  Flash,
+  GoalChip,
+  SectionHeader,
+  TINY_CAPS,
+  fmtNum,
+  fmtPhp,
+  fmtUsd,
+  handle,
+} from './shared';
 
 export interface NewCollection {
   rowId: string;
@@ -40,6 +60,7 @@ interface Props {
 const TH = cn(TINY_CAPS, 'whitespace-nowrap px-2 py-2 text-zinc-500 dark:text-zinc-400');
 const TD = 'px-2 py-2 align-middle';
 const NUM = 'text-right font-mono tabular-nums';
+const FIELD_LABEL = cn(TINY_CAPS, 'text-zinc-500 dark:text-zinc-400');
 
 const PODIUM = [
   { tone: 'from-amber-400 to-amber-600', Icon: Crown, label: '1st' },
@@ -48,6 +69,7 @@ const PODIUM = [
 ] as const;
 
 export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Props) {
+  const reduce = useReducedMotion() ?? false;
   const dates = useMemo(() => datesFor(board.weekStart, section.days), [board.weekStart, section.days]);
   const lastDates = useMemo(() => datesFor(board.lastWeekStart, section.days), [board.lastWeekStart, section.days]);
   const ids = useMemo(() => rows.map((r) => r.id), [rows]);
@@ -55,6 +77,7 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
   const last = useMemo(() => collectionsWeekStats(ids, board.collections, lastDates), [ids, board.collections, lastDates]);
   const labelOf = useMemo(() => new Map(rows.map((r) => [r.id, r.label])), [rows]);
   const liveReps = rows.filter((r) => !r.archived);
+  const scope = board.weekStart;
 
   const loggable = dates.filter((d) => d <= board.today);
   const [date, setDate] = useState<string>(() => loggable[loggable.length - 1] ?? '');
@@ -131,110 +154,121 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
     <div className="space-y-5">
       {header}
 
+      {/* Wraps by width: two columns on a phone (business and the button full width), one row at lg. */}
       <form
         onSubmit={submit}
-        className="grid gap-2 rounded-xl border border-orange-100 bg-orange-50/40 p-3 sm:grid-cols-[8.5rem_10rem_1fr_5rem_7rem_auto] sm:items-end dark:border-orange-950/60 dark:bg-orange-950/10"
+        className="grid grid-cols-2 gap-x-3 gap-y-2.5 rounded-xl border border-orange-100 bg-orange-50/40 p-3 lg:grid-cols-[9rem_minmax(9rem,12rem)_minmax(12rem,1fr)_5.5rem_8rem_auto] lg:items-end dark:border-orange-950/60 dark:bg-orange-950/10"
       >
-        <label className="grid gap-1">
-          <span className={cn(TINY_CAPS, 'text-zinc-500')}>Day</span>
-          <select
+        <div className="grid min-w-0 gap-1">
+          <span className={FIELD_LABEL}>Day</span>
+          <SmoothSelect
             value={effectiveDate}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={setDate}
             disabled={!loggable.length}
-            className="h-9 rounded-md border border-zinc-200 bg-white px-2 text-sm dark:border-zinc-800 dark:bg-zinc-950"
-          >
-            {loggable.map((d) => (
-              <option key={d} value={d}>
-                {dayHeader(d).weekday} {dayHeader(d).short}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1">
-          <span className={cn(TINY_CAPS, 'text-zinc-500')}>Rep</span>
-          <select
+            options={
+              loggable.length
+                ? loggable.map((d) => ({ value: d, label: `${dayHeader(d).weekday} ${dayHeader(d).short}` }))
+                : [{ value: '', label: 'No day yet', disabled: true }]
+            }
+            accent="orange"
+            align="start"
+            portal
+            aria-label="Day"
+            triggerClassName="text-sm"
+          />
+        </div>
+        <div className="grid min-w-0 gap-1">
+          <span className={FIELD_LABEL}>Rep</span>
+          <SmoothSelect
             value={effectiveRow}
-            onChange={(e) => setRowId(e.target.value)}
-            className="h-9 rounded-md border border-zinc-200 bg-white px-2 text-sm dark:border-zinc-800 dark:bg-zinc-950"
-          >
-            {liveReps.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="grid gap-1">
-          <span className={cn(TINY_CAPS, 'text-zinc-500')}>Business name</span>
-          <input
+            onChange={setRowId}
+            options={liveReps.map((r) => ({ value: r.id, label: r.label }))}
+            searchable={liveReps.length > 8}
+            searchPlaceholder="Find a rep…"
+            accent="orange"
+            align="start"
+            portal
+            aria-label="Rep"
+            triggerClassName="text-sm"
+          />
+        </div>
+        <label className="col-span-2 grid min-w-0 gap-1 lg:col-span-1">
+          <span className={FIELD_LABEL}>Business name</span>
+          <Input
             ref={businessRef}
             value={business}
             onChange={(e) => setBusiness(e.target.value)}
             maxLength={200}
             placeholder="e.g. Chocolate Fountain Heaven"
-            className="h-9 rounded-md border border-zinc-200 bg-white px-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-950"
           />
         </label>
-        <label className="grid gap-1">
-          <span className={cn(TINY_CAPS, 'text-zinc-500')}>Points</span>
-          <input
+        <label className="grid min-w-0 gap-1">
+          <span className={FIELD_LABEL}>Points</span>
+          <Input
             value={points}
             inputMode="decimal"
             onChange={(e) => setPoints(e.target.value.replace(/[^0-9.]/g, ''))}
-            className="h-9 rounded-md border border-zinc-200 bg-white px-2 text-right font-mono text-sm tabular-nums dark:border-zinc-800 dark:bg-zinc-950"
+            className="text-right font-mono tabular-nums"
           />
         </label>
-        <label className="grid gap-1">
-          <span className={cn(TINY_CAPS, 'text-zinc-500')}>Amount (USD)</span>
-          <input
+        <label className="grid min-w-0 gap-1">
+          <span className={FIELD_LABEL}>Amount (USD)</span>
+          <Input
             value={amount}
             inputMode="decimal"
             placeholder="optional"
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-            className="h-9 rounded-md border border-zinc-200 bg-white px-2 text-right font-mono text-sm tabular-nums dark:border-zinc-800 dark:bg-zinc-950"
+            className="text-right font-mono tabular-nums"
           />
         </label>
         <Button
           type="submit"
           size="lg"
           disabled={busy || !loggable.length || !effectiveRow || !business.trim()}
-          className="bg-gradient-to-r from-orange-500 to-amber-600 text-white hover:from-orange-600 hover:to-amber-700"
+          className="col-span-2 h-9 bg-gradient-to-r from-orange-500 to-amber-600 text-white shadow-sm shadow-orange-600/20 hover:from-orange-600 hover:to-amber-700 lg:col-span-1"
         >
           {busy ? <Loader2 className="animate-spin" /> : null}
           Log collection
         </Button>
         {!loggable.length ? (
-          <p className="text-xs text-zinc-500 sm:col-span-6">This week has no day you can log yet.</p>
+          <p className="col-span-2 text-xs text-zinc-500 lg:col-span-6">This week has no day you can log yet.</p>
         ) : null}
       </form>
 
       {week.podium.length ? (
         <div className="flex flex-wrap gap-2">
-          {week.podium.map((p, i) => {
-            const { tone, Icon, label } = PODIUM[i];
-            return (
-              <div
-                key={p.rowId}
-                className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"
-              >
-                <span className={cn('flex size-7 items-center justify-center rounded-md bg-gradient-to-br text-white shadow-sm', tone)}>
-                  <Icon className="size-4" />
-                </span>
-                <div>
-                  <div className={cn(TINY_CAPS, 'text-zinc-400')}>{label}</div>
-                  <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-                    {labelOf.get(p.rowId) ?? '—'}{' '}
-                    <span className="font-mono text-xs font-normal tabular-nums text-zinc-500">{fmtNum(p.points)} pts</span>
+          <AnimatePresence initial={false}>
+            {week.podium.map((p, i) => {
+              const { tone, Icon, label } = PODIUM[i];
+              return (
+                <motion.div
+                  key={p.rowId}
+                  layout={!reduce}
+                  initial={{ opacity: 0, y: reduce ? 0 : 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                  transition={{ duration: reduce ? 0 : 0.28, ease: EASE_TAB }}
+                  className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"
+                >
+                  <span className={cn('flex size-7 items-center justify-center rounded-md bg-gradient-to-br text-white shadow-sm', tone)}>
+                    <Icon className="size-4" />
+                  </span>
+                  <div>
+                    <div className={cn(TINY_CAPS, 'text-zinc-400')}>{label}</div>
+                    <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+                      {labelOf.get(p.rowId) ?? '—'}{' '}
+                      <span className="font-mono text-xs font-normal tabular-nums text-zinc-500">{fmtNum(p.points)} pts</span>
+                    </div>
                   </div>
-                </div>
-              </div>
-            );
-          })}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         </div>
       ) : null}
 
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-        <table className="w-full border-collapse text-sm">
+        <table className="table-keep w-full border-collapse text-sm">
           <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
             <tr>
               <th className={cn(TH, 'text-left')}>Rep</th>
@@ -252,21 +286,30 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
             {rows.map((r) => {
               const s = week.rows.get(r.id)!;
               const l = last.rows.get(r.id)!;
+              const allTime = board.history.allTimeByRow[r.id];
               return (
-                <tr key={r.id}>
-                  <td className={cn(TD, 'font-medium text-zinc-800 dark:text-zinc-200')}>
+                <tr key={r.id} className="transition-colors hover:bg-orange-50/30 dark:hover:bg-zinc-900/40">
+                  <td className={cn(TD, 'whitespace-nowrap font-medium text-zinc-800 dark:text-zinc-200')}>
                     {r.label}
                     {r.archived ? <span className={cn(TINY_CAPS, 'ml-1.5 text-[9px] text-zinc-400')}>removed</span> : null}
                   </td>
                   {s.byDay.map((d, i) => (
                     <td key={dates[i]} className={cn(TD, NUM, d.accounts ? 'text-zinc-700 dark:text-zinc-300' : DIM)}>
-                      {d.accounts ? fmtNum(d.points) : '—'}
+                      <Flash value={d.accounts ? d.points : null} scope={scope}>
+                        {d.accounts ? fmtNum(d.points) : '—'}
+                      </Flash>
                     </td>
                   ))}
-                  <td className={cn(TD, NUM, 'font-semibold')}>{s.week.accounts ? fmtNum(s.week.points) : <span className={DIM}>—</span>}</td>
+                  <td className={cn(TD, NUM, 'font-semibold')}>
+                    <Flash value={s.week.accounts ? s.week.points : null} scope={scope}>
+                      {s.week.accounts ? fmtNum(s.week.points) : <span className={DIM}>—</span>}
+                    </Flash>
+                  </td>
                   <td className={cn(TD, NUM, DIM)}>{l.week.accounts ? fmtNum(l.week.points) : '—'}</td>
                   <td className={cn(TD, NUM, 'text-zinc-600 dark:text-zinc-400')}>
-                    {board.history.allTimeByRow[r.id] !== undefined ? fmtNum(board.history.allTimeByRow[r.id]) : <span className={DIM}>—</span>}
+                    <Flash value={allTime ?? null} scope={scope}>
+                      {allTime !== undefined ? fmtNum(allTime) : <span className={DIM}>—</span>}
+                    </Flash>
                   </td>
                 </tr>
               );
@@ -274,13 +317,19 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
           </tbody>
           <tfoot className="border-t border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
             <tr>
-              <td className={cn(TD, TINY_CAPS, 'text-zinc-500')}>Day total (points)</td>
+              <td className={cn(TD, TINY_CAPS, 'whitespace-nowrap text-zinc-500')}>Day total (points)</td>
               {week.byDay.map((d, i) => (
                 <td key={dates[i]} className={cn(TD, NUM, 'font-semibold')}>
-                  {d.accounts ? fmtNum(d.points) : <span className={DIM}>—</span>}
+                  <Flash value={d.accounts ? d.points : null} scope={scope}>
+                    {d.accounts ? fmtNum(d.points) : <span className={DIM}>—</span>}
+                  </Flash>
                 </td>
               ))}
-              <td className={cn(TD, NUM, 'font-semibold')}>{week.week.accounts ? fmtNum(week.week.points) : <span className={DIM}>—</span>}</td>
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={week.week.accounts ? week.week.points : null} scope={scope}>
+                  {week.week.accounts ? fmtNum(week.week.points) : <span className={DIM}>—</span>}
+                </Flash>
+              </td>
               <td className={cn(TD, NUM, DIM)}>{last.week.accounts ? fmtNum(last.week.points) : '—'}</td>
               <td className={cn(TD, NUM, DIM)} />
             </tr>
@@ -305,21 +354,25 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
         dates={dates}
         preview={preview}
         lastPreview={lastPreview}
+        scope={scope}
       />
 
       <div className="space-y-2">
         <h3 className={cn(TINY_CAPS, 'text-zinc-500')}>This week&rsquo;s log ({weekLogs.length})</h3>
         {weekLogs.length ? (
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
-            {weekLogs.map((c) => (
-              <LogLine
-                key={c.id}
-                entry={c}
-                rep={labelOf.get(c.rowId) ?? '—'}
-                canDelete={board.viewer.isManager || c.createdBy.toLowerCase() === board.viewer.email}
-                onDelete={onDelete}
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {weekLogs.map((c) => (
+                <LogLine
+                  key={c.id}
+                  entry={c}
+                  rep={labelOf.get(c.rowId) ?? '—'}
+                  canDelete={board.viewer.isManager || c.createdBy.toLowerCase() === board.viewer.email}
+                  onDelete={onDelete}
+                  reduce={reduce}
+                />
+              ))}
+            </AnimatePresence>
           </ul>
         ) : (
           <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800">
@@ -336,17 +389,26 @@ function LogLine({
   rep,
   canDelete,
   onDelete,
+  reduce,
 }: {
   entry: CollectionEntry;
   rep: string;
   canDelete: boolean;
   onDelete: (id: string) => Promise<boolean>;
+  reduce: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const h = dayHeader(entry.date);
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
+    <motion.li
+      layout={reduce ? false : 'position'}
+      initial={{ opacity: 0, y: reduce ? 0 : -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, x: reduce ? 0 : -14, transition: { duration: 0.14 } }}
+      transition={{ duration: reduce ? 0 : 0.22, ease: EASE_SETTLE }}
+      className="flex flex-wrap items-center gap-x-4 gap-y-1 bg-white px-3 py-2 text-sm dark:bg-zinc-950"
+    >
       <span className="w-16 shrink-0 font-mono text-[11px] text-zinc-500">
         {h.weekday} {h.short}
       </span>
@@ -388,7 +450,7 @@ function LogLine({
       ) : (
         <span className="w-6" />
       )}
-    </li>
+    </motion.li>
   );
 }
 
@@ -398,12 +460,14 @@ function BonusPreviewCard({
   dates,
   preview,
   lastPreview,
+  scope,
 }: {
   verdict: BoardPayload['bonus'];
   byDay: { points: number; accounts: number }[];
   dates: string[];
   preview: { byPoints: number; byAccounts: number } | null;
   lastPreview: { byPoints: number; byAccounts: number } | null;
+  scope: string;
 }) {
   return (
     <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
@@ -421,12 +485,18 @@ function BonusPreviewCard({
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-orange-100 bg-orange-50/50 p-3 dark:border-orange-950/60 dark:bg-orange-950/15">
               <div className={cn(TINY_CAPS, 'text-orange-700 dark:text-orange-300')}>By points · what HRIS pays today</div>
-              <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{fmtPhp(preview.byPoints)}</div>
-              <div className="text-[11px] text-zinc-500">Last week {lastPreview ? fmtPhp(lastPreview.byPoints) : '—'}</div>
+              <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                <Flash value={preview.byPoints} scope={scope}>{fmtPhp(preview.byPoints)}</Flash>
+              </div>
+              <div className="text-[11px] text-orange-900/70 dark:text-orange-200/70">
+                Last week {lastPreview ? fmtPhp(lastPreview.byPoints) : '—'}
+              </div>
             </div>
             <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
               <div className={cn(TINY_CAPS, 'text-zinc-500')}>By accounts · if the tier counted accounts</div>
-              <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{fmtPhp(preview.byAccounts)}</div>
+              <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                <Flash value={preview.byAccounts} scope={scope}>{fmtPhp(preview.byAccounts)}</Flash>
+              </div>
               <div className="text-[11px] text-zinc-500">Last week {lastPreview ? fmtPhp(lastPreview.byAccounts) : '—'}</div>
             </div>
           </div>

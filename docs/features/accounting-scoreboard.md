@@ -154,6 +154,33 @@ hard-coded subset.
 - The roster picker selects `Name`, `Department` and `Work Email` only, paged, and prints departments
   through `formatDeptLabel` (`dept-label-render.test.ts`).
 
+## Motion and controls (polished 2026-10-01)
+
+- **Dropdowns are `SmoothSelect`** (`ui-standards.md` § 9.4), never a native `<select>`, whose popup
+  ignores the app theme. Every one is `accent="orange" align="start" portal`, because the content
+  area scrolls and would clip an in-flow menu. Long lists are `searchable`: Department always, and
+  Rep when there are more than 8.
+- **Every `<table>` carries `table-keep`.** Below 640 px, `src/index.css` collapses any table without
+  it into stacked cards. These are computational grids, so on a phone they scroll sideways instead,
+  with the row label stuck to the left. Drop the class and the grid falls apart on a phone.
+- **Tabs glide** (§ 11.1): one orange indicator via `SlidingPill`, 0.28 s on `[0.22, 1, 0.36, 1]`.
+  Each row has its own `layoutId` (`acct-sb-section-tab`, `acct-sb-setup-area`); a shared one would
+  fly the indicator between rows. The panel slides toward where you moved (a later tab or week from
+  the right, 0.22 s in and 0.14 s out), keyed on `` `${tab}:${weekStart}` ``, inside `overflow-x-clip`
+  so the slide never spawns a scrollbar. A background refresh never changes that key, so it never
+  replays the slide.
+- **A total that changes sweeps orange once** (`Flash`, the Issues-tab settle curve). The sweep is
+  scoped to the week, so switching weeks is new data and nothing sweeps. It shows which totals your
+  number moved, and on refresh where a teammate's did. It is colour only, so it **stays on under
+  reduced motion** (§ 14.3: the signal is the confirmation).
+- **A cell answers its save** with an emerald ring that settles, or rose when the save is refused.
+  Saving dims the cell gently instead of flickering.
+- Log lines, Setup rows and members rise in and drift out while the rest close the gap
+  (`layout="position"`), and the podium re-orders by gliding. All movement is gated on
+  `useReducedMotion()`.
+- **A failed week change** keeps the last good board under the "Couldn't refresh" bar, the same as a
+  failed background refresh. It never shows the old week silently.
+
 ## Live refresh
 
 - A background refresh runs every 45 s while the tab is visible, and on focus. It **never runs while a

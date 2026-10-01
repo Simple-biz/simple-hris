@@ -11,10 +11,13 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown, ArrowUp, Loader2, Plus, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Switch } from '@/components/ui/switch';
 import type { ResolvedSection, SectionKey } from '@/lib/accounting-scoreboard/sections';
 import { sectionDef } from '@/lib/accounting-scoreboard/sections';
@@ -22,7 +25,7 @@ import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import { shortNameFromRoster } from '@/lib/accounting-scoreboard/names';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BoardPayload, BoardRow, RosterPerson } from '@/lib/accounting-scoreboard/types';
-import { api, handle, TINY_CAPS } from './shared';
+import { api, EASE_SETTLE, EASE_TAB, handle, SlidingPill, TINY_CAPS } from './shared';
 
 interface Props {
   board: BoardPayload;
@@ -30,10 +33,29 @@ interface Props {
   onChanged: () => void;
 }
 
-const INPUT = 'h-9 rounded-md border border-zinc-200 bg-white px-2.5 text-sm dark:border-zinc-800 dark:bg-zinc-950';
+const AREAS = [
+  ['rows', 'Rows'],
+  ['sections', 'Sections'],
+  ['members', 'Members'],
+] as const;
+type Area = (typeof AREAS)[number][0];
+
+const AREA_VARIANTS = {
+  enter: (dir: number) => ({ opacity: 0, x: dir >= 0 ? 24 : -24 }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -24 : 24 }),
+};
 
 export function SetupPanel({ board, sections, onChanged }: Props) {
-  const [area, setArea] = useState<'rows' | 'sections' | 'members'>('rows');
+  const reduce = useReducedMotion() ?? false;
+  const [area, setArea] = useState<Area>('rows');
+  const [dir, setDir] = useState(1);
+  const go = (next: Area) => {
+    const from = AREAS.findIndex(([k]) => k === area);
+    const to = AREAS.findIndex(([k]) => k === next);
+    setDir(to >= from ? 1 : -1);
+    setArea(next);
+  };
   return (
     <div className="space-y-5">
       <div>
@@ -42,32 +64,30 @@ export function SetupPanel({ board, sections, onChanged }: Props) {
           Only Accounting and Admin see this. Changes apply to everyone on the next refresh.
         </p>
       </div>
-      <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
-        {(
-          [
-            ['rows', 'Rows'],
-            ['sections', 'Sections'],
-            ['members', 'Members'],
-          ] as const
-        ).map(([k, label]) => (
-          <button
-            key={k}
-            type="button"
-            onClick={() => setArea(k)}
-            className={cn(
-              'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-              area === k
-                ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100'
-                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200',
-            )}
-          >
+      <div className="inline-flex gap-0.5 rounded-xl border border-zinc-200 bg-white/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/60">
+        {AREAS.map(([k, label]) => (
+          <SlidingPill key={k} layoutId="acct-sb-setup-area" active={area === k} onClick={() => go(k)}>
             {label}
-          </button>
+          </SlidingPill>
         ))}
       </div>
-      {area === 'rows' ? <RowsArea board={board} sections={sections} onChanged={onChanged} /> : null}
-      {area === 'sections' ? <SectionsArea sections={sections} onChanged={onChanged} /> : null}
-      {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
+      <div className="overflow-x-clip">
+        <AnimatePresence mode="wait" initial={false} custom={dir}>
+          <motion.div
+            key={area}
+            custom={dir}
+            variants={AREA_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
+          >
+            {area === 'rows' ? <RowsArea board={board} sections={sections} onChanged={onChanged} /> : null}
+            {area === 'sections' ? <SectionsArea sections={sections} onChanged={onChanged} /> : null}
+            {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -143,7 +163,7 @@ function GoalEditor({
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-zinc-500">Goal {text}</span>
-      <input
+      <Input
         value={draft}
         inputMode="decimal"
         disabled={disabled}
@@ -160,7 +180,7 @@ function GoalEditor({
           }
           if (n !== value) onSave(n);
         }}
-        className={cn(INPUT, 'w-20 text-right font-mono tabular-nums')}
+        className="w-20 text-right font-mono tabular-nums"
       />
       {value !== sheetValue ? (
         <Button size="xs" variant="ghost" disabled={disabled} onClick={() => onSave(null)}>
@@ -221,30 +241,34 @@ function RowsArea({ board, sections, onChanged }: Props) {
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_22rem]">
       <div className="space-y-3">
-        <label className="grid max-w-xs gap-1">
+        <div className="grid max-w-sm gap-1">
           <span className={cn(TINY_CAPS, 'text-zinc-500')}>Section</span>
-          <select value={sectionKey} onChange={(e) => setSectionKey(e.target.value as SectionKey)} className={INPUT}>
-            {sections.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.title}
-                {s.enabled ? '' : ' (off)'}
-              </option>
-            ))}
-          </select>
-        </label>
+          <SmoothSelect
+            value={sectionKey}
+            onChange={(v) => setSectionKey(v as SectionKey)}
+            options={sections.map((s) => ({ value: s.key, label: s.enabled ? s.title : `${s.title} (off)` }))}
+            accent="orange"
+            align="start"
+            portal
+            aria-label="Section"
+            triggerClassName="text-sm"
+          />
+        </div>
         {rows.length ? (
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
-            {rows.map((r, i) => (
-              <RowLine
-                key={r.id}
-                row={r}
-                first={i === 0}
-                last={i === rows.length - 1}
-                onRename={(label) => patch(r.id, { label })}
-                onMove={(dir) => void move(i, dir)}
-                onArchive={() => patch(r.id, { archived: true })}
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {rows.map((r, i) => (
+                <RowLine
+                  key={r.id}
+                  row={r}
+                  first={i === 0}
+                  last={i === rows.length - 1}
+                  onRename={(label) => patch(r.id, { label })}
+                  onMove={(dir) => void move(i, dir)}
+                  onArchive={() => patch(r.id, { archived: true })}
+                />
+              ))}
+            </AnimatePresence>
           </ul>
         ) : (
           <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500 dark:border-zinc-800">
@@ -259,14 +283,14 @@ function RowsArea({ board, sections, onChanged }: Props) {
             if (await addRow(named.trim(), null)) setNamed('');
           }}
         >
-          <label className="grid min-w-[14rem] flex-1 gap-1">
+          <label className="grid min-w-[min(14rem,100%)] flex-1 gap-1">
             <span className={cn(TINY_CAPS, 'text-zinc-500')}>Add a named row</span>
-            <input
+            <Input
               value={named}
               maxLength={80}
               onChange={(e) => setNamed(e.target.value)}
               placeholder={
-                section.kind === 'am_pm' && section.key === 'buckets'
+                section.key === 'buckets'
                   ? "e.g. Mon (Collections), Darrell's Bucket"
                   : section.key === 'inbox'
                     ? 'e.g. Payroll Simple.biz'
@@ -274,10 +298,9 @@ function RowsArea({ board, sections, onChanged }: Props) {
                       ? 'e.g. Green'
                       : 'a queue, an inbox, or someone not on the roster'
               }
-              className={INPUT}
             />
           </label>
-          <Button type="submit" size="lg" variant="outline" disabled={busy || !named.trim()}>
+          <Button type="submit" size="lg" variant="outline" className="h-9" disabled={busy || !named.trim()}>
             <Plus /> Add
           </Button>
         </form>
@@ -306,12 +329,20 @@ function RowLine({
   onMove: (dir: -1 | 1) => void;
   onArchive: () => Promise<boolean>;
 }) {
+  const reduce = useReducedMotion() ?? false;
   const [label, setLabel] = useState(row.label);
   const [confirming, setConfirming] = useState(false);
   useEffect(() => setLabel(row.label), [row.label]);
   return (
-    <li className="flex flex-wrap items-center gap-2 px-3 py-2">
-      <input
+    <motion.li
+      layout={reduce ? false : 'position'}
+      initial={{ opacity: 0, y: reduce ? 0 : -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, x: reduce ? 0 : -14, transition: { duration: 0.14 } }}
+      transition={{ duration: reduce ? 0 : 0.22, ease: EASE_SETTLE }}
+      className="flex flex-wrap items-center gap-2 bg-white px-3 py-2 dark:bg-zinc-950"
+    >
+      <Input
         value={label}
         maxLength={80}
         aria-label="Row name"
@@ -324,7 +355,7 @@ function RowLine({
           if (!next) return setLabel(row.label);
           if (next !== row.label && !(await onRename(next))) setLabel(row.label);
         }}
-        className={cn(INPUT, 'h-8 min-w-[10rem] flex-1')}
+        className="h-8 w-auto min-w-[10rem] flex-1"
       />
       {row.workEmail ? (
         <span className="font-mono text-[11px] text-zinc-400" title={row.workEmail}>
@@ -353,7 +384,7 @@ function RowLine({
           <X />
         </Button>
       )}
-    </li>
+    </motion.li>
   );
 }
 
@@ -410,19 +441,26 @@ function RosterPicker({
       ) : null}
       {people ? (
         <>
-          <select value={dept} onChange={(e) => setDept(e.target.value)} className={cn(INPUT, 'w-full')}>
-            <option value="">Every department</option>
-            {departments.map(([d, n]) => (
-              <option key={d} value={d}>
-                {`${formatDeptLabel(d)} (${n})`}
-              </option>
-            ))}
-          </select>
-          <input
+          <SmoothSelect
+            value={dept}
+            onChange={setDept}
+            options={[
+              { value: '', label: `Every department (${people.length})` },
+              ...departments.map(([d, n]) => ({ value: d, label: `${formatDeptLabel(d)} (${n})` })),
+            ]}
+            searchable
+            searchPlaceholder="Find a department…"
+            accent="orange"
+            align="start"
+            portal
+            aria-label="Department"
+            triggerClassName="text-sm"
+          />
+          <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name or email"
-            className={cn(INPUT, 'w-full')}
+            aria-label="Search the roster"
           />
           <ul className="max-h-80 divide-y divide-zinc-100 overflow-y-auto rounded-lg border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
             {shown.map((p) => {
@@ -455,6 +493,7 @@ function RosterPicker({
 // ---------------------------------------------------------------------------
 
 function MembersArea({ board, onChanged }: { board: BoardPayload; onChanged: () => void }) {
+  const reduce = useReducedMotion() ?? false;
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const members = board.members ?? [];
@@ -494,26 +533,37 @@ function MembersArea({ board, onChanged }: { board: BoardPayload; onChanged: () 
             if (email.trim()) void add();
           }}
         >
-          <input
+          <Input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="name@simple.biz"
-            className={cn(INPUT, 'flex-1 font-mono text-[13px]')}
+            aria-label="Member's work email"
+            className="flex-1 font-mono md:text-[13px]"
           />
-          <Button type="submit" size="lg" variant="outline" disabled={busy || !email.trim()}>
+          <Button type="submit" size="lg" variant="outline" className="h-9" disabled={busy || !email.trim()}>
             {busy ? <Loader2 className="animate-spin" /> : <Plus />} Add
           </Button>
         </form>
         <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
-          {members.map((m) => (
-            <li key={m.workEmail} className="flex items-center gap-2 px-3 py-2">
-              <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{m.workEmail}</span>
-              <span className="text-[11px] text-zinc-400">added by {handle(m.addedBy)}</span>
-              <Button size="icon-xs" variant="ghost" aria-label={`Remove ${m.workEmail}`} onClick={() => void remove(m.workEmail)}>
-                <X />
-              </Button>
-            </li>
-          ))}
+          <AnimatePresence initial={false}>
+            {members.map((m) => (
+              <motion.li
+                key={m.workEmail}
+                layout={reduce ? false : 'position'}
+                initial={{ opacity: 0, y: reduce ? 0 : -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, x: reduce ? 0 : -14, transition: { duration: 0.14 } }}
+                transition={{ duration: reduce ? 0 : 0.22, ease: EASE_SETTLE }}
+                className="flex items-center gap-2 bg-white px-3 py-2 dark:bg-zinc-950"
+              >
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{m.workEmail}</span>
+                <span className="text-[11px] text-zinc-400">added by {handle(m.addedBy)}</span>
+                <Button size="icon-xs" variant="ghost" aria-label={`Remove ${m.workEmail}`} onClick={() => void remove(m.workEmail)}>
+                  <X />
+                </Button>
+              </motion.li>
+            ))}
+          </AnimatePresence>
           {!members.length ? <li className="px-3 py-4 text-center text-xs text-zinc-500">No extra members.</li> : null}
         </ul>
       </div>
