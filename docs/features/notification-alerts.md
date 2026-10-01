@@ -1,10 +1,11 @@
-# Notification alerts — the live chime + toast that announces a new notification
+# Notification alerts — the live chime + toast, and the panel's tiles and timestamp
 
 Every dashboard has a Notifications panel and a sidebar unread badge. Separately,
 some dashboards **announce** a new notification the moment it lands: a two-tone
 bell plus a teal toast, top-right, driven by `useNotificationChime`. This doc
 governs which dashboards announce, what each one is allowed to announce, and why
-the alert must always be scoped to a single dashboard.
+the alert must always be scoped to a single dashboard — and, since 2026-10-01,
+what the panel's Unread / Need Action tiles count and how every card is stamped.
 
 Accounting gained its alert on 2026-08-17 (it had never had one — the hook was
 mounted on HR alone since it was written), and HR's alert was scoped in the same
@@ -24,6 +25,9 @@ change so money never rings there.
 | Accounting mount (`view: 'accounting'`) | `src/App.tsx` |
 | Employee mount (`view: 'employee'`) | `src/components/employee/EmployeeApp.tsx` |
 | Sidebar unread badge (already view-scoped) | `src/components/Sidebar.tsx` · `src/hooks/useEmployeeNotificationsUnread.ts` |
+| The panel (every dashboard) — Unread / Need Action tiles, card stamps | `src/components/notifications/NotificationsPanel.tsx` |
+| Need Action rule + `needsAction` per button | `src/lib/notifications/notification-actions.ts` (+ `.test.ts`) |
+| The one notification timestamp format | `src/lib/notifications/notification-timestamp.ts` (+ `.test.ts`) |
 
 ## Every mount passes a `view`. Never add an unscoped one.
 
@@ -89,6 +93,68 @@ the view scope decides which types can appear, and the shared high-water mark me
 second browser tab that did not toast does not hear it either — a subscriber still
 owes its own focus/poll refresh. It is a hint to refetch, never data: subscribers read
 nothing from the detail but the type.
+
+## The panel: two tiles and one timestamp, on every dashboard (2026-10-01)
+
+Kane: *"add a KPI Card in here for 'Unread, Need Action' also make sure every
+notification has a time stamp for the date in this format - April 5, 1999 : 8:00
+AM EST - in all dashboards"*. One shared `NotificationsPanel` is the Notifications
+tab on Accounting, Admin, CEO, Employee, HR, Manager, Orphanage, QC and Payment
+Dispatch, so both reach every dashboard at once.
+
+**Unread is counted by the server, never from the list.** The panel asks
+`GET /api/employee-notifications?…&counts=1`, which returns `counts: { total,
+unread }` from two exact count queries with the **same** recipient + type scope as
+the list (one `scoped()` builder, so they cannot drift). The list itself stops at
+PostgREST's 1000 rows, and heavy recipients are far past that — **measured
+2026-10-01: 241,822 rows over 1,760 recipients, the top eight at 12,359–14,353
+each, one with 14,244 unread.** A count taken from the list reads "1,000" for
+them. When the list is capped the pager says *"newest 1,000 of N shown"*. The
+list is **not** paged to N: that would ship ~14k rows on every poll (item 305).
+
+**Unread means unread when this visit opened.** The panel marks what it shows
+read 2s after display but keeps it highlighted for the visit; the tile is the
+count fetched with that list, so it agrees with the "New" pills on screen.
+Deleting a card adjusts both figures; Clear all refetches, because a capped list
+can have more behind it. The payroll-lock banner is not counted — it is a live
+state, not a row (the header's "N active" pill still counts it, as before).
+
+**Need Action counts things waiting on the viewer, once each**
+(`notificationNeedsAction` / `countNeedAction`, pinned by the test):
+
+- The card's button must **ask for an action**. `needsAction` is a **required**
+  field on every resolver, so a new one decides out loud: onboarding review,
+  offboarding review, ticket reply and ticket assignment count; a ticket's column
+  move is news and does not.
+- An offboarding request whose queue rows are known goes **by the queue** —
+  still pending counts even after it was read, already actioned never counts.
+  Everything else goes by `read_at`, the only "handled" signal the HRIS has.
+- **One submission, ticket or request counts once**, however many notifications
+  point at it. Not hypothetical: one HR account held 11,573
+  `onboarding.submitted` rows for 1,328 submissions, up to 49 per submission
+  (item 305).
+- It counts the loaded list (never a search result or a page), and says *"in the
+  newest 1,000"* when that list is capped.
+
+Only HR and Employee have actionable types today, so Need Action reads 0 on every
+other dashboard. That is the true answer, not a gap — a dashboard gains it when a
+resolver is added for its view.
+
+**A failed read is a dash, never a 0.** No count → `—`; a failed first list read
+→ *"Couldn't load notifications"* instead of *"All caught up"*. A failed count
+keeps the last good one. The route's HTTP-200 body that carries `error` beside an
+empty list is treated as the failure it is (it used to blank the list).
+
+**Every card is stamped `April 5, 1999 : 8:00 AM EST`** (`formatNotificationTimestamp`).
+The clock is Eastern wall time through `America/New_York` — DST-aware, **never a
+fixed -05:00**, the rule `src/lib/support/hours.ts` set when Kane confirmed its
+"9 AM – 5 PM EST" *as written*. The label is the literal `EST` year-round,
+exactly as given; from March to November the clock is daylight time. A fixed
+offset would put every summer stamp an hour behind the wall clock. The card's
+stamp is `details.submitted_at` when it parses, else `created_at` (filled on
+every insert), so no card goes unstamped. The lock banner and the *"Already
+offboarded by … ·"* line use the same format. It replaced the relative "3h ago" /
+"Sep 29". The live toast carries no stamp — it announces *now*.
 
 ## HR's gift alert is scoped by GRANT, not by the map alone (2026-09-22)
 

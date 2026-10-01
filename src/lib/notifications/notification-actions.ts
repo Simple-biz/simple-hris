@@ -32,6 +32,13 @@ export interface NotificationActionTarget {
 export interface ResolvedNotificationAction extends NotificationActionTarget {
   /** Button label, e.g. "Review submission". */
   label: string;
+  /**
+   * Whether the button asks the viewer to DO something (review a submission,
+   * reply on a ticket) rather than just take them to read about it. Only these
+   * count toward the panel's "Need Action" tile. Required, so every new
+   * resolver decides out loud instead of defaulting into the count.
+   */
+  needsAction: boolean;
 }
 
 type Details = Record<string, unknown> | null | undefined;
@@ -58,6 +65,7 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
         subTab: 'onboarding-form',
         entityId: id,
         label: 'Review submission',
+        needsAction: true,
       };
     },
     // A manager sent someone to offboarding (or an approved resignation queued
@@ -68,6 +76,7 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
       tab: 'offboarding',
       subTab: 'queue',
       label: 'Review request',
+      needsAction: true,
     }),
   },
   employee: {
@@ -79,6 +88,7 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
       return {
         href: id ? `/tickets?ticket=${encodeURIComponent(id)}` : '/tickets',
         label: 'View & reply',
+        needsAction: true,
       };
     },
     // Assigned a ticket to fix. The button helps assignees who hold a board
@@ -89,6 +99,7 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
       return {
         href: id ? `/tickets?ticket=${encodeURIComponent(id)}` : '/tickets',
         label: 'Open ticket',
+        needsAction: true,
       };
     },
     // The requester's ticket changed column. Same deep link as a reply — the
@@ -99,6 +110,8 @@ const ACTIONS: Partial<Record<AppView, Record<string, ActionResolver>>> = {
       return {
         href: id ? `/tickets?ticket=${encodeURIComponent(id)}` : '/tickets',
         label: 'Open ticket',
+        // A column move is news, not a request: nothing waits on the reader.
+        needsAction: false,
       };
     },
   },
@@ -117,4 +130,78 @@ export function resolveNotificationAction(
   if (!view || !type) return null;
   const resolver = ACTIONS[view]?.[type];
   return resolver ? resolver(details) : null;
+}
+
+/* ───────────────────────── the panel's "Need Action" tile ───────────────── */
+
+/**
+ * The live outcome of an offboarding request's queue rows, as the panel
+ * summarises them: `resolved` once every known row is terminal. `null` when no
+ * row's status is known (not loaded, or not the HR panel).
+ */
+export type OffboardOutcome = { resolved: boolean } | null;
+
+/**
+ * Whether one notification still waits on this viewer.
+ *
+ * - Its button must ask for an action (`needsAction`), and must actually render
+ *   here — pass the action the card shows, which is null when there is none.
+ * - An offboarding request whose queue rows are known goes by the QUEUE: still
+ *   pending/processing counts even after it was read; already actioned never
+ *   counts. That is the one place the HRIS can see the outcome.
+ * - Everything else goes by `read_at`, the only "handled" signal there is. The
+ *   panel marks what it shows read 2s after display but keeps it highlighted for
+ *   the visit, so the tile agrees with the "New" pills on screen.
+ */
+export function notificationNeedsAction(
+  action: ResolvedNotificationAction | null,
+  readAt: string | null,
+  offboard: OffboardOutcome,
+): boolean {
+  if (!action || !action.needsAction) return false;
+  if (offboard) return !offboard.resolved;
+  return !readAt;
+}
+
+function readStringArray(details: Details, key: string): string[] {
+  if (!details || typeof details !== 'object') return [];
+  const v = (details as Record<string, unknown>)[key];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+}
+
+/**
+ * What one action is ABOUT, so the same submission / ticket / request counts
+ * once however many notifications point at it. Not hypothetical: measured
+ * 2026-10-01, one HR account held 11,573 `onboarding.submitted` rows for 1,328
+ * submissions (up to 49 per submission) — the onboarding backfill re-notifies.
+ * A ticket's reply and its assignment are one ticket to look at.
+ */
+export function needActionKey(
+  n: { id: string; details: Details },
+  action: ResolvedNotificationAction,
+): string {
+  const requestIds = readStringArray(n.details, 'request_ids');
+  if (requestIds.length > 0) return `request:${[...requestIds].sort().join(',')}`;
+  if (action.entityId) return `entity:${action.tab ?? ''}/${action.subTab ?? ''}#${action.entityId}`;
+  const ticketId = readString(n.details, 'ticket_id');
+  if (ticketId) return `ticket:${ticketId}`;
+  return `notification:${n.id}`;
+}
+
+/**
+ * The "Need Action" figure: distinct things waiting on the viewer across the
+ * list given (the whole loaded list — never a search result or one page).
+ * `stateOf` returns what the card renders: its action (null when no button) and
+ * its offboarding outcome.
+ */
+export function countNeedAction<N extends { id: string; details: Details; read_at: string | null }>(
+  items: readonly N[],
+  stateOf: (n: N) => { action: ResolvedNotificationAction | null; offboard: OffboardOutcome },
+): number {
+  const keys = new Set<string>();
+  for (const n of items) {
+    const { action, offboard } = stateOf(n);
+    if (action && notificationNeedsAction(action, n.read_at, offboard)) keys.add(needActionKey(n, action));
+  }
+  return keys.size;
 }

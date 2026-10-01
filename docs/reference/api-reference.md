@@ -1729,7 +1729,9 @@ Most common cause: the column-add migration (`references/sql/alter/add_employee_
 
 Returns notifications for `?email=` (newest first), Admin-or-self. No fixed row cap — a dashboard shows all of its own notifications, not just the 50 most recent across every dashboard (PostgREST's `db.max-rows` ceiling still applies as a backstop). Optional `&view=<AppView>` scopes the result to the notifications that belong to that dashboard: every *mapped* type owned by a different dashboard is excluded, while unmapped types stay visible everywhere so nothing silently disappears (see `hiddenTypesForView` in `src/lib/notifications/notification-views.ts`). Feature-gated types the viewer isn't allowed to see are always excluded regardless of `view`. Omitting `view` returns every type — that's what the per-dashboard count/badge hooks use to bucket unread by view.
 
-**Response**: `{ notifications: Array<{ id, type, tone, title, message, details, read_at, created_at }> }`.
+Optional `&counts=1` (2026-10-01, the Notifications panel only — the badge and chime hooks don't ask) adds exact totals from two `count: 'exact'` queries over the **same** recipient + type scope as the list: the list stops at PostgREST's 1000 rows and the heaviest recipients hold ~14,000, so a count of the list would read 1,000. A failed or null count is returned as `counts: null`, never as 0. Never `head: true` (it answers a missing table with no error).
+
+**Response**: `{ notifications: Array<{ id, type, tone, title, message, details, read_at, created_at }>, counts?: { total, unread } | null }` — `counts` present only with `&counts=1`. A list read error still answers HTTP 200 with `{ notifications: [], error }`; the panel treats that body as a failure and keeps its prior list.
 
 ### `PATCH /api/employee-notifications`
 

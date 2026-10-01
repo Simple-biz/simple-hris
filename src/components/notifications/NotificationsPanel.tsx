@@ -2,15 +2,20 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Bell, CheckCheck, CheckCircle2, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt, Info, Trophy } from 'lucide-react';
+import { Bell, CheckCheck, CheckCircle2, ClipboardCheck, Inbox, Lock, Unlock, AlertTriangle, PartyPopper, BadgeDollarSign, MessagesSquare, X, Search, ChevronLeft, ChevronRight, ArrowRight, Receipt, Info, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import type { AppView } from '@/lib/rbac/views';
 import {
+  countNeedAction,
   resolveNotificationAction,
   type NotificationActionTarget,
 } from '@/lib/notifications/notification-actions';
+import {
+  formatNotificationTimestamp,
+  notificationCardTimestamp,
+} from '@/lib/notifications/notification-timestamp';
 import { PayStubModal } from '@/components/paystub/PayStubModal';
 import type { PaintCacheProp } from '@/lib/dashboard-cache/paint-cache';
 
@@ -57,23 +62,6 @@ const OFFBOARD_ACTIONED_PHRASE: Record<string, string> = {
   returned: 'returned to the manager',
   cancelled: 'withdrawn by the manager',
 };
-
-function formatRelative(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const diffMs = Date.now() - d.getTime();
-    const min = Math.floor(diffMs / 60000);
-    if (min < 1) return 'just now';
-    if (min < 60) return `${min} min ago`;
-    const hr = Math.floor(min / 60);
-    if (hr < 24) return `${hr}h ago`;
-    const day = Math.floor(hr / 24);
-    if (day < 7) return `${day}d ago`;
-    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(d);
-  } catch {
-    return '';
-  }
-}
 
 function formatRate(v: unknown): string {
   if (v == null || v === '') return '—';
@@ -132,18 +120,67 @@ function toCachedNotification(n: EmployeeNotification): EmployeeNotification {
   return { ...n, details: rest };
 }
 
-function formatLockedAt(iso: string | null): string | null {
-  if (!iso) return null;
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(new Date(iso));
-  } catch {
-    return null;
-  }
+/** Exact totals for this dashboard's notifications, from `GET …&counts=1`. */
+interface NotificationCounts {
+  total: number;
+  unread: number;
+}
+
+const KPI_TONES = {
+  sky: {
+    ring: 'from-sky-200/40 to-blue-200/40',
+    icon: 'from-sky-500 to-blue-500',
+    text: 'text-sky-700 dark:text-sky-300',
+  },
+  amber: {
+    ring: 'from-amber-200/40 to-orange-200/40',
+    icon: 'from-amber-500 to-orange-500',
+    text: 'text-amber-700 dark:text-amber-300',
+  },
+} as const;
+
+/**
+ * One of the panel's two KPI tiles — the ui-standards § 6.3 stat tile. `value`
+ * null = no answer yet (pulse); 'failed' = the read failed with nothing to fall
+ * back on (a dash, never a 0).
+ */
+function KpiTile({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: number | null | 'failed';
+  sub: string | null;
+  icon: React.ComponentType<{ className?: string }>;
+  tone: keyof typeof KPI_TONES;
+}) {
+  const t = KPI_TONES[tone];
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-white/60 bg-white/70 p-2.5 backdrop-blur-md sm:p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+      <div className={cn('absolute inset-0 bg-gradient-to-br opacity-60', t.ring)} aria-hidden />
+      <div className="relative flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className={cn('text-[9px] font-semibold uppercase tracking-[0.14em]', t.text)}>{label}</div>
+          <div className="mt-0.5 text-base font-bold tracking-tight tabular-nums text-zinc-900 sm:text-lg dark:text-white">
+            {value === null ? (
+              <span className="my-1 block h-4 w-10 animate-pulse rounded bg-zinc-200/80 motion-reduce:animate-none dark:bg-zinc-800" aria-label="Loading" />
+            ) : value === 'failed' ? (
+              <span title="Couldn't load — the count will appear when the next refresh lands">—</span>
+            ) : (
+              value.toLocaleString('en-US')
+            )}
+          </div>
+          {sub && <div className="mt-0.5 truncate text-[10px] text-zinc-500 dark:text-zinc-400">{sub}</div>}
+        </div>
+        <div className={cn('hidden h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br text-white sm:flex', t.icon)}>
+          <Icon className="h-4 w-4" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function NotificationsPanel({
@@ -187,6 +224,14 @@ export default function NotificationsPanel({
   );
   const [painted, setPainted] = useState(() => !!(paintCache && cacheKey && paintCache.store.has(cacheKey)));
   const [itemsLoading, setItemsLoading] = useState<boolean>(!!viewerEmail && !painted);
+  // Whether a real list answer is on screen (painted from cache, or fetched) —
+  // so a failed first read shows a dash and a failure line, never "0" and
+  // "All caught up".
+  const [listAnswered, setListAnswered] = useState(painted);
+  // Exact totals for the tiles: null until the first answer, 'failed' when the
+  // read failed with no earlier answer to keep. Never cached — on a painted tab
+  // return the tiles pulse until the live counts land.
+  const [counts, setCounts] = useState<NotificationCounts | null | 'failed'>(null);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   // Live status of the offboarding_queue rows referenced by any
@@ -205,6 +250,7 @@ export default function NotificationsPanel({
     if (hit === undefined) return;
     setItems(hit);
     setPainted(true);
+    setListAnswered(true);
     setItemsLoading(false);
   }, [cacheKey]);
 
@@ -215,17 +261,31 @@ export default function NotificationsPanel({
       // the notifications that belong here (the server filters by view).
       const params = new URLSearchParams({ email: normEmail });
       if (view) params.set('view', view);
+      // Exact totals beside the list — the list stops at 1000 rows.
+      params.set('counts', '1');
       const res = await fetch(
         `/api/employee-notifications?${params.toString()}`,
         { cache: 'no-store' },
       );
-      const json = (await res.json()) as { notifications?: EmployeeNotification[] };
-      // An error body is a failure too: keep the prior list rather than blank it.
-      if (!res.ok || !Array.isArray(json.notifications)) return;
+      const json = (await res.json()) as {
+        notifications?: EmployeeNotification[];
+        counts?: NotificationCounts | null;
+        error?: string;
+      };
+      // An error body is a failure too — including the route's 200 that carries
+      // `error` beside an empty list: keep the prior list rather than blank it.
+      if (!res.ok || typeof json.error === 'string' || !Array.isArray(json.notifications)) {
+        setCounts((c) => (c === null ? 'failed' : c));
+        return;
+      }
       writeCache(json.notifications);
       setItems(json.notifications);
+      setListAnswered(true);
+      // A failed count keeps the last good one; with none, a dash — never 0.
+      setCounts((c) => json.counts ?? (c === null ? 'failed' : c));
     } catch {
       /* keep prior list */
+      setCounts((c) => (c === null ? 'failed' : c));
     } finally {
       setItemsLoading(false);
     }
@@ -357,13 +417,59 @@ export default function NotificationsPanel({
     [queueStatus],
   );
 
+  // What one card renders — its button (null when there is none here) and its
+  // offboarding outcome. The cards AND the Need Action tile read this, so the
+  // tile counts exactly the buttons the cards draw.
+  const cardStateOf = useCallback(
+    (n: EmployeeNotification) => {
+      // Resolve whenever the host declared its view; keep the action only if we
+      // can actually act on it (self-routed href, or a host-provided tab
+      // navigator).
+      const resolved = view
+        ? resolveNotificationAction(view, n.type, n.details as Record<string, unknown> | null)
+        : null;
+      const action = resolved && (resolved.href || onNavigate) ? resolved : null;
+      // For an offboarding request, check whether its queue row has since been
+      // actioned so we can detail the outcome instead of the CTA.
+      const offboardResolution =
+        n.type === 'offboarding.requested' && Array.isArray(n.details?.request_ids)
+          ? summarizeOffboard(
+              (n.details!.request_ids as unknown[]).filter((x): x is string => typeof x === 'string'),
+            )
+          : null;
+      return { action, offboardResolution };
+    },
+    [view, onNavigate, summarizeOffboard],
+  );
+
+  // Over the whole loaded list — never the search result or one page.
+  const needAction = useMemo(
+    () =>
+      countNeedAction(items, (n) => {
+        const { action, offboardResolution } = cardStateOf(n);
+        return { action, offboard: offboardResolution };
+      }),
+    [items, cardStateOf],
+  );
+  const countsKnown = counts !== null && counts !== 'failed' ? counts : null;
+  // The list stops at PostgREST's 1000 rows; the counts don't.
+  const listTruncated = countsKnown !== null && countsKnown.total > items.length;
+
   const unreadCount = items.filter(n => !n.read_at).length + (lockState.locked ? 1 : 0);
   const hasAny = items.length > 0 || lockState.locked;
 
   const handleDelete = useCallback(async (id: string) => {
     // Optimistic removal; refetch will reconcile if the API rejects (e.g. the
     // server denies the delete on a permission / ownership check).
+    const gone = itemsRef.current.find(n => n.id === id);
     setItems(prev => prev.filter(n => n.id !== id));
+    if (gone) {
+      setCounts((c) =>
+        c !== null && c !== 'failed'
+          ? { total: Math.max(0, c.total - 1), unread: Math.max(0, c.unread - (gone.read_at ? 0 : 1)) }
+          : c,
+      );
+    }
     try {
       const res = await fetch(`/api/employee-notifications?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (!res.ok) void refetch();
@@ -435,8 +541,11 @@ export default function NotificationsPanel({
         body: JSON.stringify({ email: normEmail, ids }),
       });
     } catch {
-      void refetch();
+      /* the refetch below reconciles */
     } finally {
+      // Always reconcile: a list capped at 1000 can have more behind it, and the
+      // tiles must say what is actually left.
+      void refetch();
       setClearing(false);
     }
   }, [normEmail, items, refetch]);
@@ -495,6 +604,30 @@ export default function NotificationsPanel({
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-500">
           System alerts, approvals, and activity updates.
         </p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <KpiTile
+            label="Unread"
+            tone="sky"
+            icon={Inbox}
+            value={counts === null || counts === 'failed' ? counts : counts.unread}
+            sub={countsKnown ? `of ${countsKnown.total.toLocaleString('en-US')} total` : null}
+          />
+          <KpiTile
+            label="Need Action"
+            tone="amber"
+            icon={ClipboardCheck}
+            value={listAnswered ? needAction : itemsLoading ? null : 'failed'}
+            sub={
+              !listAnswered
+                ? null
+                : listTruncated
+                  ? `in the newest ${items.length.toLocaleString('en-US')}`
+                  : needAction > 0
+                    ? 'Waiting on you'
+                    : 'Nothing waiting'
+            }
+          />
+        </div>
         {items.length > 0 && (
           <div className="relative mt-3">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
@@ -587,7 +720,7 @@ export default function NotificationsPanel({
                     {lockState.lockedAt && (
                       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 pt-3 dark:border-zinc-800">
                         <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
-                          {formatLockedAt(lockState.lockedAt)}
+                          {formatNotificationTimestamp(lockState.lockedAt)}
                         </span>
                       </div>
                     )}
@@ -670,21 +803,7 @@ export default function NotificationsPanel({
               // kpi.scored wears the Trophy so it reads as the same thing as the
               // employee's KPI Results tab (which is where the number lives).
               const Icon = n.type === 'kpi.scored' ? Trophy : isAvailableStub ? Receipt : isPaidStub ? BadgeDollarSign : isTicket ? MessagesSquare : isPayrollStart ? Lock : isPayrollStop ? Unlock : positive ? PartyPopper : BadgeDollarSign;
-              // Resolve whenever the host declared its view; keep the action
-              // only if we can actually act on it (self-routed href, or a
-              // host-provided tab navigator).
-              const resolved = view
-                ? resolveNotificationAction(view, n.type, n.details as Record<string, unknown> | null)
-                : null;
-              const action = resolved && (resolved.href || onNavigate) ? resolved : null;
-              // For an offboarding request, check whether its queue row has since
-              // been actioned so we can detail the outcome instead of the CTA.
-              const offboardResolution =
-                n.type === 'offboarding.requested' && Array.isArray(n.details?.request_ids)
-                  ? summarizeOffboard(
-                      (n.details!.request_ids as unknown[]).filter((x): x is string => typeof x === 'string'),
-                    )
-                  : null;
+              const { action, offboardResolution } = cardStateOf(n);
               const beforeReg = n.details?.before?.regular_rate;
               const afterReg  = n.details?.after?.regular_rate;
               const beforeOt  = n.details?.before?.ot_rate;
@@ -787,7 +906,7 @@ export default function NotificationsPanel({
                               <span className="text-zinc-500 dark:text-zinc-500">by {offboardResolution.by}</span>
                             )}
                             {offboardResolution.at && (
-                              <span className="text-zinc-400 dark:text-zinc-600">· {formatRelative(offboardResolution.at)}</span>
+                              <span className="text-zinc-400 dark:text-zinc-600">· {formatNotificationTimestamp(offboardResolution.at)}</span>
                             )}
                             <button
                               type="button"
@@ -867,7 +986,7 @@ export default function NotificationsPanel({
                           )}
                         >
                           <span className="text-[11.5px] text-zinc-400 dark:text-zinc-500">
-                            {formatRelative(n.details?.submitted_at ?? n.created_at)}
+                            {notificationCardTimestamp(n.details?.submitted_at, n.created_at)}
                           </span>
                         </div>
                       </div>
@@ -881,6 +1000,9 @@ export default function NotificationsPanel({
               <div data-readonly-allow className="flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800">
                 <p className="text-[11px] text-zinc-400">
                   {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                  {listTruncated && countsKnown && (
+                    <> · newest {items.length.toLocaleString('en-US')} of {countsKnown.total.toLocaleString('en-US')} shown</>
+                  )}
                 </p>
                 <div className="flex items-center gap-1">
                   <button
@@ -917,6 +1039,16 @@ export default function NotificationsPanel({
                 </div>
               </div>
             )}
+          </div>
+        ) : normEmail && !listAnswered ? (
+          /* The first read failed and nothing was painted: say so, never
+             "All caught up" beside a dashed tile. */
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Couldn&rsquo;t load notifications</p>
+            <p className="max-w-xs text-[13px] leading-relaxed text-zinc-500 dark:text-zinc-500">
+              They&rsquo;ll appear when the next refresh lands, or reload the page.
+            </p>
           </div>
         ) : (
           /* Empty state */

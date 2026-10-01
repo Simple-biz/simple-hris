@@ -99,29 +99,46 @@ export async function GET(req: Request) {
     for (const t of hiddenTypesForView(view)) excludedTypes.add(t);
   }
 
-  let query = supabase
-    .from('employee_notifications')
-    .select('id, type, tone, title, message, details, read_at, created_at')
-    .eq('recipient_email', email);
-  if (excludedTypes.size > 0) {
-    // PostgREST `not.in` exclusion — quote each value so any future type string
-    // with reserved characters stays literal.
-    query = query.not(
-      'type',
-      'in',
-      `(${[...excludedTypes].map((t) => `"${t}"`).join(',')})`,
-    );
-  }
+  // PostgREST `not.in` exclusion — quote each value so any future type string
+  // with reserved characters stays literal.
+  const excludedList =
+    excludedTypes.size > 0 ? `(${[...excludedTypes].map((t) => `"${t}"`).join(',')})` : null;
+  // One recipient + type scope for the list AND its counts, so they can't drift.
+  const scoped = (columns: string, opts?: { count: 'exact' }) => {
+    let q = supabase.from('employee_notifications').select(columns, opts).eq('recipient_email', email);
+    if (excludedList) q = q.not('type', 'in', excludedList);
+    return q;
+  };
+
+  // Exact totals for the Notifications panel's tiles (`&counts=1`; the badge and
+  // chime hooks don't ask). The list below stops at PostgREST's 1000-row ceiling
+  // and heavy recipients hold ~14,000 rows (measured 2026-10-01), so a count
+  // taken from the list would read "1000" for them. Never `head: true` — it
+  // answers a missing table with count:null and no error.
+  const wantCounts = url.searchParams.get('counts') === '1';
 
   // No artificial row cap: a dashboard shows all of its own notifications rather
   // than the 50 most recent across every dashboard (PostgREST still applies its
   // configured server-side max-rows ceiling as a backstop).
-  const { data, error } = await query.order('created_at', { ascending: false });
+  const [list, total, unread] = await Promise.all([
+    scoped('id, type, tone, title, message, details, read_at, created_at').order('created_at', { ascending: false }),
+    wantCounts ? scoped('id', { count: 'exact' }).limit(1) : null,
+    wantCounts ? scoped('id', { count: 'exact' }).is('read_at', null).limit(1) : null,
+  ]);
 
-  if (error) {
-    return NextResponse.json({ notifications: [], error: error.message });
+  if (list.error) {
+    return NextResponse.json({ notifications: [], error: list.error.message });
   }
-  return NextResponse.json({ notifications: data ?? [] });
+  if (!wantCounts) {
+    return NextResponse.json({ notifications: list.data ?? [] });
+  }
+  // A failed or null count is reported as null, never as 0 — the panel shows a
+  // dash for it rather than "nothing unread".
+  const counts =
+    total && unread && !total.error && !unread.error && total.count !== null && unread.count !== null
+      ? { total: total.count, unread: unread.count }
+      : null;
+  return NextResponse.json({ notifications: list.data ?? [], counts });
 }
 
 export async function DELETE(req: Request) {
