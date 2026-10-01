@@ -18,7 +18,8 @@ Key files:
 - `src/lib/hr/offboard-rbac.ts` — snapshot / revoke / restore RBAC grants.
 - `app/api/cron/process-scheduled-deletions/route.ts` — legacy drain: fires the delayed delete for
   rows stamped with `scheduled_deletion_at` before the 2026-08-07 routing change (new offboards
-  never set it).
+  never set it). **It never deletes someone who is here**: every due row passes the hold in
+  `src/lib/hr/deletion-hold.ts` first (see [*The reaper's hold*](#the-reapers-hold-2026-10-01)).
 
 ---
 
@@ -44,7 +45,8 @@ HR offboarding queue  ── HR processes one-by-one ──▶ POST /api/hr/offb
         │                                                 any reason) · offboarding_deactivate only
         ▼                                                 for temporary_pause (suspend, never delete)
 (legacy only) daily cron /api/cron/process-scheduled-deletions drains rows whose
-scheduled_deletion_at was stamped before 2026-08-07 ──▶ n8n: offboarding_delete
+scheduled_deletion_at was stamped before 2026-08-07 ──▶ HOLD check (is the person here?)
+                                                   ──▶ n8n: offboarding_delete (cleared rows only)
 ```
 
 ---
@@ -220,7 +222,60 @@ back to the parent envelope.
 > The **legacy delayed cron** (`process-scheduled-deletions`) fires a *slightly* different `delete`
 > payload keyed on `work_email` (`deletion_mode: "delayed_14d"`, `scheduled: true`) — it processes
 > due rows one at a time rather than an `employees[]` batch. Only rows whose
-> `scheduled_deletion_at` was stamped before 2026-08-07 can appear there.
+> `scheduled_deletion_at` was stamped before 2026-08-07 can appear there, and only rows the hold
+> below clears are fired.
+
+### The reaper's hold (2026-10-01)
+
+**The cron must never delete someone who is here.** Its queue is any row whose legacy timer has
+elapsed, and nothing on that row says whether the person is still gone. Measured read-only on
+2026-10-01 (audit item 301): **83** overdue timers, and **three** of them belong to people who are
+working:
+
+- a rehire on a NEW master row with the SAME work email (a live row, 20 h in the live week);
+- a person with **no live row at all** who logged Hubstaff time on the account in the live week;
+- a rehire on a NEW work email whose personal email is on a live row.
+
+The cron has never run (`CRON_SECRET` is unset in prod, and there are 0 `hr.employee.scheduled_deletion`
+audit rows ever), so nobody has been harmed yet. Without the hold, setting the secret would have
+deleted those accounts the same night.
+
+**The rule** (`deletionHoldReasons`, `src/lib/hr/deletion-hold.ts`). A due row, master or no-show, is
+fired only when **none** of these is true:
+
+| Hold reason | Signal |
+|---|---|
+| `work_email_on_live_row` | a `global_master_list` row with `off_boarded_at IS NULL` carries the work email. That covers a rehire, and a **recycled** address now held by someone else, whose account the delete would destroy |
+| `personal_email_on_live_row` | a live row carries the personal email: the person is back on a new address |
+| `later_hire_on_work_email` | an `hr_pending_employees` row on the work email is in flight (`pending_work_email` / `ready` / `failed_to_promote`), or was `promoted` after the departure. An unknown date on either side holds. A no-show row is never its own later hire |
+| `hubstaff_time_in_live_week` | the `is_current` Hubstaff upload shows worked time > 0 on the work email. Presence with zero time does not hold, otherwise a leaver never removed from Hubstaff would be held forever by the very teardown the hold withholds |
+
+Emails are trimmed and lower-cased on both sides. A blank email never matches.
+
+**A hold is never a write.** A held row gets no webhook, no `deletion_processed_at` stamp and no
+cleared timer. It is listed in the response and in the audit row (`held_count`, `held[]` with the
+work email and its reasons), and it is re-checked on the next run. That is what makes it safe to hold
+on a **personal** email, which this doc otherwise forbids keying anything off (*Columns*, below). An
+inbox shared by two people can cause a false HOLD, but never a deletion and never a write. Clearing
+the timer was rejected for the same reason: it would be a write keyed off exactly such a match.
+Resolving a held row (Restore the old row, or clear the stale timer by id) is HR's job, done by hand.
+
+**Fail closed.** Both queues are read before anything fires. The guard then reads the live roster,
+the pending hires and the current upload's hours, each paged past the 1,000-row cap
+(`selectAllPaged`). If **any** of those reads fails, a later page included, or there is no current
+upload, the run returns 500 `Nothing was deleted: …` and fires nothing. A partial index would read as
+"nobody is here", which on a deletion path means failing open. The guard reads are skipped when
+nothing is due.
+
+Pinned by `src/lib/hr/deletion-hold.test.ts` (18 tests: each hold class, paging past 1,000, every
+read failing, a second-page failure, and a source pin that the route loads the guard before its
+first webhook and iterates only the cleared rows). Mutation-checked: dropping the error return, the
+Hubstaff signal, the `off_boarded_at` filter or the worked-time test each fails it.
+
+**Deploy notes.** No migration and no n8n change. **PENDING, Kane's call: `CRON_SECRET` is still
+unset in Vercel prod**, so the cron still never runs. Once this commit is deployed, setting it is
+safe for the three people above. The first run will fire the cleared remainder of the 83 (real
+Workspace deletions and leaver emails), so look at its `held` list and its `deleted` count.
 
 ### n8n gotchas (see the n8n webhook-gotchas note)
 

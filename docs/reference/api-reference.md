@@ -3272,7 +3272,7 @@ of cells — the matches were not re-run).
 | `/api/contractor/invoices/[id]` | GET, PATCH | `requireFeatureAccess` | [employee-support-chat](../features/employee-support-chat.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/contractor/profile` | GET, POST, PATCH | `authorizeEmail` | — **no doc** |
 | `/api/cron/apply-scheduled-transfers` | GET, POST | cron secret | [department-transfers](../features/department-transfers.md) |
-| `/api/cron/process-scheduled-deletions` | GET, POST | cron secret | [offboarding-automation](../features/offboarding-automation.md) |
+| `/api/cron/process-scheduled-deletions` | GET, POST | cron secret | [offboarding-automation](../features/offboarding-automation.md) (§ *The reaper's hold*: a due row is fired only when no live-person signal holds it; the response adds `held_count` / `held[]`; any guard read failure → 500, nothing fired) |
 | `/api/cron/sync-hsl-from-sheet` | GET, POST | cron secret | — **no doc** |
 | `/api/cron/sync-hubstaff-week` | GET, POST | cron secret | [csv-imports](../features/csv-imports.md) · [hubstaff-weekly-auto-sync](../features/hubstaff-weekly-auto-sync.md) |
 | `/api/cron/sync-master-from-sheet` | GET, POST | cron secret | [csv-imports](../features/csv-imports.md) · *this file* |
