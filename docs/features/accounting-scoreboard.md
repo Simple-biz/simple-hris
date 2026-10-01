@@ -180,6 +180,18 @@ hard-coded subset.
   `useReducedMotion()`.
 - **A failed week change** keeps the last good board under the "Couldn't refresh" bar, the same as a
   failed background refresh. It never shows the old week silently.
+- **AM/PM columns share one centre line** (`PAIR_CELL` in `SectionGrid.tsx`): the AM/PM label, the
+  3.5rem box and the day total. A footer number is a box-wide right-aligned span (`BoxAligned`: `w-14`,
+  `pr-[7px]` = the box's 1px border + `px-1.5`), so total digits stack under the typed digits. The
+  one-number grids use the same shape, and PM Buckets puts the day's meeting count under the tick
+  column. Give the header or the body cell its own padding and the labels drift off the boxes again
+  (Kane, 2026-10-01: *"align it to the actual boxes"*).
+- **Log collection's disabled state is solid grey**, not the Button's default 50% opacity, which
+  smeared the orange gradient over the orange-tinted form in dark mode (Kane's "Collections UI bug").
+  The text fields' focus ring is orange, matching the dropdowns beside them. On a phone a log line
+  gives the business name its own full-width line, and the "by" handle shows from `sm`.
+- Verified in headless Chromium against the compiled Tailwind stylesheet at 1360 px, 1100 px and a
+  390 px frame (not signed in: the panels rendered on fixture data).
 
 ## Live refresh
 

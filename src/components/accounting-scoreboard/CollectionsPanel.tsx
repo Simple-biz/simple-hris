@@ -61,6 +61,8 @@ const TH = cn(TINY_CAPS, 'whitespace-nowrap px-2 py-2 text-zinc-500 dark:text-zi
 const TD = 'px-2 py-2 align-middle';
 const NUM = 'text-right font-mono tabular-nums';
 const FIELD_LABEL = cn(TINY_CAPS, 'text-zinc-500 dark:text-zinc-400');
+/** The shared Input's focus ring is the theme's neutral ring; here it matches the orange SmoothSelects beside it. */
+const FIELD = 'bg-white focus-visible:border-orange-400 focus-visible:ring-orange-500/20 dark:bg-zinc-950 dark:focus-visible:border-orange-700';
 
 const PODIUM = [
   { tone: 'from-amber-400 to-amber-600', Icon: Crown, label: '1st' },
@@ -200,6 +202,7 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
             onChange={(e) => setBusiness(e.target.value)}
             maxLength={200}
             placeholder="e.g. Chocolate Fountain Heaven"
+            className={FIELD}
           />
         </label>
         <label className="grid min-w-0 gap-1">
@@ -208,7 +211,7 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
             value={points}
             inputMode="decimal"
             onChange={(e) => setPoints(e.target.value.replace(/[^0-9.]/g, ''))}
-            className="text-right font-mono tabular-nums"
+            className={cn(FIELD, 'text-right font-mono tabular-nums')}
           />
         </label>
         <label className="grid min-w-0 gap-1">
@@ -218,14 +221,20 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
             inputMode="decimal"
             placeholder="optional"
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-            className="text-right font-mono tabular-nums"
+            className={cn(FIELD, 'text-right font-mono tabular-nums')}
           />
         </label>
         <Button
           type="submit"
           size="lg"
           disabled={busy || !loggable.length || !effectiveRow || !business.trim()}
-          className="col-span-2 h-9 bg-gradient-to-r from-orange-500 to-amber-600 text-white shadow-sm shadow-orange-600/20 hover:from-orange-600 hover:to-amber-700 lg:col-span-1"
+          title={!business.trim() ? 'Type the business name first' : undefined}
+          className={cn(
+            'col-span-2 h-9 bg-gradient-to-r from-orange-500 to-amber-600 text-white shadow-sm shadow-orange-600/20 hover:from-orange-600 hover:to-amber-700 lg:col-span-1',
+            // A solid, readable disabled state. The default 50% opacity let the orange gradient smear
+            // over the orange-tinted form in dark mode.
+            'disabled:bg-none disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-100 disabled:shadow-none dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400',
+          )}
         >
           {busy ? <Loader2 className="animate-spin" /> : null}
           Log collection
@@ -412,13 +421,17 @@ function LogLine({
       <span className="w-16 shrink-0 font-mono text-[11px] text-zinc-500">
         {h.weekday} {h.short}
       </span>
-      <span className="w-28 shrink-0 truncate font-medium text-zinc-800 dark:text-zinc-200">{rep}</span>
-      <span className="min-w-0 flex-1 truncate text-zinc-700 dark:text-zinc-300" title={entry.businessName}>
+      <span className="min-w-0 flex-1 truncate font-medium text-zinc-800 sm:w-28 sm:flex-none dark:text-zinc-200">{rep}</span>
+      {/* On a phone the business gets its own full-width line (it is what people scan for); from sm it sits inline. */}
+      <span
+        className="order-last w-full min-w-0 truncate text-zinc-700 sm:order-none sm:w-auto sm:flex-1 dark:text-zinc-300"
+        title={entry.businessName}
+      >
         {entry.businessName}
       </span>
       <span className="w-14 shrink-0 text-right font-mono tabular-nums">{fmtNum(entry.points)} pt</span>
-      <span className="w-24 shrink-0 text-right font-mono tabular-nums text-zinc-500">{fmtUsd(entry.amountUsd)}</span>
-      <span className="w-24 shrink-0 truncate font-mono text-[11px] text-zinc-400" title={entry.createdBy}>
+      <span className="shrink-0 text-right font-mono tabular-nums text-zinc-500 sm:w-24">{fmtUsd(entry.amountUsd)}</span>
+      <span className="hidden w-24 shrink-0 truncate font-mono text-[11px] text-zinc-400 sm:block" title={entry.createdBy}>
         {handle(entry.createdBy)}
       </span>
       {canDelete ? (

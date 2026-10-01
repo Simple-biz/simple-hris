@@ -189,7 +189,7 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                 const disabled = future || row.archived;
                 return (
                   <FragmentCells key={day.date}>
-                    <td className={cn(TD, 'pr-0.5')}>
+                    <td className={cn(TD, PAIR_CELL)}>
                       <NumberCell
                         value={day.am}
                         label={`${row.label} · ${dayHeader(day.date).weekday} AM`}
@@ -200,7 +200,7 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                         onEditing={onEditing}
                       />
                     </td>
-                    <td className={cn(TD, 'pl-0.5')}>
+                    <td className={cn(TD, PAIR_CELL)}>
                       <NumberCell
                         value={day.pm}
                         label={`${row.label} · ${dayHeader(day.date).weekday} PM`}
@@ -242,11 +242,15 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
           <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Day total</td>
           {stats.dayTotals.map((t) => (
             <FragmentCells key={t.date}>
-              <td className={cn(TD, NUM, 'pr-2 text-zinc-600 dark:text-zinc-300')}>
-                <Flash value={t.am} scope={scope}>{fmtNum(t.am)}</Flash>
+              <td className={cn(TD, PAIR_CELL, 'text-zinc-600 dark:text-zinc-300')}>
+                <Flash value={t.am} scope={scope}>
+                  <BoxAligned>{fmtNum(t.am)}</BoxAligned>
+                </Flash>
               </td>
-              <td className={cn(TD, NUM, 'pr-2 text-zinc-600 dark:text-zinc-300')}>
-                <Flash value={t.pm} scope={scope}>{fmtNum(t.pm)}</Flash>
+              <td className={cn(TD, PAIR_CELL, 'text-zinc-600 dark:text-zinc-300')}>
+                <Flash value={t.pm} scope={scope}>
+                  <BoxAligned>{fmtNum(t.pm)}</BoxAligned>
+                </Flash>
               </td>
             </FragmentCells>
           ))}
@@ -269,13 +273,25 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
   );
 }
 
+/**
+ * Every AM/PM column is centred on ONE axis: the label, the 3.5rem box and the day total all sit
+ * on the cell's centre line (PAIR_CELL), and a total is right-aligned inside a box-wide span so its
+ * digits stack under the digits typed in the box.
+ */
+const PAIR_CELL = 'px-1 text-center';
+
 function FragmentPair() {
   return (
     <>
-      <th className={cn(TH, 'py-1 text-right font-mono text-[9px]')}>AM</th>
-      <th className={cn(TH, 'py-1 text-right font-mono text-[9px]')}>PM</th>
+      <th className={cn(TH, PAIR_CELL, 'py-1 font-mono text-[9px]')}>AM</th>
+      <th className={cn(TH, PAIR_CELL, 'py-1 font-mono text-[9px]')}>PM</th>
     </>
   );
+}
+
+/** A footer number shaped like a NumberCell (w-14; 1px border + px-1.5 = 7px), so its digits line up with the box's. */
+function BoxAligned({ children }: { children: ReactNode }) {
+  return <span className="inline-block w-14 pr-[7px] text-right font-mono tabular-nums">{children}</span>;
 }
 
 function FragmentCells({ children }: { children: ReactNode }) {
@@ -335,7 +351,7 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
                 const day = dayHeader(date).weekday;
                 return (
                   <td key={date} className={cn(TD, 'text-center')}>
-                    <div className="inline-flex items-center gap-1.5">
+                    <div className="inline-flex items-center gap-1.5 align-middle">
                       <NumberCell
                         value={s.values[i]}
                         label={`${row.label} · ${day}`}
@@ -393,11 +409,22 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
         <tr>
           <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Day total</td>
           {stats.dayTotals.map((t, i) => (
-            <td key={dates[i]} className={cn(TD, NUM, 'text-center text-zinc-600 dark:text-zinc-300')}>
-              <Flash value={t} scope={scope}>{fmtNum(t)}</Flash>
-              {withFlag && stats.meetingsByDay[i] ? (
-                <span className="ml-1 text-[10px] text-zinc-400">· {stats.meetingsByDay[i]} met</span>
-              ) : null}
+            <td key={dates[i]} className={cn(TD, 'text-center text-zinc-600 dark:text-zinc-300')}>
+              {/* Same shape as the body cell (box + tick), so the total sits under the box and the
+                  day's meetings sit under the ticks. */}
+              <span className="inline-flex items-center gap-1.5">
+                <Flash value={t} scope={scope}>
+                  <BoxAligned>{fmtNum(t)}</BoxAligned>
+                </Flash>
+                {withFlag ? (
+                  <span
+                    className="w-4 text-center font-mono text-[10px] tabular-nums text-zinc-400"
+                    title={`${stats.meetingsByDay[i]} met that day`}
+                  >
+                    {stats.meetingsByDay[i] || '—'}
+                  </span>
+                ) : null}
+              </span>
             </td>
           ))}
           {withFlag ? (
