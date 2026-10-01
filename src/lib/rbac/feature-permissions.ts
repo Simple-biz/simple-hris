@@ -19,6 +19,7 @@ export const FEATURE_CATALOG: Record<FeatureViewKey, readonly { key: string; lab
     { key: "overview",         label: "Overview" },
     { key: "people",           label: "People" },
     { key: "payroll_wizard",   label: "Payroll Wizard" },
+    { key: "npd",              label: "NPD (New Payroll Dashboard)" },
     { key: "bonus_catalog",    label: "Payment Catalog" },
     { key: "payment_dispatch", label: "Payment Dispatch" },
     { key: "disputes",         label: "Issues" },

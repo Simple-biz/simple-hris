@@ -146,6 +146,7 @@ paths the audit write is awaited and **the delete is abandoned if it fails**:
 | `DELETE /api/bonus-catalog?type=bonus` | `bonus_catalog.definition.deleted` | the definition + the ids of the assignments it cascades to (the version history goes too) |
 | `DELETE /api/payment-catalog/system-bonuses` | `system_bonus.deleted` | the custom variant |
 | `DELETE /api/hsl-bonus/period` | `hsl_bonus.period_deleted` | every scored entry, the dept-period total, the status rows |
+| `PUT /api/accounting/npd` *(a save that drops filled rows; 2026-10-01)* | `npd.rows.removed` | every removed row's filled cells, by column; the save is refused if this write fails. Then `npd.sheet.saved` on every save, `npd.sheet.save_failed` if a recorded removal did not happen ([npd-dashboard.md](./npd-dashboard.md)) |
 | `DELETE /api/audit-log` | `audit.purged` | cutoff + row count (§5) |
 
 `DELETE /api/hsl-bonus/entries` (one person) snapshots the scored row but does

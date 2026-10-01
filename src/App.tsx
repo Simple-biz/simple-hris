@@ -45,6 +45,7 @@ import BonusCatalog from '@/components/accounting/BonusCatalog';
 import PeopleTab from '@/components/people/PeopleTab';
 import AccountingTransfers from '@/components/accounting/AccountingTransfers';
 import AccountingDocuments from '@/components/accounting/AccountingDocuments';
+import NpdDashboard from '@/components/npd/NpdDashboard';
 import PayrollWizardNotesFab from '@/components/accounting/PayrollWizardNotesFab';
 import PayrollCycleGreetingModal from '@/components/accounting/PayrollCycleGreetingModal';
 import type { WizardJumpRequest } from '@/lib/payroll-wizard/step-jump';
@@ -388,6 +389,10 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             canPay={roles.includes('ceo')}
           />
         );
+      case 'npd':
+        // The manual payroll sheet (New Payroll Dashboard). Its route gates the
+        // `npd` feature itself; canEdit here only decides whether the grid edits.
+        return <NpdDashboard canEdit={canEditAccountingTab('npd', roles, featurePerms)} />;
       case 'bonus-catalog':
         return <BonusCatalog initialData={initialData} />;
       case 'payment-dispatch':

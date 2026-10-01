@@ -33,6 +33,7 @@ export const VIEW_TAB_IDS: Record<FeatureViewKey, readonly string[]> = {
     'overview',
     'people',
     'payroll-wizard',
+    'npd',
     'payment-dispatch',
     'disputes',
     'transfers',

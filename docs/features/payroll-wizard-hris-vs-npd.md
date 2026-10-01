@@ -250,6 +250,12 @@ there would widen an open exposure. To share it later, copy QC Compare: its own 
 family the generic route **refuses** on GET and POST, `by`/`at` stamped server-side, and an audit on
 Clear.
 
+**2026-10-01: NPD now has a home of its own, and this step does not read it.** Accounting → NPD
+([npd-dashboard.md](./npd-dashboard.md)) stores the whole NPD sheet per tab per pay week in
+service-role-only tables behind its own `npd` grant. This step still takes its own paste and is
+unchanged. Wiring it to read the stored sheet is a separate decision, and that read would still
+have to apply this step's paste contract to the dollar column (rightmost, fixed, ₱ refused).
+
 Replays can paste too. Nothing is written, so there is nothing to protect, and the HRIS side is
 the Validation step's rows for the replayed week.
 

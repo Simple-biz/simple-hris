@@ -45,9 +45,13 @@ export function dashboardLabelForPathname(pathname: string | null | undefined): 
  * (src/lib/pages/visibility.ts:26-28). Without this entry the sidebar would read
  * "Time Adjustments" while the employee's own browser tab — and the Admin GML
  * live-status column — both said "Hours".
+ *
+ * `npd` → "NPD" (Accounting, 2026-10-01): an acronym, which Title Case would
+ * render "Npd" in the browser tab and the live-status column.
  */
 const TAB_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   hours: 'Time Adjustments',
+  npd: 'NPD',
 };
 
 /** Generic kebab-case tab id -> Title Case fallback, e.g. `'new-hire-checklist'` ->

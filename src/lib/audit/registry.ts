@@ -160,6 +160,12 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     note: 'manual_validation.set / .cleared — the per-person MV overrides on the wizard',
   },
   {
+    match: 'npd.',
+    surfaces: ['accounting', 'payroll'],
+    label: 'NPD (New Payroll Dashboard)',
+    note: 'sheet.saved (one per save: tab, week, version, row counts), rows.removed (written BEFORE the save, with the full contents of every row it removes), sheet.save_failed (a recorded removal that did not happen). resource_id = <tab>:<week Sunday>',
+  },
+  {
     match: 'bonus_catalog.',
     surfaces: ['accounting'],
     label: 'Bonus library definitions',

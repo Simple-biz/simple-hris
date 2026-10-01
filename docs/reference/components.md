@@ -2245,6 +2245,10 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/mesa/bulk-selection.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) |
 | `src/components/notifications/NotificationToast.tsx` | component | [notification-alerts](../features/notification-alerts.md) |
 | `src/components/notifications/NotificationsPanel.tsx` | component | *this file* · [kpi-scored-notification](../features/kpi-scored-notification.md) |
+| `src/components/npd/NpdDashboard.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
+| `src/components/npd/NpdNavLabel.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
+| `src/components/npd/NpdSheetGrid.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
+| `src/components/npd/useNpdSheet.ts` | hook | [npd-dashboard](../features/npd-dashboard.md) |
 | `src/components/onboarding/agreement-texts.tsx` | component | *this file* · [onboarding-ip-assignment](../features/onboarding-ip-assignment.md) |
 | `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx` | component | *this file* |
 | `src/components/orphanage/GiftCatalog.tsx` | component | *this file* · [gift-tracker-orders](../features/gift-tracker-orders.md) |

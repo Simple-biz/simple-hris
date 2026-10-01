@@ -2147,6 +2147,8 @@ Lists all finalized payroll runs.
 | `payroll_line_items` | *(planned)* | C, R |
 | `payroll_dispatches` | *(planned)* | C, R, U |
 | `webhook_configs` | *(planned)* | C, R, U, D |
+| `npd_sheets` *(migration PENDING, 2026-10-01)* | accounting/npd (via `npd_save_sheet`) | R, C, U |
+| `npd_all_departments_rows` · `npd_hsl_rows` *(same migration)* | accounting/npd — written ONLY by `npd_save_sheet` | R, C, D |
 
 ---
 
@@ -3165,12 +3167,41 @@ table; none of the 14 HSL code keys is a Departments-calculator key (`MANAGER_BO
 
 ---
 
+## 23. NPD — New Payroll Dashboard *(added 2026-10-01)*
+
+Accounting → NPD, the manual payroll sheet. Governing doc: [npd-dashboard.md](../features/npd-dashboard.md).
+Route: [app/api/accounting/npd/route.ts](../../app/api/accounting/npd/route.ts). Service-role tables
+`npd_sheets` + `npd_all_departments_rows` / `npd_hsl_rows`, migration
+`references/sql/create/2026-10-01_npd_sheets.sql` (**PENDING**).
+
+### `GET /api/accounting/npd?sheet=all_departments|hsl&week=<Sunday>`
+
+Gate `requireFeatureAccess('accounting', 'npd', 'view')`. **200** `{ sheet, week, version, rowCount, updatedAt,
+updatedBy, rows: [{ id, values: string[] }] }`, `values` in `columns.ts` order (30 / 32 cells, `''` = empty).
+A week nobody saved is `version: 0, rows: []`. `400` bad sheet or a week that is not a Sunday. **`503 { missing: true }`
+until the migration is applied; `500` on a failed read. Neither is ever an empty sheet.** Rows are paged.
+
+### `GET /api/accounting/npd?list=weeks`
+
+Same gate. `{ weeks: [{ sheet, week, version, rowCount, updatedAt, updatedBy }] }`, newest week first.
+
+### `PUT /api/accounting/npd`
+
+Gate `requireFeatureEdit('accounting', 'npd')`. Body `{ sheet, week, expectedVersion, rows: [{ id (uuid), values }] }`,
+every cell a string ≤ 5,000 chars, ≤ 2,000 rows after trailing blank rows are trimmed; nothing is coerced. Replaces the
+whole sheet through `npd_save_sheet` (atomic, row-locked). **200** `{ version, rowCount, updatedAt, updatedBy }`.
+**409** `{ conflict: true, version, updatedBy, updatedAt }` when `expectedVersion` is stale. Order (source-guarded):
+read current → early 409 → **audit `npd.rows.removed` with the full removed rows, refusing with 500 if that audit
+fails** → save → `npd.sheet.saved`. `updated_by` is the session email.
+
+---
+
 ## Route index — every `app/api/**/route.ts` in the tree
 
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3227,6 +3258,7 @@ of cells — the matches were not re-run).
 | `/api/accounting/documents/termination/[id]` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/termination/facts` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/termination/search` | GET | `requireFeatureAccess` | — **no doc** |
+| `/api/accounting/npd` | GET, PUT | `requireFeatureAccess` · `requireFeatureEdit` | [npd-dashboard](../features/npd-dashboard.md) · *this file* (§ 23) |
 | `/api/accounting/overview-snapshot` | POST | `requireRateVisibilitySession` | [audit-log](../features/audit-log.md) |
 | `/api/accounting/payout-extras` | GET | `requireRateVisibilitySession` | [accounting-total-payout](../features/accounting-total-payout.md) |
 | `/api/accounting/paystub` | GET | `requireFeatureAccess` | [cop-country-payees](../features/cop-country-payees.md) · [payment-dispatch](../features/payment-dispatch.md) |

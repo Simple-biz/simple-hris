@@ -17,6 +17,7 @@ import {
   Newspaper,
   Send,
   Settings,
+  Sheet,
   ChevronRight,
   FileSignature,
   LogOut,
@@ -26,6 +27,7 @@ import {
   Users,
 } from 'lucide-react';
 import { SWallNavLabel } from '@/components/swall/SWall';
+import NpdNavLabel from '@/components/npd/NpdNavLabel';
 import ConstructionMark from '@/components/common/ConstructionMark';
 import CollapsibleSidebarShell from '@/components/common/CollapsibleSidebarShell';
 import SidebarLogoHeader from '@/components/common/SidebarLogoHeader';
@@ -60,10 +62,13 @@ interface SidebarProps {
   constructionTabs?: readonly string[];
 }
 
-const navItems = [
+const navItems: ReadonlyArray<{ id: string; label: string; title?: string; icon: typeof Wand2 }> = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'people', label: 'People', icon: Users },
   { id: 'payroll-wizard', label: 'Payroll Wizard', icon: Wand2 },
+  // NPD — the manual payroll sheet. Its label wipes "NPD" → "New Payroll
+  // Dashboard" on hover, like S-Wall's (NpdNavLabel).
+  { id: 'npd', label: 'NPD', title: 'New Payroll Dashboard', icon: Sheet },
   { id: 'bonus-catalog', label: 'Payment Catalog', icon: Wallet },
   { id: 'payment-dispatch', label: 'Payment Dispatch', icon: Send },
   { id: 'disputes', label: 'Issues', icon: AlertCircle },
@@ -155,7 +160,7 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                title={collapsed ? item.label : undefined}
+                title={collapsed ? (item.title ?? item.label) : undefined}
                 style={{
                   transitionDelay: mobileOpen ? `${60 + index * 35}ms` : '0ms',
                 }}
@@ -188,7 +193,13 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                     />
                   )}
                 </span>
-                <span className={cn('truncate sb-collapse-fade')}>{item.label}</span>
+                {item.id === 'npd' ? (
+                  // Not `truncate`: the long label overlays to the right and a
+                  // clipping parent would cut it off.
+                  <span className={cn('sb-collapse-fade')}><NpdNavLabel /></span>
+                ) : (
+                  <span className={cn('truncate sb-collapse-fade')}>{item.label}</span>
+                )}
                 {isConstr(item.id) && <span className={cn('sb-collapse-fade')}><ConstructionMark active={activeTab === item.id} /></span>}
                 {item.id === 'notifications' && unreadNotifications > 0 && activeTab !== 'notifications'
                   ? (
@@ -216,7 +227,13 @@ export default function Sidebar({ activeTab, setActiveTab, mobileOpen, allowedTa
                   : item.id === 'notifications' && unreadNotifications === 0 && lockState.locked
                     ? <span className="ml-auto h-2 w-2 animate-pulse rounded-full bg-red-500 sb-collapse-fade" />
                     : activeTab === item.id && (
-                      <ChevronRight className="ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade" />
+                      <ChevronRight
+                        className={cn(
+                          'ml-auto h-3 w-3 text-orange-400 dark:text-orange-500/70 sb-collapse-fade',
+                          // The expanded NPD label runs over this spot.
+                          item.id === 'npd' && 'group-hover:opacity-0 group-focus-visible:opacity-0',
+                        )}
+                      />
                     )
                 }
               </button>

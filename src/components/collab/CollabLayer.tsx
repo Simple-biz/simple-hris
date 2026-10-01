@@ -82,6 +82,7 @@ const DEFAULT_COBROWSE_CHANNEL = 'accounting-cobrowse';
 const DEFAULT_SECTION_LABELS: Record<string, string> = {
   'overview': 'Overview',
   'payroll-wizard': 'Payroll Wizard',
+  'npd': 'NPD',
   'payment-dispatch': 'Payment Dispatch',
   'disputes': 'Issues',
   'mesa': 'MESA',
