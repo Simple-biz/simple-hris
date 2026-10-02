@@ -32,6 +32,7 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | DB layer (service role) | `src/lib/supabase/npd-db.ts` |
 | Route | `app/api/accounting/npd/route.ts` |
 | Page · grid · client save logic | `src/components/npd/NpdDashboard.tsx` · `NpdSheetGrid.tsx` · `useNpdSheet.ts` |
+| Loading state: the grid's skeleton | `src/components/npd/NpdSheetSkeleton.tsx` |
 | Rail label | `src/components/npd/NpdNavLabel.tsx` (wired in `src/components/Sidebar.tsx`) |
 | Google Sheet sync: sheet rows → NPD rows (pure) | `src/lib/npd/google-sheet-import.ts` (+ `.test.ts`) |
 | Google Sheet sync: the read-only fetch | `src/lib/google-sheets/fetch-npd-sheet.ts` |
@@ -395,6 +396,22 @@ option (b), plus (a)'s remembered week.
   cache the same way and are always re-read.
 
 ## The grid
+
+**Loading is the grid's own skeleton** (Kane, 2026-10-02: *"Change the table to be skeleton loading
+please"*). `NpdSheetSkeleton` is the real table's frame: the grid's own `ROW_HEAD_W` and font, the
+tab's real columns, widths, column letters and headers, real row numbers, and h-8 rows. Only the cells
+are placeholders, sized like the data that lands in them, and the last rows fade out. One calm pulse
+covers the body, with none under reduced motion. It is announced as a busy status.
+**Nothing on the page may move when the sheet lands**, and that was measured: 0 px at 1400 and 390 wide
+on 2026-10-02. Everything above the grid therefore keeps its loaded size while loading:
+- the status pill reads *Loading…* (it used to render nothing, and the pill then wrapped in on a phone);
+- the rate box and Lock in are shown, disabled;
+- *Last saved by* is a placeholder bar;
+- the sync bar prints its sentence with the week as a placeholder, plus a placeholder *Last synced*
+  line.
+
+Never make any of these render nothing while loading. A sheet painted from the cache (§ Caching)
+needs no skeleton at all.
 
 Cells render as text with one floating editor (a `textarea`, so line breaks survive) on the active
 cell. Rows are memoised, and the model keeps untouched rows' identity, so an edit re-renders one row.

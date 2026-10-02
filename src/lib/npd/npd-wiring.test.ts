@@ -413,3 +413,14 @@ describe('NPD cache (Kane, 2026-10-02: "add caching on this please")', () => {
     }
   });
 });
+
+describe('NPD loading state (Kane, 2026-10-02: "Change the table to be skeleton loading please")', () => {
+  test('a loading sheet shows the grid skeleton, with the real columns', () => {
+    const dash = read('src', 'components', 'npd', 'NpdDashboard.tsx');
+    assert.match(dash, /ctl\.loadState === 'loading' \? \(\s*<NpdSheetSkeleton key=\{sheet\} sheet=\{sheet\} columns=\{columns\} \/>/);
+    const sk = read('src', 'components', 'npd', 'NpdSheetSkeleton.tsx');
+    assert.match(sk, /import \{ ROW_HEAD_W, SHEET_FONT \} from '\.\/NpdSheetGrid';/, 'the grid’s own dimensions, not a copy');
+    assert.match(sk, /role="status"[^>]*aria-busy="true"/);
+    assert.match(sk, /animate-pulse motion-reduce:animate-none/);
+  });
+});

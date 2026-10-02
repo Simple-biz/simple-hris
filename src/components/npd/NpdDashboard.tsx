@@ -23,6 +23,7 @@ import { TAB_CACHE_KEYS, getTabCache, setTabCache } from '@/lib/accounting/tab-c
 import { parseNpdView, parseNpdWeeks } from '@/lib/npd/npd-cache';
 import NpdGoogleSheetSync, { type NpdSyncData, type NpdSyncTarget } from './NpdGoogleSheetSync';
 import NpdSheetGrid from './NpdSheetGrid';
+import NpdSheetSkeleton from './NpdSheetSkeleton';
 import { contextOf, useNpdSheet, type LockResult } from './useNpdSheet';
 
 /**
@@ -351,6 +352,8 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             </>
           ) : ctl.loadState === 'ready' ? (
             'Nothing saved for this tab and week yet.'
+          ) : ctl.loadState === 'loading' ? (
+            <span aria-hidden className="inline-block h-2.5 w-52 animate-pulse rounded-full bg-zinc-200 align-middle motion-reduce:animate-none dark:bg-zinc-800" />
           ) : null}
         </p>
         {weeksError && (
@@ -358,7 +361,8 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             The week list could not be loaded ({weeksError}). The arrows still work.
           </p>
         )}
-        {ctl.loadState === 'ready' && (
+        {/* Shown while loading too (disabled), so the row keeps its height and the grid does not jump. */}
+        {(ctl.loadState === 'ready' || ctl.loadState === 'loading') && (
           <div className="flex flex-col gap-0.5" data-readonly-allow>
             <label className="flex items-center gap-1.5 text-xs text-zinc-600 dark:text-zinc-400">
               <span className="whitespace-nowrap" title="Dollars per peso. Total Pay PHP × this rate = PHP USD Conversion. Typed for this tab and week only.">
@@ -392,7 +396,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
                     : 'border-zinc-200 focus:border-sky-400 focus:ring-sky-400/30 dark:border-zinc-800',
                 )}
               />
-              {!ctl.settings.rateText && !rateError && (
+              {ctl.loadState === 'ready' && !ctl.settings.rateText && !rateError && (
                 <span className="text-[11px] text-amber-700 dark:text-amber-300">none yet: USD stays blank</span>
               )}
             </label>
@@ -403,7 +407,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             )}
           </div>
         )}
-        {ctl.loadState === 'ready' && week && (
+        {(ctl.loadState === 'ready' || ctl.loadState === 'loading') && week && (
           <LockControl
             key={`${sheet}:${week}`}
             locked={ctl.locked}
@@ -534,9 +538,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           onNotice={showNotice}
         />
       ) : ctl.loadState === 'loading' ? (
-        <div className="flex min-h-[18rem] flex-1 items-center justify-center rounded-xl border border-dashed border-zinc-200 text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-          <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> Loading the {NPD_SHEET_LABELS[sheet]} sheet…
-        </div>
+        <NpdSheetSkeleton key={sheet} sheet={sheet} columns={columns} />
       ) : null}
     </div>
   );
@@ -568,7 +570,14 @@ function SaveStatus({
       </span>
     );
   }
-  if (loading) return null;
+  if (loading) {
+    // Same size as the pill that follows, so the header never re-wraps when the sheet lands.
+    return (
+      <span className={cn(base, 'border-zinc-200 bg-white text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400')} role="status">
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> Loading…
+      </span>
+    );
+  }
   if (cachedCopy === 'refreshing') {
     return (
       <span className={cn(base, 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300')} role="status">

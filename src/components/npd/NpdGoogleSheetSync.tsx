@@ -373,19 +373,32 @@ export default function NpdGoogleSheetSync({
         <div className="min-w-0 flex-1 basis-64">
           <p className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">Sync from the Google Sheet</p>
           <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-            {wizardWeek ? (
-              <>
-                Loads the Payroll Wizard’s week,{' '}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">{weekLabel(wizardWeek.week)}</span>, from the
-                Google Sheet’s “{GOOGLE_SHEET_TABS[sheet].title}” tab onto {NPD_SHEET_LABELS[sheet]}. Formulas, the rate and
-                every typed figure come across as the sheet has them.
-              </>
-            ) : wizardError ? (
+            {wizardError && !wizardWeek ? (
               <span className="text-amber-700 dark:text-amber-300">{wizardError}</span>
             ) : (
-              'Reading the Payroll Wizard’s week…'
+              // The same sentence while the week is on its way, with the week as a placeholder,
+              // so the bar keeps its height and nothing below it jumps.
+              <>
+                Loads the Payroll Wizard’s week,{' '}
+                {wizardWeek ? (
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">{weekLabel(wizardWeek.week)}</span>
+                ) : (
+                  <>
+                    <span className="sr-only">which is being read</span>
+                    <span aria-hidden className="inline-block h-2.5 w-32 animate-pulse rounded-full bg-zinc-200 align-middle motion-reduce:animate-none dark:bg-zinc-800" />
+                  </>
+                )}
+                , from the Google Sheet’s “{GOOGLE_SHEET_TABS[sheet].title}” tab onto {NPD_SHEET_LABELS[sheet]}. Formulas, the
+                rate and every typed figure come across as the sheet has them.
+              </>
             )}
           </p>
+          {!wizardWeek && !wizardError && (
+            <p aria-hidden className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <Clock className="h-3 w-3 shrink-0" />
+              <span className="inline-block h-2.5 w-44 animate-pulse rounded-full bg-zinc-200 motion-reduce:animate-none dark:bg-zinc-800" />
+            </p>
+          )}
           {wizardWeek && (
             <p className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400" data-testid="npd-last-sync">
               <Clock className="h-3 w-3 shrink-0" aria-hidden />

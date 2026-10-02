@@ -71,8 +71,8 @@ import { newRowId } from './useNpdSheet';
  * scroller is `relative` so nothing positioned inside it escapes the clip.
  */
 
-const ROW_HEAD_W = 52;
-const SHEET_FONT = 'text-[13px]';
+export const ROW_HEAD_W = 52;
+export const SHEET_FONT = 'text-[13px]';
 
 type Editing = { row: number; col: number; draft: string; initial: string; mode: 'type' | 'edit' };
 
