@@ -302,6 +302,26 @@ test('a full purge clears every skip flag', () => {
   assert.equal(hasFetchedThisSession(QUEUE), false);
 });
 
+test('an entry that ages out of memory clears its skip flag, even with no storage', () => {
+  // Privacy mode: no sessionStorage, memory only. The in-memory branch used to
+  // drop the stale entry and keep the flag, so the CEO Overview (which skips on
+  // the flag) would have sat on its loading frame for the rest of the session.
+  __resetAccountingCacheMemory();
+  __setAccountingCacheStorage(null);
+  const SNAPSHOT = 'ceo:overview-kpis';
+  bindAccountingCacheIdentity('kaner@simple.biz');
+  setTabCache(SNAPSHOT, { totalHeadcount: 1 });
+  markFetchedThisSession(SNAPSHOT);
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 13 * 60 * 60 * 1000;
+    assert.equal(getTabCache(SNAPSHOT), undefined, 'past the 12h ceiling reads as absent');
+    assert.equal(hasFetchedThisSession(SNAPSHOT), false, 'and the flag goes with it');
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('the skip flag is confined to lookup lists and aggregate snapshots', async () => {
   // This store keeps `hasFetchedThisSession` — `payroll-wizard-notes.md:120`
   // documents the worker suggestions and the Hubstaff upload list as "fetched
@@ -340,6 +360,8 @@ test('the skip flag is confined to lookup lists and aggregate snapshots', async 
     'npdWeeks',
     'npdSyncWeek',
     'npdView',
+    // CEO "Payments to send": a count over the dispatch queue (2026-10-02).
+    'ceoPaymentsLive',
   ];
 
   const offenders: string[] = [];

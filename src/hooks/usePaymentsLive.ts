@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
+import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { parseCachedPaymentsLive, toCachedPaymentsLive } from '@/lib/ceo/payments-live-cache';
 
 /** One recently-dispatched payment for the live "being paid now" feed. */
 export interface PaidFeedEntry {
@@ -51,6 +53,27 @@ const EMPTY: PaymentsLiveState = {
   loading: true,
   error: null,
 };
+
+/**
+ * The first paint: the cached counters when there are any, else {@link EMPTY}.
+ *
+ * Paint only. `loading` is false because there is something to show; the mount
+ * fetch still runs. `recent` stays empty and `recentHydrated` false, because the
+ * per-person feed is never cached and a seeded copy is not a real snapshot (the
+ * live modal's "newly paid" diff keys off that flag). See
+ * `src/lib/ceo/payments-live-cache.ts`.
+ */
+function seedFromCache(): PaymentsLiveState {
+  const cached = parseCachedPaymentsLive(getTabCache<unknown>(TAB_CACHE_KEYS.ceoPaymentsLive));
+  if (!cached) return EMPTY;
+  return {
+    ...cached,
+    recent: [],
+    recentHydrated: false,
+    loading: false,
+    error: null,
+  };
+}
 
 const POLL_INTERVAL_MS = 20_000;
 const DEBOUNCE_MS = 400;
@@ -108,7 +131,11 @@ const BROADCAST_FRESH_MS = 45_000;
  *      they never fire for the anon browser, hence the Broadcast path above.
  */
 export function usePaymentsLive(): PaymentsLiveState {
-  const [state, setState] = useState<PaymentsLiveState>(EMPTY);
+  const [state, setState] = useState<PaymentsLiveState>(seedFromCache);
+  // Bumped only when real counters arrive (a good fetch or an Accounting
+  // broadcast). The cache write below keys off it, so a mount never writes the
+  // seed back and restamps it as fresh.
+  const [cacheRev, setCacheRev] = useState(0);
   const instanceId = useId();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Timestamp of the last Accounting broadcast we applied. A fresh one makes the
@@ -129,6 +156,19 @@ export function usePaymentsLive(): PaymentsLiveState {
       // `recent` key at all — every one of those would otherwise shape-check
       // fine while carrying an empty/missing `recent`.
       const hydrated = res.ok && !json.error && Array.isArray(json.recent);
+      // A body that is not a real snapshot (a 500, an auth denial, a
+      // `{ error }`) keeps the last good counters on screen. It used to replace
+      // them with `json.total ?? 0`, which painted "0 left of 0" as a fact and,
+      // with a cached paint underneath, would have wiped a good card on one
+      // failed revalidation.
+      if (!hydrated) {
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          error: json.error ?? `Payments feed unavailable (HTTP ${res.status})`,
+        }));
+        return;
+      }
       // While a recent Accounting broadcast is authoritative, keep its exact
       // counts and only let the poll refresh the poll-driven parts (the
       // "recently paid" feed + the department breakdown) — don't overwrite
@@ -139,11 +179,12 @@ export function usePaymentsLive(): PaymentsLiveState {
           recent: Array.isArray(json.recent) ? json.recent : prev.recent,
           departments: Array.isArray(json.departments) ? json.departments : prev.departments,
           loading: false,
-          recentHydrated: hydrated || prev.recentHydrated,
+          recentHydrated: true,
         }));
+        setCacheRev((r) => r + 1);
         return;
       }
-      setState((prev) => ({
+      setState({
         sourceFile: json.sourceFile ?? null,
         label: json.label ?? 'Current pay week',
         total: json.total ?? 0,
@@ -152,9 +193,10 @@ export function usePaymentsLive(): PaymentsLiveState {
         recent: Array.isArray(json.recent) ? json.recent : [],
         departments: Array.isArray(json.departments) ? json.departments : [],
         loading: false,
-        recentHydrated: hydrated || prev.recentHydrated,
-        error: json.error ?? null,
-      }));
+        recentHydrated: true,
+        error: null,
+      });
+      setCacheRev((r) => r + 1);
     } catch {
       setState((prev) => ({ ...prev, loading: false }));
     }
@@ -248,6 +290,7 @@ export function usePaymentsLive(): PaymentsLiveState {
         loading: false,
         error: null,
       }));
+      setCacheRev((r) => r + 1);
     });
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
@@ -263,6 +306,16 @@ export function usePaymentsLive(): PaymentsLiveState {
       void supabase.removeChannel(channel);
     };
   }, []);
+
+  // Mirror the counters (never `recent`) into the tab cache, so a tab switch or
+  // a reload paints the card at once. Server truth only: `cacheRev` moves on a
+  // good fetch or a broadcast, never on the seed and never on a failed read.
+  useEffect(() => {
+    if (cacheRev === 0) return;
+    setTabCache(TAB_CACHE_KEYS.ceoPaymentsLive, toCachedPaymentsLive(state));
+    // `state` is read as of the render `cacheRev` moved in; it is not a trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheRev]);
 
   // Poll fallback.
   useEffect(() => {

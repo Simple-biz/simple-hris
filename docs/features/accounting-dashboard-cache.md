@@ -19,7 +19,7 @@ Siblings: `employee-dashboard-cache.md`, `manager-dashboard-cache.md`, and
 
 ## One store, three dashboards
 
-Thirteen call sites across three shells read it, which is why it is neither the Accounting
+Fourteen call sites across three shells read it, which is why it is neither the Accounting
 store nor the CEO store but the shared one:
 
 | Consumer | Datasets |
@@ -36,6 +36,7 @@ store nor the CEO store but the shared one:
 | `payroll/PabDisputeQueue.tsx` | `pabDisputes`, `pabReasonCodes`, `timeAdjustmentIssues` (`bankPreferredRequests` was deleted 2026-09-24 with the Issues table's Bank Preferred rows) |
 | `payroll-clerk/useDispatchQueue.ts` | `dispatchQueue` |
 | `ceo/CeoOverviewKpis.tsx` | `ceo:overview-kpis`, `ceo:viewer-name:<email>` |
+| `hooks/usePaymentsLive.ts` (the CEO Overview's "Payments to send", 2026-10-02) | `ceoPaymentsLive` — the counters only, never the per-person `recent` feed |
 | `ceo/CeoFinancialReports.tsx` | the financial-report snapshot |
 | `npd/useNpdSheet.ts` · `npd/NpdDashboard.tsx` · `npd/NpdGoogleSheetSync.tsx` (NPD, 2026-10-02) | `npdSheet(tab, week)` + `npdSheetIndex`, `npdWeeks`, `npdSyncWeek`, `npdView` (UI selection) |
 
@@ -131,7 +132,11 @@ not "tidy up the inconsistency" by deleting the export.
   specifies these as "fetched once per page session".
 - The CEO Overview KPI snapshot and the financial reports — company aggregates that
   re-pull on every reload, with the live "payments to send" counter separate and always
-  live (`usePaymentsLive`).
+  live (`usePaymentsLive`). Since 2026-10-02 the snapshot skips only when there is a
+  cached copy **to paint** (`hasFetchedThisSession(key) && kpis != null`); a flag with
+  nothing behind it fetches. **OPEN (item 329):** this snapshot is not purely aggregate —
+  `lastCycle.workers[]` carries each unpaid person's `amountUsd`, which the banned list
+  below would otherwise cover. Not changed; waiting on Kane.
 
 **Banned:** any dataset carrying a per-person pay figure, or a queue other people act
 on. There, a skipped fetch freezes one person's view of work somebody else has already
@@ -147,9 +152,12 @@ same request twice", and `employee-dashboard-cache.md`'s reason, which is that
 removing it would loosen a test.
 
 **A flag can never outlive its data.** `clearTabCache` and `clearAllAccountingCache` both
-clear `fetchedThisSession`. Without that, a purge would leave the flag reporting "already
-pulled" for a dataset that no longer exists and the pane trusting it would stay
-permanently empty.
+clear `fetchedThisSession`, and so does an entry aging out of **memory** (2026-10-02 — that
+branch used to drop the entry and keep the flag; with no `sessionStorage` at all, as in a
+privacy mode, nothing else cleared it). Without that, a purge would leave the flag
+reporting "already pulled" for a dataset that no longer exists and the pane trusting it
+would stay permanently empty. Pinned in `tab-cache.test.ts` (*an entry that ages out of
+memory clears its skip flag*).
 
 ### Transfers lost its skip (2026-09-09)
 
@@ -289,6 +297,59 @@ stale paint invites typing over an old copy. Kane overturned the choice; the rea
   synced*): paint, then always re-read.
 - **`npdView`**: the week NPD was left on. A UI selection like `documentsView`, re-checked as a real
   Sunday on read, so returning lands on the sheet the cache holds.
+
+### CEO Overview: the frame paints, the values load (2026-10-02)
+
+Kane: *"CEO - Overview - Enhance this dashboard to have the loading states like Accounting -
+Overview as well so it doesnt show too much skeleton for too long add cache"*. The KPI
+snapshot was already cached, but `CeoOverviewKpis` **early-returned a full-page skeleton**
+while `/api/ceo/overview-kpis` ran (the roster, the live pay engine and the reports in one
+read), so on a cold load the whole page, including "Payments to send", which has its own
+faster feed, waited on the slowest query. And "Payments to send" had **no cache at all**,
+so it flashed a skeleton on every tab switch and every reload.
+
+The rules now:
+
+- **No full-page skeleton.** The real cards always render. Shimmer bars appear only
+  inside a card, for a value that is not known yet.
+- **The hero loads the way Accounting's does, through the same components.** Amber
+  *Dashboard · syncing* pill (faster ECG sweep), the `hero-loading-border` class on the
+  card, the payout as `RollingPayout` reels spinning in place of the number
+  (`src/components/accounting/rolling-payout.tsx`, moved out of `Overview.tsx` so both
+  dashboards render one component, the `hero-stat-row.tsx` precedent), and `—` in the
+  `HeroStatRow` tiles. The greeting never waits on the read.
+- **`loading` is derived:** `!settled && kpis == null`, with `settled` never seeded and
+  never reset, so a revalidation behind cached numbers cannot bring the loading state back.
+- **A failed read with nothing cached is `—`, never a made-up `0`.** The hero keeps its
+  frame under a rose *offline* pill, the Unpaid card reads `—` / *Not available right now*,
+  Headcount reads *Headcount isn't available right now*. *No active pay cycle to summarize
+  yet* is shown only when a **loaded** snapshot has no `systemOverview`. Before, a failed
+  cold read showed that line plus `0` unpaid and `0` headcount as facts. A missing total
+  is a dash, never a reel left spinning.
+- **The reconciliation drill-down opens only once its rows exist.** While loading, an
+  empty modal would read as "Accounting hasn't published this cycle".
+- **"Payments to send" paints from `ceoPaymentsLive`.** `usePaymentsLive` seeds from it
+  (`seedFromCache`) and always refetches: a count over the dispatch queue other people
+  work, so it is in the banned list and never skip-flagged. What is cached is built by an
+  allow-list (`src/lib/ceo/payments-live-cache.ts`): the cycle, its label,
+  total / paid / remaining, and per-department progress. **The per-person `recent` feed
+  (names, emails, the amount each person was paid) is never cached**, and a seeded state
+  never sets `recentHydrated`, because the live modal's "newly paid" diff keys off that
+  flag. Writes happen only when real counters arrive (a good fetch or an Accounting
+  broadcast bumps `cacheRev`). A mount never writes the seed back, so it never restamps
+  it as fresh. The parser rejects the whole entry on any malformed field.
+- **A failed payments read keeps the last good counters.** The hook used to replace them
+  with `json.total ?? 0` on any error body, painting "0 left of 0" as a fact. With a
+  cached paint underneath, that would have wiped a good card on one failed revalidation.
+
+Left live on purpose: the dispatch lock behind the *Live / Idle* badge (a stale
+"Accounting is processing live" is a wrong answer, not a stale one, like presence) and the
+`CeoApp` role check (a guard; its spinner runs before any tab mounts and fails closed).
+
+Client paint only. No route changed, every fetch is still `cache: 'no-store'`, no gate
+moved. Verified by `tsc` and the full suite (5,662 / 5,662). **Not clicked through signed
+in** (Google SSO), and `next build` was not run because a `next dev` server was live on
+:3000.
 
 ## Adding another dataset
 

@@ -1474,7 +1474,9 @@ Department-transfer request modal (opened from `ManagerTransfers.tsx`; no longer
 
 ## CEO Dashboard (`src/components/ceo/`)
 
-A thin, self-contained role shell: a yellow/gold sidebar + four tabs, most of which reuse shared components (S-Wall, Announcements, Notifications). Its own "Overview" is a placeholder hero -- no executive analytics are wired yet. Entry is `/ceo?email=...`; auth is client-side via `/api/employee-roles`.
+A role shell: a yellow/gold sidebar + seven tabs (`CeoTab`: Overview, Financial Reports, Penny AI, People, Announcements, S-Wall, Notifications), each filtered by `useFeaturePermissions` and the admin Pages overlay (`usePagesVisibility`). Entry is `/ceo?email=...`; auth is client-side via `/api/employee-roles`. Its datasets share the Accounting tab cache ([accounting-dashboard-cache](../features/accounting-dashboard-cache.md)).
+
+*Corrected 2026-10-02: this section had described a four-tab shell with a placeholder Overview and a role gate that "fails open". The Overview has carried live KPIs since 2026-06-24 (`2d4a8b49`), and the gate fails CLOSED (`CeoApp.tsx`: a failed role check redirects to `/employee`).*
 
 ### `app/ceo/page.tsx`
 
@@ -1482,8 +1484,9 @@ Route entry; `<Suspense>`-wraps `<CeoApp />` (CeoApp reads `useSearchParams`). Y
 
 ### `src/components/ceo/CeoApp.tsx`
 
-Client shell -- owns active-tab state, mobile nav, auth gate, and the four tab bodies. **Email resolution** as elsewhere; **auth gate** allows only `ceo`/`admin`, else `router.replace('/employee?email=...')` (the gate fails open on fetch error). Tab bodies (all local except Notifications):
-- `overview` -> `CeoOverview`: gold gradient hero with a randomized `CEO_MESSAGES` greeting, floating CSS-animated diamond glyphs, a `Crown` badge, and a dashed "Executive analytics coming soon" placeholder. No data.
+Client shell -- owns active-tab state, mobile nav, auth gate, and the tab bodies. **Email resolution** as elsewhere; **auth gate** allows only `ceo`/`admin`, else `router.replace('/employee?email=...')`, and a failed role check also redirects (it fails closed). Binds the shared Accounting tab cache to the viewer (`bindAccountingCacheIdentity`). Tab bodies:
+- `overview` -> `CeoOverviewKpis` (`src/components/ceo/CeoOverviewKpis.tsx`): a replica of the Accounting Overview hero (greeting, total payout, the `HeroStatRow` rail with the Hubstaff ↔ Master drill-down), then **Payments to send** (live, `usePaymentsLive`; opens `CeoPayrollLive`), **Unpaid · last cycle** (opens the unpaid list) and **Headcount** by department. Fed by `GET /api/ceo/overview-kpis` plus the payments-live feed. **It never swaps itself for a full-page skeleton** (2026-10-02): the cards always render and load in place the way Accounting's hero does (the shared `RollingPayout` reels, `hero-loading-border`, a *syncing* pill, `—` in the tiles). A failed read with nothing cached shows `—`, never a `0`. Rules: [accounting-dashboard-cache § CEO Overview](../features/accounting-dashboard-cache.md).
+- `financial-reports` -> `CeoFinancialReports`; `biz-ai` -> `BizAiTab` (Penny, full page); `people` -> `PeopleTab view="ceo"` (view-only; Pay gated by `pay-action-exclusions.ts`).
 - `announcements` -> `AnnouncementComposer` (`allowGeneral canPin authorLabel="CEO"`) + `AnnouncementWall` (`scope="all" isElevated`).
 - `notifications` -> `NotificationsPanel` (`accent="yellow"`).
 - `s-wall` -> `SWall` (`canPost sourceLabel="CEO"`).
@@ -2058,6 +2061,9 @@ with the `.ts` helper `payroll-clerk/useAutoThreshold.ts`, for 326 rows. `manage
 holds 341 rows. It was not re-diffed against the whole tree on this date. Later that day the backfill (Sep 29 log item 319)
 added `accounting-scoreboard/ArchivePanel.tsx`, for 342 rows.
 
+**2026-10-02:** `accounting/rolling-payout.tsx` was added when the payout reels moved out of `Overview.tsx` (Sep 29 log
+item 328). The table was not re-counted or re-diffed against the tree on this date.
+
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
 not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
 2026-09-29, a count of cells — the matches were not re-run).
@@ -2100,6 +2106,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/accounting/departments/department-wizard-steps.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
 | `src/components/accounting/departments/staged-run.tsx` | component | [payment-catalog-departments](../features/payment-catalog-departments.md) |
 | `src/components/accounting/hero-stat-row.tsx` | component | *this file* |
+| `src/components/accounting/rolling-payout.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) (the hero payout reels, shared by the Accounting and CEO Overviews) |
 | `src/components/accounting/interns/InternsPayrollView.tsx` | component | [orphanage-interns](../features/orphanage-interns.md) |
 | `src/components/accounting/kpi-stat-card.tsx` | component | [bank-preferred-routing](../features/bank-preferred-routing.md) |
 | `src/components/accounting/termination-docs/TerminationDocsPanel.tsx` | component | — **no doc** |
@@ -2137,7 +2144,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/ceo/CeoApp.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) · [ceo-assistant](../features/ceo-assistant.md) |
 | `src/components/ceo/CeoChatBubble.tsx` | component | [ceo-assistant](../features/ceo-assistant.md) · [employee-penny-ai](../features/employee-penny-ai.md) |
 | `src/components/ceo/CeoFinancialReports.tsx` | component | — **no doc** |
-| `src/components/ceo/CeoOverviewKpis.tsx` | component | *this file* |
+| `src/components/ceo/CeoOverviewKpis.tsx` | component | *this file* · [accounting-dashboard-cache](../features/accounting-dashboard-cache.md) |
 | `src/components/ceo/CeoPayrollLive.tsx` | component | — **no doc** |
 | `src/components/ceo/CeoSidebar.tsx` | component | *this file* |
 | `src/components/ceo/ceo-chat-message.tsx` | component | *this file* · [employee-penny-ai](../features/employee-penny-ai.md) |

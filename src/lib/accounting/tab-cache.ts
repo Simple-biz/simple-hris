@@ -276,6 +276,11 @@ function readEnvelope<T>(key: string): Envelope<T> | undefined {
   if (inMemory) {
     if (isFreshEnvelope(inMemory, identity, now)) return inMemory as Envelope<T>;
     memory.delete(key);
+    // A flag may never outlive its data. Usually the storage branch below
+    // clears it too (the mirror holds the same stale write), but with no
+    // storage at all (privacy mode) it would not, and a pane that skips on the
+    // flag would then sit on a skeleton for the rest of the page session.
+    fetchedThisSession.delete(key);
   }
 
   const s = storage();
@@ -538,4 +543,12 @@ export const TAB_CACHE_KEYS = {
    * where you were and on the sheet the cache holds. Re-validated on read: a Sunday or nothing.
    */
   npdView: 'npd:view',
+  /**
+   * CEO Overview → "Payments to send" (`usePaymentsLive`). The COUNTERS only (cycle, total /
+   * paid / remaining, per-department progress), built by the allow-list in
+   * `src/lib/ceo/payments-live-cache.ts`; the per-person "being paid now" feed is never cached.
+   * A count over the dispatch queue other people work, so the banned category: paint only, the
+   * hook always refetches, never a skip flag. Pinned in the banned list in `tab-cache.test.ts`.
+   */
+  ceoPaymentsLive: 'ceo:payments-live',
 } as const;

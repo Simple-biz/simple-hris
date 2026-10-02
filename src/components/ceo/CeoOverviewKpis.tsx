@@ -5,7 +5,6 @@ import { motion } from 'motion/react';
 import {
   Building2, CalendarDays, Send, Wallet, ChevronRight, ChevronLeft, Search, Eye,
   Users, Activity, Award, CheckCircle2,
-  type LucideIcon,
 } from 'lucide-react';
 import { usePaymentsLive } from '@/hooks/usePaymentsLive';
 import { useDispatchLock } from '@/hooks/useDispatchLock';
@@ -16,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { HeroStatRow } from '@/components/accounting/hero-stat-row';
+import { RollingPayout } from '@/components/accounting/rolling-payout';
 import HubstaffMasterMatchesModal from '@/components/accounting/HubstaffMasterMatchesModal';
 import type { HubstaffMasterRow } from '@/lib/payroll/hubstaff-reconciliation';
 import { cn } from '@/lib/utils';
@@ -92,19 +92,23 @@ const STATUS_LABEL: Record<string, string> = {
 /* ── Live status pill ───────────────────────────────────────────────────── */
 
 /**
- * The "Dashboard · live" caption pill from the Accounting hero, replicated at
- * its resting state (pulsing halos + ECG trace). Non-interactive here — the CEO
- * board has no API-latency ping — so it's a span, not a hover button.
+ * The "Dashboard · live" caption pill from the Accounting hero, with the same
+ * three states: amber "syncing" while there is nothing to show yet (the ECG
+ * sweeps faster), rose "offline" after a failed read, orange "live" otherwise.
+ * Non-interactive here — the CEO board has no API-latency ping — so it's a
+ * span, not a hover button.
  */
-function LiveStatusPill({ status }: { status: 'live' | 'error' }) {
-  const isErr = status === 'error';
+function LiveStatusPill({ status }: { status: 'syncing' | 'live' | 'error' }) {
   return (
     <span
+      aria-live="polite"
       className={cn(
         'relative mb-4 inline-flex items-center gap-2 overflow-visible rounded-full border px-4 py-1.5 text-[13px] font-semibold uppercase tracking-[0.18em] backdrop-blur-md',
-        isErr
+        status === 'error'
           ? 'border-rose-200/80 bg-stone-50/70 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300'
-          : 'border-orange-200/80 bg-stone-50/70 text-orange-700 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300',
+          : status === 'syncing'
+            ? 'border-amber-200/80 bg-stone-50/70 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300'
+            : 'border-orange-200/80 bg-stone-50/70 text-orange-700 dark:border-orange-900/40 dark:bg-orange-950/30 dark:text-orange-300',
       )}
     >
       <span className="relative inline-flex h-4 w-4 items-center justify-center">
@@ -121,6 +125,9 @@ function LiveStatusPill({ status }: { status: 'live' | 'error' }) {
           />
           <path
             className="animate-ecg-sweep"
+            style={{
+              animationDuration: status === 'syncing' ? '0.85s' : status === 'error' ? '2.2s' : '1.5s',
+            }}
             d="M2 12h4l3 -9l6 18l3 -9h4"
             stroke="currentColor"
             strokeWidth={2.85}
@@ -131,15 +138,18 @@ function LiveStatusPill({ status }: { status: 'live' | 'error' }) {
           />
         </svg>
       </span>
-      <span>Dashboard · {isErr ? 'offline' : 'live'}</span>
+      <span>
+        Dashboard · {status === 'syncing' ? 'syncing' : status === 'error' ? 'offline' : 'live'}
+      </span>
     </span>
   );
 }
 
-/* ── Skeleton loading screen ────────────────────────────────────────────── */
+/* ── In-place loading ───────────────────────────────────────────────────── */
 
 /** House shimmer bar — matches the app's `animate-pulse` skeleton convention
- *  (see Overview.tsx). Sized via `className` at each call site. */
+ *  (see Overview.tsx). Used only INSIDE a real card, for a value not known yet;
+ *  the page never swaps itself for a skeleton. Sized via `className`. */
 function SkelBar({ className }: { className?: string }) {
   return (
     <span
@@ -149,188 +159,19 @@ function SkelBar({ className }: { className?: string }) {
   );
 }
 
-/** A single hero stat tile in its loading state — mirrors HeroStatRow's frame
- *  (icon tile + label + value) with the value shimmering, so the right rail keeps
- *  its exact dimensions and doesn't jump when the real numbers land. */
-function SkelStatRow({ Icon }: { Icon: LucideIcon }) {
-  return (
-    <div className="flex items-center gap-2.5 rounded-xl border border-zinc-200/80 bg-stone-50/70 px-3 py-2 backdrop-blur-md dark:border-zinc-800/80 dark:bg-zinc-900/60">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-200 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600">
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <SkelBar className="h-3 max-w-[130px] flex-1" />
-      <SkelBar className="ml-auto h-3.5 w-10" />
-    </div>
-  );
-}
-
-/**
- * Full-layout skeleton for the CEO overview: the hero payout card + the three
- * KPI cards (Payments to send · Unpaid · Headcount), each rendered as its REAL
- * frame with real labels and shimmer placeholders for the numbers. Shown while
- * the one-shot `/api/ceo/overview-kpis` fetch is in flight — so the structure
- * "preloads" instantly and only the values fill in (instead of a lone spinner).
- */
-function CeoOverviewSkeleton({
-  greeting,
-  viewerFirstName,
-}: {
-  greeting: string;
-  viewerFirstName: string;
-}) {
-  return (
-    <div className="flex flex-col gap-4 lg:gap-5" aria-busy="true">
-      <span className="sr-only">Loading executive metrics…</span>
-
-      {/* Hero payout card — labels/greeting are real, values shimmer. */}
-      <section className="relative overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] lg:p-7 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
-        <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.9 }} className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-orange-300/30 blur-3xl dark:bg-orange-500/15" />
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1.1, delay: 0.1 }} className="absolute -right-20 top-12 h-64 w-64 rounded-full bg-rose-300/25 blur-3xl dark:bg-rose-500/15" />
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1.3, delay: 0.2 }} className="absolute bottom-0 left-1/3 h-56 w-56 rounded-full bg-blue-300/20 blur-3xl dark:bg-blue-500/15" />
-        </div>
-
-        <div className="relative grid grid-cols-1 items-end gap-4 lg:grid-cols-[1fr_auto] lg:gap-8">
-          <div>
-            <LiveStatusPill status="live" />
-            <p className="mb-4 text-2xl font-semibold tracking-tight text-zinc-700 sm:text-3xl lg:mb-5 dark:text-zinc-200">
-              {viewerFirstName ? (
-                <>
-                  {greeting},{' '}
-                  <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
-                    {viewerFirstName}
-                  </span>
-                  .
-                </>
-              ) : (
-                <>
-                  {greeting}.{' '}
-                  <span className="bg-gradient-to-r from-orange-600 to-rose-500 bg-clip-text font-semibold text-transparent dark:from-orange-400 dark:to-rose-400">
-                    Executive
-                  </span>{' '}
-                  dashboard.
-                </>
-              )}
-            </p>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700/80 xl:mb-3 dark:text-orange-400/80">
-              Total payout · this accounting pay run
-            </p>
-            <div className="flex items-baseline">
-              <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-zinc-500">₱</span>
-              {/* Height tracks the number's font-size (h-[1em] + matching text-*)
-                  so there's no vertical shift when the real payout renders. */}
-              <span
-                aria-hidden
-                className="inline-flex h-[1em] w-[200px] animate-pulse items-center justify-center rounded-md bg-zinc-200/80 align-bottom text-4xl lg:w-[260px] lg:text-5xl xl:w-[340px] xl:text-6xl 2xl:w-[400px] 2xl:text-7xl dark:bg-zinc-800"
-              />
-            </div>
-            <div className="mt-2.5 h-[2px] w-16 rounded-full bg-gradient-to-r from-orange-500 to-rose-500 dark:from-orange-400 dark:to-rose-400" />
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              {/* First bar is h-5 to match the real 'active workers' emerald pill
-                  height (h-5), so the stacked mobile layout doesn't shift. */}
-              <SkelBar className="h-5 w-28" />
-              <SkelBar className="h-4 w-24" />
-              <SkelBar className="h-4 w-44" />
-            </div>
-          </div>
-
-          {/* Right rail — period pill + the four stat tiles. */}
-          <div className="flex w-full flex-col gap-2.5 lg:w-auto lg:min-w-[300px]">
-            <div className="inline-flex items-center gap-2 self-start rounded-xl border border-orange-200/80 bg-stone-50/80 px-3 py-1.5 text-[11.5px] backdrop-blur-md lg:self-end dark:border-orange-900/40 dark:bg-zinc-900/70">
-              <CalendarDays className="h-3.5 w-3.5 text-orange-500 dark:text-orange-400" />
-              <span className="flex flex-col leading-tight">
-                <span className="text-[9px] font-semibold uppercase tracking-[0.16em] text-zinc-400 dark:text-zinc-500">
-                  Payroll period
-                </span>
-                <SkelBar className="mt-0.5 h-3 w-28" />
-              </span>
-            </div>
-            <SkelStatRow Icon={Users} />
-            <SkelStatRow Icon={Activity} />
-            <SkelStatRow Icon={Award} />
-            <SkelStatRow Icon={CheckCircle2} />
-          </div>
-        </div>
-      </section>
-
-      {/* KPI cards — Payments to send + Unpaid · last cycle. */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        {/* Payments to send */}
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-              <Send className="h-3.5 w-3.5 text-sky-500" /> Payments to send
-            </div>
-            <SkelBar className="h-3 w-10" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <SkelBar className="h-8 w-16" />
-            <SkelBar className="h-3 w-20" />
-          </div>
-          <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900" />
-          <div className="mt-1.5 flex items-center justify-between gap-2">
-            <SkelBar className="h-3 w-32" />
-            <SkelBar className="h-3 w-12" />
-          </div>
-          <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-2.5 dark:border-zinc-800">
-            <SkelBar className="h-3 w-28" />
-            <SkelBar className="h-3 w-14" />
-          </div>
-        </div>
-
-        {/* Unpaid · last cycle */}
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-              <Wallet className="h-3.5 w-3.5 text-rose-500" /> Unpaid · last cycle
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <SkelBar className="h-8 w-14" />
-            <SkelBar className="h-3 w-24" />
-          </div>
-          <div className="mt-1.5 flex items-center gap-1.5">
-            <CalendarDays className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-            <SkelBar className="h-3 w-40" />
-          </div>
-        </div>
-      </div>
-
-      {/* Headcount by department */}
-      <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="mb-3.5 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-            <Building2 className="h-3.5 w-3.5 text-amber-500" /> Headcount
-          </div>
-          <SkelBar className="h-3 w-8" />
-        </div>
-        <ul className="space-y-2.5">
-          {['w-4/5', 'w-3/5', 'w-2/3', 'w-1/2', 'w-2/5'].map((w, i) => (
-            <li key={i} className="space-y-1">
-              <div className="flex items-center justify-between gap-2">
-                <SkelBar className="h-3 w-28" />
-                <SkelBar className="h-3 w-6" />
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
-                <div className={cn('h-full animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800', w)} />
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-}
-
 export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string | null }) {
-  // Seed from the in-session cache so a tab switch repaints instantly; only a
-  // cold cache (first visit this session / after a reload) shows the skeleton.
+  // Seed from the tab cache so a tab switch or a reload paints at once. Only a
+  // cold cache (the first visit after sign-in) has nothing to show, and even
+  // then the real cards render; only the values not known yet are placeholders.
   const [kpis, setKpis] = useState<OverviewKpis | null>(
     () => getTabCache<OverviewKpis>(OVERVIEW_CACHE_KEY) ?? null,
   );
-  const [loading, setLoading] = useState<boolean>(
-    () => getTabCache<OverviewKpis>(OVERVIEW_CACHE_KEY) === undefined,
-  );
+  // Derived, never stored: "loading" means nothing to paint AND the first read
+  // has not answered. `settled` is never seeded and never reset, so a
+  // revalidation behind cached numbers can never bring the loading state back
+  // (accounting-dashboard-cache.md § Adding another dataset, step 4).
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && kpis == null;
   const [err, setErr] = useState<string | null>(null);
   const [showUnpaid, setShowUnpaid] = useState(false);
   // Headcount-by-department sidebar pagination (5 departments per page).
@@ -380,10 +221,11 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
     // this page session, `kpis` was seeded from the cache above — repaint it
     // instantly and skip the (heavy) refetch. The live "payments to send"
     // counter stays live regardless (usePaymentsLive / Realtime). A full reload
-    // clears the session flag, so the snapshot re-pulls once, fresh.
-    if (hasFetchedThisSession(OVERVIEW_CACHE_KEY)) return;
+    // clears the session flag, so the snapshot re-pulls once, fresh, behind the
+    // cached paint. The skip also needs something TO paint: a flag with no data
+    // behind it would hold the loading frame for the rest of the session.
+    if (hasFetchedThisSession(OVERVIEW_CACHE_KEY) && kpis != null) return;
     let alive = true;
-    if (kpis == null) setLoading(true);
     fetch('/api/ceo/overview-kpis', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j: OverviewKpis & { error?: string }) => {
@@ -400,13 +242,13 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
         }
       })
       .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (alive) setLoading(false); });
+      .finally(() => { if (alive) setSettled(true); });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Greeting — computed BEFORE the loading gate so the skeleton screen shows the
-  // same greeting + labels; only the numbers shimmer in when data lands.
+  // Greeting — never waits on the KPI read, so the hero greets the viewer while
+  // its numbers are still loading.
   const nowHour = new Date().getHours();
   const greeting = !greetingReady
     ? 'Welcome'
@@ -418,14 +260,18 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
     return first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
   })();
 
-  // While the one-shot KPI fetch is in flight, render the full overview as a
-  // skeleton (hero card + Payments-to-send + Unpaid + Headcount) instead of a
-  // lone spinner, so the whole layout is present immediately and only the values
-  // fill in. (The "Payments to send" number has its OWN live-loading skeleton
-  // below, since usePaymentsLive resolves independently of this fetch.)
-  if (loading) {
-    return <CeoOverviewSkeleton greeting={greeting} viewerFirstName={viewerFirstName} />;
-  }
+  // No full-page skeleton (Kane, 2026-10-02: "loading states like Accounting -
+  // Overview ... so it doesnt show too much skeleton for too long"). The real
+  // cards always render, and each fills in on its own: the hero loads the way
+  // Accounting's does (amber "syncing" pill, animated border, payout reels
+  // spinning, "—" in the stat tiles), and "Payments to send" paints as soon as
+  // its own feed answers instead of waiting on this heavier read.
+  //
+  // Three states for the snapshot-fed cards:
+  //   loading   — nothing to paint and no answer yet → in-place placeholders
+  //   failed    — nothing to paint and the read failed → "—", never a made-up 0
+  //   loaded    — the snapshot (cached or fresh) is on screen
+  const failed = !loading && kpis == null;
 
   const departments = kpis?.departments ?? [];
   const maxDept = Math.max(1, ...departments.map((d) => d.count));
@@ -444,7 +290,8 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
   const sys = kpis?.systemOverview ?? null;
 
   return (
-    <div className="flex flex-col gap-4 lg:gap-5">
+    <div className="flex flex-col gap-4 lg:gap-5" aria-busy={loading || undefined}>
+      {loading && <span className="sr-only">Loading executive metrics…</span>}
       {err && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
           Some metrics may be incomplete: {err}
@@ -454,8 +301,15 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
       {/* ── Dashboard live — the main card, ALONE at the top, full width. An
           EXACT replica of the Accounting Overview hero (greeting + Total payout
           + subtitle + the same stat tiles), fed by Accounting's published
-          snapshot so the numbers match exactly. ─────────────────────────────── */}
-      <section className="relative overflow-hidden rounded-3xl border border-orange-100/80 bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] lg:p-7 xl:p-8 dark:border-orange-900/30 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15">
+          snapshot so the numbers match exactly. While it loads, it loads the
+          way Accounting's does: the frame is real and the border cycles
+          (`hero-loading-border`, the same class). ───────────────────────────── */}
+      <section className={cn(
+        'relative overflow-hidden rounded-3xl border bg-gradient-to-br from-stone-50 via-orange-50/35 to-blue-50/25 p-5 lg:p-7 xl:p-8 dark:from-zinc-950 dark:via-orange-950/15 dark:to-blue-950/15',
+        loading
+          ? 'hero-loading-border'
+          : 'border-orange-100/80 shadow-[0_12px_32px_-16px_rgba(255,138,76,0.12)] dark:border-orange-900/30',
+      )}>
         {/* Decorative orbs — pure dopamine (mirror Accounting). */}
         <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.9 }} className="absolute -left-24 -top-24 h-72 w-72 rounded-full bg-orange-300/30 blur-3xl dark:bg-orange-500/15" />
@@ -463,7 +317,10 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 1.3, delay: 0.2 }} className="absolute bottom-0 left-1/3 h-56 w-56 rounded-full bg-blue-300/20 blur-3xl dark:bg-blue-500/15" />
         </div>
 
-        {sys ? (
+        {/* The frame renders unless a LOADED snapshot says there is no cycle.
+            While loading, or after a failed read, it is the same frame with
+            placeholders, so nothing jumps when the numbers land. */}
+        {sys || kpis == null ? (
           <motion.div
             initial="hidden"
             animate="visible"
@@ -474,7 +331,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             className="relative grid grid-cols-1 items-end gap-4 lg:grid-cols-[1fr_auto] lg:gap-8"
           >
             <motion.div variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}>
-              <LiveStatusPill status={err ? 'error' : 'live'} />
+              <LiveStatusPill status={loading ? 'syncing' : err ? 'error' : 'live'} />
               <p className="mb-4 text-2xl font-semibold tracking-tight text-zinc-700 sm:text-3xl lg:mb-5 dark:text-zinc-200">
                 {viewerFirstName ? (
                   <>
@@ -499,10 +356,16 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
               </p>
               <div className="flex items-baseline">
                 <span className="mr-1.5 text-4xl font-medium text-zinc-400 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-zinc-500">₱</span>
+                {/* The reels are the loading state, exactly as on Accounting
+                    (the shared component): they spin while the snapshot
+                    loads, then settle onto the figure. A known-missing total
+                    (or a failed read) is a dash, never a reel left spinning. */}
                 <span className="font-mono text-4xl font-bold tracking-tight text-zinc-900 lg:text-5xl xl:text-6xl 2xl:text-7xl dark:text-white">
-                  {sys.totalPayoutPhp != null
-                    ? sys.totalPayoutPhp.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                    : '—'}
+                  {loading || sys?.totalPayoutPhp != null ? (
+                    <RollingPayout value={sys?.totalPayoutPhp ?? null} loading={loading} />
+                  ) : (
+                    '—'
+                  )}
                 </span>
               </div>
               {/* Accent rule — orange→rose hairline under the hero number. */}
@@ -510,11 +373,11 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
               <p className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-zinc-600 dark:text-zinc-400">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="inline-flex h-5 items-center justify-center rounded-full bg-emerald-100 px-1.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                    {sys.inThisPayroll.toLocaleString('en-US')}
+                    {sys ? sys.inThisPayroll.toLocaleString('en-US') : '—'}
                   </span>
                   active workers
                 </span>
-                {sys.totalPayoutUsd != null && (
+                {sys?.totalPayoutUsd != null && (
                   <>
                     <span className="text-zinc-300 dark:text-zinc-700">·</span>
                     <span>
@@ -528,7 +391,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                 )}
                 <span className="text-zinc-300 dark:text-zinc-700">·</span>
                 <span>
-                  {sys.pabFinalized
+                  {sys?.pabFinalized
                     ? 'Initial pay + PAB · other bonuses applied at payroll'
                     : 'Initial pay · bonuses applied at payroll'}
                 </span>
@@ -547,22 +410,34 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                     Payroll period
                   </span>
                   <span className="font-semibold tracking-tight text-zinc-800 dark:text-zinc-100">
-                    {sys.periodLabel}
-                    {sys.periodWeek != null && (
-                      <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">· wk {sys.periodWeek}</span>
+                    {sys ? (
+                      <>
+                        {sys.periodLabel}
+                        {sys.periodWeek != null && (
+                          <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">· wk {sys.periodWeek}</span>
+                        )}
+                      </>
+                    ) : loading ? (
+                      <SkelBar className="mt-0.5 h-3 w-28 align-middle" />
+                    ) : (
+                      '—'
                     )}
                   </span>
                 </span>
               </div>
-              <HeroStatRow Icon={Users} tone="neutral" label="Master list" value={sys.masterList} />
-              <HeroStatRow Icon={Activity} tone="info" label="In this payroll" value={sys.inThisPayroll} />
-              <HeroStatRow Icon={Award} tone="info" label="Bonuses keyed in" value={sys.bonusesKeyedIn} />
+              {/* A null value renders "—" in HeroStatRow, which is exactly how
+                  Accounting's rail looks before its numbers land. */}
+              <HeroStatRow Icon={Users} tone="neutral" label="Master list" value={sys?.masterList ?? null} />
+              <HeroStatRow Icon={Activity} tone="info" label="In this payroll" value={sys?.inThisPayroll ?? null} />
+              <HeroStatRow Icon={Award} tone="info" label="Bonuses keyed in" value={sys?.bonusesKeyedIn ?? null} />
               <HeroStatRow
                 Icon={CheckCircle2}
                 tone="ok"
                 label="Hubstaff ↔ Master matches"
-                value={sys.emailsMatched}
-                onClick={() => setReconcileOpen(true)}
+                value={sys?.emailsMatched ?? null}
+                // No drill-down until the rows exist: an empty modal while
+                // loading would read as "Accounting hasn't published".
+                onClick={sys ? () => setReconcileOpen(true) : undefined}
                 tooltip={
                   <div className="space-y-2">
                     <div>
@@ -581,7 +456,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                           On Master &amp; worked
                         </span>
                         <span className="font-mono font-semibold tabular-nums">
-                          {sys.emailsMatched == null ? '—' : sys.emailsMatched.toLocaleString('en-US')}
+                          {sys?.emailsMatched == null ? '—' : sys.emailsMatched.toLocaleString('en-US')}
                         </span>
                       </li>
                       <li className="flex items-center justify-between gap-3">
@@ -590,7 +465,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                           On Master, no hours
                         </span>
                         <span className="font-mono font-semibold tabular-nums">
-                          {sys.masterOnlyCount == null ? '—' : sys.masterOnlyCount.toLocaleString('en-US')}
+                          {sys?.masterOnlyCount == null ? '—' : sys.masterOnlyCount.toLocaleString('en-US')}
                         </span>
                       </li>
                       <li className="flex items-center justify-between gap-3">
@@ -599,7 +474,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                           Exceptions (no Hubstaff / just hired / leave)
                         </span>
                         <span className="font-mono font-semibold tabular-nums">
-                          {sys.exceptionsCount == null ? '—' : sys.exceptionsCount.toLocaleString('en-US')}
+                          {sys?.exceptionsCount == null ? '—' : sys.exceptionsCount.toLocaleString('en-US')}
                         </span>
                       </li>
                       <li className="flex items-center justify-between gap-3">
@@ -608,7 +483,7 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
                           In Hubstaff, not on Master
                         </span>
                         <span className="font-mono font-semibold tabular-nums">
-                          {sys.hubstaffOnlyCount == null ? '—' : sys.hubstaffOnlyCount.toLocaleString('en-US')}
+                          {sys?.hubstaffOnlyCount == null ? '—' : sys.hubstaffOnlyCount.toLocaleString('en-US')}
                         </span>
                       </li>
                     </ul>
@@ -751,14 +626,32 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             )}
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-              {lastCycle?.unpaidCount ?? 0}
-            </span>
-            {lastCycle && <span className="text-[13px] text-zinc-400">of {lastCycle.totalRecipients} workers</span>}
+            {loading ? (
+              <>
+                <SkelBar className="h-8 w-14" />
+                <SkelBar className="h-3 w-24" />
+              </>
+            ) : (
+              <>
+                <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                  {/* A failed read is a dash, never "0 unpaid". */}
+                  {failed ? '—' : lastCycle?.unpaidCount ?? 0}
+                </span>
+                {lastCycle && <span className="text-[13px] text-zinc-400">of {lastCycle.totalRecipients} workers</span>}
+              </>
+            )}
           </div>
           <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-zinc-500 dark:text-zinc-400">
             <CalendarDays className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-            {lastCycle ? <span className="truncate">{lastCycle.reportName}</span> : 'No completed cycle yet'}
+            {loading ? (
+              <SkelBar className="h-3 w-40" />
+            ) : lastCycle ? (
+              <span className="truncate">{lastCycle.reportName}</span>
+            ) : failed ? (
+              'Not available right now'
+            ) : (
+              'No completed cycle yet'
+            )}
           </div>
         </button>
       </div>
@@ -769,9 +662,31 @@ export default function CeoOverviewKpis({ viewerEmail }: { viewerEmail: string |
             <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
               <Building2 className="h-3.5 w-3.5 text-amber-500" /> Headcount
             </div>
-            <span className="text-[12px] text-zinc-400">{kpis?.totalHeadcount ?? 0}</span>
+            {loading ? (
+              <SkelBar className="h-3 w-8" />
+            ) : (
+              <span className="text-[12px] text-zinc-400">{failed ? '—' : kpis?.totalHeadcount ?? 0}</span>
+            )}
           </div>
-          {departments.length === 0 ? (
+          {loading ? (
+            // Placeholder bars in the list's own geometry (five rows = one
+            // page), so the card keeps its height when the departments land.
+            <ul className="space-y-2.5" aria-hidden>
+              {['w-4/5', 'w-3/5', 'w-2/3', 'w-1/2', 'w-2/5'].map((w, i) => (
+                <li key={i} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <SkelBar className="h-3 w-28" />
+                    <SkelBar className="h-3 w-6" />
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+                    <div className={cn('h-full animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800', w)} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : failed ? (
+            <p className="py-8 text-center text-sm text-zinc-400">Headcount isn&apos;t available right now.</p>
+          ) : departments.length === 0 ? (
             <p className="py-8 text-center text-sm text-zinc-400">No people to show.</p>
           ) : (
             <ul className="space-y-2.5">
