@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CircleCheck, Clock, LoaderCircle, RefreshCw, TriangleAlert, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -8,10 +8,12 @@ import { NPD_SHEET_LABELS, type NpdSheetKind } from '@/lib/npd/columns';
 import { GOOGLE_SHEET_TABS, type NpdImportSummary } from '@/lib/npd/google-sheet-import';
 import { weekLabel } from '@/lib/npd/sheet';
 import {
-  creepSyncProgress,
-  enterSyncPhase,
+  SYNC_PHASE_MOTION,
+  SYNC_PHASE_VALUE,
   isTerminalPhase,
   isWorkingPhase,
+  phaseMotionSpan,
+  scaleXOf,
   type SyncPhase,
 } from '@/lib/npd/sync-progress';
 import type { LockResult, NpdImportPayload, NpdSyncStamp } from './useNpdSheet';
@@ -35,6 +37,10 @@ import type { LockResult, NpdImportPayload, NpdSyncStamp } from './useNpdSheet';
  * phases (src/lib/npd/sync-progress.ts). It turns green and full ONLY when the server
  * confirmed the save (the `stamp` changed), amber while it waits for Replace / Cancel,
  * red on any failure. Its space is always reserved, so nothing moves when it appears.
+ * SMOOTH (Kane, 2026-10-02: "Improve the smoothness animation"): each phase is ONE
+ * Web Animations glide on `transform`, run by the compositor, so it stays smooth while
+ * the page draws hundreds of synced rows; a new phase glides on from wherever the bar
+ * is. React never writes the fill's transform. A faint sheen moves while it works.
  *
  * Read first, then confirm: the rows are fetched (GET /api/accounting/npd/google-sheet),
  * and a week that already has saved rows asks before they are replaced. A locked
@@ -51,8 +57,11 @@ export type NpdSyncData = NpdImportPayload & {
 /** What NPD holds for a tab × week: saved rows (null = unknown) and its lock. */
 export type NpdSyncTarget = { rows: number | null; locked: boolean };
 
-/** The bar under the button: one run of one tab's sync. `leaving` = fading out. */
-type Progress = { kind: NpdSheetKind; phase: SyncPhase; pct: number; leaving: boolean };
+/** The bar under the button: one run of one tab's sync. `run` numbers the run; `leaving` = fading out. */
+type Progress = { kind: NpdSheetKind; phase: SyncPhase; run: number; leaving: boolean };
+
+const reducedMotion = () =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const PHASE_STATUS: Record<SyncPhase, (sheet: NpdSheetKind) => string> = {
   reading: (s) => `Reading the Google Sheet’s “${GOOGLE_SHEET_TABS[s].title}” tab…`,
@@ -140,9 +149,15 @@ export default function NpdGoogleSheetSync({
   /** The page's last sync stamp when this run started: a DIFFERENT one means this run's save landed. */
   const stampAtRunRef = useRef<NpdSyncStamp | null>(null);
 
+  const runCounterRef = useRef(0);
+  const fillRef = useRef<HTMLSpanElement>(null);
+  const sheenRef = useRef<HTMLSpanElement>(null);
+  const glideRef = useRef<Animation | null>(null);
+  const sheenAnimRef = useRef<Animation | null>(null);
+  const shownRunRef = useRef(0);
+
   /** Move the bar to a phase. A finished run (done / failed) only ever ends; it is never resumed. */
-  const toPhase = (phase: SyncPhase) =>
-    setProgress((p) => (p && !isTerminalPhase(p.phase) ? { ...p, phase, pct: enterSyncPhase(p.pct, phase) } : p));
+  const toPhase = (phase: SyncPhase) => setProgress((p) => (p && !isTerminalPhase(p.phase) ? { ...p, phase } : p));
 
   // The tab on screen now, for a read that finishes after the person moved on.
   const sheetRef = useRef(sheet);
@@ -155,16 +170,6 @@ export default function NpdGoogleSheetSync({
     setProgress(null);
   }, [sheet]);
 
-  // Ease forward inside a phase whose length is unknown.
-  const working = !!progress && isWorkingPhase(progress.phase);
-  useEffect(() => {
-    if (!working) return;
-    const t = window.setInterval(
-      () => setProgress((p) => (p && isWorkingPhase(p.phase) ? { ...p, pct: creepSyncProgress(p.pct, p.phase) } : p)),
-      90,
-    );
-    return () => window.clearInterval(t);
-  }, [working]);
 
   // Green and full only when the server confirmed this run's save; red if that save failed.
   const phase = progress?.phase ?? null;
@@ -232,7 +237,8 @@ export default function NpdGoogleSheetSync({
     setOutcome(null);
     setConfirm(null);
     stampAtRunRef.current = stamp;
-    setProgress({ kind, phase: 'reading', pct: enterSyncPhase(0, 'reading'), leaving: false });
+    runCounterRef.current += 1;
+    setProgress({ kind, phase: 'reading', run: runCounterRef.current, leaving: false });
     let data: NpdSyncData | null = null;
     let error: string | null = null;
     try {
@@ -292,6 +298,58 @@ export default function NpdGoogleSheetSync({
 
   const bar = progress && progress.kind === sheet ? progress : null;
   const running = !!bar && !isTerminalPhase(bar.phase);
+  const barPhase = bar?.phase ?? null;
+  const barRun = bar?.run ?? 0;
+
+  // The glide. Read where the bar IS (mid-animation included), stop the old glide
+  // there, and start the phase's own from that point, so nothing ever jumps. The
+  // inline transform is always the phase's END state, so a reduced-motion user, a
+  // hold or an interrupted glide lands exactly where it should.
+  useLayoutEffect(() => {
+    const el = fillRef.current;
+    if (!el) return;
+    const current = scaleXOf(getComputedStyle(el).transform);
+    glideRef.current?.cancel();
+    glideRef.current = null;
+    if (!barPhase) {
+      el.style.transform = 'scaleX(0)';
+      return;
+    }
+    const newRun = barRun !== shownRunRef.current;
+    shownRunRef.current = barRun;
+    const { from, to } = phaseMotionSpan(current, barPhase, newRun);
+    el.style.transform = `scaleX(${to})`;
+    const motion = SYNC_PHASE_MOTION[barPhase];
+    if (motion.kind === 'hold' || from === to || reducedMotion() || typeof el.animate !== 'function') return;
+    glideRef.current = el.animate([{ transform: `scaleX(${from})` }, { transform: `scaleX(${to})` }], {
+      duration: motion.ms,
+      easing: motion.easing,
+    });
+  }, [barPhase, barRun]);
+
+  // The sheen: only while it is working, never under reduced motion.
+  const sheenOn = !!barPhase && isWorkingPhase(barPhase);
+  useEffect(() => {
+    const el = sheenRef.current;
+    if (!el || !sheenOn || reducedMotion() || typeof el.animate !== 'function') return;
+    sheenAnimRef.current = el.animate([{ transform: 'translateX(-120%)' }, { transform: 'translateX(320%)' }], {
+      duration: 1500,
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+      iterations: Infinity,
+    });
+    return () => {
+      sheenAnimRef.current?.cancel();
+      sheenAnimRef.current = null;
+    };
+  }, [sheenOn]);
+
+  useEffect(
+    () => () => {
+      glideRef.current?.cancel();
+      sheenAnimRef.current?.cancel();
+    },
+    [],
+  );
   const fill =
     bar?.phase === 'done'
       ? 'bg-emerald-500 dark:bg-emerald-400'
@@ -362,24 +420,35 @@ export default function NpdGoogleSheetSync({
             data-phase={bar?.phase ?? 'idle'}
             role={bar ? 'progressbar' : undefined}
             aria-hidden={bar ? undefined : true}
-            aria-label={bar ? `${GOOGLE_SHEET_TABS[sheet].button}: ${PHASE_STATUS[bar.phase](sheet)}` : undefined}
+            aria-label={bar ? GOOGLE_SHEET_TABS[sheet].button : undefined}
+            aria-valuetext={bar ? PHASE_STATUS[bar.phase](sheet) : undefined}
             aria-valuemin={bar ? 0 : undefined}
             aria-valuemax={bar ? 100 : undefined}
-            aria-valuenow={bar ? Math.round(bar.pct) : undefined}
+            aria-valuenow={bar ? (SYNC_PHASE_VALUE[bar.phase] ?? undefined) : undefined}
             className={cn(
               'relative h-[3px] w-full overflow-hidden rounded-full transition-opacity duration-300 ease-out',
               TRACK_TONE[sheet],
               bar && !bar.leaving ? 'opacity-100' : 'opacity-0',
             )}
           >
+            {/* Its transform belongs to the Web Animations glide above; React never sets it. */}
             <span
+              ref={fillRef}
               aria-hidden
+              data-testid="npd-sync-progress-fill"
               className={cn(
-                'absolute inset-0 origin-left rounded-full transition-[transform,background-color] duration-200 ease-out motion-reduce:transition-none',
+                'absolute inset-0 origin-left overflow-hidden rounded-full transition-colors duration-300 ease-out will-change-transform',
                 fill,
               )}
-              style={{ transform: `scaleX(${(bar?.pct ?? 0) / 100})` }}
-            />
+            >
+              <span
+                ref={sheenRef}
+                className={cn(
+                  'absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/55 to-transparent transition-opacity duration-300 dark:via-white/30',
+                  sheenOn ? 'opacity-100' : 'opacity-0',
+                )}
+              />
+            </span>
           </div>
         </div>
       </div>

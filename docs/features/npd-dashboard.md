@@ -292,6 +292,12 @@ and *"MAKE SURE when we sync only the current week and add a timestamp"*. Built 
   holds a moment, then fades. It is announced as a `progressbar` with the phase in its label. The busy
   button stays at full strength (busy, not unavailable). Under reduced motion the fill jumps instead
   of easing, and the spinner stops. Never let a timer fill it to 100.
+  **Motion** (Kane: *"Improve the smoothness animation"*): each phase is ONE Web Animations glide on
+  `transform`, a long deceleration toward that phase's ceiling. The compositor runs it, so it stays
+  smooth while the page draws hundreds of synced rows. Each glide starts from wherever the bar is,
+  so it never jumps or backs up. React never writes the fill's transform, and no timer ticks it
+  (test-pinned; measured at ≤ 0.4% of the width per frame). A faint sheen sweeps the fill only while
+  it works. Reduced motion drops both and steps straight to each phase.
 - **A row belongs to a week by its parsed Week cell** (`Week 9/20/26 - 9/26/26`; case, spacing round
   the dash and 2- or 4-digit years allowed), **never by its position**. A week's rows are scattered
   through the tab (17 and 24 blocks on 2026-10-02). Every row labelled with that week is taken, in
@@ -398,7 +404,7 @@ column must be parsed and refused exactly as that step's paste contract says.
   Payroll CSV says *The All Dept Google Sheet is not configured* (503), and nothing changes. That env var is now
   load-bearing for NPD: never remove it as "the rates sync is off".
 - Verified 2026-10-02 (sync): 21 pure tests; NPD + wiring 146/146; the live-sheet check above (0 mismatches, re-run
-  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (49/49 with the progress bar: under the button and its
+  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (55/55 with the progress bar: under the button and its
   width, each phase, green only after the save lands, red on failure, fades back, reduced motion, phone). It covered: each tab shows only its own button; an empty week
   loads without asking and saves at version 0 with the sheet's rate; a week with rows asks first, and Cancel changes
   nothing; Replace swaps rows, rate and column formulas; Undo restores all three; a locked week is refused; leaving

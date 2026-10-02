@@ -4,40 +4,66 @@
  *
  * The bar follows the sync's REAL phases, not a timer: reading the Google Sheet →
  * (asking before it replaces a week that has rows) → putting the rows on the sheet
- * → saving. Inside a phase it eases toward that phase's ceiling, because a phase's
- * length is unknown. It never reaches 100 by itself: only `done` (the server
- * confirmed the save) fills it, so a full bar always means saved.
+ * → saving. A phase's length is unknown, so each working phase is ONE long,
+ * decelerating glide toward a ceiling it never passes. The browser runs it on the
+ * compositor (Web Animations, transform only), so it stays smooth even while the
+ * page is busy drawing hundreds of synced rows. A new phase glides on from wherever
+ * the bar is; it never jumps back. Only `done` (the server confirmed the save) takes
+ * it to the end, so a full bar always means saved.
  */
 
 export type SyncPhase = 'reading' | 'confirm' | 'applying' | 'saving' | 'done' | 'failed';
 
-/** Where each phase starts and the furthest it may creep. */
-export const SYNC_PHASE_RANGE: Record<SyncPhase, { from: number; ceiling: number }> = {
-  reading: { from: 4, ceiling: 60 },
-  confirm: { from: 60, ceiling: 60 },
-  applying: { from: 60, ceiling: 78 },
-  saving: { from: 78, ceiling: 95 },
-  done: { from: 100, ceiling: 100 },
-  failed: { from: 0, ceiling: 100 },
+/** Decelerating: quick to show it started, then a long crawl that never looks stuck. */
+const GLIDE = 'cubic-bezier(0.08, 0.82, 0.17, 1)';
+/** A confident arrival, for short known moves. */
+const ARRIVE = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+export type PhaseMotion =
+  /** Glide from where the bar is to `to` (a share of the track, 0–1) over `ms`, then hold there. */
+  | { readonly kind: 'glide'; readonly to: number; readonly ms: number; readonly easing: string }
+  /** Freeze where it is (waiting for Replace / Cancel, or stopped by a failure). */
+  | { readonly kind: 'hold' };
+
+export const SYNC_PHASE_MOTION: Record<SyncPhase, PhaseMotion> = {
+  reading: { kind: 'glide', to: 0.6, ms: 9000, easing: GLIDE },
+  confirm: { kind: 'hold' },
+  applying: { kind: 'glide', to: 0.78, ms: 2400, easing: ARRIVE },
+  saving: { kind: 'glide', to: 0.95, ms: 6000, easing: GLIDE },
+  done: { kind: 'glide', to: 1, ms: 420, easing: ARRIVE },
+  failed: { kind: 'hold' },
+};
+
+/** For assistive tech: a whole-number reading per phase (the exact fill inside a phase is an estimate). */
+export const SYNC_PHASE_VALUE: Record<SyncPhase, number | null> = {
+  reading: 30,
+  confirm: 60,
+  applying: 70,
+  saving: 85,
+  done: 100,
+  failed: null,
 };
 
 /** Phases a run ends in: nothing moves the bar out of them but a new run. */
 export const isTerminalPhase = (p: SyncPhase) => p === 'done' || p === 'failed';
 
-/** Phases whose length is unknown: the bar eases forward while they run. */
+/** Phases whose length is unknown: the bar is moving and shows it is still working. */
 export const isWorkingPhase = (p: SyncPhase) => p === 'reading' || p === 'applying' || p === 'saving';
 
-/** Entering a phase: jump to its start, never backwards. A failure keeps where it stopped. */
-export function enterSyncPhase(pct: number, phase: SyncPhase): number {
-  if (phase === 'done') return 100;
-  if (phase === 'failed') return pct;
-  return Math.max(pct, SYNC_PHASE_RANGE[phase].from);
+/**
+ * Where a phase's motion starts and ends, from the bar's current fill (0–1). A new
+ * run starts empty; otherwise the bar never moves backwards, and a hold stays put.
+ */
+export function phaseMotionSpan(current: number, phase: SyncPhase, newRun: boolean): { from: number; to: number } {
+  const from = newRun ? 0 : Math.min(1, Math.max(0, current));
+  const m = SYNC_PHASE_MOTION[phase];
+  return { from, to: m.kind === 'hold' ? from : Math.max(from, m.to) };
 }
 
-/** One tick inside a working phase: close a share of the gap to the ceiling. Never past it, never back. */
-export function creepSyncProgress(pct: number, phase: SyncPhase, share = 0.06): number {
-  if (!isWorkingPhase(phase)) return pct;
-  const ceiling = SYNC_PHASE_RANGE[phase].ceiling;
-  if (pct >= ceiling) return pct;
-  return Math.min(ceiling, pct + Math.max(0.05, (ceiling - pct) * share));
+/** The X scale of a computed `transform` (`none`, `matrix(a, …)`, or `matrix3d(a, …)`). */
+export function scaleXOf(transform: string): number {
+  const m = /^matrix(?:3d)?\(([^,]+)/.exec(transform.trim());
+  if (!m) return transform.trim() === 'none' ? 1 : 0;
+  const a = Number(m[1]);
+  return Number.isFinite(a) ? a : 0;
 }

@@ -320,6 +320,10 @@ describe('Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)', () =>
     assert.match(sync, /if \(stamp && stamp !== stampAtRunRef\.current && stamp\.sheet === progressKind\) toPhase\('done'\);/);
     assert.equal((sync.match(/toPhase\('done'\)/g) ?? []).length, 1, 'nothing else marks a sync done');
     assert.match(sync, /role=\{bar \? 'progressbar' : undefined\}/);
+    // Smooth: the compositor runs the fill (Web Animations on transform); React never writes it.
+    assert.match(sync, /el\.animate\(\[\{ transform: `scaleX\(\$\{from\}\)` \}, \{ transform: `scaleX\(\$\{to\}\)` \}\]/);
+    assert.ok(!/style=\{\{ transform/.test(sync), 'no React-driven transform on the fill');
+    assert.ok(!sync.includes('setInterval'), 'no timer ticks the bar');
     assert.ok(sync.includes('if (target.locked)'), 'a locked week is refused before anything is applied');
     const hook = read('src', 'components', 'npd', 'useNpdSheet.ts');
     const applyImport = hook.slice(hook.indexOf('const applyImport'), hook.indexOf('const importSheet'));
