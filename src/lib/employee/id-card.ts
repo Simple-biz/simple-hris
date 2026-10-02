@@ -147,6 +147,32 @@ export function idCardPhotoSources(input: IdCardInput): string[] {
   );
 }
 
+const isStringOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
+
+/**
+ * True only for a COMPLETE `IdCard`. Admin Penny receives the view model over
+ * the wire (`/api/admin/penny-chat/attachment`, source `id_card`) and paints it
+ * locally; a payload missing a field is refused whole rather than painted with
+ * a hole in it, because a badge with a blank where the name belongs looks like
+ * a real record that says nothing.
+ */
+export function isIdCard(v: unknown): v is IdCard {
+  if (!v || typeof v !== 'object') return false;
+  const c = v as Record<string, unknown>;
+  return (
+    typeof c.name === 'string' &&
+    c.name.length > 0 &&
+    typeof c.initials === 'string' &&
+    isStringOrNull(c.workEmail) &&
+    isStringOrNull(c.department) &&
+    isStringOrNull(c.address) &&
+    isStringOrNull(c.startDate) &&
+    isStringOrNull(c.employeeId) &&
+    Array.isArray(c.photoSources) &&
+    c.photoSources.every((s) => typeof s === 'string')
+  );
+}
+
 export function buildIdCard(input: IdCardInput): IdCard {
   const workEmail = clean(input.workEmail) ?? clean(input.fallbackEmail);
   const name = clean(input.name) ?? nameFromEmail(workEmail) ?? '—';

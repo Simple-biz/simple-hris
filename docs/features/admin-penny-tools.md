@@ -1,6 +1,6 @@
 # What Admin Penny can be asked
 
-The capability reference for the Admin dashboard's Penny AI: the **25 tools** it
+The capability reference for the Admin dashboard's Penny AI: the **26 tools** it
 can call, what each one really answers, and — the more useful half — **what it
 will refuse to tell you and why**.
 
@@ -68,15 +68,20 @@ did.
 
 | Tool | Ask it |
 |---|---|
-| `list_employee_attachments` | **Every file this HRIS holds about one person**, as openable thumbnails — not a description of them. Time-adjustment evidence screenshots, MESA receipts, requested documents **and their signed copies separately**, the onboarding W-8BEN and IP assignment, and the profile photo. |
+| `list_employee_attachments` | **Every file this HRIS holds about one person**, as openable thumbnails — not a description of them. Time-adjustment evidence screenshots, MESA receipts, requested documents **and their signed copies separately**, the onboarding W-8BEN and IP assignment, and the profile photo. **Not** for ID questions — and told to pass `source` whenever the question names one kind, because every file it returns is shown as a thumbnail. |
+| `get_employee_id_card` | *(2026-10-02)* **The employee ID card** — the company badge from the person's Employee portal, as **one** openable image, painted by the same renderer as the employee's own Download PNG and re-resolved from the active roster when opened. Names its gaps (no photo, no address, no serial). Off-boarded people have none. Admin-only. |
 
 Images open in a lightbox over the console; PDFs open in a new tab. Narrow with
-`source=`, or ask for everything.
+`source=`, or ask for everything. The ID card opens in the same lightbox, with
+**save png** in place of *open raw*.
 
 Two things to know before you rely on it:
 
 - **There is no ID photograph and no bank-card photograph in this HRIS.** See
-  §6 — this is the single most likely wrong assumption about this tool.
+  §6 — this is the single most likely wrong assumption about this tool. Ask for
+  the **ID card** and you get the badge from `get_employee_id_card`, not a file.
+  Until 2026-10-02 that question reached this tool, and Kane was shown his
+  profile photo and a screenshot of the Penny mascot as his "ID".
 - **Opening a file is audited** (`admin_assistant.attachment_opened`), and the
   link is minted at the moment you click, not when Penny lists it. Each source
   keeps its own lifetime — the W-8BEN's link lasts **5 minutes**, an ordinary
@@ -114,7 +119,9 @@ a gap waiting to be filled.
   **renderings**: the employee ID badge is generated from roster data
   (`employee-id-card.md`) and the People bank card draws the payout record
   (`people-bank-card.md`). Penny is instructed to say so plainly rather than
-  offer the nearest lookalike. If real ID capture is ever wanted, that is a new
+  offer the nearest lookalike. The **badge itself** can be shown —
+  `get_employee_id_card` paints it (§4) — but it is the company badge, and the
+  tool says so: it is never presented as a government ID. If real ID capture is ever wanted, that is a new
   surface with an upload path, a retention rule and a consent question — not a
   Penny change.
 - **Full account numbers are never stored in the change history and never
@@ -191,6 +198,8 @@ a gap waiting to be filled.
   It was **Admin-only** until 2026-09-23, when Kane chose to give the CEO's
   Penny every Admin tool except `list_employee_attachments` (resolution (b),
   session `a91f00a9`; `CEO_WITHHELD_ADMIN_TOOLS` in `admin-tools.ts`).
+  `get_employee_id_card` joined that withheld set on 2026-10-02, for the same
+  reason: it is opened through the admin-gated attachment route.
   When the identity does not close, the remainder is `unexplained_php` and Penny
   **must not name a cause**.
 

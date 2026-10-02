@@ -46,6 +46,7 @@ export const TOOL_PHASES: Record<string, string> = {
   get_change_timeline: 'Merging every change source into one timeline',
   get_payroll_notes_history: 'Reading the payroll-note edits',
   list_employee_attachments: 'Gathering the files on record for them',
+  get_employee_id_card: 'Reading their roster record for the ID card',
 };
 
 /** Prefix used when a tool has no mapped phrase — honest, if unlovely. */

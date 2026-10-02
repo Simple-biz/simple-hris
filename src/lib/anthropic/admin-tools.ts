@@ -37,14 +37,16 @@ import { buildPaymentsLive } from '@/lib/ceo/payments-live';
 import { getPeopleBankHistory, type BankChangeEntry } from '@/lib/supabase/bank-update-history';
 import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
 import {
-  ATTACHMENT_SOURCE_IDS,
   ATTACHMENT_SOURCES,
+  FILE_SOURCE_IDS,
   attachmentKind,
   encodeAttachmentRef,
   frameSafeLabel,
   isAttachmentSourceId,
+  isFileSourceId,
   type AttachmentSourceId,
 } from '@/lib/penny/attachment-refs';
+import { resolveIdCardForEmail } from '@/lib/employee/id-card-server';
 import {
   AUDIT_SURFACES,
   describeAuditFamilies,
@@ -258,7 +260,7 @@ export const ADMIN_TOOLS: Anthropic.Tool[] = [
   {
     name: 'list_employee_attachments',
     description:
-      "Every FILE this HRIS holds about one person — the images and documents themselves, not a description of them. Use for \"show me X's ID\", \"open her bank card\", \"what did he attach\", \"pull up the receipt/screenshot/W-8BEN/signed contract\", or any question whose real answer is a picture. Covers: time-adjustment evidence screenshots, MESA receipts, requested documents and their signed copies, the W-8BEN and IP-assignment from onboarding, and their profile photo. Returns one entry per file with what it is, which record it came from and when it was added. The console shows these to the admin as openable thumbnails automatically — so DESCRIBE what you found in words (how many, what kinds, from when) and do NOT print the `ref` values, which are internal. This HRIS stores no government-ID photograph and no photograph of a bank card: if that is what was asked for, say so plainly and name what IS on file instead of offering the nearest lookalike.",
+      "Every FILE this HRIS holds about one person — the images and documents themselves, not a description of them. Use for \"what did he attach\", \"pull up the receipt/screenshot/W-8BEN/signed contract\", \"show me her profile photo\", or any question whose real answer is a stored file. NOT for the employee ID card — that is a badge the HRIS draws, not a file: use get_employee_id_card. Covers: time-adjustment evidence screenshots, MESA receipts, requested documents and their signed copies, the W-8BEN and IP-assignment from onboarding, and their profile photo. Returns one entry per file with what it is, which record it came from and when it was added. EVERY file returned is put in front of the admin as an openable thumbnail automatically, so when the question names ONE kind of file pass that `source` — an unnarrowed list answers a question about a receipt with someone's screenshots too. DESCRIBE what you found in words (how many, what kinds, from when) and do NOT print the `ref` values, which are internal. This HRIS stores no photograph of a government-issued ID and no photograph of a bank card: if that is what was asked for, say so plainly and name what IS on file instead of offering the nearest lookalike.",
     input_schema: {
       type: 'object',
       properties: {
@@ -268,13 +270,28 @@ export const ADMIN_TOOLS: Anthropic.Tool[] = [
         },
         source: {
           type: 'string',
-          enum: ['all', ...ATTACHMENT_SOURCE_IDS],
+          enum: ['all', ...FILE_SOURCE_IDS],
           description:
             'Narrow to one kind of file. Defaults to "all". evidence = time-adjustment screenshots, receipt = MESA receipts, document / document_signed = Accounting document requests, w8ben / ip_assignment = onboarding paperwork, photo = profile photo.',
         },
         limit: {
           type: 'integer',
           description: 'Maximum files to return, newest first. 1–40, default 20.',
+        },
+      },
+      required: ['work_email'],
+    },
+  },
+  {
+    name: 'get_employee_id_card',
+    description:
+      "Show one person's EMPLOYEE ID CARD — the company badge the HRIS issues on their Employee portal (Profile → Overview): photo, full name, work email, department, address, start date and employee ID serial, drawn from their roster record. Use for \"show me X's ID\", \"pull up her ID card\", \"what does his badge say\". The console renders the badge as an openable image by itself — the same PNG the employee downloads — so say in one line that it is ready to open, name anything the badge is missing (gaps), and never print the ref. This badge is the ONLY ID card this HRIS has: it stores no photograph of a government-issued ID (passport, driver's licence, national ID). If that is what was asked for, say it is not on file — never present the badge as one. Off-boarded people have no badge. Requires the exact work_email from find_employee.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        work_email: {
+          type: 'string',
+          description: "The person's work email, exactly as returned by find_employee.",
         },
       },
       required: ['work_email'],
@@ -349,12 +366,16 @@ export function isAdminTool(name: string): boolean {
 /**
  * Admin tools the CEO route (/api/ceo/chat) does NOT expose. Since 2026-09-23
  * (Kane, resolution (b)) the CEO's Penny carries every other Admin tool,
- * get_bonus_breakdown included. list_employee_attachments stays Admin-only: its
- * refs are opened through /api/admin/penny-chat/attachment, which is
- * admin-gated, and the CEO widget renders no attachment frames — a CEO-only
- * holder would be shown files they cannot open.
+ * get_bonus_breakdown included. list_employee_attachments and
+ * get_employee_id_card stay Admin-only: their refs are opened through
+ * /api/admin/penny-chat/attachment, which is admin-gated, and the CEO widget
+ * renders no attachment frames — a CEO-only holder would be told about an image
+ * they cannot open.
  */
-export const CEO_WITHHELD_ADMIN_TOOLS: ReadonlySet<string> = new Set(['list_employee_attachments']);
+export const CEO_WITHHELD_ADMIN_TOOLS: ReadonlySet<string> = new Set([
+  'list_employee_attachments',
+  'get_employee_id_card',
+]);
 
 /** The Admin tools the CEO route declares, in ADMIN_TOOLS order. */
 export const CEO_ADMIN_TOOLS: Anthropic.Tool[] = ADMIN_TOOLS.filter(
@@ -395,6 +416,8 @@ export async function runAdminTool(
         return await getPayrollNotesHistory(input);
       case 'list_employee_attachments':
         return await listEmployeeAttachments(input);
+      case 'get_employee_id_card':
+        return await getEmployeeIdCard(input);
       case 'list_audit_actions':
         return await listAuditActions(str(input.contains));
       default:
@@ -2048,8 +2071,15 @@ async function listEmployeeAttachments(input: Record<string, unknown>): Promise<
   }
 
   const wantRaw = str(input.source) || 'all';
-  if (wantRaw !== 'all' && !isAttachmentSourceId(wantRaw)) {
-    return { error: `Unknown source "${wantRaw}". Use one of: all, ${ATTACHMENT_SOURCE_IDS.join(', ')}.` };
+  // A rendered source holds no file, so asking this tool for one would come back
+  // empty and read as "nothing on record" — refuse it by name instead.
+  if (isAttachmentSourceId(wantRaw) && ATTACHMENT_SOURCES[wantRaw].rendered) {
+    return {
+      error: `"${wantRaw}" is not a stored file — it is drawn from roster data. Use get_employee_id_card for the employee ID card.`,
+    };
+  }
+  if (wantRaw !== 'all' && !isFileSourceId(wantRaw)) {
+    return { error: `Unknown source "${wantRaw}". Use one of: all, ${FILE_SOURCE_IDS.join(', ')}.` };
   }
   const wants = (s: AttachmentSourceId) => wantRaw === 'all' || wantRaw === s;
   const limit = clampInt(input.limit, 1, 40, 20);
@@ -2324,7 +2354,81 @@ async function listEmployeeAttachments(input: Record<string, unknown>): Promise<
       subject_email:
         'The address the RECORD is keyed on. Onboarding paperwork predates the work email, so it is often a personal address — that is expected, not a mismatch.',
       not_stored:
-        'This HRIS holds no photograph of a government ID and no photograph of a bank card. If asked for one, say it is not on file rather than offering a lookalike. The bank CARD on the People tab is a rendering of the payout record, not an image, and the employee ID card is a badge the HRIS generates from roster data.',
+        'This HRIS holds no photograph of a government-issued ID and no photograph of a bank card. If asked for one, say it is not on file rather than offering a lookalike. The bank CARD on the People tab is a rendering of the payout record, not an image. The employee ID card is a badge the HRIS draws from roster data — none of these files is it; call get_employee_id_card to show it.',
+    },
+  };
+}
+
+// ── employee ID card ─────────────────────────────────────────────────────────
+
+/**
+ * The badge from the Employee portal's Profile, offered to the console as ONE
+ * openable image. There is no file: the ref names the person, the open endpoint
+ * re-resolves their active roster row and returns the `IdCard` view model, and
+ * the console paints it with the employee's own Download-PNG renderer.
+ *
+ * This is deliberately its own tool rather than a source inside
+ * list_employee_attachments. Asked "show me Kane's ID card", that tool returned
+ * every file on record — his profile photo and a time-adjustment screenshot of
+ * the Penny mascot — and the console put both in front of him as the answer.
+ */
+async function getEmployeeIdCard(input: Record<string, unknown>): Promise<ToolResult> {
+  const workEmail = normEmail(str(input.work_email));
+  if (!workEmail || !isSafeEmail(workEmail)) {
+    return { error: 'A valid work_email is required (get it from find_employee).' };
+  }
+
+  const resolved = await resolveIdCardForEmail(workEmail);
+  if (!resolved.ok) {
+    if (resolved.reason === 'read_failed') {
+      return {
+        error: `Could not read the roster (${resolved.message}), so the badge is unknown — not missing.`,
+      };
+    }
+    return {
+      work_email: workEmail,
+      id_card: null,
+      note: 'No ACTIVE roster row resolves for this address, so there is no badge to draw. Identity never resolves to an off-boarded row (work emails are recycled), so an off-boarded person has no ID card — check find_employee for their status.',
+    };
+  }
+
+  const card = resolved.card;
+  const gaps: string[] = [];
+  if (card.photoSources.length === 0) gaps.push('No profile photo — the badge shows their initials.');
+  if (!card.address) gaps.push('Address not on file — HR corrects it on the roster record.');
+  if (!card.employeeId) gaps.push('No employee ID serial — it is derived from the start date, which is blank.');
+  if (!card.department) gaps.push('No department on the roster row, so that line is omitted.');
+
+  return {
+    work_email: workEmail,
+    attachments: [
+      {
+        ref: encodeAttachmentRef({ source: 'id_card', id: workEmail, slot: 0 }),
+        source: 'id_card',
+        what: ATTACHMENT_SOURCES.id_card.label,
+        file_name: null,
+        kind: 'image',
+        at: null,
+        subject_email: workEmail,
+        open_from: ATTACHMENT_SOURCES.id_card.origin,
+      } satisfies AttachmentEntry,
+    ],
+    id_card: {
+      name: card.name,
+      work_email: card.workEmail,
+      department: card.department,
+      address: card.address,
+      start_date: card.startDate,
+      employee_id: card.employeeId,
+      has_photo: card.photoSources.length > 0,
+    },
+    gaps,
+    field_notes: {
+      ref: 'Internal handle for the console, which renders the badge as an openable image. Never print it.',
+      source:
+        "Drawn from the person's ACTIVE roster record at the moment it is opened — the same values and the same painter as the badge on their own Profile, so it cannot disagree with what they see. Address is the roster address (never the payout address on Profile → Payment).",
+      not_a_government_id:
+        'This is the company badge. No photograph of a passport, licence or national ID exists in this HRIS.',
     },
   };
 }

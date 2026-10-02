@@ -4,6 +4,8 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { auditFrom } from '@/lib/audit/context';
 import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
+import { resolveIdCardForEmail } from '@/lib/employee/id-card-server';
+import type { IdCard } from '@/lib/employee/id-card';
 import {
   ATTACHMENT_SOURCES,
   parseAttachmentRef,
@@ -16,7 +18,9 @@ export const runtime = 'nodejs';
 /**
  * Open ONE file that Admin Penny surfaced.
  *
- * `GET ?ref=<source>~<record id>[~<slot>]` → `{ url }`, a short-lived link.
+ * `GET ?ref=<source>~<record id>[~<slot>]` → `{ url }`, a short-lived link —
+ * or, for a RENDERED source (`id_card`), `{ card }`: the view model the console
+ * paints itself, because there are no stored bytes to link to.
  *
  * ── Why the ref names a record and not a path ────────────────────────────────
  * The client never supplies a storage path. It names a ROW, this route reads
@@ -47,6 +51,11 @@ type Resolved = {
   subject: string | null;
   /** Already-usable URL (the public avatar), when nothing needs signing. */
   directUrl?: string | null;
+  /**
+   * A RENDERED source's view model. Nothing is stored and nothing is signed: the
+   * console paints the image itself with the owning surface's own renderer.
+   */
+  card?: IdCard;
 };
 
 async function resolve(ref: AttachmentRef): Promise<Resolved | { error: string; status: number }> {
@@ -54,6 +63,18 @@ async function resolve(ref: AttachmentRef): Promise<Resolved | { error: string; 
     const url = await getProfilePhotoUrlForEmail(ref.id);
     if (!url) return { error: 'No profile photo on file', status: 404 };
     return { path: null, subject: ref.id, directUrl: url };
+  }
+
+  if (ref.source === 'id_card') {
+    // Re-resolved from the ACTIVE roster at open time — the ref only names the
+    // person. A failed read is an error, never a badge drawn from half the data.
+    const resolved = await resolveIdCardForEmail(ref.id);
+    if (!resolved.ok) {
+      return resolved.reason === 'read_failed'
+        ? { error: `Could not read the roster: ${resolved.message}`, status: 500 }
+        : { error: 'No active roster record — an off-boarded person has no ID card', status: 404 };
+    }
+    return { path: null, subject: resolved.card.workEmail ?? ref.id, card: resolved.card };
   }
 
   const supabase = createSupabaseServiceRoleClient();
@@ -148,6 +169,27 @@ export async function GET(request: NextRequest) {
   }
   if ('error' in resolved) {
     return NextResponse.json({ error: resolved.error }, { status: resolved.status });
+  }
+
+  if (resolved.card) {
+    // Audited exactly like a file open: looking at someone's badge through
+    // Penny is the same act as opening their photo.
+    void insertAuditLog({
+      ...auditFrom(request, authz),
+      action: 'admin_assistant.attachment_opened',
+      resource: 'admin_penny_chat',
+      resource_id: resolved.subject ?? ref.id,
+      details: {
+        source: ref.source,
+        record_id: ref.id,
+        subject_email: resolved.subject,
+        ttl_seconds: null,
+      },
+    }).catch(() => {});
+    return NextResponse.json(
+      { card: resolved.card, expires_in: null },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
   }
 
   let url = resolved.directUrl ?? null;

@@ -23,6 +23,7 @@ Approved comp: <https://claude.ai/code/artifact/a45d0cb3-4790-4f56-8b64-3a12fabf
 | View-model resolution — pure, DOM-free | `src/lib/employee/id-card.ts` (+ `id-card.test.ts`) |
 | The badge — presentational only | `src/components/employee/EmployeeIdCard.tsx` |
 | PNG export — canvas painter | `src/lib/employee/id-card-render.ts` (+ `id-card-render.test.ts`) |
+| Server-side resolution for Admin Penny (2026-10-02) | `src/lib/employee/id-card-server.ts` |
 | Host — section chip, render block, `buildIdCard` call | `src/components/employee/EmployeeProfile.tsx` |
 | Brand artwork | `public/simple-logo.png` (navy `#27285A`, orange `#F26F07`) |
 
@@ -248,6 +249,32 @@ elevated `?email=` preview at all**, and that is settled where identity is resol
 this decision, because the first leg would then be carrying a file that had become a money
 document.
 
+## Admin Penny opens it too (2026-10-02)
+
+Kane asked Admin Penny for his ID card and was shown the Penny mascot — a screenshot
+attached to one of his own time-adjustment requests — because the only tool that answered
+was the list of stored **files**, and the badge is not one. Penny now has
+`get_employee_id_card` (`admin-penny-console.md` § The employee ID card), and the badge is
+its **second consumer**:
+
+- **Same view model, same painter.** `resolveIdCardForEmail`
+  (`src/lib/employee/id-card-server.ts`) builds the `IdCard` on the server from what this
+  Profile reads, in the same order — the active roster row via `findRosterRowByEmail` (the
+  one match `/api/employees?email=` now shares, so the serial is the roster-numbered one),
+  the master record for the **roster** address (never `employee_ids.full_address`), and the
+  photo via `getProfilePhotoUrlForEmail`. The console then paints it with
+  `renderIdCardPng`. Change the badge here and Penny's copy changes with it.
+- **The rules above bind that path too**: `buildIdCard` resolves everything,
+  `formatDeptLabel` is unconditional, photos load `crossOrigin` or fall to initials, an
+  unloadable wordmark aborts rather than drawing an unbranded rectangle.
+- **Fails closed where the Profile degrades.** A failed roster or master read is an error,
+  never a badge; an off-boarded person has none.
+- **It adds no access.** An admin could already open any employee's Profile through an
+  elevated `?email=` preview and download this badge (decided 2026-09-04, upheld 2026-09-12
+  above). Penny's open is the better-recorded path: `admin_assistant.attachment_opened`.
+- `isIdCard` (in `id-card.ts`) is the wire guard: the console refuses a card with any field
+  missing rather than painting a badge with a hole in it.
+
 ## Deploy notes
 
 **No migration.** Every column already exists on `global_master_list` (`name`, `work_email`,
@@ -258,4 +285,7 @@ values `EmployeeProfile` already fetches through `/api/employees?email=` and
 
 No write path exists on this surface. **Download PNG** is client-side only — the file is
 painted in the browser and never uploaded, so there is no route, no storage bucket and
-nothing to retain. There is still no print or PDF.
+nothing to retain. There is still no print or PDF. *(2026-10-02)* Admin Penny's copy is
+painted in the browser the same way; the only server work is the existing
+`GET /api/admin/penny-chat/attachment` returning the view model for `id_card~<email>` — no
+new route, no migration, nothing stored.

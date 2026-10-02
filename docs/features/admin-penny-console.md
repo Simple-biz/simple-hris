@@ -22,10 +22,12 @@ the employee bubble are unchanged — `ceo-assistant.md` and
 | `/clear` command matcher | `src/lib/penny/console-commands.ts` |
 | Openable attachments (2026-09-12) | `src/lib/penny/attachment-refs.ts`, `app/api/admin/penny-chat/attachment/route.ts`, `src/components/ceo/penny-attachments.tsx` |
 | Table parsing + column analysis (2026-09-12) | `src/lib/penny/chat-tables.ts` |
+| The employee ID card (2026-10-02) | `src/lib/employee/id-card-server.ts`, `get_employee_id_card` in `src/lib/anthropic/admin-tools.ts` |
 
 Tests: `src/lib/penny/console-stream.test.ts` (16), `console-phases.test.ts` (10),
-`console-commands.test.ts` (7), `attachment-refs.test.ts` (11),
-`chat-tables.test.ts` (14).
+`console-commands.test.ts` (7), `attachment-refs.test.ts` (15),
+`chat-tables.test.ts` (14), `id-card-tool.test.ts` (7). Live, read-only:
+`scripts/verify-penny-id-card.mts` runs the real tool runner against production.
 
 ## The console never claims work that isn't happening
 
@@ -283,6 +285,17 @@ card draws the payout record (`people-bank-card.md`). Both the tool description
 and the system prompt say so in as many words, because the failure mode is Penny
 offering the nearest lookalike as if it were the thing asked for.
 
+**That failure mode happened anyway, through the strip** (Kane, 2026-10-02:
+*"when I query an image like the ID Card it did not pull it properly it just gave
+me an image of pennyai"*). Asked for his ID card, Penny ran this tool, which
+returned every file on record for him — his profile photo and a time-adjustment
+screenshot whose attachment is the Penny mascot PNG (his own 2026-08-19 request,
+`e26aeb0a…`) — and the console put both in front of him as the answer. The words
+said "no ID file"; the thumbnails said otherwise. So the ID card now has its own
+tool and is **rendered**, below, and this tool no longer answers ID questions.
+**Every file this tool returns is shown as a thumbnail**, so its description now
+tells the model to pass `source` whenever the question names one kind.
+
 | Piece | File |
 |---|---|
 | Source registry, ref encode/parse, per-source TTL — pure | `src/lib/penny/attachment-refs.ts` (+ `.test.ts`, 11) |
@@ -301,6 +314,48 @@ profile photo. Deliberately **not** `onboarding_pay_plans`, whose PDFs are keyed
 by (department, country) — a pay plan is a departmental document a person merely
 received, and filing it under their name would assert a personal record that
 does not exist.
+
+### The employee ID card — rendered, not stored (2026-10-02)
+
+`get_employee_id_card` shows the company badge from the person's Employee portal
+(Profile → Overview, `employee-id-card.md`) as **one** openable image — and
+nothing else, so an ID question can no longer come back as somebody's
+screenshots. It is a separate tool rather than a source inside
+`list_employee_attachments` on purpose: that tool lists **files**, and a drawing on
+a file list is exactly how the mascot became the answer.
+
+- **`id_card` is a *rendered* source** (`rendered: true` in `ATTACHMENT_SOURCES`):
+  no bucket, no lifetime, keyed by email. `list_employee_attachments` takes its
+  `source` enum from `FILE_SOURCE_IDS` and refuses `id_card` **by name** rather
+  than returning an empty list that would read as "nothing on record".
+- **The opener re-resolves the card at open time** — `resolveIdCardForEmail`
+  reads what the Profile reads, in the same order: the active roster row through
+  `findRosterRowByEmail` (the match `/api/employees?email=` makes, now one shared
+  function), so `employee_id` is the roster-numbered serial rather than a
+  single-row placeholder; the master record for the address; and the photo via
+  `getProfilePhotoUrlForEmail`. The ref names the person; the data never rides it.
+- **It returns `{ card }`, not a URL**, and the console paints the PNG with
+  `renderIdCardPng` — the painter behind the employee's own *Download PNG* — so
+  Penny's badge and theirs cannot disagree. `isIdCard` checks the payload **whole**
+  first; an incomplete card is refused, never painted with a hole in it. The
+  object URL is revoked when the viewer closes, and the footer offers **save png**
+  under the employee's own filename (`simple-id-<serial>.png`).
+- **Fails closed.** A failed roster or master read is an error ("the badge is
+  unknown, not missing"), never a card drawn from half the data — that would
+  print *Not on file* over an address that is on file. An off-boarded person
+  resolves to **no badge**: neither read ever returns an off-boarded row, because
+  work emails are recycled.
+- **Audited like any open**: `admin_assistant.attachment_opened`, source
+  `id_card`, `ttl_seconds: null`. Nothing new is exposed — an admin already sees
+  every one of these fields in an elevated `?email=` Profile preview, and may
+  download that badge (`employee-id-card.md`, decided 2026-09-04, upheld 09-12).
+- **Withheld from the CEO route** with `list_employee_attachments`: the opener is
+  admin-gated and the CEO widget renders no attachment frames.
+- It is still **not a government ID**, and the tool description says so: no
+  photograph of a passport, licence or national ID exists in this HRIS.
+
+Gaps the tool names rather than hides: no photo (initials), address not on file,
+no serial (blank start date), no department.
 
 ### Nothing new is exposed
 
@@ -472,8 +527,13 @@ and `penny-attachments.tsx` too.
   command with no hint row is invisible, and a hint row for a command that does
   not resolve fails the test.
 - Adding an attachment source means a row in `ATTACHMENT_SOURCES` **and** a
-  `case` in the open endpoint's `resolve()`. A bucket without a TTL (or the
-  reverse) fails `attachment-refs.test.ts` rather than falling back to a default.
+  `case` in the open endpoint's `resolve()` — `id-card-tool.test.ts` now fails on
+  a source with no branch. A bucket without a TTL (or the reverse) fails
+  `attachment-refs.test.ts` rather than falling back to a default. A **rendered**
+  source (no stored bytes) must have neither, and never reaches
+  `list_employee_attachments`'s enum.
+- An email-keyed ref is capped at **254 chars** (`MAX_REF_EMAIL`) — that bound is
+  what lets the frame-size proof cover the email-keyed sources at all.
 - Never put a signed URL in a frame, and never raise `MAX_FRAME_CHARS` to make
   one fit. The ref exists so the frame stays small and the credential stays
   short-lived.

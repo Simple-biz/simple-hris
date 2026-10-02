@@ -2700,8 +2700,8 @@ none of them writes to the database.
 
 | Route | Gate | Model | Tools |
 |---|---|---|---|
-| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-opus-5-5` *(since 2026-09-23; was `claude-sonnet-4-6`)* | `CEO_TOOLS` + `CEO_ADMIN_TOOLS` (24) — every Admin tool except `list_employee_attachments` |
-| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (25) |
+| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-opus-5-5` *(since 2026-09-23; was `claude-sonnet-4-6`)* | `CEO_TOOLS` + `CEO_ADMIN_TOOLS` (24) — every Admin tool except `list_employee_attachments` and `get_employee_id_card` (both need the admin-gated opener below) |
+| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (26) |
 | `POST /api/employee/penny-chat` | `authorizeEmailAccess(email)` | `claude-haiku-4-5` | employee set, **no identity argument** |
 
 ### `POST /api/ceo/chat`
@@ -2751,7 +2751,8 @@ re-run on `claude-opus-4-8` by then, via beta `server-side-fallback-2026-06-01`.
 
 ### `GET /api/admin/penny-chat/attachment` *(added 2026-09-12)*
 
-Opens **one** file that Penny surfaced. The client names a **record**, never a path.
+Opens **one** file that Penny surfaced — or, since 2026-10-02, the person's **employee ID card**, which is not a file.
+The client names a **record**, never a path.
 
 **Auth**: `requireAdminSession()`. Every file reachable here is already openable by the same caller through its own surface
 (`requireFeatureAccess` admin-bypasses, `authorizeEmailAccess` elevated-bypasses), so this exposes nothing new — but those
@@ -2759,12 +2760,21 @@ surfaces write **no audit row at all** on a download, which makes this the bette
 
 | Param | Meaning |
 |---|---|
-| `ref` | `<source>~<record uuid>[~<slot>]`. Sources: `evidence` · `receipt` · `document` · `document_signed` · `w8ben` · `ip_assignment` · `photo` (whose id is an email, not a uuid) |
+| `ref` | `<source>~<record uuid>[~<slot>]`. Sources: `evidence` · `receipt` · `document` · `document_signed` · `w8ben` · `ip_assignment` · `photo` · `id_card` (both keyed by an email, ≤254 chars, not a uuid) |
 
 **Response** `200`:
 ```json
 { "url": "https://…signed…", "expires_in": 3600 }
 ```
+
+For `id_card` — a **rendered** source, with no stored bytes — the response is the badge's view model instead, and the
+console paints the PNG itself with `renderIdCardPng`, the painter behind the employee's own Download PNG:
+```json
+{ "card": { "name": "…", "workEmail": "…", "department": "…", "address": "…", "startDate": "…", "employeeId": "2511-0006", "initials": "…", "photoSources": ["…"] }, "expires_in": null }
+```
+The card is **re-resolved from the active roster at open time** (`resolveIdCardForEmail`: the `/api/employees?email=` roster
+match, then the master record for the address) — the ref only names the person. A failed roster read is `500`, never a
+badge drawn from half the data; no active row (an off-boarded person) is `404`.
 
 The route resolves the ref to a row, reads the storage path **off that row**, and signs it against a bucket fixed by the
 source — so no string from the request ever reaches `storage.from(...)` and traversal is unrepresentable rather than
@@ -2779,7 +2789,7 @@ cannot pick one.
 `500` misconfigured source (a bucket with no lifetime, or the reverse) · `503` storage not configured.
 
 **Tables**: reads `time_adjustment_requests`, `mesa_request_receipts`, `document_requests`, `hr_onboarding_submissions`,
-or the master row (profile photo). **Service role**: required.
+or the master row (profile photo, ID card — plus the `active_employees` roster for the card). **Service role**: required.
 **Audit**: `admin_assistant.attachment_opened` — actor via `auditFrom(request, authz)`, `resource_id` = whose file it is,
 `details` carrying the source, record id, slot and TTL. Best-effort: the read already happened, so failing the response
 would only hide it.
@@ -3342,7 +3352,7 @@ of cells — the matches were not re-run).
 | `/api/admin/hsl-week-snapshot` | GET, POST | `requireAdminSession` | — **no doc** |
 | `/api/admin/monday-sync` | GET, POST | `requireAdminSession` | [monday-board-sync](../features/monday-board-sync.md) |
 | `/api/admin/penny-chat` | POST | `requireAdminSession` | [admin-penny-console](../features/admin-penny-console.md) · [admin-penny-tools](../features/admin-penny-tools.md) · *this file* |
-| `/api/admin/penny-chat/attachment` | GET | `requireFeatureAccess` | [admin-penny-console](../features/admin-penny-console.md) · *this file* |
+| `/api/admin/penny-chat/attachment` | GET | `requireAdminSession` | [admin-penny-console](../features/admin-penny-console.md) · *this file* |
 | `/api/admin/webhooks/automation` | GET, POST, PUT | `requireAdminSession` | [webhook-automations](../features/webhook-automations.md) |
 | `/api/admin/workspace-license-config` | POST | `requireAdminSession` | — **no doc** |
 | `/api/announcements` | GET, POST | `getToken` (GET) · `requireFeatureEditAnyView` | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |

@@ -1,5 +1,4 @@
-import { getEmployees, getEmployeeMasterRecord, type EmployeeRow } from "@/lib/supabase/employees";
-import { normEmail } from "@/lib/email/norm-email";
+import { findRosterRowByEmail, getEmployees, getEmployeeMasterRecord } from "@/lib/supabase/employees";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -20,21 +19,15 @@ export async function GET(req: NextRequest) {
     const authz = await authorizeEmailAccess(email);
     if (!authz.ok) return deniedResponse(authz);
     const lookup = authz.effectiveEmail;
-    const norm = normEmail(lookup) ?? lookup.toLowerCase();
     // Prefer the active-list match so the generated employee_id reflects the
     // serial numbering across same-month starters (getEmployeeMasterRecord
     // only sees one row and can't reproduce that ordering). Server-side filter
     // — response is one row even though getEmployees() scans the full view.
+    // Alternate work emails match too, so a login via an alternate resolves to
+    // the right roster row. Admin Penny's ID card resolves through the same
+    // matcher, so the badge it draws is the one this Profile shows.
     const all = await getEmployees();
-    const me = (all.employees ?? []).find((e: EmployeeRow) => {
-      const we = normEmail(e.work_email ?? "");
-      const pe = normEmail(e.personal_email ?? "");
-      // Alternate work emails are a second inbox for the same person — match them
-      // too so a login via an alternate resolves to the right roster row.
-      const a1 = normEmail(e.alternate_work_email ?? "");
-      const a2 = normEmail(e.alternate_work_email_2 ?? "");
-      return we === norm || pe === norm || a1 === norm || a2 === norm;
-    });
+    const me = findRosterRowByEmail(all.employees ?? [], lookup);
     if (me) return NextResponse.json({ employees: [me], error: all.error });
 
     // Fallback to global_master_list for people who fell off the latest upload

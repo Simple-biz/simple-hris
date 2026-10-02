@@ -1,5 +1,6 @@
 import { createSupabaseServerClient, createSupabaseServiceRoleClient } from "./server";
 import { overrideDeptLabel } from "@/lib/departments/dept-email-overrides";
+import { normEmail } from "@/lib/email/norm-email";
 
 /**
  * View in Supabase that filters `global_master_list` down to rows whose
@@ -521,6 +522,27 @@ async function fetchActiveEmployees(
   // (people-roster.ts, ceo-tools.ts), so reusing `error` would convert a
   // self-healed read back into the empty result we are trying to prevent.
   return { employees, error: null, warning: viewWarning };
+}
+
+/**
+ * The roster row one address belongs to — work, personal, or either alternate work
+ * email (a second inbox for the same person). This is the single-employee match
+ * `/api/employees?email=` makes for the Profile, and Admin Penny's ID card resolves
+ * through the same function so the badge it draws is the badge the employee sees.
+ */
+export function findRosterRowByEmail(
+  employees: readonly EmployeeRow[],
+  email: string,
+): EmployeeRow | undefined {
+  const norm = normEmail(email) ?? email.trim().toLowerCase();
+  if (!norm) return undefined;
+  return employees.find((e) => {
+    const we = normEmail(e.work_email ?? "");
+    const pe = normEmail(e.personal_email ?? "");
+    const a1 = normEmail(e.alternate_work_email ?? "");
+    const a2 = normEmail(e.alternate_work_email_2 ?? "");
+    return we === norm || pe === norm || a1 === norm || a2 === norm;
+  });
 }
 
 /**

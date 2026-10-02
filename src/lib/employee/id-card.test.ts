@@ -6,6 +6,7 @@ import {
   formatIdCardDate,
   idCardInitials,
   idCardPhotoSources,
+  isIdCard,
   nameFromEmail,
 } from './id-card';
 
@@ -182,4 +183,43 @@ test('an entirely empty input builds a card instead of throwing', () => {
   assert.equal(card.startDate, null);
   assert.equal(card.employeeId, null);
   assert.deepEqual(card.photoSources, []);
+});
+
+/* ── the wire guard: Admin Penny paints a card it received, so it checks it whole ── */
+
+test('isIdCard accepts every card buildIdCard can produce', () => {
+  assert.equal(isIdCard(buildIdCard({})), true);
+  assert.equal(
+    isIdCard(
+      buildIdCard({
+        name: 'Jane Cruz',
+        workEmail: 'janec@simple.biz',
+        department: 'hsl:filing_specialist',
+        fullAddress: '1 Rizal St, Manila',
+        startDate: '2025-11-10',
+        employeeId: '2511-0004',
+        photoUrl: 'https://example.test/a.jpg',
+      }),
+    ),
+    true,
+  );
+});
+
+test('isIdCard refuses a card with a hole in it rather than painting one', () => {
+  const good = buildIdCard({ name: 'Jane Cruz', workEmail: 'janec@simple.biz' });
+  for (const bad of [
+    null,
+    undefined,
+    'card',
+    [],
+    { ...good, name: '' }, // a badge with a blank where the name belongs
+    { ...good, name: undefined },
+    { ...good, initials: undefined },
+    { ...good, workEmail: undefined }, // absent is not the same as null
+    { ...good, address: 42 },
+    { ...good, photoSources: 'https://example.test/a.jpg' },
+    { ...good, photoSources: [null] },
+  ]) {
+    assert.equal(isIdCard(bad), false, `accepted ${JSON.stringify(bad)}`);
+  }
 });

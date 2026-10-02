@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ExternalLink, FileText, ImageIcon, Loader2, Paperclip, X } from 'lucide-react';
+import { Download, ExternalLink, FileText, ImageIcon, Loader2, Paperclip, X } from 'lucide-react';
 import { ATTACHMENT_SOURCES, parseAttachmentRef } from '@/lib/penny/attachment-refs';
+import { isIdCard } from '@/lib/employee/id-card';
+import { IdCardRenderError, idCardFileName, renderIdCardPng } from '@/lib/employee/id-card-render';
 import type { PennyAttachment } from './use-ceo-chat';
 import type { ChatTone } from './ceo-chat-message';
 
@@ -22,7 +24,20 @@ import type { ChatTone } from './ceo-chat-message';
  * because a PDF viewer belongs to the browser.
  */
 
-type OpenState = { ref: string; label: string; url: string; expiresIn: number | null } | null;
+type OpenState = {
+  ref: string;
+  label: string;
+  url: string;
+  expiresIn: number | null;
+  /**
+   * True when `url` is an object URL this component minted for a picture it
+   * painted itself (the ID card). Revoked when the viewer closes — a short-lived
+   * signed link expires on its own, a blob lives until the tab does.
+   */
+  objectUrl: boolean;
+  /** Filename to save under, for a painted picture. Null for a stored file. */
+  saveAs: string | null;
+} | null;
 
 const ICON = {
   image: ImageIcon,
@@ -73,8 +88,34 @@ export default function PennyAttachments({
           { cache: 'no-store' },
         );
         const body = (await res.json().catch(() => null)) as
-          | { url?: string; expires_in?: number | null; error?: string }
+          | { url?: string; card?: unknown; expires_in?: number | null; error?: string }
           | null;
+        // A RENDERED source (the ID card) has no stored bytes: the server sends
+        // the view model and the picture is painted here, by the same renderer
+        // as the employee's own Download PNG, so the two cannot disagree.
+        if (res.ok && body && 'card' in body) {
+          if (!isIdCard(body.card)) {
+            setFailed((f) => ({ ...f, [att.ref]: 'The ID card arrived incomplete, so it was not drawn.' }));
+            return;
+          }
+          try {
+            const blob = await renderIdCardPng(body.card);
+            setOpen({
+              ref: att.ref,
+              label: att.label,
+              url: URL.createObjectURL(blob),
+              expiresIn: null,
+              objectUrl: true,
+              saveAs: idCardFileName(body.card),
+            });
+          } catch (e) {
+            setFailed((f) => ({
+              ...f,
+              [att.ref]: e instanceof IdCardRenderError ? e.message : 'Could not draw the ID card.',
+            }));
+          }
+          return;
+        }
         if (!res.ok || !body?.url) {
           // Say what the server said. "Could not open" on a file that was
           // deleted, and on one the storage layer is down for, sends an admin
@@ -88,6 +129,8 @@ export default function PennyAttachments({
             label: att.label,
             url: body.url,
             expiresIn: typeof body.expires_in === 'number' ? body.expires_in : null,
+            objectUrl: false,
+            saveAs: null,
           });
         } else {
           window.open(body.url, '_blank', 'noopener,noreferrer');
@@ -100,6 +143,14 @@ export default function PennyAttachments({
     },
     [pending],
   );
+
+  // A painted picture's object URL is released when its viewer closes (or the
+  // strip unmounts) — otherwise every open of the ID card leaks a PNG.
+  useEffect(() => {
+    if (!open?.objectUrl) return;
+    const url = open.url;
+    return () => URL.revokeObjectURL(url);
+  }, [open]);
 
   if (attachments.length === 0) return null;
 
@@ -390,8 +441,9 @@ function ImageViewer({ state, onClose }: { state: NonNullable<OpenState>; onClos
                 The image did not load.
               </p>
               <p className="mt-1.5 font-mono text-[11px] leading-relaxed text-[#a89a8d]">
-                The link is short-lived{expires ? ` (${expires})` : ''} and may have expired.
-                Close this and click the file again for a fresh one.
+                {state.objectUrl
+                  ? 'This picture was drawn in the browser and did not display. Close this and click it again to redraw it.'
+                  : `The link is short-lived${expires ? ` (${expires})` : ''} and may have expired. Close this and click the file again for a fresh one.`}
               </p>
             </div>
           ) : (
@@ -454,15 +506,28 @@ function ImageViewer({ state, onClose }: { state: NonNullable<OpenState>; onClos
               link valid {expires}
             </span>
           )}
-          <a
-            href={state.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-[#8a7f73] transition-colors hover:text-[#ffa24d] focus-visible:text-[#ffa24d] focus-visible:outline-none"
-          >
-            open raw
-            <ExternalLink className="h-3 w-3" aria-hidden />
-          </a>
+          {state.saveAs ? (
+            // A painted picture has no "raw" to open — offer the file itself,
+            // under the same name the employee's own Download PNG uses.
+            <a
+              href={state.url}
+              download={state.saveAs}
+              className="ml-auto inline-flex items-center gap-1 text-[#8a7f73] transition-colors hover:text-[#ffa24d] focus-visible:text-[#ffa24d] focus-visible:outline-none"
+            >
+              save png
+              <Download className="h-3 w-3" aria-hidden />
+            </a>
+          ) : (
+            <a
+              href={state.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-[#8a7f73] transition-colors hover:text-[#ffa24d] focus-visible:text-[#ffa24d] focus-visible:outline-none"
+            >
+              open raw
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+          )}
         </footer>
       </div>
     </div>,
