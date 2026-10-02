@@ -163,7 +163,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'npd.',
     surfaces: ['accounting', 'payroll'],
     label: 'NPD (New Payroll Dashboard)',
-    note: 'sheet.saved (one per save: tab, week, version, row counts, and the PHP→USD rate / column formulas from → to when they change), rows.removed (written BEFORE the save, with the full contents of every row it removes), sheet.save_failed (a recorded removal that did not happen), sheet.locked (Lock in), sheet.unlocked (written BEFORE the unlock, with the required reason and who had locked it), sheet.unlock_failed. resource_id = <tab>:<week Sunday>',
+    note: 'sheet.saved (one per save: tab, week, version, row counts, and the PHP→USD rate / column formulas from → to when they change), rows.removed (written BEFORE the save, with the full contents of every row it removes), sheet.save_failed (a recorded removal that did not happen), sheet.locked (Lock in), sheet.unlocked (written BEFORE the unlock, with the required reason and who had locked it), sheet.unlock_failed, google_sheet.loaded (All Dept Payroll CSV / Hogan Payroll Sync read the Google Sheet tab for the Payroll Wizard\'s week: tab, wizard upload, row count, rate, typed cells, skipped rows; the save that follows is its own sheet.saved), sheet.synced (written AFTER a sync\'s save landed: the timestamp the NPD tab shows as "Last synced", with tab, version, row count and wizard upload; a sync for any week but the wizard\'s current one is refused before anything is written). resource_id = <tab>:<week Sunday>',
   },
   {
     match: 'bonus_catalog.',

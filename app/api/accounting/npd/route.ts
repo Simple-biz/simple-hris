@@ -6,6 +6,7 @@ import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-f
 import { isNpdSheetKind } from '@/lib/npd/columns';
 import { recomputeSheet } from '@/lib/npd/formulas';
 import { isSundayIso, removedRows, rowForAudit, validateLockBody, validateSaveBody } from '@/lib/npd/sheet';
+import { resolveCurrentWeek } from '@/lib/payroll/payroll-readiness';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import {
   NPD_LOCK_NOT_SET_UP,
@@ -124,9 +125,26 @@ export async function PUT(req: Request) {
   }
   const parsed = validateSaveBody(raw);
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-  const { sheet, week, expectedVersion, usdPerPhp, columnFormulas } = parsed.value;
+  const { sheet, week, expectedVersion, usdPerPhp, columnFormulas, googleSheetSync } = parsed.value;
   const rows = recomputeSheet(sheet, parsed.value.rows, { columnFormulas, rate: usdPerPhp });
   const resourceId = `${sheet}:${week}`;
+
+  // A Google Sheet sync fills ONLY the Payroll Wizard's current week (Kane,
+  // 2026-10-02: "MAKE SURE when we sync only the current week"). Refused before
+  // anything is read or written; an ordinary save of any week is unaffected.
+  if (googleSheetSync) {
+    const wizard = await resolveCurrentWeek();
+    if (wizard.degraded.length > 0 || !wizard.sourceFile || wizard.weekStart !== week) {
+      const current = wizard.degraded.length === 0 && wizard.sourceFile && isSundayIso(wizard.weekStart) ? ` (${wizard.weekStart})` : '';
+      return NextResponse.json(
+        {
+          error: `A Google Sheet sync only fills the Payroll Wizard's current week${current}, and this is not it. Nothing was saved.`,
+          syncWeek: true,
+        },
+        { status: 422, headers: NO_STORE },
+      );
+    }
+  }
 
   const current = await readNpdSheet(sheet, week);
   if (!current.ok) return failed(current);
@@ -225,8 +243,32 @@ export async function PUT(req: Request) {
       ...(JSON.stringify(columnFormulas) !== JSON.stringify(current.meta.columnFormulas)
         ? { column_formulas: { from: current.meta.columnFormulas, to: columnFormulas } }
         : {}),
+      ...(googleSheetSync ? { google_sheet_sync: googleSheetSync.tab } : {}),
     },
   });
+
+  // The sync's timestamp: the time this save landed, stamped by the server. The bar
+  // on each NPD tab reads it back ("Last synced …"). It is written only after a
+  // save that succeeded, so a sync that never saved is never shown as synced.
+  const syncedAt = googleSheetSync ? (saved.meta.updatedAt ?? new Date().toISOString()) : null;
+  if (googleSheetSync) {
+    await insertAuditLog({
+      ...auditFrom(req, authz),
+      action: 'npd.sheet.synced',
+      resource: 'npd_sheet',
+      resource_id: resourceId,
+      details: {
+        sheet,
+        week,
+        version: saved.meta.version,
+        row_count: saved.meta.rowCount,
+        tab: googleSheetSync.tab,
+        wizard_source_file: googleSheetSync.sourceFile,
+        synced_at: syncedAt,
+        synced_by: authz.sessionEmail,
+      },
+    });
+  }
 
   return NextResponse.json(
     {
@@ -236,6 +278,7 @@ export async function PUT(req: Request) {
       updatedBy: saved.meta.updatedBy,
       usdPerPhp: saved.meta.usdPerPhp,
       columnFormulas: saved.meta.columnFormulas,
+      ...(googleSheetSync ? { syncedAt, syncedBy: authz.sessionEmail } : {}),
     },
     { headers: NO_STORE },
   );

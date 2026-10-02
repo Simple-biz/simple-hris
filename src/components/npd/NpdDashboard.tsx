@@ -18,15 +18,17 @@ import {
 import { cn } from '@/lib/utils';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, NPD_SHEETS, NPD_SHEET_LABELS, isNpdSheetKind, type NpdSheetKind } from '@/lib/npd/columns';
-import { NPD_UNLOCK_REASON_MAX, defaultNpdWeek, shiftWeek, weekLabel } from '@/lib/npd/sheet';
+import { NPD_UNLOCK_REASON_MAX, defaultNpdWeek, isBlankRow, shiftWeek, weekLabel } from '@/lib/npd/sheet';
+import NpdGoogleSheetSync, { type NpdSyncData, type NpdSyncTarget } from './NpdGoogleSheetSync';
 import NpdSheetGrid from './NpdSheetGrid';
 import { contextOf, useNpdSheet, type LockResult } from './useNpdSheet';
 
 /**
  * Accounting → NPD (New Payroll Dashboard). The manual version of the Payroll
  * Wizard: a sheet per tab (All Departments | HSL) per pay week that Accounting
- * pastes from Google Sheets. Nothing is imported from HRIS and nothing here pays
- * anyone. Governing doc: docs/features/npd-dashboard.md.
+ * pastes from Google Sheets, or syncs from it (All Dept Payroll CSV · Hogan Payroll
+ * Sync, for the Payroll Wizard's week). Nothing is imported from HRIS and nothing
+ * here pays anyone. Governing doc: docs/features/npd-dashboard.md.
  *
  * Formulas: every calculated column follows the Google Sheet's formula (right-click
  * a cell to see or edit it); this sheet's PHP→USD rate is typed here, per tab per
@@ -186,15 +188,16 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             : null;
 
   // ── Switching tab or week: save first, never drop edits ─────────────────
+  /** Resolves false when the switch did not happen (unsaved edits on this sheet). */
   const switchTo = useCallback(
-    async (next: { sheet?: NpdSheetKind; week?: string }) => {
-      if ((next.sheet ?? sheet) === sheet && (next.week ?? week) === week) return;
+    async (next: { sheet?: NpdSheetKind; week?: string }): Promise<boolean> => {
+      if ((next.sheet ?? sheet) === sheet && (next.week ?? week) === week) return true;
       setSwitching(true);
       const ok = await ctl.flush();
       setSwitching(false);
       if (!ok) {
         showNotice('Not switched: your latest edits on this sheet are not saved yet. Resolve the message above first.');
-        return;
+        return false;
       }
       if (next.sheet) {
         setSheet(next.sheet);
@@ -206,8 +209,38 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
       }
       if (next.week) setWeek(next.week);
       setNotice(null);
+      return true;
     },
     [ctl, sheet, week, showNotice],
+  );
+
+  // ── Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync) ────────
+  /** What a sync would replace: the rows on screen for the open sheet, else the saved count. */
+  const syncTargetOf = useCallback(
+    (kind: NpdSheetKind, wk: string): NpdSyncTarget => {
+      if (kind === sheet && wk === week && ctl.loadState === 'ready') {
+        const onScreen = ctl.rows.filter((r) => !isBlankRow(r)).length;
+        return { rows: Math.max(onScreen, ctl.meta?.rowCount ?? 0), locked: ctl.locked };
+      }
+      if (!weeks) return { rows: null, locked: false };
+      const entry = weeks.find((w) => w.sheet === kind && w.week === wk);
+      return { rows: entry?.rowCount ?? 0, locked: !!entry?.lockedAt };
+    },
+    [sheet, week, weeks, ctl.loadState, ctl.rows, ctl.meta, ctl.locked],
+  );
+
+  const onSyncApply = useCallback(
+    async (kind: NpdSheetKind, data: NpdSyncData): Promise<LockResult> => {
+      const notSaved = { ok: false, message: 'Not synced: your latest edits on this sheet are not saved yet. Resolve the message above first.' };
+      // Edits on screen are saved before anything replaces them, even on the same sheet.
+      if (!(await ctl.flush())) return notSaved;
+      if (!(await switchTo({ sheet: kind, week: data.week }))) return notSaved;
+      return ctl.importSheet(
+        { sheet: kind, week: data.week },
+        { rows: data.rows, rateText: data.rateText, tab: data.tab, sourceFile: data.sourceFile || null },
+      );
+    },
+    [ctl, switchTo],
   );
 
   return (
@@ -222,8 +255,9 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-300">NPD</p>
             <h2 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">New Payroll Dashboard</h2>
             <p className="mt-1 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              The payroll sheet, one per pay week. Paste it in from Google Sheets or type it here. Nothing is imported
-              from HRIS. The calculated columns use the Google Sheet’s own formulas: right-click a cell to see or edit one.
+              The payroll sheet, one per pay week. Sync it from the Google Sheet, paste it in, or type it here. Nothing is
+              imported from HRIS. The calculated columns use the Google Sheet’s own formulas: right-click a cell to see or
+              edit one.
             </p>
           </div>
         </div>
@@ -373,6 +407,10 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           />
         )}
       </div>
+
+      {canEdit && (
+        <NpdGoogleSheetSync sheet={sheet} stamp={ctl.syncStamp} targetOf={syncTargetOf} onApply={onSyncApply} disabled={switching} />
+      )}
 
       {/* ── Messages ────────────────────────────────────────────────────── */}
       {ctl.loadState === 'missing' && (

@@ -6,6 +6,12 @@ Admin-only data ingestion for the three CSV-shaped sources the HRIS depends on: 
 
 > **Rates note (2026-06-16):** The **Google Sheet rates sync is now DISABLED** — rate changes flow exclusively through the [Payment Catalog](bonus-catalog.md). The **manual rates CSV upload is still enabled** and still writes pay tables. See [§3 Google Sheet sync](#3-google-sheet-sync-manual-button-only) and [§9](#9-recent-fixes--gotchas).
 
+> **NPD note (2026-10-02):** the Payroll Wizard's **All Dept Payroll CSV** card (Initialize Payroll Data) **moved to
+> Accounting → NPD**. There it reads this same spreadsheet (`GOOGLE_SHEETS_RATES_SHEET_ID` / `_TAB_NAME`) into NPD's
+> All Departments sheet for the wizard's week, and **never** touches `employee_hourly_rates`. The rates sync below stays
+> disabled. Those env vars are therefore **in use** and must not be removed. Admin → CSV imports keeps its own rates
+> card. See [npd-dashboard.md § Google Sheet sync](npd-dashboard.md#google-sheet-sync-all-dept-payroll-csv--hogan-payroll-sync).
+
 ---
 
 ## Table of Contents

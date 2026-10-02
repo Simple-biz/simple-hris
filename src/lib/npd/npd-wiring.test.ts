@@ -269,3 +269,97 @@ describe('the NPD migration locks the tables to the service role', () => {
     assert.match(script, /const dryRun = wantDry \|\| \(!wantVerify && !wantApply\);/);
   });
 });
+
+describe('Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)', () => {
+  const route = read('app', 'api', 'accounting', 'npd', 'google-sheet', 'route.ts');
+
+  test('the route is GET only, gated on npd EDIT as its first statement', () => {
+    assert.match(
+      route,
+      /export async function GET\(req: Request\) \{\n\s+const authz = await requireFeatureEdit\('accounting', 'npd'\);\n\s+if \(!authz\.ok\) return deniedResponse\(authz\);/,
+    );
+    for (const verb of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.ok(!route.includes(`export async function ${verb}`), `${verb} is not exported`);
+  });
+
+  test('it writes nothing but its audit row: the page saves through PUT /api/accounting/npd', () => {
+    for (const write of ['saveNpdSheet', 'lockNpdSheet', 'unlockNpdSheet', '.rpc(', '.from(', '.insert(', '.update(', '.upsert(', '.delete(']) {
+      assert.ok(!route.includes(write), `route does not call ${write}`);
+    }
+    assert.ok(route.includes("action: 'npd.google_sheet.loaded'"));
+    assert.equal(familyForAction('npd.google_sheet.loaded')?.match, 'npd.');
+  });
+
+  test('the week is the wizard’s live upload, never a calendar fallback, and is checked before the sheet is read', () => {
+    const resolve = route.indexOf('await resolveCurrentWeek()');
+    const degraded = route.indexOf('wizard.degraded.length > 0');
+    const noUpload = route.indexOf('if (!wizard.sourceFile)');
+    const sunday = route.indexOf('if (!isSundayIso(wizard.weekStart))');
+    const fetchSheet = route.indexOf('await fetchNpdSheetGrids(sheet)');
+    assert.ok(resolve > 0 && resolve < degraded && degraded < noUpload && noUpload < sunday && sunday < fetchSheet);
+    assert.ok(!/defaultNpdWeek|manilaTodayIso|new Date\(\)/.test(route), 'no calendar week');
+  });
+
+  test('the Google Sheet is read with the read-only scope', () => {
+    const fetcher = read('src', 'lib', 'google-sheets', 'fetch-npd-sheet.ts');
+    assert.match(fetcher, /getServiceAccountAccessToken\('https:\/\/www\.googleapis\.com\/auth\/spreadsheets\.readonly'\)/);
+    assert.ok(!/auth\/spreadsheets['"]/.test(fetcher), 'never the read-write scope');
+    assert.ok(!/method: '(POST|PUT)'/.test(fetcher));
+  });
+
+  test('NPD shows the two buttons to edit grants only, and the hook replaces then saves at once', () => {
+    const dash = read('src', 'components', 'npd', 'NpdDashboard.tsx');
+    assert.match(dash, /\{canEdit && \(\s*<NpdGoogleSheetSync sheet=\{sheet\} stamp=\{ctl\.syncStamp\} targetOf=\{syncTargetOf\} onApply=\{onSyncApply\} disabled=\{switching\} \/>\s*\)\}/);
+    const onApply = dash.slice(dash.indexOf('const onSyncApply'));
+    assert.ok(onApply.indexOf('await ctl.flush()') < onApply.indexOf('await switchTo('), 'edits on screen are saved before a sync replaces them');
+    const sync = read('src', 'components', 'npd', 'NpdGoogleSheetSync.tsx');
+    // Each tab shows only its own button, and a sync fills only the tab it was clicked on (Kane, 2026-10-02).
+    assert.match(sync, /\{GOOGLE_SHEET_TABS\[sheet\]\.button\}/);
+    assert.match(sync, /onClick=\{\(\) => void run\(sheet\)\}/);
+    assert.ok(!sync.includes('NPD_SHEETS.map'), 'never both buttons at once');
+    assert.ok(sync.includes('if (target.locked)'), 'a locked week is refused before anything is applied');
+    const hook = read('src', 'components', 'npd', 'useNpdSheet.ts');
+    const applyImport = hook.slice(hook.indexOf('const applyImport'), hook.indexOf('const importSheet'));
+    assert.ok(applyImport.indexOf('if (isLocked(s))') < applyImport.indexOf('pushUndo(s)'));
+    assert.ok(applyImport.indexOf('pushUndo(s)') < applyImport.indexOf('void saveNow(s)'), 'one undo step, then saved through the normal save');
+  });
+
+  test('ONLY the current week: the route takes no week, and the save refuses a sync for any other week before reading anything', () => {
+    assert.ok(!/searchParams\.get\('week'\)/.test(route), 'the sync route never takes a week');
+    const put = read('app', 'api', 'accounting', 'npd', 'route.ts');
+    const body = put.slice(put.indexOf('export async function PUT'));
+    const guard = body.indexOf('if (googleSheetSync) {');
+    assert.ok(guard > 0);
+    assert.ok(body.indexOf('await resolveCurrentWeek()', guard) > guard);
+    assert.match(body.slice(guard, guard + 700), /wizard\.weekStart !== week/);
+    assert.ok(guard < body.indexOf('await readNpdSheet(sheet, week)'), 'refused before the sheet is read');
+    assert.ok(guard < body.indexOf("action: 'npd.rows.removed'"), 'refused before any audit or write');
+  });
+
+  test('the timestamp is written only after a save that landed, by the server, as npd.sheet.synced', () => {
+    const put = read('app', 'api', 'accounting', 'npd', 'route.ts');
+    const body = put.slice(put.indexOf('export async function PUT'));
+    const saved = body.indexOf("action: 'npd.sheet.saved'");
+    const synced = body.indexOf("action: 'npd.sheet.synced'");
+    assert.ok(body.indexOf('if (!saved.ok)') < saved && saved < synced, 'after the failure branch and the saved audit');
+    assert.match(body.slice(synced, synced + 600), /synced_by: authz\.sessionEmail/);
+    assert.equal(familyForAction('npd.sheet.synced')?.match, 'npd.');
+    const db = read('src', 'lib', 'supabase', 'npd-db.ts');
+    assert.match(db, /\.eq\('action', 'npd\.sheet\.synced'\)/);
+    assert.match(route, /readLastNpdSyncs\(week\)/);
+  });
+
+  test('Hogan Payroll Sync reads the sheet Kane named for HSL, pinned, by gid', () => {
+    const fetcher = read('src', 'lib', 'google-sheets', 'fetch-npd-sheet.ts');
+    assert.match(fetcher, /export const HSL_SOURCE = \{ spreadsheetId: '1VPPYSF0HFoLRpXiZB3Bjm-277_tO77-gm1xeUs0atX4', gid: 406220700 \} as const;/);
+    assert.match(fetcher, /if \(sheet === 'hsl'\) return \{ spreadsheetId: HSL_SOURCE\.spreadsheetId, gid: HSL_SOURCE\.gid \};/);
+  });
+
+  test('the wizard’s Initialize Payroll Data no longer carries the All Dept Payroll CSV card', () => {
+    const wizard = read('src', 'components', 'PayrollWizard.tsx');
+    assert.ok(!wizard.includes('handleRatesSheetSync'));
+    assert.ok(!wizard.includes("'/api/cron/sync-rates-from-sheet'"));
+    assert.ok(!/<h3[^>]*>\s*All Dept Payroll CSV\s*<\/h3>/.test(wizard));
+    // The rates sync it called stays OFF: rates belong to the Payment Catalog.
+    assert.match(read('app', 'api', 'cron', 'sync-rates-from-sheet', 'route.ts'), /const RATES_SHEET_SYNC_DISABLED = true;/);
+  });
+});

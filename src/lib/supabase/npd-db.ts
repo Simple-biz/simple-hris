@@ -320,3 +320,46 @@ export async function unlockNpdSheet(args: {
   if (!row) return { ok: false, refusal: null, error: 'The unlock returned nothing' };
   return { ok: true, version: Number(row.version) };
 }
+
+// ─── Google Sheet sync: when each tab × week was last synced ────────────────
+
+/** One `npd.sheet.synced` event: written by the PUT once a Google Sheet sync's save landed. */
+export type NpdLastSync = { at: string; by: string; tab: string | null; rowCount: number | null; version: number | null };
+
+/**
+ * The last Google Sheet sync of each tab for one week, from the audit trail (the
+ * same source as the wizard's "Last synced" lines). A failed read is an error,
+ * never "not synced yet".
+ */
+export async function readLastNpdSyncs(
+  week: string,
+): Promise<{ ok: true; bySheet: Record<NpdSheetKind, NpdLastSync | null> } | { ok: false; error: string }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const latest = async (sheet: NpdSheetKind): Promise<NpdLastSync | null> => {
+    const { data, error } = await supabase
+      .from('audit_log')
+      .select('created_at, user_name, details')
+      .eq('action', 'npd.sheet.synced')
+      .eq('resource_id', `${sheet}:${week}`)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return null;
+    const d = (data.details ?? {}) as Record<string, unknown>;
+    return {
+      at: typeof d.synced_at === 'string' && d.synced_at ? d.synced_at : String(data.created_at),
+      by: typeof d.synced_by === 'string' && d.synced_by ? d.synced_by : String(data.user_name ?? ''),
+      tab: typeof d.tab === 'string' ? d.tab : null,
+      rowCount: typeof d.row_count === 'number' ? d.row_count : null,
+      version: typeof d.version === 'number' ? d.version : null,
+    };
+  };
+  try {
+    const [allDepartments, hsl] = await Promise.all([latest('all_departments'), latest('hsl')]);
+    return { ok: true, bySheet: { all_departments: allDepartments, hsl } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}

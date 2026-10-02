@@ -1,14 +1,17 @@
 # NPD — New Payroll Dashboard (Accounting → NPD)
 
 The manual version of the Payroll Wizard: a spreadsheet Accounting fills by pasting from the Google
-Sheet it replaces (or by typing), one sheet per tab per pay week, saved to Supabase. Two tabs,
+Sheet it replaces (or by typing, or with the **Google Sheet sync** buttons, § Google Sheet sync), one
+sheet per tab per pay week, saved to Supabase. Two tabs,
 **All Departments** (30 columns) and **HSL** (32 columns), each with exactly the header row
 Accounting supplied. **Nothing is imported from HRIS and nothing here pays anyone.** The calculated
 columns use **the Google Sheet's own formulas**, editable per cell or per column (§ Formulas). It sits
 in the Accounting rail directly below Payroll Wizard; the label reads **NPD** and wipes to **New
 Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief (blueprint, CHOSEN
 1–7, no NEEDS); session log item 309. Plan: `docs/superpowers/plans/2026-10-01-npd-dashboard.md`.
-**Lock in** added the same day (item 310), **formulas** the same day (item 313).
+**Lock in** added the same day (item 310), **formulas** the same day (item 313). **Google Sheet sync**
+(All Dept Payroll CSV · Hogan Payroll Sync) added 2026-10-02 (item 320); plan
+`docs/superpowers/plans/2026-10-02-npd-google-sheet-sync.md`.
 
 ## Key files
 
@@ -30,6 +33,11 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | Route | `app/api/accounting/npd/route.ts` |
 | Page · grid · client save logic | `src/components/npd/NpdDashboard.tsx` · `NpdSheetGrid.tsx` · `useNpdSheet.ts` |
 | Rail label | `src/components/npd/NpdNavLabel.tsx` (wired in `src/components/Sidebar.tsx`) |
+| Google Sheet sync: sheet rows → NPD rows (pure) | `src/lib/npd/google-sheet-import.ts` (+ `.test.ts`) |
+| Google Sheet sync: the read-only fetch | `src/lib/google-sheets/fetch-npd-sheet.ts` |
+| Google Sheet sync: route (wizard week + rows) | `app/api/accounting/npd/google-sheet/route.ts` |
+| Google Sheet sync: the button on each tab | `src/components/npd/NpdGoogleSheetSync.tsx` (applied by `useNpdSheet.importSheet`) |
+| Sync vs the live Google Sheet, every week, every cell (read-only) | `scripts/verify-npd-google-sheet-sync.mts` |
 | Tab registration | `rbac/accounting-tabs.ts` · `rbac/view-tabs.ts` · `rbac/feature-permissions.ts` · `pages/visibility.ts` · `presence/page-label.ts` · `collab/CollabLayer.tsx` · `App.tsx` |
 
 ## Every cell is text, exactly as pasted
@@ -219,6 +227,84 @@ Departments and HSL lock separately; one sheet = one lock).
 - Locked does not mean "sent" or "paid". Nothing reads the lock yet. The HRIS vs NPD step still takes
   its own paste.
 
+## Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)
+
+Kane, 2026-10-02: *"Accounting - NPD - Transfer the button from Payroll Wizard - Initialize Payroll
+Data - All Dept Payroll CSV, AND WE WILL add a new button Called - "Hogan Payroll Sync" so on NPD we
+can sync them - and it will load the current week similar week that is Payroll Wizard is on"*, then
+*"Separate each sync button please put them in their respective tabs"*, *"we will use this sheet
+for HSL - https://docs.google.com/spreadsheets/d/1VPPYSF0HFoLRpXiZB3Bjm-277_tO77-gm1xeUs0atX4/edit?gid=406220700"*
+and *"MAKE SURE when we sync only the current week and add a timestamp"*. Built via `blueprint`
+(CHOSEN 1–11, no NEEDS), item 320.
+
+- **One button per tab, filling only that tab.** All Departments shows **All Dept Payroll CSV**,
+  which reads the Google Sheet's **All Dept** tab (`GOOGLE_SHEETS_RATES_SHEET_ID` /
+  `GOOGLE_SHEETS_RATES_TAB_NAME`, the moved button's own config). HSL shows **Hogan Payroll Sync**,
+  which reads **the sheet Kane named for HSL, pinned in code** (`HSL_SOURCE` in `fetch-npd-sheet.ts`:
+  spreadsheet `1VPPYSF0…atX4`, tab **gid 406220700**, titled "Hogan" on 2026-10-02). It finds that tab
+  **by gid**, so a rename or an env change can't point it at another sheet. Never move HSL back onto an
+  env var or a tab title. The labels live in `GOOGLE_SHEET_TABS`. If you move to the other tab while the sheet
+  is being read, that sync is dropped, so it never pulls you back. The bar shows to the `npd` **edit**
+  grant only, and so does the route.
+- **It is the wizard's button, moved, with a new job.** The wizard's card read
+  `GOOGLE_SHEETS_RATES_SHEET_ID` / `GOOGLE_SHEETS_RATES_TAB_NAME`, which is **this spreadsheet**. Its
+  old job, upserting `employee_hourly_rates` through `/api/cron/sync-rates-from-sheet`, has been off
+  since 2026-06-16 (`RATES_SHEET_SYNC_DISABLED`; rates belong to the Payment Catalog) and **stays
+  off**. Here the button writes NPD's tables and nothing else. Never re-enable the rates sync as part
+  of this: that is a money rule (`csv-imports.md` § Rates sync is DISABLED). The card is **gone from
+  the wizard** (Initialize Payroll Data now has 3 cards). Admin → CSV Imports keeps its own rates card.
+- **ONLY THE CURRENT WEEK, enforced twice.** The sync route takes **no week**; it always uses the
+  wizard's, and only rows labelled with that week come back. The `PUT` then **refuses (422) a save
+  tagged as a sync (`googleSheetSync`) for any week but the wizard's current one**, before it reads or
+  writes anything. An ordinary save of any week is unaffected. Never add a week parameter to the sync.
+- **The week is the Payroll Wizard's**: its live (`is_current`) Hubstaff upload's week, through
+  `resolveCurrentWeek`, the resolver Payroll Readiness uses. **There is no calendar fallback.** An
+  unreadable upload list (503), no upload, or a filename that names no Sunday (409) is refused.
+  Syncing into a guessed week would fill the wrong sheet. A past week someone is replaying in their
+  own wizard can't be seen by the server, so the sync always uses the live upload. The page switches
+  to that week first; it never syncs into the week on screen.
+- **A sync REPLACES that tab×week**: rows, the PHP→USD rate, and the column formulas, which reset to
+  the Google Sheet's. The page loads the rows (`GET /api/accounting/npd/google-sheet?sheet=…`,
+  read-only, audited `npd.google_sheet.loaded`) and saves them through **the normal `PUT`**. So
+  everything a paste gets, a sync gets too: the removed rows are audited first, a locked sheet is
+  refused (also refused before anything is fetched), and the version is checked. **Never give the
+  sync a write path of its own.** Edits on screen are saved before anything replaces them. A week
+  that already has rows asks first ("Replace the N saved rows … with the Google Sheet's M?"). A sync
+  is one undo step and saves at once. If the target sheet is left or fails to load before the rows
+  land, the sync is **dropped, never applied later** (`useNpdSheet.importSheet`).
+- **The timestamp ("Last synced Oct 2, 3:14 PM EDT by …") is the server's, written only when the
+  synced rows are SAVED.** The sync's save carries `googleSheetSync: { tab, sourceFile }`. Once that
+  save lands, the `PUT` writes `npd.sheet.synced` (`synced_at` = the save's time, `synced_by` = the
+  session email). The bar on each tab shows the latest one for the wizard's week (read from the audit
+  trail by `readLastNpdSyncs`, the wizard's own "Last synced" pattern), or *Not synced yet for …*.
+  A read that failed says so, never "not synced". A sync that was cancelled, refused or never saved is
+  never shown as synced, and an Undo before the save drops the tag. No migration: the trail is the
+  record. The other way is a `synced_at` column on `npd_sheets`, which needs another ALTER.
+- **A row belongs to a week by its parsed Week cell** (`Week 9/20/26 - 9/26/26`; case, spacing round
+  the dash and 2- or 4-digit years allowed), **never by its position**. A week's rows are scattered
+  through the tab (17 and 24 blocks on 2026-10-02). Every row labelled with that week is taken, in
+  sheet order. Rows with another week, no week, or an unreadable one are skipped and counted. A
+  missing column header refuses the whole load and names the header.
+- **NPD ends up equal to the sheet, cell for cell.** A cell holding the sheet's **standard** formula
+  (`SHEET_FORMULA_PATTERNS`, shared with the formulas verify script) is left to NPD's formula. Anything
+  else in a formula column is **typed over (amber) with the sheet's value**: a typed figure, a one-off
+  formula, or **a blank cell with no formula**. That last one is not a bug: left to NPD's formula, a
+  blank OT Rate would show Regular Rate × 1.5, which the sheet doesn't have, and the next formula
+  would read it.
+- **No digit is dropped.** A cell's text is what the sheet shows (`₱11,304.80`) when NPD's parser
+  reads that back as exactly the value the sheet holds. Otherwise it is the exact number: an hours
+  cell shown `40.25` that holds `40.2533` is stored `40.2533`, because NPD's formulas read the text
+  and the sheet's formulas read the number. On 2026-10-02, 286 All Dept hour cells displayed fewer
+  digits than they held.
+- **The rate is the constant in that week's USD formulas** (`=AU12*0.0160051`), the most common one,
+  and the first in the sheet if there is a tie. A row whose formula uses another constant keeps the
+  sheet's USD figure as typed, so no figure changes (e.g. 3 such rows in Jul 19–25). A constant NPD
+  refuses (≥ 1, or 0) is not used, and every USD figure stays the sheet's, typed.
+- **Proof:** `scripts/verify-npd-google-sheet-sync.mts` (read-only) rebuilds **every week of both
+  tabs** the way a sync would, lets NPD's engine fill them, and compares every cell with the sheet.
+  On 2026-10-02 that was 26 tab-weeks, 14,007 rows and 434,482 cells, with **0 mismatches**. Re-run it
+  after touching `google-sheet-import.ts` or `formulas.ts`.
+
 ## Removed rows are audited first
 
 Rows carry a client-minted UUID that stays stable across saves, so the route can say **which**
@@ -290,7 +376,23 @@ column must be parsed and refused exactly as that step's paste contract says.
 - **Grant PENDING:** Admin → Roles → Accounting → **NPD (New Payroll Dashboard)** → Edit for each
   person who will paste (Aliviah). Measured 2026-10-01: **0** active `npd` grants. Admins see it
   already.
-- No env vars, no n8n, no cron.
+- **Google Sheet sync (2026-10-02): no migration.** It saves through `npd_save_sheet_v2`, so it needs the
+  **formulas migration applied** like any save. Before that, a synced sheet stays on screen with *NPD formulas
+  are not set up yet*. Env: `GOOGLE_SHEETS_RATES_SHEET_ID` (+ optional `GOOGLE_SHEETS_RATES_TAB_NAME`, default
+  "All Dept") for **All Dept Payroll CSV only**, and the existing `GOOGLE_SHEETS_SERVICE_ACCOUNT_*` for both.
+  **Hogan Payroll Sync needs no sheet env**: its spreadsheet and gid are pinned in code. All are set in
+  `.env.local`. **Vercel production is PENDING confirmation for `GOOGLE_SHEETS_RATES_SHEET_ID`**: the old wizard
+  card never read it in production, because its route returned `disabled` before fetching. Without it, All Dept
+  Payroll CSV says *The All Dept Google Sheet is not configured* (503), and nothing changes. That env var is now
+  load-bearing for NPD: never remove it as "the rates sync is off".
+- Verified 2026-10-02 (sync): 21 pure tests; NPD + wiring 146/146; the live-sheet check above (0 mismatches, re-run
+  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36. It covered: each tab shows only its own button; an empty week
+  loads without asking and saves at version 0 with the sheet's rate; a week with rows asks first, and Cancel changes
+  nothing; Replace swaps rows, rate and column formulas; Undo restores all three; a locked week is refused; leaving
+  the sheet mid-load or the tab mid-read drops the sync; no rows says so; view-only gets no button; phone width does
+  not scroll sideways; each tab's "Last synced … by …" (or *Not synced yet*); the sync's save is tagged and then
+  shows the server's time; an Undo's save is not tagged. **Not clicked through signed in**, and the route has not been called against production.
+- No n8n, no cron.
 - Verified 2026-10-01 in a bundled client fixture driven by Playwright with a mocked API (40/40:
   paste with header skip, multi-line cells, edit/undo/redo, copy, delete, insert, 409 → Keep mine,
   failed save → Retry, tab switch flushes, week stepping, view-only, phone width, nav hover). Lock in

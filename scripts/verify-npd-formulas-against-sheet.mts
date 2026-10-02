@@ -27,12 +27,14 @@ import dotenv from 'dotenv';
 import columnsModule from '../src/lib/npd/columns';
 import formulasModule from '../src/lib/npd/formulas';
 import authModule from '../src/lib/google-sheets/auth';
+import importModule from '../src/lib/npd/google-sheet-import';
 import type { NpdSheetKind } from '../src/lib/npd/columns';
 import type { FormulaRow } from '../src/lib/npd/formulas';
 
 const { NPD_COLUMNS, normalizeHeaderText } = columnsModule;
 const { NPD_DEFAULT_FORMULAS, evaluateRow } = formulasModule;
 const { getServiceAccountAccessToken } = authModule;
+const { SHEET_FORMULA_PATTERNS } = importModule;
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 dotenv.config({ path: path.join(REPO_ROOT, '.env.local'), quiet: true });
@@ -44,32 +46,15 @@ const TABS: Array<{ title: string; sheet: NpdSheetKind }> = [
   { title: 'Hogan', sheet: 'hsl' },
 ];
 
-/** The sheet's standard formula per NPD key, row number as {r}, letters as in the sheet. */
-const SHEET_PATTERNS: Record<NpdSheetKind, Record<string, RegExp>> = {
-  all_departments: {
-    ot_rate: /^=AD\{r\}\*1\.5$/,
-    hours_until_ot: /^=IF\(AC\{r\}<40,\(40-AC\{r\}\),0\)$/,
-    orphan_hours_total_pay: /^=IF\(AC\{r\}>=40,\(AH\{r\}\*AF\{r\}\),IF\(\(AH\{r\}\+AC\{r\}\)<=40,AH\{r\}\*AD\{r\},\(AG\{r\}\*AD\{r\}\)\+\(AH\{r\}-AG\{r\}\)\*AF\{r\}\)\)$/,
-    total_hourly_pay: /^=\(\(AC\{r\}\*AD\{r\}\)\+\(AE\{r\}\*AF\{r\}\)\+\(AI\{r\}\)\+\(AJ\{r\}\*AK\{r\}\)\)$/,
-    total_pay_php: /^=AM\{r\}\+AO\{r\}\+AP\{r\}\+AQ\{r\}\+AR\{r\}\+AS\{r\}\+AN\{r\}$/,
-    php_usd_conversion: /^=AU\{r\}\s*\*\s*([0-9.]+)\s*$/,
-  },
-  hsl: {
-    hogan_we_rate: /^=AB\{r\}\+15$/,
-    total_ot_hours: /^=MAX\(0,\(\(AA\{r\}\+AC\{r\}\)-40\)\)$/,
-    ot_differential: /^=AB\{r\}\*0\.5$/,
-    hours_until_ot: /^=MAX\(0,IF\(\(AC\{r\}\+AA\{r\}\)<40,\(40-\(AA\{r\}\+AC\{r\}\)\),0\)\)$/,
-    orphan_hours_total_pay: /^=IF\(\(AA\{r\}\+AC\{r\}\)>=40,AH\{r\}\*\(AB\{r\}\+AF\{r\}\),IF\(\(AH\{r\}\+AC\{r\}\+AA\{r\}\)<40,AH\{r\}\*AB\{r\},\(AG\{r\}\*AB\{r\}\)\+\(AH\{r\}-AG\{r\}\)\*\(AB\{r\}\+AF\{r\}\)\)\)$/,
-    total_hourly_pay: /^=\(\(AA\{r\}\*AB\{r\}\)\+\(AC\{r\}\*AD\{r\}\)\)\+\(AE\{r\}\*AF\{r\}\)\+AI\{r\}\+\(AJ\{r\}\*AK\{r\}\)$/,
-    total_pay_php: /^=AM\{r\}\+AO\{r\}\+AP\{r\}\+AQ\{r\}\+AR\{r\}\+AS\{r\}\+AN\{r\}$/,
-    php_usd_conversion: /^=AU\{r\}\s*\*\s*([0-9.]+)\s*$/,
-  },
-};
+// The sheet's standard formula per NPD key lives in src/lib/npd/google-sheet-import.ts,
+// shared with NPD's Google Sheet sync, so the two can never drift apart.
+const SHEET_PATTERNS = SHEET_FORMULA_PATTERNS;
 
 async function main() {
   const token = await getServiceAccountAccessToken('https://www.googleapis.com/auth/spreadsheets.readonly');
   const values = async (title: string, render: 'FORMULA' | 'UNFORMATTED_VALUE') => {
-    const range = encodeURIComponent(`'${title}'!A1:CZ12000`);
+    // Open-ended rows: the tabs grow ~520 rows a week (a fixed A1:CZ12000 would cut them off).
+    const range = encodeURIComponent(`'${title}'!A1:CZ`);
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET}/values/${range}?valueRenderOption=${render}`,
       { headers: { Authorization: `Bearer ${token}` } },

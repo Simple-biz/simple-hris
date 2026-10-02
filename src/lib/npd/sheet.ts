@@ -333,7 +333,16 @@ export type NpdSaveBody = {
   usdPerPhp: number | null;
   /** This sheet's column formulas: key → stored formula, or "" for "no formula in this column". */
   columnFormulas: Record<string, string>;
+  /**
+   * Set when this save puts a Google Sheet sync on the sheet (All Dept Payroll CSV ·
+   * Hogan Payroll Sync). The route refuses it for any week but the Payroll Wizard's
+   * current one, and stamps the sync's time (`npd.sheet.synced`) once the save lands.
+   */
+  googleSheetSync: { tab: string; sourceFile: string | null } | null;
 };
+
+export const NPD_SYNC_TAB_MAX = 100;
+export const NPD_SYNC_SOURCE_FILE_MAX = 300;
 
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -382,6 +391,19 @@ export function validateSaveBody(raw: unknown): Validation<NpdSaveBody> {
   const columnFormulas = formulaMap(b.columnFormulas, 'columnFormulas', true);
   if (!columnFormulas.ok) return columnFormulas;
 
+  let googleSheetSync: NpdSaveBody['googleSheetSync'] = null;
+  if (b.googleSheetSync !== undefined && b.googleSheetSync !== null) {
+    const g = b.googleSheetSync as Record<string, unknown>;
+    if (typeof g !== 'object' || Array.isArray(g)) return { ok: false, error: 'googleSheetSync must be an object' };
+    if (typeof g.tab !== 'string' || g.tab.trim() === '' || g.tab.length > NPD_SYNC_TAB_MAX) {
+      return { ok: false, error: `googleSheetSync.tab must be the Google Sheet tab's name (1–${NPD_SYNC_TAB_MAX} characters)` };
+    }
+    if (g.sourceFile !== undefined && g.sourceFile !== null && (typeof g.sourceFile !== 'string' || g.sourceFile.length > NPD_SYNC_SOURCE_FILE_MAX)) {
+      return { ok: false, error: `googleSheetSync.sourceFile must be text of at most ${NPD_SYNC_SOURCE_FILE_MAX} characters` };
+    }
+    googleSheetSync = { tab: g.tab.trim(), sourceFile: typeof g.sourceFile === 'string' ? g.sourceFile : null };
+  }
+
   const seen = new Set<string>();
   const rows: NpdRow[] = [];
   for (let i = 0; i < b.rows.length; i += 1) {
@@ -427,6 +449,7 @@ export function validateSaveBody(raw: unknown): Validation<NpdSaveBody> {
       rows: trimmed,
       usdPerPhp,
       columnFormulas: columnFormulas.value,
+      googleSheetSync,
     },
   };
 }

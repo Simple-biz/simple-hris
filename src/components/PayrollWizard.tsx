@@ -2291,7 +2291,6 @@ export default function PayrollWizard({
   const [hslSyncLoading, setHslSyncLoading] = useState(false);
   const [hslSyncResult, setHslSyncResult] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
   const [masterSyncPct, setMasterSyncPct] = useState<{ pct: number } | null>(null);
-  const [ratesSyncPct, setRatesSyncPct] = useState<{ pct: number } | null>(null);
   const [hslSyncPct, setHslSyncPct] = useState<{ pct: number } | null>(null);
   const syncTimers = useRef<{ master?: ReturnType<typeof setInterval>; rates?: ReturnType<typeof setInterval>; hsl?: ReturnType<typeof setInterval> }>({});
   /**
@@ -12265,51 +12264,6 @@ export default function PayrollWizard({
     }
   };
 
-  const handleRatesSheetSync = async () => {
-    setRatesUploadLoading(true);
-    const stopProgress = startSyncProgress('rates', setRatesSyncPct);
-    let succeeded = false;
-    try {
-      const res = await fetch('/api/cron/sync-rates-from-sheet', { method: 'POST' });
-      const json = (await res.json()) as { success?: boolean; disabled?: boolean; rowCount?: number; uniqueEmployees?: number; inserted?: number; updated?: number; skippedNoWorkEmail?: number; skippedNoRate?: number; error?: string };
-      // Rates Sheet sync is intentionally disabled — rates are managed in the
-      // Payment Catalog, so the endpoint returns HTTP 200 + { disabled: true }.
-      // Surface that as a neutral info toast rather than a red failure. Mirrors
-      // AdminCsvImports.handleRatesSheetSync.
-      if (json.disabled) {
-        toast.info('Rates sync disabled', {
-          description: json.error ?? 'Rates are managed in the Payment Catalog, not the Google Sheet.',
-        });
-        return;
-      }
-      if (!res.ok || !json.success) throw new Error(json.error ?? 'Rates sync failed');
-      succeeded = true;
-      setRatesSyncPct({ pct: 100 });
-      setLastSyncAt((prev) => ({ ...prev, rates: new Date().toISOString() }));
-      toast.success('Payroll rates synced from Google Sheet', {
-        description: [
-          `${(json.uniqueEmployees ?? 0).toLocaleString()} employees`,
-          `${json.updated ?? 0} updated`,
-          `${json.inserted ?? 0} new`,
-        ].join(' · '),
-      });
-      // Pull the freshly-synced rates into the wizard's in-memory rate map so
-      // the Initial Calculation reflects them immediately — without this, the
-      // calc keeps using the page-load snapshot and newly-rated employees show
-      // "No rate" until a manual refresh. Mirrors handleMasterSheetSync's
-      // reloadMasterEmployees() call.
-      await loadEmployeeHourlyRates();
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('rates-profiles-stale'));
-    } catch (err) {
-      toast.error('Rates sync failed', { description: err instanceof Error ? err.message : String(err) });
-    } finally {
-      stopProgress();
-      setRatesUploadLoading(false);
-      if (succeeded) setTimeout(() => setRatesSyncPct(null), 1500);
-      else setRatesSyncPct(null);
-    }
-  };
-
   const handleHslSheetSync = async () => {
     setHslSyncLoading(true);
     setHslSyncResult(null);
@@ -13463,8 +13417,8 @@ export default function PayrollWizard({
             {/* ── TAB: Upload CSV (original content) ── */}
             {hubstaffActiveTab === 'upload' && (
               <div className="space-y-6">
-                {/* ── 3 upload types in a uniform grid: roster · rates · timesheet ── */}
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                {/* ── 3 upload types in a uniform grid: roster · Hogan pay plan · timesheet ── */}
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {/* 1. Master list (employee roster) */}
                   <section className="flex flex-col gap-3 rounded-xl border border-emerald-200/80 bg-emerald-50/40 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
                     <div className="flex items-start gap-3">
@@ -13524,57 +13478,13 @@ export default function PayrollWizard({
                     </div>
                   </section>
 
-                  {/* 2. Payroll rates (All Dept) */}
-                  <section className="flex flex-col gap-3 rounded-xl border border-sky-200/80 bg-sky-50/40 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-sky-200/90 bg-white dark:border-sky-800/60 dark:bg-sky-950/50">
-                        <DollarSign className="h-5 w-5 text-sky-700 dark:text-sky-400" aria-hidden />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-800/90 dark:text-sky-400/90">
-                          Payroll rates
-                        </p>
-                        <h3 className="text-base font-semibold leading-tight text-zinc-900 dark:text-white">
-                          All Dept Payroll CSV
-                        </h3>
-                      </div>
-                    </div>
-                    <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                      Pulls the <span className="font-medium">All Dept</span> sheet via Google Sheets API and upserts{' '}
-                      <span className="font-mono text-zinc-700 dark:text-zinc-300">employee_hourly_rates</span>{' '}
-                      by work email. Multiple weekly rows per employee are expected — the latest week wins.
-                    </p>
-                    {ratesSyncPct !== null && (
-                      <div className="rounded-lg border border-zinc-200 bg-white/80 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/60">
-                        <div className="mb-1 flex items-center justify-between text-[10.5px]">
-                          <span className="text-zinc-500 dark:text-zinc-400">Syncing payroll rates…</span>
-                          <span className="tabular-nums text-zinc-400 dark:text-zinc-600">{Math.round(ratesSyncPct.pct)}%</span>
-                        </div>
-                        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700/60">
-                          <div className="h-full rounded-full bg-sky-500 transition-[width] duration-100 ease-linear" style={{ width: `${ratesSyncPct.pct}%` }} />
-                        </div>
-                      </div>
-                    )}
-                    <div className="mt-auto flex flex-col gap-2 pt-1">
-                      {renderLastSynced(lastSyncAt.rates)}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={ratesUploadLoading}
-                        onClick={() => void handleRatesSheetSync()}
-                        className="w-full gap-2 border-sky-300/80 bg-white text-sky-900 hover:bg-sky-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100 dark:hover:bg-sky-950/70"
-                      >
-                        {ratesUploadLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4" />
-                        )}
-                        Sync from Google Sheet
-                      </Button>
-                    </div>
-                  </section>
+                  {/* The All Dept Payroll CSV card moved to Accounting → NPD on 2026-10-02
+                      (Kane: "Transfer the button from Payroll Wizard - Initialize Payroll Data -
+                      All Dept Payroll CSV"). There it loads the Google Sheet's All Dept tab into
+                      NPD for this wizard's week; its old job here, the rates sync, has been off
+                      since 2026-06-16. docs/features/npd-dashboard.md § Google Sheet sync. */}
 
-                  {/* 3. Hogan Smith Pay Plan */}
+                  {/* 2. Hogan Smith Pay Plan */}
                   <section className="flex flex-col gap-3 rounded-xl border border-violet-200/80 bg-violet-50/40 p-4 dark:border-violet-900/40 dark:bg-violet-950/20">
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-violet-200/90 bg-white dark:border-violet-800/60 dark:bg-violet-950/50">
@@ -13629,7 +13539,7 @@ export default function PayrollWizard({
                     </div>
                   </section>
 
-                  {/* 4. Hubstaff weekly timesheet — CSV upload only (the live API sync was
+                  {/* 3. Hubstaff weekly timesheet — CSV upload only (the live API sync was
                       removed: Hubstaff's 1000 req/hour cap made on-demand pulls unreliable). */}
                   <section
                     data-tutorial-target="step1-upload-weekly"

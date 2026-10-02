@@ -48,6 +48,11 @@ import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/s
  *    column formulas are part of the sheet: saved with it, undone with it (an undo
  *    step is rows AND settings together), and never carried over from another
  *    week. The server recalculates every formula cell on save, with the same module.
+ *  - GOOGLE SHEET SYNC (`importSheet`): the rows a sync fetched REPLACE the target
+ *    tab × week — rows, rate, and the column formulas reset to the Google Sheet's —
+ *    as one undo step, saved at once through the normal save (so the removed-rows
+ *    audit, the lock and the version check all apply). It waits for that sheet to
+ *    load, and is DROPPED (never applied later) if the sheet is left first.
  */
 
 export const SAVE_DEBOUNCE_MS = 1200;
@@ -66,6 +71,17 @@ export type LoadState = 'loading' | 'ready' | 'error' | 'missing';
 /** `locked` = a save the server refused because the sheet was locked meanwhile. */
 export type SaveState = 'idle' | 'pending' | 'saving' | 'error' | 'conflict' | 'locked';
 export type LockResult = { ok: boolean; message?: string };
+/** What a Google Sheet sync puts on a sheet (from GET /api/accounting/npd/google-sheet). */
+export type NpdImportPayload = {
+  readonly rows: ReadonlyArray<{ readonly values: readonly string[]; readonly overrides: readonly string[] }>;
+  readonly rateText: string;
+  /** The Google Sheet tab and the wizard upload it was synced for: sent with the save, stamped by the server. */
+  readonly tab: string;
+  readonly sourceFile: string | null;
+};
+/** A sync whose save landed: the server's timestamp. */
+export type NpdSyncStamp = { sheet: NpdSheetKind; week: string; at: string; by: string; tab: string };
+type SyncTag = { tab: string; sourceFile: string | null };
 /** The sheet's formula settings. Replaced (never mutated) on change, so identity = dirty. */
 export type NpdSettings = { readonly rateText: string; readonly columnFormulas: Readonly<Record<string, string>> };
 const NO_SETTINGS: NpdSettings = { rateText: '', columnFormulas: {} };
@@ -93,9 +109,14 @@ type Session = {
   timer: number | null;
   /** An unresolved conflict: no autosave until the editor chooses. */
   blocked: boolean;
+  /** A Google Sheet sync not saved yet: the next save carries it, and the server stamps its time. */
+  syncTag: SyncTag | null;
   undo: Snapshot[];
   redo: Snapshot[];
 };
+
+const keyOf = (sheet: NpdSheetKind, week: string) => `${sheet}:${week}`;
+type PendingImport = { key: string; payload: NpdImportPayload; resolve: (r: LockResult) => void };
 
 const isDirty = (s: Session) => s.saved !== null && (s.rows !== s.saved || s.settings !== s.savedSettings);
 const isLocked = (s: Session) => !!s.meta?.lockedAt;
@@ -142,8 +163,10 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   const [conflict, setConflict] = useState<NpdConflict | null>(null);
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
   const [settings, setSettingsState] = useState<NpdSettings>(NO_SETTINGS);
+  const [syncStamp, setSyncStamp] = useState<NpdSyncStamp | null>(null);
 
   const sessionRef = useRef<Session | null>(null);
+  const pendingImportRef = useRef<PendingImport | null>(null);
   const mountedRef = useRef(true);
   const canEditRef = useRef(canEdit);
   canEditRef.current = canEdit;
@@ -167,7 +190,9 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
 
     const sent = s.rows;
     const sentSettings = s.settings;
+    const sentTag = s.syncTag;
     const body = {
+      ...(sentTag ? { googleSheetSync: sentTag } : {}),
       sheet: s.sheet,
       week: s.week,
       expectedVersion: s.meta.version,
@@ -221,6 +246,12 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
         s.meta = metaFrom(j);
         s.saved = sent;
         s.savedSettings = sentSettings;
+        if (sentTag && s.syncTag === sentTag) {
+          s.syncTag = null;
+          if (typeof j.syncedAt === 'string') {
+            setSyncStamp({ sheet: s.sheet, week: s.week, at: j.syncedAt, by: String(j.syncedBy ?? ''), tab: sentTag.tab });
+          }
+        }
         if (live(s)) {
           setMeta(s.meta);
           setSaveError(null);
@@ -279,6 +310,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       if (!res.ok) {
         setLoadError(typeof j.error === 'string' ? j.error : `Could not load the sheet (${res.status})`);
         setLoadState(j.missing === true ? 'missing' : 'error');
+        settlePendingImport(s, { ok: false, message: 'The sheet could not be loaded, so nothing from the Google Sheet was put on it.' });
         return;
       }
       const loaded = ((Array.isArray(j.rows) ? j.rows : []) as Partial<NpdRow>[]).map((r) => ({
@@ -301,6 +333,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       s.undo = [];
       s.redo = [];
       s.blocked = false;
+      s.syncTag = null;
       setMeta(s.meta);
       setRowsState(padded);
       syncHistory(s);
@@ -308,10 +341,16 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       setSaveError(null);
       setSaveState('idle');
       setLoadState('ready');
+      const pending = pendingImportRef.current;
+      if (pending && pending.key === keyOf(s.sheet, s.week)) {
+        pendingImportRef.current = null;
+        pending.resolve(applyImport(s, pending.payload));
+      }
     } catch (e) {
       if (!live(s)) return;
       setLoadError(e instanceof Error ? e.message : 'Could not load the sheet');
       setLoadState('error');
+      settlePendingImport(s, { ok: false, message: 'The sheet could not be loaded, so nothing from the Google Sheet was put on it.' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -330,10 +369,17 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       inFlight: null,
       timer: null,
       blocked: false,
+      syncTag: null,
       undo: [],
       redo: [],
     };
     sessionRef.current = s;
+    // A sync waiting for ANOTHER sheet is dropped: it must never land later, unseen.
+    const pending = pendingImportRef.current;
+    if (pending && pending.key !== keyOf(sheet, week)) {
+      pendingImportRef.current = null;
+      pending.resolve({ ok: false, message: 'You moved to another sheet before the Google Sheet rows were put on it, so nothing was changed.' });
+    }
     setMeta(null);
     setRowsState([]);
     setSettingsState(NO_SETTINGS);
@@ -356,6 +402,9 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      const pending = pendingImportRef.current;
+      pendingImportRef.current = null;
+      pending?.resolve({ ok: false, message: 'The page was closed before the Google Sheet rows were put on the sheet.' });
     };
   }, []);
 
@@ -408,6 +457,8 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     const s = editable();
     const prev = s?.undo.pop();
     if (!s || !prev) return;
+    // Undoing a sync before it saved: what saves next is not the Google Sheet's.
+    s.syncTag = null;
     s.redo.push({ rows: s.rows, settings: s.settings });
     apply(s, prev.rows, prev.settings);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -518,6 +569,59 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     apply(s, next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Google Sheet sync ───────────────────────────────────────────────────
+
+  /** A failed load of the sheet a sync is waiting for ends that sync. */
+  const settlePendingImport = (s: Session, r: LockResult) => {
+    const pending = pendingImportRef.current;
+    if (pending && pending.key === keyOf(s.sheet, s.week)) {
+      pendingImportRef.current = null;
+      pending.resolve(r);
+    }
+  };
+
+  /** Replace a loaded sheet with the synced rows: one undo step, saved straight away. */
+  const applyImport = (s: Session, payload: NpdImportPayload): LockResult => {
+    if (!canEditRef.current) return { ok: false, message: 'You can view this sheet but not change it.' };
+    if (isLocked(s)) return { ok: false, message: 'This sheet is locked in, so nothing was changed. Unlock it first.' };
+    if (s.blocked) return { ok: false, message: 'Resolve the message above first; nothing was changed.' };
+    const settings: NpdSettings = { rateText: payload.rateText, columnFormulas: {} };
+    const width = NPD_COLUMNS[s.sheet].length;
+    const rows: NpdRow[] = payload.rows.map((r) => ({
+      id: newRowId(),
+      values: Array.from({ length: width }, (_, i) => r.values[i] ?? ''),
+      overrides: [...r.overrides],
+      formulas: {},
+    }));
+    pushUndo(s);
+    s.syncTag = { tab: payload.tab, sourceFile: payload.sourceFile };
+    apply(s, ensureSpareRows(recomputeSheet(s.sheet, rows, contextOf(settings)), width, newRowId), settings);
+    void saveNow(s);
+    return { ok: true };
+  };
+
+  /**
+   * Put a sync's rows on `target`. Applied now when that sheet is the one loaded;
+   * otherwise when it finishes loading (the dashboard switches to it first). A
+   * newer sync, leaving that sheet, or closing the page ends the wait with
+   * nothing changed.
+   */
+  const importSheet = useCallback(
+    (target: { sheet: NpdSheetKind; week: string }, payload: NpdImportPayload): Promise<LockResult> => {
+      const key = keyOf(target.sheet, target.week);
+      const earlier = pendingImportRef.current;
+      pendingImportRef.current = null;
+      earlier?.resolve({ ok: false, message: 'A newer sync replaced this one.' });
+      const s = sessionRef.current;
+      if (s && keyOf(s.sheet, s.week) === key && s.meta) return Promise.resolve(applyImport(s, payload));
+      return new Promise<LockResult>((resolve) => {
+        pendingImportRef.current = { key, payload, resolve };
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   /** Save now if anything is unsaved. Resolves false when the edits are NOT safely saved. */
   const flush = useCallback(async (): Promise<boolean> => {
@@ -637,6 +741,9 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     reload,
     loadTheirs,
     keepMine,
+    importSheet,
+    /** The last sync whose save landed in this page (the server's timestamp). */
+    syncStamp,
   };
 }
 

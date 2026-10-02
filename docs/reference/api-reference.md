@@ -2438,7 +2438,7 @@ Pay-bearing reads, all gated by `requireRateVisibilitySession()`.
 | `GET /api/accounting/transfers` | Read-only transfer history joined to the pay-rate change each move triggered. [route.ts](app/api/accounting/transfers/route.ts) |
 | `POST /api/accounting/transfers` | `{ id, action: 'retry_sheet' }` — retry the Google Sheet dept write-back for an `applied` transfer whose sheet sync failed (`409` if not `applied`). Audit `department_transfer.sheet_retry`. |
 | `GET /api/payroll/rate-history-bulk` | Every `employee_rate_history` row (`employee_email`, `regular_rate`, `ot_rate`, `effective_from`), newest-first, unpaginated. Feeds the Payroll Wizard's per-employee mid-cycle rate proration. [route.ts](app/api/payroll/rate-history-bulk/route.ts) |
-| `GET /api/accounting/sync-status` | Last successful Google-Sheet sync timestamps `{ master, rates, hsl, error }` (from the audit trail, so both cron and manual syncs count). Powers the Wizard Initialize step. [route.ts](app/api/accounting/sync-status/route.ts) |
+| `GET /api/accounting/sync-status` | Last successful Google-Sheet sync timestamps `{ master, rates, hsl, error }` (from the audit trail, so both cron and manual syncs count). Powers the Wizard Initialize step (master + Hogan pay plan cards; the rates card moved to NPD on 2026-10-02, so `rates` is no longer shown there). [route.ts](app/api/accounting/sync-status/route.ts) |
 | `GET /api/people/[email]` | One person's payout record (**masked**; unmask through `POST …/reveal-banking`, audited) + `bankingResolved` + their bank change history. **Since 2026-09-28 it no longer returns `history`.** Pay moved to the route below, so the banking read the popup, the Search Bar and the Payroll Wizard wait on never waits on statement assembly. [route.ts](app/api/people/[email]/route.ts) |
 | `GET /api/people/[email]/payroll` | *(2026-09-28)* `{ weeks: PayrollHistoryWeek[] }`, one person's pay week by week **with the bonuses**, for the People → Payroll tab (popup + Search Bar page). Each week is headlined by the statement's Net pay (bonus lines itemised), else the paid dispatch total (bonus total, not itemised), else hourly pay under that name (bonus `null` = not on record). **Fails closed:** a failed records, statement or dispatch read answers 500 with the reason, never an empty or hourly-only list. Same gate as the rest of People, deliberately not the statement modal's `accounting.payment_dispatch` grant. [people-payroll-history.md](../features/people-payroll-history.md) · [route.ts](app/api/people/[email]/payroll/route.ts) |
 
@@ -3201,7 +3201,10 @@ Same gate. `{ weeks: [{ sheet, week, version, rowCount, updatedAt, updatedBy, lo
 Gate `requireFeatureEdit('accounting', 'npd')`. Body `{ sheet, week, expectedVersion, usdPerPhp ("0.0162575" | null; > 0 and < 1),
 columnFormulas ({ key: "=…" | "" }), rows: [{ id (uuid), values, overrides?, formulas? }] }`. Formulas are stored by key
 (`={regular_rate}*1.5`) and must parse. **The server recalculates every formula cell before anything else** (only cells in
-`overrides` keep their text). Every cell a string ≤ 5,000 chars, ≤ 2,000 rows after trailing blank rows are trimmed; nothing is coerced. Replaces the
+`overrides` keep their text). Optional `googleSheetSync: { tab (1–100), sourceFile? (≤ 300) }` marks a Google Sheet sync's save:
+it is **refused 422 `{ syncWeek: true }` for any week but the Payroll Wizard's current one**, checked before anything is read; on
+success the route writes `npd.sheet.synced` (the sync's timestamp) after `npd.sheet.saved` and returns `syncedAt`, `syncedBy`.
+Every cell a string ≤ 5,000 chars, ≤ 2,000 rows after trailing blank rows are trimmed; nothing is coerced. Replaces the
 whole sheet through `npd_save_sheet_v2` (atomic, row-locked; **503** `{ missing: true }` until the formulas migration is applied). **200** `{ version, rowCount, updatedAt, updatedBy }`.
 **409** `{ conflict: true, version, updatedBy, updatedAt }` when `expectedVersion` is stale. **423** `{ locked: true,
 lockedBy, lockedAt }` when the sheet is locked in (checked first). Order (source-guarded): read current → 423 → early 409 → **audit `npd.rows.removed` with the full removed rows, refusing with 500 if that audit
@@ -3214,6 +3217,23 @@ lockedAt, lockedBy, version }` (audit `npd.sheet.locked`); **409** stale version
 lock. `{ action: 'unlock', sheet, week, reason }` (reason required, ≤ 500) → **200** `{ locked: false, version }`. The unlock is
 **audited first** (`npd.sheet.unlocked` with the reason); **500** and still locked if that audit fails; **409** if not locked.
 **503** `{ missing: true }` until the Lock in migration is applied. Locked/unlocked by = the session email.
+
+### `GET /api/accounting/npd/google-sheet[?sheet=all_departments|hsl]` — Google Sheet sync *(added 2026-10-02)*
+
+The **All Dept Payroll CSV** (moved here from Payroll Wizard → Initialize Payroll Data) and **Hogan Payroll Sync**
+buttons. [google-sheet/route.ts](../../app/api/accounting/npd/google-sheet/route.ts). Gate `requireFeatureEdit('accounting', 'npd')`.
+**Read-only**: it writes only its audit row (`npd.google_sheet.loaded`). The page saves what it returns through the `PUT` above.
+The week is the Payroll Wizard's live (`is_current`) Hubstaff upload's week (`resolveCurrentWeek`) with **no calendar fallback**:
+**503** if the upload list cannot be read, **409** with no upload or a filename that names no Sunday.
+**It takes no week** (only the wizard's current week can be synced). No `sheet` → **200** `{ week, sourceFile, lastSync:
+{ all_departments, hsl } (each `{ at, by, tab, rowCount, version }` or null = not synced yet), lastSyncError }`, where `lastSync`
+is null with `lastSyncError` set when the audit trail could not be read. With `sheet` → reads that tab: All Dept from
+`GOOGLE_SHEETS_RATES_SHEET_ID` / `GOOGLE_SHEETS_RATES_TAB_NAME`, Hogan from the PINNED spreadsheet `1VPPYSF0…atX4` tab gid
+406220700 (found by gid). It reads three ways (FORMULA / UNFORMATTED_VALUE / FORMATTED_VALUE, `spreadsheets.readonly`),
+and returns **200** `{ week, sourceFile, tab, rows: [{ values, overrides, sheetRow }], rateText, summary }`
+(`src/lib/npd/google-sheet-import.ts`). **404** `{ code: 'no_rows' }` when the tab has no rows for that week; **422** on a missing
+header or column (named) or more than 2,000 rows; **503** `{ missing: true }` when the spreadsheet env is not set; **502** when
+Google cannot be read.
 
 ---
 
@@ -3269,7 +3289,7 @@ Managers. The people picker: `{ people: [{ name, department, workEmail }] }` fro
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3334,6 +3354,7 @@ of cells — the matches were not re-run).
 | `/api/accounting/documents/termination/facts` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/documents/termination/search` | GET | `requireFeatureAccess` | — **no doc** |
 | `/api/accounting/npd` | GET, PUT, PATCH | `requireFeatureAccess` · `requireFeatureEdit` | [npd-dashboard](../features/npd-dashboard.md) · *this file* (§ 23) |
+| `/api/accounting/npd/google-sheet` | GET | `requireFeatureEdit` | [npd-dashboard](../features/npd-dashboard.md) (§ Google Sheet sync) · *this file* (§ 23) |
 | `/api/accounting/overview-snapshot` | POST | `requireRateVisibilitySession` | [audit-log](../features/audit-log.md) |
 | `/api/accounting/payout-extras` | GET | `requireRateVisibilitySession` | [accounting-total-payout](../features/accounting-total-payout.md) |
 | `/api/accounting/paystub` | GET | `requireFeatureAccess` | [cop-country-payees](../features/cop-country-payees.md) · [payment-dispatch](../features/payment-dispatch.md) |

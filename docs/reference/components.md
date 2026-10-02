@@ -2258,6 +2258,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/notifications/NotificationToast.tsx` | component | [notification-alerts](../features/notification-alerts.md) |
 | `src/components/notifications/NotificationsPanel.tsx` | component | *this file* · [kpi-scored-notification](../features/kpi-scored-notification.md) |
 | `src/components/npd/NpdDashboard.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
+| `src/components/npd/NpdGoogleSheetSync.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) (§ Google Sheet sync) |
 | `src/components/npd/NpdNavLabel.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
 | `src/components/npd/NpdSheetGrid.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
 | `src/components/npd/useNpdSheet.ts` | hook | [npd-dashboard](../features/npd-dashboard.md) |
