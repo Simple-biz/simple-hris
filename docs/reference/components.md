@@ -2262,6 +2262,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/npd/NpdNavLabel.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
 | `src/components/npd/NpdSheetGrid.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
 | `src/components/npd/NpdSheetSkeleton.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) (§ The grid) |
+| `src/components/npd/NpdLockDialog.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) (§ Lock in) |
 | `src/components/npd/useNpdSheet.ts` | hook | [npd-dashboard](../features/npd-dashboard.md) |
 | `src/components/onboarding/agreement-texts.tsx` | component | *this file* · [onboarding-ip-assignment](../features/onboarding-ip-assignment.md) |
 | `src/components/orphanage/CreateOrphanageStyleDisputeDialog.tsx` | component | *this file* |

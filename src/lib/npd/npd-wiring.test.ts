@@ -440,3 +440,28 @@ describe('NPD grid draws only the rows in view (Kane, 2026-10-02: "its extremly 
     assert.match(grid, /querySelector<HTMLElement>\('tr\[aria-rowindex\]'\)\?\.getBoundingClientRect\(\)\.height/);
   });
 });
+
+describe('NPD Lock in: a modal with timestamps, and smooth motion (Kane, 2026-10-02)', () => {
+  const dash = read('src', 'components', 'npd', 'NpdDashboard.tsx');
+  const dlg = read('src', 'components', 'npd', 'NpdLockDialog.tsx');
+  test('Lock in and Unlock open the house dialog, never window.confirm', () => {
+    assert.match(dash, /<NpdLockDialog/);
+    assert.match(dlg, /from '@\/components\/ui\/dialog'/);
+    for (const f of [dash, dlg]) assert.ok(!/window\.confirm\s*\(|confirm\s*\(\s*['"`]/.test(f), 'no browser confirm call');
+  });
+  test('the done step shows the server lock time, and unlock still requires a reason', () => {
+    assert.match(dlg, /\{lockedAt \? formatLockStamp\(lockedAt\) : 'just now'\}/);
+    assert.match(dlg, /disabled=\{working \|\| \(mode === 'unlock' && !trimmed\)\}/);
+    assert.match(dlg, /onOpenChange=\{\(o\) => !working && onOpenChange\(o\)\}/, 'cannot be dismissed while it works');
+  });
+  test('the locked bar transition is inline, because the global unlayered * rule in index.css beats Tailwind transition utilities', () => {
+    const bar = dash.slice(dash.indexOf('function LockedBar'));
+    assert.match(bar, /transitionProperty: 'grid-template-rows, opacity, margin-top'/);
+    const css = read('src', 'index.css');
+    assert.match(css, /\*,\n\*::before,\n\*::after \{\n  transition-property: background-color/, 'if this global rule ever goes, the inline styles can become classes again');
+  });
+  test('a tab or week switch glides the sheet in, and the white tab slides', () => {
+    assert.match(dash, /<motion\.div\s+key=\{`\$\{sheet\}:\$\{week\}`\}/);
+    assert.match(dash, /layoutId="npd-sheet-tab"/);
+  });
+});

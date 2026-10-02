@@ -33,6 +33,7 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | Route | `app/api/accounting/npd/route.ts` |
 | Page · grid · client save logic | `src/components/npd/NpdDashboard.tsx` · `NpdSheetGrid.tsx` · `useNpdSheet.ts` |
 | Loading state: the grid's skeleton | `src/components/npd/NpdSheetSkeleton.tsx` |
+| Lock in / Unlock modal (timestamps) | `src/components/npd/NpdLockDialog.tsx` |
 | Which rows the grid draws (pure) | `src/lib/npd/grid-window.ts` (+ `.test.ts`) |
 | Rail label | `src/components/npd/NpdNavLabel.tsx` (wired in `src/components/Sidebar.tsx`) |
 | Google Sheet sync: sheet rows → NPD rows (pure) | `src/lib/npd/google-sheet-import.ts` (+ `.test.ts`) |
@@ -224,8 +225,27 @@ Departments and HSL lock separately; one sheet = one lock).
   unlock: an unlock reloads the sheet from the server.
 - On screen: the **Locked in** pill, a bar naming who and when, a read-only grid ("This sheet is
   locked in. Unlock it to make changes." on a keystroke or paste), disabled row tools, and
-  "(locked)" beside that tab in the week menu. Lock in and Unlock are inline two-step actions,
-  never `window.confirm`.
+  "(locked)" beside that tab in the week menu.
+- **Lock in and Unlock each open a modal with its timestamps** (`NpdLockDialog`; Kane, 2026-10-02:
+  *"Smoothen the lockin animation please and add a modal that has a time stamp on it please"*,
+  replacing the first build's inline two-step). It is the house Dialog, **never `window.confirm`**.
+  - Lock in asks with a **live clock** ("Locks at …", ticking each second) plus the week, rows and
+    rate. Once done it shows **the server's lock time** (`lockedAt`, with seconds and the time zone)
+    and who locked it.
+  - Unlock shows when it was locked and by whom, and **requires the reason** before Unlock turns on.
+    Once done it shows the time it unlocked, on this device's clock, and says so.
+  - While it works the modal cannot be dismissed. A refusal (409 stale version, 400, 503) stays inside
+    it with the message, and nothing changes.
+
+  The rules underneath did not move: pending edits are saved first, exactly the version on screen
+  is locked, and the reason is audited before the unlock.
+- **The lock state changes smoothly.** The locked bar grows in and collapses (grid rows 0fr ⇄ 1fr,
+  320 ms, measured frame by frame), keeping its text while it collapses. The status pill crossfades
+  between states (each state is its own keyed element). The lock icon in the modal closes once,
+  the one authored moment. Reduced motion turns all of it off. **The bar's transition is an inline
+  style on purpose**: `src/index.css` has a global, unlayered `*, *::before, *::after
+  { transition-property: background-color, … }` rule, and unlayered CSS beats every Tailwind
+  `transition-*` utility. A class there silently does nothing (session log item 326).
 - **Before the Lock in migration is applied**, header reads use `select('*')` and treat missing lock
   columns as unlocked. That is true, because nothing can be locked without `npd_lock_sheet`. Saves
   keep working, and Lock in answers 503 *"Lock in is not set up yet"*.
@@ -429,6 +449,12 @@ measured from a drawn row. The scroll length and every row's position are theref
 every row were drawn. Copy, paste, select-all, delete and undo work on the model, never on the DOM, so
 undrawn rows are never missed. **Never go back to mapping every row in the body.**
 
+**Switching tab or week moves smoothly** (Kane, 2026-10-02: *"Even switching tabs should have nice
+animation"*). The white tab slides to the one picked (`motion` layoutId, 0.28 s, the scoreboard's
+`SlidingPill` ease). The new sheet glides in from the side it came from (`npd-sheet-area`, keyed by tab
+× week, 0.24 s, 14 px). The skeleton turning into the grid happens inside one key, so loading never
+re-animates. Reduced motion makes both instant.
+
 Cells render as text with one floating editor (a `textarea`, so line breaks survive) on the active
 cell. Rows are memoised, and the model keeps untouched rows' identity, so an edit re-renders one row.
 Paste parses Google Sheets' TSV, including quoted cells with line breaks or tabs and doubled
@@ -479,7 +505,7 @@ column must be parsed and refused exactly as that step's paste contract says.
   Payroll CSV says *The All Dept Google Sheet is not configured* (503), and nothing changes. That env var is now
   load-bearing for NPD: never remove it as "the rates sync is off".
 - Verified 2026-10-02 (sync): 21 pure tests; NPD + wiring 146/146; the live-sheet check above (0 mismatches, re-run
-  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (78/78 with the 600-person drawn-rows checks; 69/69 with the cache, the remembered week included: a reload paints the cached rows,
+  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (92/92 with the lock modal, the lock bar's frames and the switch motion; 78/78 with the 600-person drawn-rows checks; 69/69 with the cache, the remembered week included: a reload paints the cached rows,
   week menu and sync bar before a slow live read, nothing on that copy can be typed, a failed refresh keeps the
   copy read-only under Not refreshed, Try again loads it live; 55/55 with the progress bar: under the button and its
   width, each phase, green only after the save lands, red on failure, fades back, reduced motion, phone). It covered: each tab shows only its own button; an empty week

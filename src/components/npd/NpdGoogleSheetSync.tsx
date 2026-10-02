@@ -443,11 +443,9 @@ export default function NpdGoogleSheetSync({
             aria-valuemin={bar ? 0 : undefined}
             aria-valuemax={bar ? 100 : undefined}
             aria-valuenow={bar ? (SYNC_PHASE_VALUE[bar.phase] ?? undefined) : undefined}
-            className={cn(
-              'relative h-[3px] w-full overflow-hidden rounded-full transition-opacity duration-300 ease-out',
-              TRACK_TONE[sheet],
-              bar && !bar.leaving ? 'opacity-100' : 'opacity-0',
-            )}
+            className={cn('relative h-[3px] w-full overflow-hidden rounded-full', TRACK_TONE[sheet], bar && !bar.leaving ? 'opacity-100' : 'opacity-0')}
+            // Inline: the global unlayered `*` transition rule in index.css overrides transition utilities.
+            style={{ transitionProperty: 'opacity, background-color', transitionDuration: '300ms', transitionTimingFunction: 'ease-out' }}
           >
             {/* Its transform belongs to the Web Animations glide above; React never sets it. */}
             <span
@@ -462,9 +460,10 @@ export default function NpdGoogleSheetSync({
               <span
                 ref={sheenRef}
                 className={cn(
-                  'absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/55 to-transparent transition-opacity duration-300 dark:via-white/30',
+                  'absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/55 to-transparent dark:via-white/30',
                   sheenOn ? 'opacity-100' : 'opacity-0',
                 )}
+                style={{ transitionProperty: 'opacity', transitionDuration: '300ms' }}
               />
             </span>
           </div>
