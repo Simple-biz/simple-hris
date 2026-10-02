@@ -2439,3 +2439,44 @@ a board read). Whatever the budget does not reach is queued or deferred, never r
 **no commits** after its pass was stored (`b66e65c`, 2026-10-01 07:55, is already its close), and
 `push.py --offline` re-validated the stored pass with zero API calls.
 
+
+## Pass 38b — 2026-10-02 evening — Kane's word closes the Pending Deploy rows
+
+Kane, to session `d2ba4c35`, looking at pass 38's rows: *"Why are most of these pending deploye close
+them and end them they are already done lol"*. That is the word the close list was waiting for, so it is
+now in `pass.mts` as `KANE_LIVE` and is the recorded basis on every row it closes. Nothing was written to
+the board: the budget is dead until 00:00Z, and the 20:00 EDT API pass above carries it. Its order is
+unchanged, but its `review.mts` hash now covers these statuses, so Kane approves them there by hash.
+
+**What it closes** (`selfcheck()` PASS on 83 rows):
+- **18 of pass 37/38's rows go Done on the word.** Each has its last sha's commit date, all inside
+  Sprint 30, and `done: true` in `hris-plan.ts`.
+- **The Accounting Scoreboard row is among them. Its one blocker was MEASURED cleared**, not waved
+  through. `https://accounting-bonus.vercel.app/` is served by Vercel and answers `307` to
+  `/accounting-scoreboard`, then `200`, while a made-up `vercel.app` host answers `404`. So the domain
+  and `ACCOUNTING_SCOREBOARD_HOST` are in place. The Google redirect URI cannot be checked without
+  signing in, so it rests on his word (`accounting-scoreboard.md` Deploy notes).
+- **The SP-scale row goes Done on use**, not on the word. It is dev tooling with no prod surface (the
+  pass 17 precedent), and `selfcheck()` runs it on every review.
+- **The 58 close-list rows / 188 SP go Done** (`2026-10-02-monday-close-on-confirmation.tsv`). They
+  are appended to `ROWS`, with their shas recovered from pass 36's `ROWS` at `64728b4b`; all 58 last
+  shas match the close list. They already exist on the board, so `--only-new` corrects them at 3 calls
+  each, after the new rows. A budget death queues the rest to `pending-sp.json` under the hash.
+- Total: **78 rows Done / 281 SP** in this pass.
+
+**What it does NOT close.** These are re-measured read-only the same evening, with a negative control
+that read as missing:
+- The deletion cron: still **0** `hr.employee.scheduled_deletion` audit rows ever, so `CRON_SECRET`
+  is still the blocker.
+- NPD: **0** live `npd` grants.
+- HRIS vs NPD Save: `payroll_wizard_npd_comparisons` is still **missing**.
+
+An assertion cannot set an env var or run a migration, so these stay Pending Deploy with their
+blockers. Two rows were In Progress when Kane wrote and are now on origin/main: rob@'s Pay exclusion
+and the CEO Overview loading states. They move to **Pending Deploy**, not Done, because his word was
+about the Pending Deploy rows. The withheld TSV's Status / Actual SP / Completed Date columns were
+re-synced from `ROWS`: 20 Done, 4 Pending Deploy.
+
+**Budget:** the 20:00 EDT `--only-new` now carries 83 rows, ~250 calls on top of the board read, the 10
+moves and Gridline's pass. That is more than pass 36's day held. The queue makes a budget death cost a
+flush, not the SP. Run the new rows first; they are first in `ROWS`.

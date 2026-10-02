@@ -2178,71 +2178,71 @@ export const PLAN_TASKS: PlanTask[] = [
   // label index and window have been READ off the board. The budget was dead on 2026-09-29, so none of
   // those three is known yet. Never guess one. One row is Done on use (the blueprint skill); the rest
   // wait for Kane to say which ones he has looked at in prod.
-  { epic: 'HRIS-30', name: 'The HSL Branches KPI calculator can score the upcoming week', type: 'Bug', sp: 2, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-23', name: 'The Accounting → People Pay button shows only for the CEO — the button, not the pay route', type: 'Feature', sp: 1, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-32', name: 'Anniversary Gifts pick their gift from Gift items, items show a reference price again, and the free-form Suggestions card is gone', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-32', name: 'Gift Tracker Orders — approved gifts are locked into a priced PDF invoice, and the tab badge counts the gifts still open', type: 'Feature', sp: 8, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-32', name: 'A Gift Tracker order invoice can be deleted, and locking one shows a Creating invoice overlay', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-32', name: 'The Gift Tracker Submissions tab pages at 20', type: 'Feature', sp: 1, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-28', name: 'CEO Penny runs on Opus 5.5 with every Admin tool, and can map who holds access over whom', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-18', name: 'A leaver with no master row gets termination documents from the pay ledger, never by writing a master row back, and the starting rate is optional', type: 'Bug', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-03a', name: 'The Payment Dispatch hero leads with the pay week — one Start/Stop control, no heading or source filename, and a finished processor shows a green check', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-03a', name: 'A failed pay read on Payment Dispatch shows an error instead of claiming no Hubstaff cycle was uploaded', type: 'Bug', sp: 1, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-01a', name: 'A rehire’s promote reactivates their own off-boarded master row instead of leaving them invisible, and refuses a row on a different personal email', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
-  { epic: 'HRIS-06', name: 'The Payment Catalog re-reads the roster on refetch, so a transfer moves the sub-team headcounts', type: 'Bug', sp: 2, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-03b', name: 'A Personal Email cell holding a name instead of an address no longer wins paystub delivery, and five of the six paystubs it blocked are sent', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-19', name: 'Employees can no longer pick their sending bank — only Accounting sets it, and the approval queue is retired', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-09', name: 'The Employee Profile puts the ID card beside the information, matches the Overview navy in dark mode, and drops the Selected channel line', type: 'Chore', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-26', name: 'A manager may transfer someone out of a department they also manage, and never releases their own request', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-30', name: 'The HSL Branches KPI calculator can score the upcoming week', type: 'Bug', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-23', name: 'The Accounting → People Pay button shows only for the CEO — the button, not the pay route', type: 'Feature', sp: 1, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-32', name: 'Anniversary Gifts pick their gift from Gift items, items show a reference price again, and the free-form Suggestions card is gone', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-32', name: 'Gift Tracker Orders — approved gifts are locked into a priced PDF invoice, and the tab badge counts the gifts still open', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-32', name: 'A Gift Tracker order invoice can be deleted, and locking one shows a Creating invoice overlay', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-32', name: 'The Gift Tracker Submissions tab pages at 20', type: 'Feature', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-28', name: 'CEO Penny runs on Opus 5.5 with every Admin tool, and can map who holds access over whom', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-18', name: 'A leaver with no master row gets termination documents from the pay ledger, never by writing a master row back, and the starting rate is optional', type: 'Bug', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'The Payment Dispatch hero leads with the pay week — one Start/Stop control, no heading or source filename, and a finished processor shows a green check', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-03a', name: 'A failed pay read on Payment Dispatch shows an error instead of claiming no Hubstaff cycle was uploaded', type: 'Bug', sp: 1, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-01a', name: 'A rehire’s promote reactivates their own off-boarded master row instead of leaving them invisible, and refuses a row on a different personal email', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-06', name: 'The Payment Catalog re-reads the roster on refetch, so a transfer moves the sub-team headcounts', type: 'Bug', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-03b', name: 'A Personal Email cell holding a name instead of an address no longer wins paystub delivery, and five of the six paystubs it blocked are sent', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-19', name: 'Employees can no longer pick their sending bank — only Accounting sets it, and the approval queue is retired', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-09', name: 'The Employee Profile puts the ID card beside the information, matches the Overview navy in dark mode, and drops the Selected channel line', type: 'Chore', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-26', name: 'A manager may transfer someone out of a department they also manage, and never releases their own request', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The support.closed CHECK widen is NOT applied (measured 2026-09-29: one Close was
   // rejected on 09-25 at 20:03Z, and 0 notifications of the type exist), and there are still 0 Support grants.
   { epic: 'HRIS-17', name: 'Closing a Support ticket notifies the employee', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-25', name: 'The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-25', name: 'The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The warning lives in the n8n workflow JSON, and the live workflow runs whatever was
   // pasted last. The re-paste is PENDING (session-log item 207). Nothing here can measure n8n.
   { epic: 'HRIS-25', name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code', type: 'n8n Workflow', sp: 1, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-19', name: 'The People Bank changes feed filters by bank type', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-06', name: 'The Current Banks Who banks here list has unique row keys', type: 'Bug', sp: 1, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-19', name: 'The People Bank changes feed filters by bank type', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'The Current Banks Who banks here list has unique row keys', type: 'Bug', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
   // Supersedes the 12-second bound in the S29 row 'Start Processing plays one bounded cue…'. That row
   // was true when it shipped and stays. RENAMED 2026-09-30, before it ever reached the board: it was
   // staged as 'Start Processing plays the whole Jellyfish Jam, and the peer modal names who started
   // it', and 56e0a7f4 (09-29, S30) cut the whole song to one minute with a fade. A row must describe
   // the current rule, so this one keeps only what 0f4667c5 still makes true, and the length has its
   // own S30 row below.
-  { epic: 'HRIS-02a', name: 'The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-23', name: 'People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-23', name: 'The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-15', name: 'Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-01a', name: 'HR Onboarding loads every submission and staged hire past 1,000, and splits Archived from Archived/Complete', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
-  { epic: 'HRIS-01a', name: 'HR Onboarding All shows live submissions only, Archived gets its own pill, and the hero card and Lead Gen Bulk promote button are gone', type: 'Chore', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-15', name: 'Three more readers capped at 1,000 rows now page — the work-email taken set, the New Hire Checklist and the rates sync', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-10', name: 'The AI/API Team’s own managers read SP Rankings on My Team, and the Employee tab stays Kane’s', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'My Team Appointments ranking for Lead Gen and Callback — most appointments set, with tenure', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'My Team Rankings leaderboard for appointment teams — average appointments per day, week and month', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'PM Team Rankings rank by bonus earned, shown as KPI items', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'KPI Rankings for every per-person KPI-bonus department, cached per department, with Client VA order-only', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'Rankings gets a top-3 podium, a board-shaped skeleton and search by name or work email', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-10', name: 'Rankings View — one person’s KPI and ranking performance, week by week', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'HR, QC and Accounting get KPI Rankings and View as team boards', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator’s stored bonus', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-21', name: 'The Overview Payroll Notes card tracks wizard Steps 1–8, open steps first, in place of New hires and Attrition', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-02a', name: 'The Hi Kane payroll cycle greeting lists the unfinished wizard steps and jumps to Step N', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-02a', name: 'The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-23', name: 'People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-23', name: 'The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-01a', name: 'HR Onboarding loads every submission and staged hire past 1,000, and splits Archived from Archived/Complete', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-01a', name: 'HR Onboarding All shows live submissions only, Archived gets its own pill, and the hero card and Lead Gen Bulk promote button are gone', type: 'Chore', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'Three more readers capped at 1,000 rows now page — the work-email taken set, the New Hire Checklist and the rates sync', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-10', name: 'The AI/API Team’s own managers read SP Rankings on My Team, and the Employee tab stays Kane’s', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'My Team Appointments ranking for Lead Gen and Callback — most appointments set, with tenure', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'My Team Rankings leaderboard for appointment teams — average appointments per day, week and month', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'PM Team Rankings rank by bonus earned, shown as KPI items', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'KPI Rankings for every per-person KPI-bonus department, cached per department, with Client VA order-only', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'Rankings gets a top-3 podium, a board-shaped skeleton and search by name or work email', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-10', name: 'Rankings View — one person’s KPI and ranking performance, week by week', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'HR, QC and Accounting get KPI Rankings and View as team boards', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator’s stored bonus', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-21', name: 'The Overview Payroll Notes card tracks wizard Steps 1–8, open steps first, in place of New hires and Attrition', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'The Hi Kane payroll cycle greeting lists the unfinished wizard steps and jumps to Step N', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
   // Done on USE, the pass-17 rule for dev tooling with no prod surface: 505c3b2e (2026-09-28) was built
   // under it ("Blueprint, no NEEDS; six CHOSEN lines").
   { epic: 'HRIS-15', name: 'The blueprint skill takes its own recommendations and builds, stopping only for a closed NEEDS list', type: 'Chore', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-04', name: 'The Issues table moves smoothly, and a time-adjustment proof opens in a viewer with Next and a preview strip', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-02a', name: 'The Payroll Wizard’s all-uploads PAB merge is one streamed server call, byte-identical to the old result', type: 'Chore', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-09', name: 'The Employee Overview PAB calendar follows a wizard PAB Period save live', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-15', name: 'Every Payroll Wizard write leaves an audit row with the right actor, the Hubstaff uploader included', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-06', name: 'KPI Calculator Add External Member finds people in the manager’s other departments', type: 'Bug', sp: 2, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-06', name: 'Lead Gen can save and lock its KPI week again — the replace-set delete no longer puts every kept id in the URL', type: 'Bug', sp: 3, done: false, sprint: 'S29', priority: 'Critical' },
-  { epic: 'HRIS-10', name: 'Orientation on My Team pages its weeks, and each week’s people, at 10', type: 'Feature', sp: 2, done: false, sprint: 'S29', priority: 'Low' },
-  { epic: 'HRIS-01a', name: 'The offboarding queue dialogs render light in light mode', type: 'Bug', sp: 1, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-04', name: 'The Issues table moves smoothly, and a time-adjustment proof opens in a viewer with Next and a preview strip', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-02a', name: 'The Payroll Wizard’s all-uploads PAB merge is one streamed server call, byte-identical to the old result', type: 'Chore', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-09', name: 'The Employee Overview PAB calendar follows a wizard PAB Period save live', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Every Payroll Wizard write leaves an audit row with the right actor, the Hubstaff uploader included', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-06', name: 'KPI Calculator Add External Member finds people in the manager’s other departments', type: 'Bug', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Lead Gen can save and lock its KPI week again — the replace-set delete no longer puts every kept id in the URL', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'Critical' },
+  { epic: 'HRIS-10', name: 'Orientation on My Team pages its weeks, and each week’s people, at 10', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-01a', name: 'The offboarding queue dialogs render light in light mode', type: 'Bug', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
   // MONEY, recorded rather than smoothed over: on Kane's ruling (b) Pre/Post-Hearing now pays PHP 0 until
   // Accounting adds its bonus to the Library. See [[hsl-bonus-library-never-reaches-hsl]].
-  { epic: 'HRIS-30', name: 'Seven more HSL KPI branches are scored from the Payment Catalog — their hardcoded rules retired, and the Mgr column dropped', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'High' },
-  { epic: 'HRIS-06', name: 'KPI Calculator insight cards — department spotlight, top earner and the Sent-to-Accounting trend', type: 'Feature', sp: 5, done: false, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-15', name: 'Carla gets a Jellyfish Jam play bubble every five active minutes', type: 'Feature', sp: 3, done: false, sprint: 'S29', priority: 'Low' },
+  { epic: 'HRIS-30', name: 'Seven more HSL KPI branches are scored from the Payment Catalog — their hardcoded rules retired, and the Mgr column dropped', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'High' },
+  { epic: 'HRIS-06', name: 'KPI Calculator insight cards — department spotlight, top earner and the Sent-to-Accounting trend', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Carla gets a Jellyfish Jam play bubble every five active minutes', type: 'Feature', sp: 3, done: true, sprint: 'S29', priority: 'Low' },
   // ROLLS TO S30, and it is In Progress, NOT Pending Deploy. The panel button that opens the dialog was
   // never added (a permission classifier refused that one edit). OMS_RETURN_TABLE is unset even in
   // .env.local, and the OMS team has not created the table. See [[orphanage-oms-pull]].
@@ -2255,18 +2255,18 @@ export const PLAN_TASKS: PlanTask[] = [
   // pass's own staging) and 54803650 (one audit line) carry no row. 47f30fd2 shares KpiInsightCards.tsx
   // and HslBonusCalculator.tsx with 3f2f1ea5, so it is evidence on that row. a3babfbb + 81eb0299 are
   // one Advisor fix.
-  { epic: 'HRIS-09', name: 'The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload', type: 'Bug', sp: 2, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-03c', name: 'The Orphanage paste adds up a person’s repeated lines and prices the total once', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: 'The Start Processing cue plays one minute, then fades out', type: 'Feature', sp: 1, done: false, sprint: 'S30', priority: 'Low' },
-  { epic: 'HRIS-06', name: 'KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-03a', name: 'Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-03a', name: 'The Pending and Excluded queues swap their violet avatar gradient for lime → green', type: 'Chore', sp: 1, done: false, sprint: 'S30', priority: 'Low' },
-  { epic: 'HRIS-30', name: 'The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-09', name: 'The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload', type: 'Bug', sp: 2, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-03c', name: 'The Orphanage paste adds up a person’s repeated lines and prices the total once', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'The Start Processing cue plays one minute, then fades out', type: 'Feature', sp: 1, done: true, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-03a', name: 'The Pending and Excluded queues swap their violet avatar gradient for lime → green', type: 'Chore', sp: 1, done: true, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-30', name: 'The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   // Done on a database fact: nothing deploys, and the catalog was re-read 2026-09-30.
   { epic: 'HRIS-05', name: 'The Supabase Advisor’s four security errors are closed — RLS on three anon-writable tables, and active_employees runs as the caller', type: 'Bug', sp: 5, done: true, sprint: 'S30', priority: 'Critical' },
-  { epic: 'HRIS-32', name: 'A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-10', name: 'The Manager Bonus History tab is retired', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
-  { epic: 'HRIS-15', name: 'The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up', type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-32', name: 'A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-10', name: 'The Manager Bonus History tab is retired', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up', type: 'Chore', sp: 3, done: true, sprint: 'S30', priority: 'Low' },
 
   // —── PASS 37 · 2026-10-01 · Sep 30, 3 rows, 14 SP — the commits after pass 36's staging ─────────────
   // Pass 36 was APPLIED 2026-10-01 (hash e8e9a7031db4, 65 rows). These come from 31fd9c0a..57e712f9,
@@ -2277,9 +2277,9 @@ export const PLAN_TASKS: PlanTask[] = [
   // ae33f9fd are the findings their fixes close, so they are evidence on those rows. 64728b4b is pass
   // 36's own staging. f3b95535 is a ~70-line docs sweep, the same class as the docs-only commits pass 36
   // gave no row.
-  { epic: 'HRIS-26', name: 'Every Transfers list pages the whole table - HR, Accounting, Manager and the export', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: "The Payroll Wizard Validation step gets HRIS vs NPD - paste NPD's figures, match each work email to within a set number of cents, and list who is left out", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: "Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub's Hours x Rate multiplies out", type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-26', name: 'Every Transfers list pages the whole table - HR, Accounting, Manager and the export', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "The Payroll Wizard Validation step gets HRIS vs NPD - paste NPD's figures, match each work email to within a set number of cents, and list who is left out", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub's Hours x Rate multiplies out", type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'Critical' },
 
   // —── PASS 38 · 2026-10-02 · Oct 1-2, 21 rows, 98 SP, all Sprint 30 ─────────────────────────────────
   // Kane: "Give me all the HRIS - WITHHELD SP similar to the monday board format ... I will be copy
@@ -2294,27 +2294,27 @@ export const PLAN_TASKS: PlanTask[] = [
   // staging) and the one-line audit commits a2e091f3 / 5fe285bc / 92a880be / 16589600 / e68eb9c9 /
   // 23b425f5 (findings and measurements; a2e091f3 is evidence on the existing deletion-cron row, which
   // 5025844b now fixes). Scored on the 2026-10-02 scale: 3 is the default, 2 only for small docs.
-  { epic: 'HRIS-12', name: 'Every HR tab paints from the tab cache, and the shared panels paint and then always refetch', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-10', name: 'Cold Manager tabs paint from the cache, the Leaves tab included, with hire rows cached as a projection', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-15', name: 'Every Notifications panel gets Unread and Need Action tiles, and every card carries an Eastern time stamp', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-12', name: 'Opening HR Notifications no longer re-sends 140 onboarding notifications - the backfill asks per submission', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-12', name: 'Every HR tab paints from the tab cache, and the shared panels paint and then always refetch', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'Cold Manager tabs paint from the cache, the Leaves tab included, with hire rows cached as a projection', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Every Notifications panel gets Unread and Need Action tiles, and every card carries an Eastern time stamp', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-12', name: 'Opening HR Notifications no longer re-sends 140 onboarding notifications - the backfill asks per submission', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'High' },
   // Done on the DELIVERABLE: a doc-only Spike's output is the doc, on origin/main (the security re-read
   // row above set the precedent). 3 SP, not 2: 52 findings is not small volume.
   { epic: 'HRIS-05', name: 'OWASP Top 10 2025 security audit of HRIS - 52 findings, 6 Critical', type: 'Spike', sp: 3, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-02a', name: 'NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: 'NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: "NPD runs the Google Sheet's own formulas, editable from a right-click", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-02a', name: 'NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "NPD runs the Google Sheet's own formulas, editable from a right-click", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-02a', name: 'HRIS vs NPD Save output - an append-only saved version per pay week', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-06', name: "Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-06', name: "Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-06', name: "Accounting Scoreboard history backfilled from Carla's sheet, with an archive page", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-28', name: "Admin Penny shows an employee's ID card - rendered by its own tool, never picked from the file list", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-12', name: 'HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-15', name: 'The test suite is green again - 5,556 of 5,556 pass', type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-06', name: 'Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard history backfilled from Carla's sheet, with an archive page", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-28', name: "Admin Penny shows an employee's ID card - rendered by its own tool, never picked from the file list", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-12', name: 'HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-15', name: 'The test suite is green again - 5,556 of 5,556 pass', type: 'Chore', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'Critical' },
   { epic: 'HRIS-23', name: 'rob@ keeps View on People but never sees or files Pay', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-15', name: 'Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-15', name: 'Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
   { epic: 'HRIS-11', name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
 ];

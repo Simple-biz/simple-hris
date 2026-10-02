@@ -799,6 +799,22 @@ const LOCAL_ONLY =
   'IN PROGRESS: committed on local main and NOT on origin/main (main was 3 ahead after a fetch on ' +
   '2026-10-02). Kane pushes; once it is on origin/main it is Pending Deploy.';
 const ip = (what: string) => `${LOCAL_ONLY} ${what}`;
+/**
+ * Kane's word on the Pending Deploy rows, 2026-10-02 (to session d2ba4c35): the basis for every row
+ * that goes Done on it. It does NOT close a row with a MEASURED open external step (the honesty gate,
+ * SKILL.md: an assertion cannot run a migration or set an env var). Those keep Pending Deploy and
+ * their blocker, re-measured read-only the same evening.
+ */
+const KANE_LIVE =
+  'DONE ON KANE\'S WORD. Kane, 2026-10-02, on the Pending Deploy rows: "Why are most of these pending ' +
+  'deploye close them and end them they are already done lol". Every sha is on origin/main (0 ahead / ' +
+  '0 behind after a fetch on 2026-10-02), no external step is open, and the Completed Date is the last ' +
+  'sha\'s commit date.';
+const live = (what: string) => `${KANE_LIVE} ${what}`;
+/** Dev tooling has no prod surface, so it goes Done on USE (the pass 17 precedent). */
+const used = (what: string) =>
+  `DONE ON USE. Dev tooling with no prod surface (the pass 17 precedent): selfcheck() runs it over the ` +
+  `whole plan on every review and apply, and it ran clean for this pass. Every sha is on origin/main. ${what}`;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -827,32 +843,37 @@ export interface PassRow {
 export const ROWS: PassRow[] = [
   // —── PASS 37 · 2026-10-01 · Sep 30, 3 rows, 14 SP, all Sprint 30 ───────────────────────────────
   // Pass 36's 65 rows were APPLIED 2026-10-01 under e8e9a7031db4 and are recorded in git history and in
-  // scripts/tmp-verify-pass36.ids.json, so they leave this array. Nothing here is Done: Kane has not
-  // said he has looked at any of these in prod.
+  // scripts/tmp-verify-pass36.ids.json, so they leave this array. All three went Done on Kane's word,
+  // 2026-10-02 (KANE_LIVE).
   {
     name: 'Every Transfers list pages the whole table - HR, Accounting, Manager and the export',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-30',
     shas: ['27082696', '0f783bf4'],
-    basis: pd('Every list reader in department-transfer-requests.ts ended in .limit(300) (pending 500, and the cron read was un-ranged, so the 1,000-row cap applied). The table holds 434 rows, so HR showed "Completed 299", Accounting and its CSV/XLSX/PDF export stopped at 300, and the per-department Done / Release readers cut the newest 300 across ALL teams before filtering. All seven readers now drain through selectEveryTransferRow (selectAllPaged, ordered by timestamp + id, a sheared read retried once then refused). 12 tests against a 1,000-row-capped double, mutation-checked. 27082696 is the finding (audit item 290); 0f783bf4 is the fix (item 291).'),
+    basis: live('Every list reader in department-transfer-requests.ts ended in .limit(300) (pending 500, and the cron read was un-ranged, so the 1,000-row cap applied). The table holds 434 rows, so HR showed "Completed 299", Accounting and its CSV/XLSX/PDF export stopped at 300, and the per-department Done / Release readers cut the newest 300 across ALL teams before filtering. All seven readers now drain through selectEveryTransferRow (selectAllPaged, ordered by timestamp + id, a sheared read retried once then refused). 12 tests against a 1,000-row-capped double, mutation-checked. 27082696 is the finding (audit item 290); 0f783bf4 is the fix (item 291).'),
   },
   {
     name: "The Payroll Wizard Validation step gets HRIS vs NPD - paste NPD's figures, match each work email to within a set number of cents, and list who is left out",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-30',
     shas: ['e8c0cdba', '7e6a50e3', '9ed71b58', '505e3a99', 'ff397af1', '851777f6'],
-    basis: pd('Kane, 2026-09-30, over six commits on the same files (HrisNpdComparison.tsx, hris-npd-compare.ts). The CURRENT rule: Step 7 Validation gets an HRIS vs NPD tab, also in the full-screen view. Step 1 is NPD Figures (paste work emails and dollars; every unreadable line is listed). Step 2 is the output, with a search bar: one row per person, the union of both sides, green when HRIS and NPD agree within N cents, red with the difference, or Not in HRIS / Not in NPD. Nobody is dropped. The match is on the WORK EMAIL only. N defaults to 3 and Kane sets it in an "off by" box; it is never saved. People configured not to be paid this week (Excluded on Final Pay, or the department paused in Step 1) are left out and listed. HRIS $ is the staged final over the cycle FX, rounded as dispatch stages it. Compares only, and writes nothing. ~3,000 lines with tests. Audit items 292-297.'),
+    basis: live('Kane, 2026-09-30, over six commits on the same files (HrisNpdComparison.tsx, hris-npd-compare.ts). The CURRENT rule: Step 7 Validation gets an HRIS vs NPD tab, also in the full-screen view. Step 1 is NPD Figures (paste work emails and dollars; every unreadable line is listed). Step 2 is the output, with a search bar: one row per person, the union of both sides, green when HRIS and NPD agree within N cents, red with the difference, or Not in HRIS / Not in NPD. Nobody is dropped. The match is on the WORK EMAIL only. N defaults to 3 and Kane sets it in an "off by" box; it is never saved. People configured not to be paid this week (Excluded on Final Pay, or the department paused in Step 1) are left out and listed. HRIS $ is the staged final over the cycle FX, rounded as dispatch stages it. Compares only, and writes nothing. ~3,000 lines with tests. Audit items 292-297.'),
   },
   {
     name: "Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub's Hours x Rate multiplies out",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-09-30',
     shas: ['ae33f9fd', '57e712f9'],
-    basis: pd('Item 298: non-HSL pay was priced on WHOLE SECONDS while every statement prints 2dp hours, so 492 of 780 hours lines on the 09-20 → 09-26 stubs did not multiply out (12.54h × PHP 427.50 ≠ PHP 5,358.71). Kane: "only 2 decimals!" From the Sun 2026-09-27 pay week (TWO_DP_HOURS_PRICING_FROM), the wizard, proratePayForMidPeriodChange and Dispatch\'s computeProratedRowPay all price splitTwoDpHoursWeek: the total rounds half-up on integer seconds, then splits at 40 h. 237 lines of tests. MONEY, recorded: pay moves by fractions of a peso per line from that week on; Sep 20-26 and earlier keep their whole-seconds money, and their stubs still print the mismatch. Audit item 299.'),
+    basis: live('Item 298: non-HSL pay was priced on WHOLE SECONDS while every statement prints 2dp hours, so 492 of 780 hours lines on the 09-20 → 09-26 stubs did not multiply out (12.54h × PHP 427.50 ≠ PHP 5,358.71). Kane: "only 2 decimals!" From the Sun 2026-09-27 pay week (TWO_DP_HOURS_PRICING_FROM), the wizard, proratePayForMidPeriodChange and Dispatch\'s computeProratedRowPay all price splitTwoDpHoursWeek: the total rounds half-up on integer seconds, then splits at 40 h. 237 lines of tests. MONEY, recorded: pay moves by fractions of a peso per line from that week on; Sep 20-26 and earlier keep their whole-seconds money, and their stubs still print the mismatch. Audit item 299.'),
   },
   // —── PASS 38 · 2026-10-02 · 21 new rows / 98 SP + 1 existing row's status, all Sprint 30 ─────────
   // Kane pastes these BY HAND (the API budget died at 20:56Z). This array is still the record: selfcheck
   // proves every name is in the plan byte-exact, every Done row's date is its last sha's commit date,
-  // and no unshipped row carries a date. 1 Done (the OWASP audit, on its deliverable), 18 Pending Deploy
-  // with 4 of them blocked, 3 In Progress (not pushed). Nothing else is Done: Kane has not said he has
-  // looked at any of them in prod.
+  // and no unshipped row carries a date. As first built: 1 Done (the OWASP audit, on its deliverable), 18
+  // Pending Deploy with 4 blocked, 3 In Progress. UPDATED 2026-10-02 evening: everything is pushed, and
+  // Kane's word (KANE_LIVE) closes every Pending Deploy row with no open step, the Scoreboard included
+  // (its domain measured live). Still Pending Deploy: the 3 rows whose blocker re-measured OPEN, and the
+  // 2 rows that were In Progress when he spoke. The SP-scale row is Done on use.
   {
     name: "Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
     status: 'Pending Deploy',
@@ -862,27 +883,31 @@ export const ROWS: PassRow[] = [
   },
   {
     name: "Every HR tab paints from the tab cache, and the shared panels paint and then always refetch",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["70381811"],
-    basis: pd("Item 303. Every HR tab paints from src/lib/hr/tab-cache.ts; the shared panels (Leave requests, Announcements, Hiring cards, New Hire checklist, Notifications, S-WALL) paint from it but never skip their fetch. 18 files, 86 lines of tests."),
+    basis: live("Item 303. Every HR tab paints from src/lib/hr/tab-cache.ts; the shared panels (Leave requests, Announcements, Hiring cards, New Hire checklist, Notifications, S-WALL) paint from it but never skip their fetch. 18 files, 86 lines of tests."),
   },
   {
     name: "Cold Manager tabs paint from the cache, the Leaves tab included, with hire rows cached as a projection",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["9dbc17bc", "c5555f3d"],
-    basis: pd("Items 304 and 306, clustered on ManagerApp.tsx and src/lib/manager/tab-cache.ts. A cold Manager tab paints from mgr-tab:, hire rows are cached as a projection (hire-row-cache.ts, 99 lines of tests), and the Leaves tab joins (Kane chose B)."),
+    basis: live("Items 304 and 306, clustered on ManagerApp.tsx and src/lib/manager/tab-cache.ts. A cold Manager tab paints from mgr-tab:, hire rows are cached as a projection (hire-row-cache.ts, 99 lines of tests), and the Leaves tab joins (Kane chose B)."),
   },
   {
     name: "Every Notifications panel gets Unread and Need Action tiles, and every card carries an Eastern time stamp",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["abf5f7a0"],
-    basis: pd("Item 305. Unread is a SERVER count (the list stops at 1,000 rows; the heaviest recipients hold 12-14k), Need Action counts one per submission, a failed read shows a dash and never 0, and every card is stamped like \"April 5, 1999 : 8:00 AM EST\" on the America/New_York clock. One shared panel, so all nine dashboards. 163 lines of tests."),
+    basis: live("Item 305. Unread is a SERVER count (the list stops at 1,000 rows; the heaviest recipients hold 12-14k), Need Action counts one per submission, a failed read shows a dash and never 0, and every card is stamped like \"April 5, 1999 : 8:00 AM EST\" on the America/New_York clock. One shared panel, so all nine dashboards. 163 lines of tests."),
   },
   {
     name: "Opening HR Notifications no longer re-sends 140 onboarding notifications - the backfill asks per submission",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["97f1bdef"],
-    basis: pd("Item 305. The backfill decided \"already notified\" from one unpaged read, which stopped at 1,000 rows, so all 7 pending submissions looked new and went to 20 HR recipients on every open (140 rows). It now asks per submission and inserts nothing on any failed check. Measured read-only: an open now inserts 0. The existing duplicates stay; cleaning them is Kane's call."),
+    basis: live("Item 305. The backfill decided \"already notified\" from one unpaged read, which stopped at 1,000 rows, so all 7 pending submissions looked new and went to 20 HR recipients on every open (140 rows). It now asks per submission and inserts nothing on any failed check. Measured read-only: an open now inserts 0. The existing duplicates stay; cleaning them is Kane's call."),
   },
   {
     name: "OWASP Top 10 2025 security audit of HRIS - 52 findings, 6 Critical",
@@ -900,27 +925,31 @@ export const ROWS: PassRow[] = [
   },
   {
     name: "NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["f39bed0d", "6a2c1f22"],
-    basis: pd("Items 310 and 325. The lock lives in the database (npd_lock_sheet / npd_unlock_sheet, and the save refuses a locked week), and 6a2c1f22 moves Lock in / Unlock into a modal with timestamps. Lock in migration APPLIED 2026-10-02 ~18:59Z, 39/39 checks (npd_sheets.locked_at measured present)."),
+    basis: live("Items 310 and 325. The lock lives in the database (npd_lock_sheet / npd_unlock_sheet, and the save refuses a locked week), and 6a2c1f22 moves Lock in / Unlock into a modal with timestamps. Lock in migration APPLIED 2026-10-02 ~18:59Z, 39/39 checks (npd_sheets.locked_at measured present)."),
   },
   {
     name: "NPD runs the Google Sheet's own formulas, editable from a right-click",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["a24daf85", "f255de46"],
-    basis: pd("Item 313. An 890-line formula engine with 296 lines of tests evaluates the sheet's own formulas, and a right-click edits them. Formulas migration APPLIED 2026-10-02 ~19:00Z, 32/32 checks (npd_sheets.usd_per_php measured present); f255de46 records both applies."),
+    basis: live("Item 313. An 890-line formula engine with 296 lines of tests evaluates the sheet's own formulas, and a right-click edits them. Formulas migration APPLIED 2026-10-02 ~19:00Z, 32/32 checks (npd_sheets.usd_per_php measured present); f255de46 records both applies."),
   },
   {
     name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["c28a7041", "b9768e46", "4b8fbff7"],
-    basis: pd("Item 320. One sync button per tab, the wizard's CURRENT week only (the PUT refuses any other), a server Last synced stamp, and a progress bar driven by the sync's real phases that glides on the compositor (4b8fbff7). No migration: it saves through npd_save_sheet_v2."),
+    basis: live("Item 320. One sync button per tab, the wizard's CURRENT week only (the PUT refuses any other), a server Last synced stamp, and a progress bar driven by the sync's real phases that glides on the compositor (4b8fbff7). No migration: it saves through npd_save_sheet_v2."),
   },
   {
     name: "NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["ee10cff5", "bb7d675c", "ab6df389", "1b4fa0a8"],
-    basis: pd("Items 321, 323 and 324, clustered on NpdDashboard.tsx / NpdSheetGrid.tsx. The tab cache holds a PICTURE only: read-only until the live read lands, never editable. A skeleton holds the layout so nothing moves, the grid draws only the rows in view (grid-window.ts), and ee10cff5 drops the header paragraph."),
+    basis: live("Items 321, 323 and 324, clustered on NpdDashboard.tsx / NpdSheetGrid.tsx. The tab cache holds a PICTURE only: read-only until the live read lands, never editable. A skeleton holds the layout so nothing moves, the grid draws only the rows in view (grid-window.ts), and ee10cff5 drops the header paragraph."),
   },
   {
     name: "HRIS vs NPD Save output - an append-only saved version per pay week",
@@ -931,64 +960,483 @@ export const ROWS: PassRow[] = [
   },
   {
     name: "Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["7458fc5a", "c3197d8d", "54958e52"],
-    basis: pd("Item 315, plus its polish (c3197d8d) and fix (54958e52), clustered on src/components/accounting-scoreboard/. Access is the board's member list, never an HRIS role. It writes no pay. Migration APPLIED 2026-10-01, 121/121 checks. It works today at /accounting-scoreboard on the main HRIS host."),
-    blockers: ["The accounting-bonus.vercel.app domain is not set up: Vercel domain, ACCOUNTING_SCOREBOARD_HOST env, and the OAuth redirect URI (accounting-scoreboard.md Deploy notes, PENDING Kane)"],
+    basis: live("Its blocker was MEASURED cleared on 2026-10-02: https://accounting-bonus.vercel.app/ is served by Vercel and answers 307 to /accounting-scoreboard and then 200 (the host rule; a made-up vercel.app host answers 404), so the Vercel domain and ACCOUNTING_SCOREBOARD_HOST are in place. The Google OAuth redirect URI cannot be checked without signing in, so it rests on Kane's word. Item 315, plus its polish (c3197d8d) and fix (54958e52), clustered on src/components/accounting-scoreboard/. Access is the board's member list, never an HRIS role. It writes no pay. Migration APPLIED 2026-10-01, 121/121 checks. It works today at /accounting-scoreboard on the main HRIS host."),
   },
   {
     name: "Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["c476ffe8", "8a4a514d"],
-    basis: pd("Items 317 and 318. Payroll Timing comes from the wizard's own cycle-stamped start, never the global lock, and every past week is checked. Adds a stop-light Overview and a phone burger menu."),
+    basis: live("Items 317 and 318. Payroll Timing comes from the wizard's own cycle-stamped start, never the global lock, and every past week is checked. Adds a stop-light Overview and a phone burger menu."),
   },
   {
     name: "Accounting Scoreboard history backfilled from Carla's sheet, with an archive page",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-01',
     shas: ["789fb0fa"],
-    basis: pd("Item 319. The board's past is filled from Carla's sheet: a day belongs to the sheet OR the board, never both. The archive migration and the fill are APPLIED (11/11 read-back checks; accounting_scoreboard_archive measured present 2026-10-02). The record is 189, not the sheet's typed 129."),
+    basis: live("Item 319. The board's past is filled from Carla's sheet: a day belongs to the sheet OR the board, never both. The archive migration and the fill are APPLIED (11/11 read-back checks; accounting_scoreboard_archive measured present 2026-10-02). The record is 189, not the sheet's typed 129."),
   },
   {
     name: "Admin Penny shows an employee's ID card - rendered by its own tool, never picked from the file list",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["9eda01e1"],
-    basis: pd("Kane: the ID card query returned the Penny mascot, because a time-adjustment attachment IS the mascot PNG. get_employee_id_card now renders the card with the employee's own painter, and id_card is refused on the file list by name. Withheld from CEO."),
+    basis: live("Kane: the ID card query returned the Penny mascot, because a time-adjustment attachment IS the mascot PNG. get_employee_id_card now renders the card with the employee's own painter, and id_card is refused on the file list by name. Withheld from CEO."),
   },
   {
     name: "HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["071297ce"],
-    basis: pd("The HR onboarding gates had no map for DATA sub-teams, so picking hsl:attorney disabled Bypass and Save. A gate now reads its picker's map. 79 lines of tests."),
+    basis: live("The HR onboarding gates had no map for DATA sub-teams, so picking hsl:attorney disabled Bypass and Save. A gate now reads its picker's map. 79 lines of tests."),
   },
   {
     name: "The test suite is green again - 5,556 of 5,556 pass",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["88237d71"],
-    basis: pd("Closes Open items 203, 107, 96 and 43. Mostly test fixes, plus a 4-line ManagerApp.tsx change, which is why this is not Done on use."),
+    basis: live("Closes Open items 203, 107, 96 and 43. Mostly test fixes, plus a 4-line ManagerApp.tsx change, which is why this is not Done on use."),
   },
   {
     name: "Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person",
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["4ef0da13"],
-    basis: pd("Item 322, MONEY. A salary is a dated fact about a person, legal on an individual Pay Structure only. One resolver for the wizard and current pay returns hourly, salary or HELD, and a held row pays nothing. The migration is APPLIED, measured 2026-10-02: payment_catalog_pay_structures.pay_basis and employee_salary_history.pay_basis both exist, and a negative-control column errors 42703. That contradicts the PENDING note in salaried-pay-basis.md; --verify was not run."),
+    basis: live("Item 322, MONEY. A salary is a dated fact about a person, legal on an individual Pay Structure only. One resolver for the wizard and current pay returns hourly, salary or HELD, and a held row pays nothing. The migration is APPLIED, measured 2026-10-02: payment_catalog_pay_structures.pay_basis and employee_salary_history.pay_basis both exist, and a negative-control column errors 42703. That contradicts the PENDING note in salaried-pay-basis.md; --verify was not run."),
   },
   {
     name: "rob@ keeps View on People but never sees or files Pay",
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ["7c7f7046"],
-    basis: ip("pay-action-exclusions.ts is the one list: the UI hides Pay and /api/people/pay returns 403 for anyone on it. 53 lines of tests."),
+    basis: pd("pay-action-exclusions.ts is the one list: the UI hides Pay and /api/people/pay returns 403 for anyone on it. 53 lines of tests."),
   },
   {
     name: "Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default",
-    status: 'In Progress',
+    status: 'Done',
+    completed: '2026-10-02',
     shas: ["b9c658cc"],
-    basis: ip("Kane 2026-10-02. One scale file (sp-scale.mts) checked over the whole plan; the 24 rows already at 1 SP are exempt by name on a list that only shrinks. Item 327."),
+    basis: used("Kane 2026-10-02. One scale file (sp-scale.mts) checked over the whole plan; the 24 rows already at 1 SP are exempt by name on a list that only shrinks. Item 327."),
   },
   {
     name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache",
-    status: 'In Progress',
+    status: 'Pending Deploy',
     shas: ["89b4347f"],
-    basis: ip("Items 328-329, committed by a concurrent session while this pass was being built. The CEO Overview drops its full-page skeleton and loads the way the Accounting Overview does; Payments to send joins the tab cache (payments-live-cache.ts, 103 lines of tests), and the rolling payout is extracted into accounting/rolling-payout.tsx."),
+    basis: pd("Items 328-329, committed by a concurrent session while this pass was being built. The CEO Overview drops its full-page skeleton and loads the way the Accounting Overview does; Payments to send joins the tab cache (payments-live-cache.ts, 103 lines of tests), and the rolling payout is extracted into accounting/rolling-payout.tsx."),
+  },
+  // —── PASS 38b · 2026-10-02 · 58 EXISTING rows / 188 SP close on Kane's word ─────────────────────
+  // docs/audits/2026-10-02-monday-close-on-confirmation.tsv: pass 36 wrote each as Pending Deploy
+  // (e8e9a7031db4, 2026-10-01). Every sha is on origin/main, no blocker is recorded, and the last sha's
+  // date falls inside the row's sprint. Shas recovered from pass 36's ROWS (64728b4b), last sha
+  // checked against the close list. They already exist, so --only-new corrects them (3 calls each),
+  // and a budget death queues the rest to pending-sp.json under the approval hash.
+  {
+    name: "The HSL Branches KPI calculator can score the upcoming week",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['00cd5eac'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Accounting → People Pay button shows only for the CEO — the button, not the pay route",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['131289f7'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Anniversary Gifts pick their gift from Gift items, items show a reference price again, and the free-form Suggestions card is gone",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['d4cf4d17', 'd73f5db2', 'b386f258'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Gift Tracker Orders — approved gifts are locked into a priced PDF invoice, and the tab badge counts the gifts still open",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['c98b0a99', 'ec77a51d', '923d7956'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A Gift Tracker order invoice can be deleted, and locking one shows a Creating invoice overlay",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['c6f4d06f'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Gift Tracker Submissions tab pages at 20",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['b47bb153'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "CEO Penny runs on Opus 5.5 with every Admin tool, and can map who holds access over whom",
+    status: 'Done',
+    completed: '2026-09-23',
+    shas: ['643d25af'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A leaver with no master row gets termination documents from the pay ledger, never by writing a master row back, and the starting rate is optional",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['ca36e17e', '6565022d'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Payment Dispatch hero leads with the pay week — one Start/Stop control, no heading or source filename, and a finished processor shows a green check",
+    status: 'Done',
+    completed: '2026-09-24',
+    shas: ['e7f67ad2', 'f957cb10', 'd309dc61', '277352b0'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A failed pay read on Payment Dispatch shows an error instead of claiming no Hubstaff cycle was uploaded",
+    status: 'Done',
+    completed: '2026-09-24',
+    shas: ['9e775ef6'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A rehire’s promote reactivates their own off-boarded master row instead of leaving them invisible, and refuses a row on a different personal email",
+    status: 'Done',
+    completed: '2026-09-24',
+    shas: ['e41ce525'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Payment Catalog re-reads the roster on refetch, so a transfer moves the sub-team headcounts",
+    status: 'Done',
+    completed: '2026-09-24',
+    shas: ['327f5d94'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A Personal Email cell holding a name instead of an address no longer wins paystub delivery, and five of the six paystubs it blocked are sent",
+    status: 'Done',
+    completed: '2026-09-24',
+    shas: ['2a4ab788', 'a09ba22d'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Employees can no longer pick their sending bank — only Accounting sets it, and the approval queue is retired",
+    status: 'Done',
+    completed: '2026-09-24',
+    shas: ['6cabcff3'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Employee Profile puts the ID card beside the information, matches the Overview navy in dark mode, and drops the Selected channel line",
+    status: 'Done',
+    completed: '2026-09-27',
+    shas: ['aeb2efad', 'b7e954c8', '0d5e26e2'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A manager may transfer someone out of a department they also manage, and never releases their own request",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['431b3914'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['d21a0a3b', '87c407ff'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The People Bank changes feed filters by bank type",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['faf996f9'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Current Banks Who banks here list has unique row keys",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['85085bf5'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['0f4667c5'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['27225f85', '9258059e', 'b2c7de37'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['7480c046'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['ab361ae3', 'cbe1754f'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "HR Onboarding loads every submission and staged hire past 1,000, and splits Archived from Archived/Complete",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['ae4e7392'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "HR Onboarding All shows live submissions only, Archived gets its own pill, and the hero card and Lead Gen Bulk promote button are gone",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['ed79a222', '5c5cc077'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Three more readers capped at 1,000 rows now page — the work-email taken set, the New Hire Checklist and the rates sync",
+    status: 'Done',
+    completed: '2026-09-25',
+    shas: ['40fd43d8', '7adcae0d', '8591e978'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The AI/API Team’s own managers read SP Rankings on My Team, and the Employee tab stays Kane’s",
+    status: 'Done',
+    completed: '2026-09-26',
+    shas: ['ce76444c'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "My Team Appointments ranking for Lead Gen and Callback — most appointments set, with tenure",
+    status: 'Done',
+    completed: '2026-09-26',
+    shas: ['3a0866cc'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "My Team Rankings leaderboard for appointment teams — average appointments per day, week and month",
+    status: 'Done',
+    completed: '2026-09-26',
+    shas: ['5db19364'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "PM Team Rankings rank by bonus earned, shown as KPI items",
+    status: 'Done',
+    completed: '2026-09-27',
+    shas: ['7dc15098'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "KPI Rankings for every per-person KPI-bonus department, cached per department, with Client VA order-only",
+    status: 'Done',
+    completed: '2026-09-27',
+    shas: ['a738ff1f', 'a7d39f5e'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Rankings gets a top-3 podium, a board-shaped skeleton and search by name or work email",
+    status: 'Done',
+    completed: '2026-09-27',
+    shas: ['459d65a2', '13e59805', '34e31cab', 'fe676f9d'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Rankings View — one person’s KPI and ranking performance, week by week",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['16d958ba'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "HR, QC and Accounting get KPI Rankings and View as team boards",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['3305969c'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator’s stored bonus",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['505c3b2e', '707fb1b0'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Overview Payroll Notes card tracks wizard Steps 1–8, open steps first, in place of New hires and Attrition",
+    status: 'Done',
+    completed: '2026-09-26',
+    shas: ['da7d22f5'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Hi Kane payroll cycle greeting lists the unfinished wizard steps and jumps to Step N",
+    status: 'Done',
+    completed: '2026-09-26',
+    shas: ['5f22e91b'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Issues table moves smoothly, and a time-adjustment proof opens in a viewer with Next and a preview strip",
+    status: 'Done',
+    completed: '2026-09-26',
+    shas: ['2aebfde3'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Payroll Wizard’s all-uploads PAB merge is one streamed server call, byte-identical to the old result",
+    status: 'Done',
+    completed: '2026-09-27',
+    shas: ['f30f498c'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Employee Overview PAB calendar follows a wizard PAB Period save live",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['bbdea24a'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Every Payroll Wizard write leaves an audit row with the right actor, the Hubstaff uploader included",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['47e75366', '6259f31b'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "KPI Calculator Add External Member finds people in the manager’s other departments",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['a40076a6'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Lead Gen can save and lock its KPI week again — the replace-set delete no longer puts every kept id in the URL",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['889cce6a'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Orientation on My Team pages its weeks, and each week’s people, at 10",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['a8507246'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The offboarding queue dialogs render light in light mode",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['8423e710'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Seven more HSL KPI branches are scored from the Payment Catalog — their hardcoded rules retired, and the Mgr column dropped",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['c9153d9a', '6acb6579', '5e3ca407', '957ec0c0'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "KPI Calculator insight cards — department spotlight, top earner and the Sent-to-Accounting trend",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['98a9ecc7'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Carla gets a Jellyfish Jam play bubble every five active minutes",
+    status: 'Done',
+    completed: '2026-09-28',
+    shas: ['89ec1f99', 'd9dc6322'],
+    basis: live('An existing Sprint 29 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['2a4695ee'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Orphanage paste adds up a person’s repeated lines and prices the total once",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['0236d8e8'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Start Processing cue plays one minute, then fades out",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['56e0a7f4'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['e7f5eb91'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['c7a437ff'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Pending and Excluded queues swap their violet avatar gradient for lime → green",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['314dccad'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['3f2f1ea5', '47f30fd2'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['e37022cc'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Manager Bonus History tab is retired",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['31fd9c0a'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
+  },
+  {
+    name: "The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up",
+    status: 'Done',
+    completed: '2026-09-29',
+    shas: ['28e8bbb0'],
+    basis: live('An existing Sprint 30 row, written Pending Deploy by pass 36 (e8e9a7031db4) and listed in docs/audits/2026-10-02-monday-close-on-confirmation.tsv. Pass 36\'s item update carries its full evidence.'),
   },
 ];
 

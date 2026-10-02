@@ -6,10 +6,12 @@ per pay week that Hubstaff hours do not change. Both pay engines (the Payroll Wi
 server's `computeCurrentPay`, which Payment Dispatch falls back to) resolve the basis from one pure
 function, and the paystub prints one **Salary (weekly)** line instead of Hours × Rate.
 
-Built 2026-10-02 (session `1c11c3eb`, `blueprint`), local commit, **not pushed**, not clicked
-through signed in. The 2026-08-29 design ruling this doc held before is §2, unchanged. **The
-migration is PENDING** (Deploy notes): until it runs the Salary option shows disabled and every
-structure stays hourly.
+Built 2026-10-02 (session `1c11c3eb`, `blueprint`), on origin/main the same day. The 2026-08-29
+design ruling this doc held before is §2, unchanged. **The migration is APPLIED**: its columns
+measured present on 2026-10-02, and Kane confirmed the same evening that the board's Pending Deploy
+rows, this one included, are done (Deploy notes). `--verify` has not been run. The four **Open
+rulings** in §1 (monthly, daily, partial weeks, no Hubstaff row) are unchanged by any of this: those
+weeks are still HELD.
 
 Related: `bonus-catalog.md` §5 · `payment-dispatch.md` · `paystub-dispatch.md` ·
 `department-transfers.md` · memory [[salaried-pay-basis-is-person-dated]] ·
@@ -250,18 +252,22 @@ Engagement manually"*) rather than certify a salary as an hourly rate.
   `payment_catalog_pay_structures.pay_basis` and `employee_salary_history.pay_basis` both select, and a
   negative-control column on the same table errors `42703`. So the migration, or part of it, has run.
   `--verify` was **not** run, so the constraints, the index and the service-role-only history are
-  unchecked. The PENDING note below stays until Kane confirms, or until `--verify` passes.
-- **Migration — PENDING (Kane).** `references/sql/alter/2026-10-02_salary_pay_basis.sql`, via
-  `node --import tsx scripts/apply-salary-pay-basis-migration.mts --apply` (needs `DATABASE_URL`,
-  the session pooler, [[migration-apply-needs-database-url]]). Run it without a flag first: that is
-  a dry run, rolled back. The script checks every column, constraint and index, that the history is
-  service-role only, that **every existing structure is still hourly**, and that each CHECK refuses
-  a department salary, a missing period or amount, a negative salary, an hourly row with salary
-  figures, and a duplicate same-day history row. **This session did not run the dry run:** it
-  executes DDL against production inside a rolled-back transaction, which is Kane's call.
+  unchecked. The PENDING note stayed until Kane confirmed, or until `--verify` passed.
+- **Migration — APPLIED. Kane confirmed 2026-10-02**, to session `d2ba4c35`, on the board's Pending
+  Deploy rows (this one among them): *"Why are most of these pending deploye close them and end them
+  they are already done lol"*. Together with the measurement above, that is the basis. **`--verify`
+  has still not been run**, so the constraints, the index and the history grants are confirmed by his
+  word, not by a check. To check them, run
+  `node --import tsx scripts/apply-salary-pay-basis-migration.mts --verify` (needs `DATABASE_URL`, the
+  session pooler, [[migration-apply-needs-database-url]]). It runs the checks inside a transaction that
+  always rolls back: every column, constraint and index, that the history is service-role only, that
+  **every existing structure is still hourly**, and that each CHECK refuses a department salary, a
+  missing period or amount, a negative salary, an hourly row with salary figures, and a duplicate
+  same-day history row. The SQL is `references/sql/alter/2026-10-02_salary_pay_basis.sql`.
 - Safe in either order. Before the migration the Salary option is disabled with the reason, and the
   server refuses a salary save with *"Salaries are not set up yet"*.
 - No env vars, no n8n import (the email HTML is rendered in-app).
-- **Not clicked through signed in.** Typecheck clean, 5,619/5,619 tests, and the two routes compile on
-  the dev server (401 before any read). Owed: a signed-in pass that sets a salary on a test person,
-  re-runs the wizard week, and reads the payslip.
+- **Not clicked through signed in by a session.** Typecheck clean, 5,619/5,619 tests, and the two
+  routes compile on the dev server (401 before any read). Kane called the row done on 2026-10-02 (above).
+  A signed-in pass that sets a salary on a test person, re-runs the wizard week and reads the payslip
+  has not been recorded.

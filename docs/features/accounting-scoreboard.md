@@ -338,13 +338,20 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   hold 0 rows, and the anon key is refused (`42501`). Re-check any time with
   `node --import tsx scripts/apply-accounting-scoreboard-migration.mts --verify`. (Do not double-click
   the `.mts`: Windows opens it as video.)
-- **PENDING (Kane):**
-  1. Vercel: add `accounting-bonus.vercel.app` to this project.
+- **The second domain: DONE (Kane confirmed 2026-10-02; steps 1, 2 and 4 also measured).** Kane, to
+  session `d2ba4c35`, on the board's Pending Deploy rows: *"close them and end them they are already
+  done"*.
+  1. Vercel: `accounting-bonus.vercel.app` on this project. **Measured 2026-10-02 ~21:45Z:** the host
+     is served by Vercel and answers `307` to `/accounting-scoreboard`, then `200` (a made-up
+     `vercel.app` host answers `404`).
   2. Vercel env: `ACCOUNTING_SCOREBOARD_HOST=accounting-bonus.vercel.app` (Production), then redeploy.
-  3. Google Cloud → the HRIS OAuth client → Authorized redirect URIs: add
-     `https://accounting-bonus.vercel.app/api/auth/callback/google`. Until then, sign-in on that host
-     fails with `redirect_uri_mismatch`, but `/accounting-scoreboard` on the main HRIS host works.
-  4. The push.
+     **Measured the same way:** the bare host lands on the board, which is the host rule in
+     `decideScoreboardHost()` and is inert until that env var is set.
+  3. Google Cloud → the HRIS OAuth client → Authorized redirect URIs:
+     `https://accounting-bonus.vercel.app/api/auth/callback/google`. **On Kane's word only.** It cannot be
+     checked without signing in, and on 2026-10-01 he saw `redirect_uri_mismatch` there. If that comes
+     back, this is the step to re-check.
+  4. The push. **Measured:** every commit is on origin/main.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.
