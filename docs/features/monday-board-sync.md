@@ -2423,3 +2423,19 @@ have 0 grants.
 **Owed:** Kane's paste, then a `verify.mts` re-read once the budget resets. The re-read checks name
 parity: a pasted name that differs by one byte shows up as an orphan plus a missing row. Then
 `verify-one` on pass 36's 65 ids, which have never been re-read. Open item 330.
+
+**Superseded the same evening (Kane, ~17:20 EDT): NO hand paste.** Kane: *"Ill make sure by 8 we will be
+the first one to push"*, then *"Combine that with all the commits from gridline folder please"*. So the
+pass goes through the API right after the 00:00Z reset (20:00 EDT). The two TSVs stay as the record,
+and nobody pastes them, because a paste plus an API create would duplicate every row. Order, by value
+per call:
+1. one probe
+2. `review.mts` (a board read), then the hash to Kane
+3. on his approval, `apply.mts --apply --only-new` (24 rows), then `tmp-move-s29-open.mts --apply` (10 moves)
+4. Gridline's stored pass, `apply_pending.py` (1 create + 9 moves/closes, then its own Sprint 30 audit)
+5. `verify-one` on the HRIS rows
+That is about 300 calls against a budget that a fresh day has carried before (pass 36: 65 creates plus
+a board read). Whatever the budget does not reach is queued or deferred, never re-derived. Gridline had
+**no commits** after its pass was stored (`b66e65c`, 2026-10-01 07:55, is already its close), and
+`push.py --offline` re-validated the stored pass with zero API calls.
+
