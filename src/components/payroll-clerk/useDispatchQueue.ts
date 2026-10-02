@@ -18,6 +18,7 @@ import {
   type QueueRow,
 } from './mock-queue';
 import {
+  catalogClaimFromStructure,
   resolveWizardRowValues,
   type CatalogRateClaimLike,
   type WizardRowValues,
@@ -413,22 +414,13 @@ async function loadAll(
       const catRes = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store', signal });
       if (catRes.ok) {
         const catJson = (await catRes.json()) as {
-          structures?: Array<{
-            scope?: string;
-            employeeEmail?: string | null;
-            regularRate?: number;
-            otRate?: number | null;
-            currency?: string;
-          }>;
+          structures?: Array<Parameters<typeof catalogClaimFromStructure>[0]>;
         };
+        // The SAME builder the server's paystub-fresh uses — salary structures included, so a
+        // stale tab's hourly snapshot can't price a salaried person here either.
         for (const s of catJson.structures ?? []) {
-          if (s?.scope !== 'employee' || s.currency !== 'PHP') continue;
-          const em = (s.employeeEmail ?? '').trim().toLowerCase();
-          if (!em || typeof s.regularRate !== 'number' || !Number.isFinite(s.regularRate)) continue;
-          catalogClaimByEmail.set(em, {
-            regular: s.regularRate,
-            ot: typeof s.otRate === 'number' && Number.isFinite(s.otRate) ? s.otRate : null,
-          });
+          const c = catalogClaimFromStructure(s);
+          if (c) catalogClaimByEmail.set(c.email, c.claim);
         }
       }
     } catch {

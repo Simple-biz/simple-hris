@@ -346,3 +346,51 @@ test('PARITY: the in-app view and the email agree on the transfer label', () => 
   assert.equal(label, 'Lead Gen to HSL');
   assert.ok(renderPayStubEmailHtml(view).includes(label as string));
 });
+
+/* ─────────────────────── salaried week (2026-10-02) ─────────────────────── */
+// docs/features/salaried-pay-basis.md: a flat salary has no hourly rate, so the
+// statement prints ONE "Salary" line for the amount and NONE of the Hours × Rate
+// lines, which would read "40.00h × ₱0.00" beside real money.
+
+function salaryPayload(currency: 'PHP' | 'USD' = 'PHP'): Record<string, unknown> {
+  const p = plainPayload();
+  p.hours = { regular: 40, ot: 3.5, total: 43.5 };
+  p.rates_php = { regular: null, ot: null };
+  p.pay_php = {
+    ...(p.pay_php as Record<string, unknown>),
+    regular: 25000,
+    ot: 0,
+    initial: 25000,
+    final: 25000,
+  };
+  p.salary = {
+    period: 'week',
+    amount_native: currency === 'PHP' ? 25000 : 431.03,
+    currency,
+    amount_php: 25000,
+    effective_from: '2026-07-12',
+  };
+  return p;
+}
+
+test('a salaried week renders ONE Salary line and no Hours × Rate lines', () => {
+  const view = mapPayloadToPayStub(salaryPayload());
+  assert.deepEqual(view.salary, { period: 'week', amountNative: 25000, currency: 'PHP', amountPhp: 25000 });
+  const html = renderPayStubEmailHtml(view);
+  assert.ok(html.includes('Salary (weekly)'), 'expected the Salary line');
+  assert.ok(html.includes('Flat · hours not counted'), 'expected the flat detail');
+  assert.ok(html.includes('&#8369;25,000.00'), 'the salary amount');
+  assert.ok(!html.includes('Regular Hours'), 'no Regular Hours line on a salary');
+  assert.ok(!html.includes('>Overtime<'), 'no Overtime line on a salary');
+});
+
+test('a USD salary names the native figure it converted from', () => {
+  const html = render(salaryPayload('USD'));
+  assert.ok(html.includes('$431.03 USD / week · flat'));
+});
+
+test('an hourly payload carries no salary and renders exactly as before', () => {
+  const view = mapPayloadToPayStub(plainPayload());
+  assert.equal(view.salary, null);
+  assert.ok(render(plainPayload()).includes('Regular Hours'));
+});

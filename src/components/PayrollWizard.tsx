@@ -142,6 +142,7 @@ import {
 import {
   buildCatalogRateIndex,
   resolveEmployeeCatalogRate,
+  resolveEmployeeCatalogStructure,
   resolveDeptCatalogRate,
 } from '@/lib/payroll/resolve-rate';
 import {
@@ -173,10 +174,23 @@ import {
   CURRENCY_SYMBOL,
   CURRENCY_LOCALE,
   formatRate,
+  formatSalary,
   isAutoOtRate,
   type PayStructure,
   type PayCurrency,
+  type SalaryPeriod,
 } from '@/lib/payment-catalog/pay-structure';
+import type { SnapshotSalary } from '@/lib/payroll/wizard-dispatch-values';
+import {
+  buildSalaryHistoryByEmail,
+  parseIsoDay,
+  resolveSalaryWeek,
+  salaryHeldLabel,
+  structureBasisClaim,
+  type SalaryHistoryByEmail,
+  type SalaryHistoryState,
+  type SalaryUnknownReason,
+} from '@/lib/payroll/salary-basis';
 import {
   settlementAmountFromPhp,
   type SettlementRate,
@@ -684,14 +698,59 @@ function pickPreviewValue(row: Record<string, unknown>, key: string): string {
   return '—';
 }
 
+/**
+ * How a calc row was priced (docs/features/salaried-pay-basis.md §4.2). This REPLACES the
+ * `regularRate`/`otRate` pair CalcRow used to carry, and the replacement is the point: every
+ * read site had to decide what a salaried or held row means, with no `?? 0` escape.
+ *   hourly → rate × hours (the rates the statement DISPLAYS; null = no rate on file)
+ *   salary → a flat weekly salary; Hubstaff hours move no money
+ *   held   → a salaried week that cannot be priced (partial week, records disagree…): it
+ *            pays nothing and is flagged exactly like a "No rate" row
+ */
+type CalcBasis =
+  | { kind: 'hourly'; regularRate: number | null; otRate: number | null }
+  | {
+      kind: 'salary';
+      period: SalaryPeriod;
+      amountNative: number;
+      currency: PayCurrency;
+      amountPhp: number;
+      effectiveFrom: string;
+    }
+  | { kind: 'held'; reason: SalaryUnknownReason; detail: string };
+
+/** The hourly rates a row displays — both null for a salaried or held row. */
+function calcRowRates(r: { basis: CalcBasis }): { regular: number | null; ot: number | null } {
+  return r.basis.kind === 'hourly'
+    ? { regular: r.basis.regularRate, ot: r.basis.otRate }
+    : { regular: null, ot: null };
+}
+
+/**
+ * "Has pay on file" — what the old `regularRate != null || otRate != null` meant. A salaried
+ * row is priced (its bonuses, Adj., MESA and Orphanage ride on top, CHOSEN 3); a held one is
+ * not, exactly like a person with no rate.
+ */
+function calcRowHasPay(r: { basis: CalcBasis }): boolean {
+  if (r.basis.kind === 'salary') return true;
+  if (r.basis.kind === 'held') return false;
+  return r.basis.regularRate != null || r.basis.otRate != null;
+}
+
+/** The regular-rate presence check (`regularRate != null`): matched / missing counters. */
+function calcRowHasRegularPay(r: { basis: CalcBasis }): boolean {
+  if (r.basis.kind === 'salary') return true;
+  if (r.basis.kind === 'held') return false;
+  return r.basis.regularRate != null;
+}
+
 type CalcRow = {
   email: string;
   name: string;
   totalHours: number;
   regularHours: number;
   otHours: number;
-  regularRate: number | null;
-  otRate: number | null;
+  basis: CalcBasis;
   regularPay: number | null;
   otPay: number | null;
   initialPay: number | null;
@@ -898,7 +957,35 @@ type DispatchEmployee = {
    * money already inside `initial` — never add it to a total again.
    */
   time_adjustment: ReportTimeAdjustment;
+  /**
+   * The flat salary this week was priced at (docs/features/salaried-pay-basis.md), or null for
+   * an hourly week. When set, `pay_php.regular` IS the salary (PHP-equivalent), `pay_php.ot` is
+   * 0, `rates_php` is all-null and `hours` is informational only: the statement renders ONE
+   * "Salary" earnings line instead of Hours × Rate. Absent on payloads staged before 2026-10-02.
+   */
+  salary: SalaryBlockRaw | null;
 };
+
+/** Payload `salary` block — native amount + currency (never FX-derived) and the PHP it paid. */
+type SalaryBlockRaw = {
+  period: SalaryPeriod;
+  amount_native: number;
+  currency: PayCurrency;
+  amount_php: number;
+  effective_from: string;
+};
+
+/** CalcRow basis → the payload `salary` block (null for hourly and held rows). */
+function salaryBlockFromCalcRow(r: { basis: CalcBasis }): SalaryBlockRaw | null {
+  if (r.basis.kind !== 'salary') return null;
+  return {
+    period: r.basis.period,
+    amount_native: r.basis.amountNative,
+    currency: r.basis.currency,
+    amount_php: r.basis.amountPhp,
+    effective_from: r.basis.effectiveFrom,
+  };
+}
 
 /** CalcRow time adjustment → the payload-shaped `time_adjustment` block. Always
  *  a block (zeros + `[]` when none): a row that never passed through
@@ -2189,6 +2276,11 @@ export default function PayrollWizard({
    *  and this list is only ever consulted after an active lookup has already
    *  missed. See src/lib/roster/offboarded-roster-row.ts. */
   const [offboardedRoster, setOffboardedRoster] = useState<OffboardedRosterRow[]>([]);
+  /** The overlay loaded cleanly for this cycle. Until it has (and whenever a read fails or
+   *  reports an error) salaried weeks are HELD: a leaver's mid-week last day can't be ruled
+   *  out, and a partial salary week is not priced (salaried-pay-basis.md). Hourly pay never
+   *  reads this. */
+  const [offboardedRosterReady, setOffboardedRosterReady] = useState(false);
   /** "First paycheck" index — every email's EARLIEST Hubstaff upload week, across
    *  all uploads on record (`GET /api/payroll-wizard/first-hours-week`). Step 2
    *  labels a calc row whose first-ever hours fall in the week in view, so a hire
@@ -2599,6 +2691,9 @@ export default function PayrollWizard({
   // A failed catalog fetch means the calc silently falls back to sheet rates —
   // the drift class the catalog exists to prevent — so it must be VISIBLE.
   const [payStructuresError, setPayStructuresError] = useState<string | null>(null);
+  /** At least one catalog read succeeded. Before that the salary cross-check has no structure
+   *  to compare against (claim `unavailable`), so the dated salary history decides alone. */
+  const [payStructuresLoaded, setPayStructuresLoaded] = useState(false);
 
   // ── HSL step: per-dept KPI bonus data loaded on demand (step 5) ─────────────
   const [hslStepPeriods, setHslStepPeriods] = useState<{
@@ -4215,22 +4310,37 @@ export default function PayrollWizard({
    * is deliberately NOT influenced by this list.
    */
   const offboardedRosterSeqRef = useRef(0);
+  /** The cycle the overlay was last loaded for — `undefined` until the first load. */
+  const offboardedRosterCycleRef = useRef<string | null | undefined>(undefined);
   /** Re-runnable so a Set-rate save beside this tab (RATES_CHANGED_EVENT) can
    *  re-pull the overlay: since 2026-09-15 a leaver's department follows the
    *  structure that dialog writes (leaver-pay-department.ts), so the roster
    *  must move with the rates or Step 2 keeps the old cohort. */
   const loadOffboardedRoster = React.useCallback(async () => {
     const seq = ++offboardedRosterSeqRef.current;
+    // A NEW cycle's list is not trusted until it lands (salaried weeks hold meanwhile). A
+    // same-cycle reload (RATES_CHANGED_EVENT) keeps the current trust, so salaried rows do not
+    // flicker to held — and into a debounced snapshot — on every rate save beside this tab.
+    if (offboardedRosterCycleRef.current !== calcSourceFile) {
+      offboardedRosterCycleRef.current = calcSourceFile;
+      setOffboardedRosterReady(false);
+    }
     const qs = calcSourceFile ? `?source_file=${encodeURIComponent(calcSourceFile)}` : '';
     try {
       const res = await fetch(`/api/payroll-wizard/offboarded-roster${qs}`, { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: OffboardedRosterRow[] };
+      const json = (await res.json()) as { rows?: OffboardedRosterRow[]; error?: string | null };
       // A response for a cycle the clerk has already switched away from must
       // never land — it would cohort this week's people off another week's list.
       if (seq !== offboardedRosterSeqRef.current) return;
       setOffboardedRoster(res.ok ? json.rows ?? [] : []);
+      // Salaried pay: without a trustworthy leaver list a salaried week cannot be confirmed
+      // WHOLE (a mid-week last day is a partial week), so those weeks are held.
+      setOffboardedRosterReady(res.ok && !json.error);
     } catch {
-      if (seq === offboardedRosterSeqRef.current) setOffboardedRoster([]);
+      if (seq === offboardedRosterSeqRef.current) {
+        setOffboardedRoster([]);
+        setOffboardedRosterReady(false);
+      }
     }
   }, [calcSourceFile]);
   useEffect(() => {
@@ -4570,6 +4680,7 @@ export default function PayrollWizard({
         return;
       }
       setPayStructures(json.structures ?? []);
+      setPayStructuresLoaded(true);
       setPayStructuresError(null);
     } catch (e) {
       // Without the catalog, ratesByEmail falls back to the sheet rates — the
@@ -4600,6 +4711,39 @@ export default function PayrollWizard({
     void loadRateHistory();
   }, [loadRateHistory]);
 
+  // The dated SALARY timeline (docs/features/salaried-pay-basis.md): who is salaried in the
+  // selected week, read by the same resolver computeCurrentPay uses. Starts `unavailable`, never
+  // `loaded`: until the read lands nobody's basis is known, and a salaried person must be HELD
+  // in that window, not priced hourly. A failed read keeps the last good map but flips the state
+  // back to `unavailable` — the resolver then holds every structure-salaried person.
+  const [salaryHistory, setSalaryHistory] = useState<SalaryHistoryByEmail>(() => new Map());
+  const [salaryHistoryState, setSalaryHistoryState] = useState<SalaryHistoryState>('unavailable');
+  const [salaryHistoryError, setSalaryHistoryError] = useState<string | null>(null);
+  const loadSalaryHistory = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/payroll/salary-history-bulk', { cache: 'no-store' });
+      const json = (await res.json()) as {
+        rows?: Array<Record<string, unknown>>;
+        state?: SalaryHistoryState;
+        error?: string | null;
+      };
+      if (!res.ok || json.state === 'unavailable' || !json.state) {
+        setSalaryHistoryState('unavailable');
+        setSalaryHistoryError(json.error || `Salary history failed to load (HTTP ${res.status})`);
+        return;
+      }
+      setSalaryHistory(buildSalaryHistoryByEmail(json.rows ?? []));
+      setSalaryHistoryState(json.state);
+      setSalaryHistoryError(null);
+    } catch (e) {
+      setSalaryHistoryState('unavailable');
+      setSalaryHistoryError(e instanceof Error ? e.message : 'Salary history failed to load');
+    }
+  }, []);
+  useEffect(() => {
+    void loadSalaryHistory();
+  }, [loadSalaryHistory]);
+
   // A rate fix made beside this tab — the Notes FAB's Readiness / Offboarded
   // "Set rate" — must reach THIS tab's figures without a remount. The three rate
   // sources above were loaded once on mount, so until 2026-09-15 an open wizard
@@ -4614,13 +4758,14 @@ export default function PayrollWizard({
       void loadPayStructures();
       void loadEmployeeHourlyRates();
       void loadRateHistory();
+      void loadSalaryHistory();
       // A leaver's DEPARTMENT follows their Set-rate structure (2026-09-15), and
       // the overlay is where the wizard reads it.
       void loadOffboardedRoster();
     };
     window.addEventListener(RATES_CHANGED_EVENT, onRatesChanged);
     return () => window.removeEventListener(RATES_CHANGED_EVENT, onRatesChanged);
-  }, [loadPayStructures, loadEmployeeHourlyRates, loadRateHistory, loadOffboardedRoster]);
+  }, [loadPayStructures, loadEmployeeHourlyRates, loadRateHistory, loadSalaryHistory, loadOffboardedRoster]);
 
   // Into-HSL transfer effective dates — day-scopes the HSL Weekend Hours
   // treatment in a transfer week (resolveHslWeekScope): the dept label moves
@@ -7857,11 +8002,25 @@ export default function PayrollWizard({
    * next non-HSL week. Days are returned chronologically.
    */
   const payDaysByEmail = useMemo<
-    Map<string, { isHsl: boolean; hslFrom: Date | null; days: Array<{ date: Date; seconds: number }> }>
+    Map<
+      string,
+      {
+        isHsl: boolean;
+        hslFrom: Date | null;
+        days: Array<{ date: Date; seconds: number }>;
+        /** The person's own 7-day pay week — what the salary basis is dated against. */
+        week: { start: Date; end: Date };
+      }
+    >
   >(() => {
     const map = new Map<
       string,
-      { isHsl: boolean; hslFrom: Date | null; days: Array<{ date: Date; seconds: number }> }
+      {
+        isHsl: boolean;
+        hslFrom: Date | null;
+        days: Array<{ date: Date; seconds: number }>;
+        week: { start: Date; end: Date };
+      }
     >();
     // Prefer the cross-upload merged rows (one row per employee, every upload
     // resolved to its TRUE ISO dates via its own filename) so a pay week's
@@ -7933,7 +8092,7 @@ export default function PayrollWizard({
           return t >= lo && t <= hi;
         })
         .sort((a, b) => a.date.getTime() - b.date.getTime());
-      if (days.length > 0) map.set(em, { isHsl, hslFrom, days });
+      if (days.length > 0) map.set(em, { isHsl, hslFrom, days, week: { start: week.start, end: week.end } });
     }
     return map;
   }, [hubstaffRowsForPab, hubstaffDisplayRows, calcSourceFile, employeeDepts, hslWeekModelCutover, hslTransferEffectiveByEmail]);
@@ -7998,6 +8157,77 @@ export default function PayrollWizard({
    * (`splitTwoDpHoursWeek`), so the statement's printed hours multiply out. Centavo rounding either way.
    * HSL employees receive an additional +15 PHP/h for Saturday and Sunday hours.
    */
+  /**
+   * Per-employee `start_date + 30d` map. An employee needs 30 days of service
+   * before their first Tech Bonus cycle. `masterEmployees` is the master-list
+   * roster the wizard already fetches in Step 2. Declared ABOVE calcResults
+   * (2026-10-02) because the salaried partial-week hold reads the start date there.
+   */
+  const startDateByEmail = useMemo(() => {
+    const map = new Map<string, Date>();
+    for (const emp of masterEmployees) {
+      const sd = emp.start_date ? new Date(emp.start_date) : null;
+      if (!sd || isNaN(sd.getTime())) continue;
+      const we = normEmail(emp.work_email);
+      const pe = normEmail(emp.personal_email);
+      if (we) map.set(we, sd);
+      if (pe) map.set(pe, sd);
+      // Bridge alternate work emails the same way ratesByEmail/masterIndex do.
+      // The Global Master List is the source of truth for which addresses
+      // belong to one person, so a Hubstaff row keyed on an alias (e.g.
+      // sheeng@simple.biz when the primary work email is shannong@simple.biz)
+      // still resolves its start date — required for the Tech Bonus
+      // 30-day-service gate. Never overwrites a primary (primary wins).
+      for (const alt of [emp.alternate_work_email, emp.alternate_work_email_2]) {
+        const a = normEmail(alt);
+        if (a && !map.has(a)) map.set(a, sd);
+      }
+    }
+    // Final-pay overlay: a leaver is absent from `masterEmployees`, so they
+    // resolve no start date and the 30-day gate below rejects them outright —
+    // meaning someone who qualified all along silently loses the bonus on their
+    // LAST check, the one run where it can never be corrected later. Appended
+    // with a `has()` guard (never the unconditional `set` the active loop uses)
+    // so an active person's date can't be moved by an overlay row.
+    for (const p of offboardedRoster) {
+      const sd = p.start_date ? new Date(p.start_date) : null;
+      if (!sd || isNaN(sd.getTime())) continue;
+      for (const e of [p.work_email, p.personal_email, p.hubstaff_email, p.alternate_work_email, p.alternate_work_email_2]) {
+        const n = normEmail(e);
+        if (n && !map.has(n)) map.set(n, sd);
+      }
+    }
+    return map;
+  }, [masterEmployees, offboardedRoster]);
+
+  /**
+   * A leaver's LAST DAY, by every email the final-pay overlay knows them by — the salaried
+   * partial-week hold (salaried-pay-basis.md, NEEDS 3). `'unknown'` = offboarded with no date
+   * on record (fell off the sheet): a salaried week then cannot be judged whole.
+   */
+  const lastDayByEmail = useMemo(() => {
+    const map = new Map<string, Date | 'unknown'>();
+    for (const r of offboardedRoster) {
+      const last = parseIsoDay(r.off_boarded_at) ?? 'unknown';
+      for (const e of [r.hubstaff_email, r.work_email, r.personal_email, r.alternate_work_email, r.alternate_work_email_2]) {
+        const n = normEmail(e);
+        if (n && !map.has(n)) map.set(n, last);
+      }
+    }
+    return map;
+  }, [offboardedRoster]);
+
+  /** The upload's own pay week, for a row with no per-day columns (payDaysByEmail skips it). */
+  const fileWeekFor = useCallback(
+    (isHsl: boolean): { start: Date; end: Date } | null => {
+      const range = calcSourceFile ? parseDateRangeFromFilename(calcSourceFile) : null;
+      if (!range) return null;
+      const model = resolveHslWeekModelWithDefault(range.start, hslWeekModelCutover);
+      return payWeekFromUploadStart(range.start, isHsl, model);
+    },
+    [calcSourceFile, hslWeekModelCutover],
+  );
+
   // Catalog index used ONLY to resolve individual (employee-scoped) rates during
   // proration. Since 2026-07-30 an individual catalog rate no longer flattens the
   // week outright: the engine prorates through the person's dated history when it
@@ -8276,6 +8506,71 @@ export default function PayrollWizard({
         }
       }
 
+      // ── Salaried pay basis (docs/features/salaried-pay-basis.md) ──
+      // The person's DATED basis for their own pay week, from the resolver computeCurrentPay
+      // also calls. A salary replaces Regular AND OT with the flat weekly amount — no OT, no HSL
+      // weekend premium; Hubstaff hours stay on the row as information only (Kane, 2026-10-02).
+      // A held week pays nothing and reads exactly like a "No rate" row.
+      const personEmails = [
+        em,
+        rateRow?.work_email,
+        rateRow?.personal_email,
+        master?.work_email,
+        master?.personal_email,
+        master?.alternate_work_email,
+        master?.alternate_work_email_2,
+      ]
+        .map((x) => normEmail(x ?? ''))
+        .filter((x): x is string => !!x);
+      const salaryWeekRaw = resolveSalaryWeek(
+        {
+          history: salaryHistory,
+          historyState: salaryHistoryState,
+          emails: personEmails,
+          structure: payStructuresLoaded
+            ? structureBasisClaim(resolveEmployeeCatalogStructure(previewCatalogIndex, personEmails))
+            : { kind: 'unavailable' },
+          week:
+            payDay?.week ??
+            fileWeekFor((employeeDepts[row.email] ?? employeeDepts[(row.email ?? '').toLowerCase()]) === 'hogan_smith_law'),
+          startDate: personEmails.map((x) => startDateByEmail.get(x)).find((d) => d !== undefined) ?? null,
+          lastDay: personEmails.map((x) => lastDayByEmail.get(x)).find((d) => d !== undefined) ?? null,
+        },
+        fxRates,
+      );
+      const salaryWeek =
+        salaryWeekRaw.kind === 'salary' && !offboardedRosterReady
+          ? {
+              kind: 'held' as const,
+              reason: 'leavers_unavailable' as const,
+              detail: 'The offboarded list has not loaded, so a whole salary week cannot be confirmed yet.',
+            }
+          : salaryWeekRaw;
+      let basis: CalcBasis;
+      if (salaryWeek.kind === 'salary') {
+        basis = {
+          kind: 'salary',
+          period: salaryWeek.pay.period,
+          amountNative: salaryWeek.pay.amountNative,
+          currency: salaryWeek.pay.currency,
+          amountPhp: salaryWeek.pay.amountPhp,
+          effectiveFrom: salaryWeek.pay.effectiveFrom,
+        };
+        regularPay = salaryWeek.pay.amountPhp;
+        otPay = 0;
+      } else if (salaryWeek.kind === 'held') {
+        basis = { kind: 'held', reason: salaryWeek.reason, detail: salaryWeek.detail };
+        regularPay = null;
+        otPay = null;
+      } else {
+        // The rate actually applied — never the sheet cache when pay came from
+        // elsewhere. This is what makes hours × rate reconcile on the statement.
+        // For HSL sheet-form rows `otRate` is the DERIVED 0.5× differential —
+        // the rate the Overtime line actually shows and pays.
+        basis = { kind: 'hourly', regularRate: displayRegularRate, otRate: displayOtRate };
+      }
+      const isHourly = basis.kind === 'hourly';
+
       const initialPay =
         regularPay != null && otPay != null
           ? Math.round((regularPay + otPay) * 100) / 100
@@ -8292,33 +8587,32 @@ export default function PayrollWizard({
         totalHours: totalH,
         regularHours,
         otHours,
-        weekend,
-        hogan,
-        // The rate actually applied — never the sheet cache when pay came from
-        // elsewhere. This is what makes hours × rate reconcile on the statement.
-        // For HSL sheet-form rows `otRate` is the DERIVED 0.5× differential —
-        // the rate the Overtime line actually shows and pays.
-        regularRate: displayRegularRate,
-        otRate: displayOtRate,
+        // A salaried or held week has no hourly legs: no weekend carve-out, no sheet-form
+        // block, no proration, no rate disagreement to explain — only the flat amount (or none).
+        weekend: isHourly ? weekend : null,
+        hogan: isHourly ? hogan : null,
+        basis,
         regularPay,
         otPay,
         initialPay,
-        rateChange,
-        prorationSegments,
-        rateDisagreement,
+        rateChange: isHourly ? rateChange : null,
+        prorationSegments: isHourly ? prorationSegments : null,
+        rateDisagreement: isHourly ? rateDisagreement : null,
         // No per-day override ⇒ pay came straight from the cache rate, so that IS
         // the rate paid. Recording it (rather than leaving it null) keeps the
         // consistency check on its exact path for every row. Sheet-form HSL rows
         // paid OT at the derived differential, never the stored cache OT rate.
-        ratesPaid:
-          ratesPaid ?? {
-            regular: regularRate != null ? [regularRate] : [],
-            ot: hogan?.rates_php
-              ? [hogan.rates_php.ot_differential]
-              : otRate != null
-                ? [otRate]
-                : [],
-          },
+        // A salaried/held row paid at NO hourly rate.
+        ratesPaid: !isHourly
+          ? { regular: [], ot: [] }
+          : ratesPaid ?? {
+              regular: regularRate != null ? [regularRate] : [],
+              ot: hogan?.rates_php
+                ? [hogan.rates_php.ot_differential]
+                : otRate != null
+                  ? [otRate]
+                  : [],
+            },
       };
     });
   }, [
@@ -8332,6 +8626,15 @@ export default function PayrollWizard({
     catalogIndexForProration,
     isReplay,
     fxRates,
+    salaryHistory,
+    salaryHistoryState,
+    payStructuresLoaded,
+    previewCatalogIndex,
+    fileWeekFor,
+    employeeDepts,
+    startDateByEmail,
+    lastDayByEmail,
+    offboardedRosterReady,
   ]);
 
   // Keep the bridge's calc-result ref current (used to resolve board emails to the
@@ -8859,11 +9162,15 @@ export default function PayrollWizard({
       const ta = timeAdjustDeltaByEmail.get(em) ?? timeAdjustDeltaByEmail.get(row.email) ?? null;
       const adjHours = ta?.hours ?? 0;
       let adjPesos = 0;
-      if (adjHours !== 0 && base.regularRate != null && base.initialPay != null) {
+      // A salaried week moves no money on hours, corrected or not (Kane, 2026-10-02: "no
+      // matter their hubstaff hours"), so only an HOURLY row folds the delta in. The hours are
+      // still staged below, so the statement can disclose the correction.
+      const adjRate = base.basis.kind === 'hourly' ? base.basis.regularRate : null;
+      if (adjHours !== 0 && adjRate != null && base.initialPay != null) {
         adjPesos =
           adjHours >= 0
-            ? phpHourlyPayFromSeconds(base.regularRate, adjHours * 3600)
-            : -phpHourlyPayFromSeconds(base.regularRate, -adjHours * 3600);
+            ? phpHourlyPayFromSeconds(adjRate, adjHours * 3600)
+            : -phpHourlyPayFromSeconds(adjRate, -adjHours * 3600);
         base = { ...base, initialPay: Math.round((base.initialPay + adjPesos) * 100) / 100 };
       }
       // Stage the delta on the row — ALWAYS, zeros when none — so the dispatch
@@ -8881,6 +9188,65 @@ export default function PayrollWizard({
       };
     });
   }, [calcResults, employeeDepts, otGlobalSuspended, otDeptEnabled, timeAdjustDeltaByEmail, pausedDeptKeys]);
+
+  /**
+   * Salaried people with NO row in this week's Hubstaff export (salaried-pay-basis.md, NEEDS 4).
+   * The run is built from the export and never adds a row (final-pay-roster-overlay), so they
+   * are not paid this week. Whether a salaried person with zero tracked time is paid anyway is
+   * Kane's ruling; until then the wizard SAYS they are unpaid instead of saying nothing.
+   * Active roster only — a leaver's last salary week is the partial-week question (NEEDS 3).
+   */
+  const salariedNotInExport = useMemo<Array<{ name: string; email: string }>>(() => {
+    if (salaryHistoryState !== 'loaded' || salaryHistory.size === 0 || calcResults.length === 0) return [];
+    const week = fileWeekFor(false);
+    if (!week) return [];
+    const onRun = new Set<string>();
+    for (const r of calcResults) {
+      const em = normEmail(r.email);
+      if (!em) continue;
+      onRun.add(em);
+      const m = masterIndex.byWorkEmail.get(em) ?? masterIndex.byPersonalEmail.get(em);
+      for (const x of [m?.work_email, m?.personal_email, m?.alternate_work_email, m?.alternate_work_email_2]) {
+        const n = normEmail(x ?? '');
+        if (n) onRun.add(n);
+      }
+    }
+    const out: Array<{ name: string; email: string }> = [];
+    for (const e of masterEmployees) {
+      const emails = [e.work_email, e.personal_email, e.alternate_work_email, e.alternate_work_email_2]
+        .map((x) => normEmail(x ?? ''))
+        .filter((x): x is string => !!x);
+      if (emails.length === 0 || !emails.some((x) => salaryHistory.has(x))) continue;
+      if (emails.some((x) => onRun.has(x))) continue;
+      const outcome = resolveSalaryWeek(
+        {
+          history: salaryHistory,
+          historyState: salaryHistoryState,
+          emails,
+          structure: payStructuresLoaded
+            ? structureBasisClaim(resolveEmployeeCatalogStructure(previewCatalogIndex, emails))
+            : { kind: 'unavailable' },
+          week,
+          startDate: emails.map((x) => startDateByEmail.get(x)).find((d) => d !== undefined) ?? null,
+        },
+        fxRates,
+      );
+      // `held` counts too: the records say salaried, and nobody is paying them.
+      if (outcome.kind !== 'hourly') out.push({ name: e.name ?? '', email: emails[0] });
+    }
+    return out;
+  }, [
+    salaryHistory,
+    salaryHistoryState,
+    calcResults,
+    fileWeekFor,
+    masterIndex,
+    masterEmployees,
+    payStructuresLoaded,
+    previewCatalogIndex,
+    startDateByEmail,
+    fxRates,
+  ]);
 
   /**
    * Safety net for the "Pay this week" pause: workers who logged hours this
@@ -8905,7 +9271,10 @@ export default function PayrollWizard({
       // the pause means never. Flag them regardless of rate: a leaver is exactly
       // the population most likely to have lost their rate row.
       const finalPay = finalPayEmails.has(normEmail(row.email) ?? '');
-      if (row.totalHours > 0 && (finalPay || (row.regularRate ?? 0) > 0)) {
+      // "Would have been paid": a real hourly rate, or a priced salary week.
+      const wouldPay =
+        row.basis.kind === 'salary' || (row.basis.kind === 'hourly' && (row.basis.regularRate ?? 0) > 0);
+      if (row.totalHours > 0 && (finalPay || wouldPay)) {
         out.push({ ...row, deptKey: dk, finalPay });
       }
     }
@@ -8934,11 +9303,12 @@ export default function PayrollWizard({
         rowByEmail.set(k, {
           email: r.email,
           name: r.name,
-          regularRate: r.regularRate,
-          otRate: r.otRate,
+          regularRate: calcRowRates(r).regular,
+          otRate: calcRowRates(r).ot,
           isHslSheetForm: r.hogan != null,
           workedRegularHours: r.regularHours,
           deptKey: employeeDepts[r.email],
+          salaried: r.basis.kind === 'salary',
         });
       }
     }
@@ -9011,47 +9381,8 @@ export default function PayrollWizard({
     return { isTechBonusWeek, isOverridden, weekStartDate, salaryDate };
   }, [calcSourceFile, techWeekOverrides]);
 
-  /**
-   * Per-employee `start_date + 30d` map. An employee needs 30 days of service
-   * before their first Tech Bonus cycle. `masterEmployees` is the master-list
-   * roster the wizard already fetches in Step 2.
-   */
-  const startDateByEmail = useMemo(() => {
-    const map = new Map<string, Date>();
-    for (const emp of masterEmployees) {
-      const sd = emp.start_date ? new Date(emp.start_date) : null;
-      if (!sd || isNaN(sd.getTime())) continue;
-      const we = normEmail(emp.work_email);
-      const pe = normEmail(emp.personal_email);
-      if (we) map.set(we, sd);
-      if (pe) map.set(pe, sd);
-      // Bridge alternate work emails the same way ratesByEmail/masterIndex do.
-      // The Global Master List is the source of truth for which addresses
-      // belong to one person, so a Hubstaff row keyed on an alias (e.g.
-      // sheeng@simple.biz when the primary work email is shannong@simple.biz)
-      // still resolves its start date — required for the Tech Bonus
-      // 30-day-service gate. Never overwrites a primary (primary wins).
-      for (const alt of [emp.alternate_work_email, emp.alternate_work_email_2]) {
-        const a = normEmail(alt);
-        if (a && !map.has(a)) map.set(a, sd);
-      }
-    }
-    // Final-pay overlay: a leaver is absent from `masterEmployees`, so they
-    // resolve no start date and the 30-day gate below rejects them outright —
-    // meaning someone who qualified all along silently loses the bonus on their
-    // LAST check, the one run where it can never be corrected later. Appended
-    // with a `has()` guard (never the unconditional `set` the active loop uses)
-    // so an active person's date can't be moved by an overlay row.
-    for (const p of offboardedRoster) {
-      const sd = p.start_date ? new Date(p.start_date) : null;
-      if (!sd || isNaN(sd.getTime())) continue;
-      for (const e of [p.work_email, p.personal_email, p.hubstaff_email, p.alternate_work_email, p.alternate_work_email_2]) {
-        const n = normEmail(e);
-        if (n && !map.has(n)) map.set(n, sd);
-      }
-    }
-    return map;
-  }, [masterEmployees, offboardedRoster]);
+  // `startDateByEmail` (the Tech Bonus 30-day gate's start dates) is declared above
+  // calcResults: the salaried partial-week hold reads it there.
 
   /**
    * Set of work emails who should receive the Tech Bonus on the current
@@ -9066,8 +9397,7 @@ export default function PayrollWizard({
       const weekStart = techBonusWeekInfo.weekStartDate;
       if (techBonusWeekInfo.isTechBonusWeek) {
         for (const r of effectiveCalcResults) {
-          const hasRates = r.regularRate != null || r.otRate != null;
-          if (!hasRates) continue;
+          if (!calcRowHasPay(r)) continue;
           const em = normEmail(r.email);
           const sd = em ? startDateByEmail.get(em) : undefined;
           if (!sd) continue;
@@ -9891,7 +10221,7 @@ export default function PayrollWizard({
       // Strip every PH-side bonus (PAB, Tech, dept performance / attendance).
       // The paystub pipeline is PHP-only; attaching bonuses without a rate
       // produces misleading totals.
-      const hasRates = r.regularRate != null || r.otRate != null;
+      const hasRates = calcRowHasPay(r);
       // Department allowlist (Payment Catalog System Bonuses) — a department not
       // assigned a bonus gets 0 regardless of attendance/service (e.g. US managers).
       const pabDeptOk = isPabDeptEligible(r.email);
@@ -9996,7 +10326,9 @@ export default function PayrollWizard({
           week?.start,
           week?.end,
         ),
-        rates_php: { regular: r.regularRate, ot: r.otRate },
+        // A salaried week prints no hourly rate (all-null) — its one Earnings line is the
+        // `salary` block below.
+        rates_php: calcRowRates(r),
         pay_php: {
           regular: r.regularPay,
           ot: r.otPay,
@@ -10013,6 +10345,7 @@ export default function PayrollWizard({
         },
         adjustment_note: accountingAdj !== 0 ? (bonusOverrideNotes[overrideKey]?.trim() || null) : null,
         time_adjustment: timeAdjustmentBlockFromCalcRow(r),
+        salary: salaryBlockFromCalcRow(r),
       };
 
       // Two independent checks, neither of which stops the run.
@@ -10020,7 +10353,8 @@ export default function PayrollWizard({
       // (1) The statement's own arithmetic. Should now be impossible to fail — the
       //     displayed rate is derived FROM the rate that paid — so this is a
       //     regression net, kept because the failure mode was silent and expensive.
-      const issues = findRateConsistencyIssues({
+      //     A salaried week has no Hours × Rate line to check: its one line IS the amount.
+      const issues = r.basis.kind === 'salary' ? [] : findRateConsistencyIssues({
         hours: emp.hours,
         ratesPhp: emp.rates_php,
         payPhp: emp.pay_php,
@@ -10198,8 +10532,11 @@ export default function PayrollWizard({
         totalHours: r.totalHours,
         regularHours: r.regularHours,
         otHours: r.otHours,
-        regularRate: r.regularRate,
-        otRate: r.otRate,
+        regularRate: calcRowRates(r).regular,
+        otRate: calcRowRates(r).ot,
+        salary: r.basis.kind === 'salary' ? { amountPhp: r.basis.amountPhp } : null,
+        salaryHeld:
+          r.basis.kind === 'held' ? { label: salaryHeldLabel(r.basis.reason), detail: r.basis.detail } : null,
         // Sheet-form rows display the derived 0.5× differential as the OT rate
         // (rates_php set ⇒ a single rate priced the week) — the ot_ratio audit
         // must expect regular × 0.5 for them, not 1.5×.
@@ -10678,6 +11015,11 @@ export default function PayrollWizard({
       timeAdjustmentHours: number;
       timeAdjustmentPay: number;
       timeAdjustmentDays: ReportTimeAdjustmentDay[];
+      // The flat salary this week was priced at (salaried-pay-basis.md), native amount +
+      // currency. Null = an hourly week. It is ALSO what the freshness guard compares against
+      // the Pay Structure — without it a stale tab's hourly figures for a now-salaried person
+      // would carry nothing to contradict (§3.5). Older snapshots omit the field (undefined).
+      salary: SnapshotSalary | null;
     }> = {};
     for (const r of dispatchData.rows) {
       const entry = {
@@ -10715,6 +11057,15 @@ export default function PayrollWizard({
         timeAdjustmentHours: r.time_adjustment.hours,
         timeAdjustmentPay: r.time_adjustment.pay_php,
         timeAdjustmentDays: r.time_adjustment.days,
+        salary: r.salary
+          ? {
+              period: r.salary.period,
+              amountNative: r.salary.amount_native,
+              currency: r.salary.currency,
+              amountPhp: r.salary.amount_php,
+              effectiveFrom: r.salary.effective_from,
+            }
+          : null,
       };
       const we = r.email?.trim().toLowerCase();
       const pe = r.personal_email?.trim().toLowerCase();
@@ -10942,6 +11293,11 @@ export default function PayrollWizard({
         if (!detail) { refused.push(`${email} — no hours record to re-price from`); continue; }
         const row = rowByEmail.get(email);
         if (!row) { refused.push(`${email} — not in this pay period`); continue; }
+        // A salaried week has no hourly rate to re-price orphanage hours at (salaried-pay-basis.md).
+        if (row.basis.kind === 'salary') {
+          refused.push(`${email} — salaried this week; orphanage hours have no hourly rate to price at`);
+          continue;
+        }
 
         const deptKey = employeeDepts[row.email];
         const deptOtOn = otGlobalSuspended
@@ -10949,8 +11305,8 @@ export default function PayrollWizard({
           : (deptKey ? (otDeptEnabled[`ot_dept_${deptKey}`] ?? true) : true);
         const priced = priceOrphanageHours({
           hours: detail.hours,
-          regularRatePhp: row.regularRate,
-          storedOtRatePhp: row.otRate,
+          regularRatePhp: calcRowRates(row).regular,
+          storedOtRatePhp: calcRowRates(row).ot,
           isHslSheetForm: row.hogan != null,
           workedRegularHours: row.regularHours,
           overtimeEnabled: deptOtOn,
@@ -11326,8 +11682,11 @@ export default function PayrollWizard({
         row.totalHours.toFixed(2),
         row.regularHours.toFixed(2),
         row.otHours.toFixed(2),
-        row.regularRate != null ? row.regularRate.toString() : '',
-        row.otRate != null ? row.otRate.toString() : '',
+        calcRowRates(row).regular?.toString() ?? '',
+        calcRowRates(row).ot?.toString() ?? '',
+        // A search for "salary" (or "held") finds the salaried rows.
+        row.basis.kind === 'salary' ? `salary salaried ${row.basis.amountNative}` : '',
+        row.basis.kind === 'held' ? `salary held ${salaryHeldLabel(row.basis.reason)}` : '',
         row.regularPay != null ? row.regularPay.toString() : '',
         row.otPay != null ? row.otPay.toString() : '',
         row.initialPay != null ? row.initialPay.toString() : '',
@@ -12660,7 +13019,7 @@ export default function PayrollWizard({
                             const em = (r.email ?? '').toLowerCase();
                             // Match dispatch: bonuses are zeroed for rows without a
                             // pay rate, so gate the KPI the same way here.
-                            const hasRates = r.regularRate != null || r.otRate != null;
+                            const hasRates = calcRowHasPay(r);
                             // `hslKpiAmounts` is keyed by `hsl_bonus_entries.employee_email` — the
                             // WORK email since the 2026-07-21 re-key — while this row is keyed by
                             // the person's HUBSTAFF email. Reading the raw map here showed ₱0 for
@@ -12920,7 +13279,7 @@ export default function PayrollWizard({
                               totalInitialPay += r.initialPay ?? 0;
                               // Resolved, not raw — the footer must total the same figure the rows
                               // print (see the KPI Bonus cell above).
-                              totalKpi += (r.regularRate != null || r.otRate != null) ? (resolvedHslKpi.amounts[r.email] ?? 0) : 0;
+                              totalKpi += calcRowHasPay(r) ? (resolvedHslKpi.amounts[r.email] ?? 0) : 0;
                               totalAdj += bonusOverrides[overrideKeyFor(r.email)] ?? 0;
                               totalOrphanage += orphanageAmounts[r.email] ?? 0;
                               const st = effectivePabStatus.get(em) ?? 'in_progress';
@@ -14378,7 +14737,11 @@ export default function PayrollWizard({
                   )}
                   {(() => {
                     if (initialCalcDataLoading) return null;
-                    const missingRows = effectiveCalcResults.filter(r => r.regularRate == null);
+                    // Hourly rows with no rate. Held SALARY rows are listed separately below —
+                    // "add their rates" is the wrong fix for someone who is salaried.
+                    const missingRows = effectiveCalcResults.filter(
+                      r => r.basis.kind === 'hourly' && r.basis.regularRate == null,
+                    );
                     if (missingRows.length === 0 || effectiveCalcResults.length === 0) return null;
                     return (
                       <StepInfoButton
@@ -14413,6 +14776,64 @@ export default function PayrollWizard({
                                   <td className="px-3 py-1.5 font-mono text-zinc-600 dark:text-zinc-400">{r.email}</td>
                                   <td className="px-3 py-1.5 text-right font-mono tabular-nums text-zinc-600 dark:text-zinc-400">
                                     {r.totalHours.toFixed(2)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </StepInfoButton>
+                    );
+                  })()}
+                  {(() => {
+                    // Salaried pay (salaried-pay-basis.md): weeks the engine refused to price, and
+                    // salaried people the Hubstaff export does not contain at all (NEEDS 4 — the run
+                    // is built from the export and never adds a row, so they are NOT paid).
+                    if (initialCalcDataLoading) return null;
+                    const heldRows = effectiveCalcResults.filter(r => r.basis.kind === 'held');
+                    const total = heldRows.length + salariedNotInExport.length;
+                    if (total === 0) return null;
+                    return (
+                      <StepInfoButton
+                        label={`${total} salaried ${total === 1 ? 'person' : 'people'} not paid`}
+                        tone="amber"
+                        count={total}
+                        icon={<AlertCircle className="h-4 w-4" aria-hidden />}
+                        contentClassName="w-[28rem] p-0"
+                      >
+                        <div className="px-3.5 pb-3.5">
+                          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                            These salaried people are not paid by this run. A held week pays nothing
+                            until its salary record is fixed in the Payment Catalog or the amount is
+                            entered by hand.
+                          </p>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto border-t border-zinc-200 dark:border-zinc-800">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 z-10 bg-amber-50 dark:bg-amber-950/40">
+                              <tr className="border-b border-amber-300/50 dark:border-amber-800/40">
+                                <th className="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Name</th>
+                                <th className="px-3 py-1.5 text-left font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">Why</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                              {heldRows.map(r => (
+                                <tr key={`held-${r.email}`}>
+                                  <td className="px-3 py-1.5 align-top font-medium text-zinc-800 dark:text-zinc-200">
+                                    {r.name || r.email}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-zinc-600 dark:text-zinc-400">
+                                    {r.basis.kind === 'held' ? r.basis.detail : null}
+                                  </td>
+                                </tr>
+                              ))}
+                              {salariedNotInExport.map(p => (
+                                <tr key={`absent-${p.email}`}>
+                                  <td className="px-3 py-1.5 align-top font-medium text-zinc-800 dark:text-zinc-200">
+                                    {p.name || p.email}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-zinc-600 dark:text-zinc-400">
+                                    Salaried, but not in this week&rsquo;s Hubstaff export — not paid.
                                   </td>
                                 </tr>
                               ))}
@@ -14968,7 +15389,7 @@ export default function PayrollWizard({
                       <>
                         {effectiveCalcResults.length} {effectiveCalcResults.length === 1 ? 'row' : 'rows'}
                         {(() => {
-                          const matched = effectiveCalcResults.filter(r => r.regularRate != null).length;
+                          const matched = effectiveCalcResults.filter(r => calcRowHasRegularPay(r)).length;
                           const missing = effectiveCalcResults.length - matched;
                           if (missing === 0) return (
                             <span className="ml-2 text-emerald-600 dark:text-emerald-400">— all matched</span>
@@ -15173,7 +15594,7 @@ export default function PayrollWizard({
                           key={`${row.email}-${i}`}
                           className={cn(
                             "border-zinc-200 dark:border-zinc-800",
-                            row.regularRate == null
+                            !calcRowHasRegularPay(row)
                               ? "bg-amber-50/60 hover:bg-amber-50 dark:bg-amber-950/20 dark:hover:bg-amber-950/30"
                               : "hover:bg-zinc-50 dark:hover:bg-zinc-900/30",
                           )}
@@ -15235,7 +15656,26 @@ export default function PayrollWizard({
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
                             <div className="flex flex-col items-end gap-0.5">
                               <span>
-                                {row.regularRate != null ? formatPHP(row.regularRate) : (
+                                {row.basis.kind === 'salary' ? (
+                                  // A flat salary: no hourly rate exists, so the cell names the
+                                  // salary itself. The Reg Pay column carries the PHP it pays.
+                                  <span
+                                    title={`Flat salary from ${row.basis.effectiveFrom} — Hubstaff hours move no money; no OT, no weekend premium.`}
+                                    className="inline-flex flex-col items-end gap-0.5"
+                                  >
+                                    <span>{formatSalary(row.basis.amountNative, row.basis.period, row.basis.currency)}</span>
+                                    <span className="inline-block whitespace-nowrap rounded bg-emerald-100 px-1 py-px font-sans text-[9px] font-semibold leading-tight text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                                      Salary
+                                    </span>
+                                  </span>
+                                ) : row.basis.kind === 'held' ? (
+                                  <span
+                                    title={row.basis.detail}
+                                    className="inline-block whitespace-nowrap rounded bg-amber-100 px-1 py-px font-sans text-[9px] font-semibold leading-tight text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                                  >
+                                    {salaryHeldLabel(row.basis.reason)}
+                                  </span>
+                                ) : row.basis.regularRate != null ? formatPHP(row.basis.regularRate) : (
                                   <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">No rate</span>
                                 )}
                               </span>
@@ -15253,7 +15693,11 @@ export default function PayrollWizard({
                             </div>
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums text-zinc-700 dark:text-zinc-300">
-                            {row.otRate != null ? formatPHP(row.otRate) : (
+                            {row.basis.kind === 'salary' ? (
+                              <span className="text-zinc-400" title="A salary pays no overtime.">—</span>
+                            ) : row.basis.kind === 'held' ? (
+                              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">—</span>
+                            ) : row.basis.otRate != null ? formatPHP(row.basis.otRate) : (
                               <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400">No rate</span>
                             )}
                           </TableCell>
@@ -15263,7 +15707,7 @@ export default function PayrollWizard({
                             )}
                           </TableCell>
                           <TableCell className="px-2 text-right align-middle font-mono text-xs tabular-nums">
-                            {row.otHours > 0 ? (
+                            {row.otHours > 0 && row.basis.kind !== 'salary' ? (
                               row.otPay != null ? (
                                 <span className="font-medium text-indigo-600 dark:text-indigo-400">
                                   {formatPHP(row.otPay)}
@@ -17677,7 +18121,7 @@ export default function PayrollWizard({
                                 {techColShown && (() => {
                                   const em = normEmail(emp.email);
                                   const sd = em ? startDateByEmail.get(em) : undefined;
-                                  const hasRates = emp.regularRate != null || emp.otRate != null;
+                                  const hasRates = calcRowHasPay(emp);
                                   const techOn = techBonusEligible.has(emp.email);
                                   const isManualGrant = techBonusManualGrants.has(emp.email);
                                   const isManualRevoke = techBonusManualRevokes.has(emp.email);

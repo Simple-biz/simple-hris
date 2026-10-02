@@ -100,16 +100,25 @@ import {
 import {
   newPayId,
   formatRate,
+  formatSalary,
+  isSalaryStructure,
   CURRENCY_SYMBOL,
   currencyChipLabel,
   CURRENCY_LOCALE,
   PAY_CURRENCIES,
+  PRICEABLE_SALARY_PERIODS,
+  SALARY_CURRENCIES,
+  SALARY_PERIODS,
+  SALARY_PERIOD_LABEL,
   OT_MULTIPLIER,
   defaultOtRate,
   isAutoOtRate,
+  type PayBasis,
   type PayStructure,
   type PayCurrency,
+  type SalaryPeriod,
 } from '@/lib/payment-catalog/pay-structure';
+import { isPayWeekSunday, nextSundayIso } from '@/lib/payroll/salary-basis';
 import {
   buildCatalogExport,
   downloadCatalogCsv,
@@ -2275,19 +2284,22 @@ function SystemBonusCard({
 // onboarding), per department ("common") or per individual.
 // ---------------------------------------------------------------------------
 
-/** Animated PHP / USD / COP segmented toggle. */
+/** Animated PHP / USD / COP segmented toggle. `options` narrows the set (a salary
+ *  is PHP or USD only). */
 function CurrencyToggle({
   value,
   onChange,
   idSuffix,
+  options = PAY_CURRENCIES,
 }: {
   value: PayCurrency;
   onChange: (c: PayCurrency) => void;
   idSuffix: string;
+  options?: readonly PayCurrency[];
 }) {
   return (
     <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800">
-      {PAY_CURRENCIES.map((c) => (
+      {options.map((c) => (
         <button
           key={c}
           type="button"
@@ -2351,22 +2363,158 @@ function OtModeToggle({
   );
 }
 
+/** Animated "Hourly" / "Salary" segmented toggle — how a structure prices the person
+ *  (docs/features/salaried-pay-basis.md). Same pattern as OtModeToggle. */
+function PayBasisToggle({
+  value,
+  onChange,
+  idSuffix,
+  salaryDisabledReason,
+}: {
+  value: PayBasis;
+  onChange: (b: PayBasis) => void;
+  idSuffix: string;
+  /** Non-null = the Salary option is shown disabled with this reason. */
+  salaryDisabledReason?: string | null;
+}) {
+  const opts: { key: PayBasis; label: string }[] = [
+    { key: 'hourly', label: 'Hourly' },
+    { key: 'salary', label: 'Salary' },
+  ];
+  return (
+    <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800" role="group" aria-label="Pay basis">
+      {opts.map((o) => {
+        const disabled = o.key === 'salary' && !!salaryDisabledReason && value !== 'salary';
+        return (
+          <button
+            key={o.key}
+            type="button"
+            disabled={disabled}
+            title={disabled ? salaryDisabledReason ?? undefined : undefined}
+            aria-pressed={value === o.key}
+            onClick={() => onChange(o.key)}
+            className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              value === o.key ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+            }`}
+          >
+            {value === o.key && (
+              <motion.span
+                layoutId={`payBasisPill-${idSuffix}`}
+                className="absolute inset-0 rounded bg-orange-500"
+                transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+              />
+            )}
+            <span className="relative z-10">{o.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Day / Week / Month for a salary. Only the periods the pay engines can price are
+ *  live; the rest render disabled with WHY — how a daily or monthly salary maps onto
+ *  the weekly pay run is Kane's ruling (salaried-pay-basis.md, NEEDS 1/2). */
+function SalaryPeriodToggle({
+  value,
+  onChange,
+  idSuffix,
+}: {
+  value: SalaryPeriod;
+  onChange: (p: SalaryPeriod) => void;
+  idSuffix: string;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-zinc-200 p-0.5 dark:border-zinc-800" role="group" aria-label="Salary period">
+      {SALARY_PERIODS.map((p) => {
+        const priceable = PRICEABLE_SALARY_PERIODS.includes(p);
+        return (
+          <button
+            key={p}
+            type="button"
+            disabled={!priceable}
+            title={
+              priceable
+                ? undefined
+                : `Not available yet — how a ${p === 'day' ? 'daily' : 'monthly'} salary pays on the weekly run hasn't been decided.`
+            }
+            aria-pressed={value === p}
+            onClick={() => onChange(p)}
+            className={`relative rounded px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              value === p ? 'text-white' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+            }`}
+          >
+            {value === p && (
+              <motion.span
+                layoutId={`salaryPeriodPill-${idSuffix}`}
+                className="absolute inset-0 rounded bg-orange-500"
+                transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+              />
+            )}
+            <span className="relative z-10">{SALARY_PERIOD_LABEL[p]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The salary side of the shared editor — offered on INDIVIDUAL structures only: a salary
+ *  is a dated fact about a person, never a department property (salaried-pay-basis.md §2). */
+type PayRateEditorSalary = {
+  onSave: (amount: number, period: SalaryPeriod, currency: PayCurrency) => void;
+  /** Non-null = salaries can't be saved right now (e.g. migration not applied); says why. */
+  unavailableReason?: string | null;
+  /** Called when the basis toggles, so the parent can move its effective date to a Sunday. */
+  onBasisChange?: (basis: PayBasis) => void;
+  /** The parent's effective date can't carry this save (a basis change must start on a
+   *  pay-week Sunday) — Save is disabled and this is shown. */
+  dateError?: string | null;
+};
+
 /** Shared Regular + OT + currency form used by both dept and individual rows.
  *  OT defaults to 1.5x the regular rate (auto, live-updating); "Custom" mode
- *  unlocks the field for a manual override. */
+ *  unlocks the field for a manual override. With `salary` set (individual rows only)
+ *  an Hourly | Salary toggle swaps the hourly fields for a flat salary. */
 function PayRateEditor({
   initial,
   onSave,
   onCancel,
   saveLabel = 'Save rate',
+  salary,
 }: {
-  initial: { regularRate?: number; otRate?: number; currency?: PayCurrency };
+  initial: {
+    regularRate?: number;
+    otRate?: number;
+    currency?: PayCurrency;
+    payBasis?: PayBasis;
+    salaryPeriod?: SalaryPeriod;
+    salaryAmount?: number;
+  };
   onSave: (regular: number, ot: number | undefined, currency: PayCurrency) => void;
   onCancel?: () => void;
   saveLabel?: string;
+  salary?: PayRateEditorSalary;
 }) {
-  const [regular, setRegular] = useState(initial.regularRate != null ? String(initial.regularRate) : '');
+  const initiallySalary = initial.payBasis === 'salary';
+  const [basis, setBasis] = useState<PayBasis>(salary && initiallySalary ? 'salary' : 'hourly');
+  // An hourly row being switched to salary must not inherit its hourly figure as the amount.
+  const [regular, setRegular] = useState(
+    !initiallySalary && initial.regularRate != null ? String(initial.regularRate) : '',
+  );
+  const [salaryAmount, setSalaryAmount] = useState(
+    initiallySalary && initial.salaryAmount != null ? String(initial.salaryAmount) : '',
+  );
+  const [salaryPeriod, setSalaryPeriod] = useState<SalaryPeriod>(
+    initial.salaryPeriod && PRICEABLE_SALARY_PERIODS.includes(initial.salaryPeriod) ? initial.salaryPeriod : 'week',
+  );
   const [currency, setCurrency] = useState<PayCurrency>(initial.currency ?? 'PHP');
+  const changeBasis = (b: PayBasis) => {
+    setBasis(b);
+    // A salary is PHP or USD only — COP is stored as PHP on this write path (§5.7).
+    if (b === 'salary' && !SALARY_CURRENCIES.includes(currency)) setCurrency('PHP');
+    salary?.onBasisChange?.(b);
+  };
 
   // Start in custom mode only when the stored OT rate isn't the auto 1.5x value.
   const initialCustom =
@@ -2391,8 +2539,85 @@ function PayRateEditor({
   // What the OT input shows: the live auto value when locked, the typed value otherwise.
   const otDisplay = otMode === 'auto' ? (autoOt != null ? String(autoOt) : '') : customOt;
 
+  const salaryNum = Number(salaryAmount);
+  const salaryValid =
+    salaryAmount.trim() !== '' &&
+    Number.isFinite(salaryNum) &&
+    salaryNum >= 0 &&
+    PRICEABLE_SALARY_PERIODS.includes(salaryPeriod) &&
+    SALARY_CURRENCIES.includes(currency);
+  const dateError = salary?.dateError ?? null;
+
+  if (salary && basis === 'salary') {
+    const canSave = salaryValid && !dateError && !salary.unavailableReason;
+    return (
+      <div className="space-y-3">
+        <PayBasisToggle value={basis} onChange={changeBasis} idSuffix={saveLabel} />
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label={`Salary (${CURRENCY_SYMBOL[currency]})`}>
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              value={salaryAmount}
+              onChange={(e) => setSalaryAmount(e.target.value)}
+              placeholder="0.00"
+              className="w-36"
+            />
+          </Field>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Per</span>
+            <SalaryPeriodToggle value={salaryPeriod} onChange={setSalaryPeriod} idSuffix={saveLabel} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Currency</span>
+            <CurrencyToggle value={currency} onChange={setCurrency} idSuffix={saveLabel} options={SALARY_CURRENCIES} />
+          </div>
+        </div>
+        <p className="max-w-prose text-xs text-zinc-500 dark:text-zinc-400">
+          Paid flat every pay week — Hubstaff hours, overtime and the HSL weekend rate don&rsquo;t
+          change it. Bonuses, Adj., MESA and Orphanage still apply on top. A week that starts or
+          ends inside the pay week is held for Accounting to pay by hand.
+        </p>
+        {(salary.unavailableReason || dateError) && (
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+            {salary.unavailableReason ?? dateError}
+          </p>
+        )}
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canSave}
+            onClick={() => canSave && salary.onSave(salaryNum, salaryPeriod, currency)}
+            className="bg-orange-500 text-white hover:bg-orange-600"
+          >
+            {saveLabel}
+          </Button>
+          {onCancel && (
+            <Button type="button" size="sm" variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Switching a salaried row back to hourly is a dated basis change too (Sunday only).
+  const hourlyBlocked = !!salary && initiallySalary && !!dateError;
+
   return (
     <div className="space-y-3">
+      {salary && (
+        <PayBasisToggle
+          value={basis}
+          onChange={changeBasis}
+          idSuffix={saveLabel}
+          salaryDisabledReason={salary.unavailableReason}
+        />
+      )}
       <div className="flex flex-wrap items-end gap-3">
         <Field label={`Regular rate (${CURRENCY_SYMBOL[currency]}/hr)`}>
           <Input
@@ -2427,12 +2652,15 @@ function PayRateEditor({
           <CurrencyToggle value={currency} onChange={setCurrency} idSuffix={saveLabel} />
         </div>
       </div>
+      {hourlyBlocked && (
+        <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{dateError}</p>
+      )}
       <div className="flex items-center gap-2">
         <Button
           type="button"
           size="sm"
-          disabled={!valid}
-          onClick={() => valid && onSave(regularNum, otNum, currency)}
+          disabled={!valid || hourlyBlocked}
+          onClick={() => valid && !hourlyBlocked && onSave(regularNum, otNum, currency)}
           className="bg-orange-500 text-white hover:bg-orange-600"
         >
           {saveLabel}
@@ -2501,6 +2729,18 @@ function PayStructureTab({
   // Set by a member row's "Set rate" so the adder below opens on that person —
   // the hand-off is the whole reason the member list needs no write path of its own.
   const [addingFor, setAddingFor] = useState<string | null>(null);
+
+  // The honest seam for an unapplied migration (salaried-pay-basis.md, Deploy notes): once the
+  // salary columns exist EVERY row reads back with a `payBasis`, so a catalog where none does is
+  // a database without them. Salary is then shown but disabled, with the reason, rather than
+  // offered and refused by the server after the clerk filled it in.
+  const salaryUnavailableReason = useMemo(
+    () =>
+      structures.length > 0 && !structures.some((s) => s.payBasis !== undefined)
+        ? 'Salaries aren’t set up yet — the salary migration hasn’t been applied.'
+        : null,
+    [structures],
+  );
 
   // Where each person sits right now — by every alias, and by NAME for a structure
   // keyed on an address the roster row does not carry (ambiguous names are dropped).
@@ -2891,6 +3131,7 @@ function PayStructureTab({
             // someone whose row already occupies that slot — and the save would
             // overwrite their live rate from a blank editor.
             existingEmails={overriddenEmails}
+            salaryUnavailableReason={salaryUnavailableReason}
             onAdd={(emp, regular, ot, currency, effectiveDate) =>
               onUpsert({
                 id: newPayId(),
@@ -2901,6 +3142,23 @@ function PayStructureTab({
                 regularRate: regular,
                 otRate: ot,
                 currency,
+              }, effectiveDate)
+            }
+            // A salary structure stores NO hourly rate (0 / none) — an engine that never
+            // learned the salary basis then prices ₱0, never a believable hourly figure.
+            onAddSalary={(emp, amount, period, currency, effectiveDate) =>
+              onUpsert({
+                id: newPayId(),
+                scope: 'employee',
+                departmentKey: selectedDept,
+                employeeEmail: emp.email,
+                employeeName: emp.name,
+                regularRate: 0,
+                otRate: undefined,
+                currency,
+                payBasis: 'salary',
+                salaryPeriod: period,
+                salaryAmount: amount,
               }, effectiveDate)
             }
           />
@@ -2921,8 +3179,36 @@ function PayStructureTab({
                   >
                     <IndividualPayRow
                       structure={s}
+                      salaryUnavailableReason={salaryUnavailableReason}
+                      // Saving hourly over a salary row really ends the salary: the basis and
+                      // both salary figures are cleared, and the route dates the switch.
                       onSave={(regular, ot, currency, effectiveDate) =>
-                        onUpsert({ ...s, regularRate: regular, otRate: ot, currency }, effectiveDate)
+                        onUpsert(
+                          {
+                            ...s,
+                            regularRate: regular,
+                            otRate: ot,
+                            currency,
+                            payBasis: 'hourly',
+                            salaryPeriod: undefined,
+                            salaryAmount: undefined,
+                          },
+                          effectiveDate,
+                        )
+                      }
+                      onSaveSalary={(amount, period, currency, effectiveDate) =>
+                        onUpsert(
+                          {
+                            ...s,
+                            regularRate: 0,
+                            otRate: undefined,
+                            currency,
+                            payBasis: 'salary',
+                            salaryPeriod: period,
+                            salaryAmount: amount,
+                          },
+                          effectiveDate,
+                        )
                       }
                       onRemove={() => onDelete(s.id)}
                     />
@@ -3195,7 +3481,10 @@ function RateSourceChip({ rate }: { rate: ReturnType<typeof winningRate> }) {
       </span>
     );
   }
-  const label = formatRate(rate.regular, rate.currency);
+  // A salaried person has no hourly rate: the chip states the salary, never "₱0.00/hr".
+  const label = rate.salary
+    ? `${formatSalary(rate.salary.amount, rate.salary.period, rate.currency)} salary`
+    : formatRate(rate.regular, rate.currency);
   if (rate.source === 'individual') {
     return (
       <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
@@ -3227,6 +3516,15 @@ function nextMondayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** A change onto or off a salary takes effect on a pay-week Sunday: inside a week it would
+ *  be a partial salary week, which is not priced (salaried-pay-basis.md, NEEDS 3). The
+ *  server refuses any other date; this says so before the clerk presses Save. */
+function salaryDateError(needsSunday: boolean, iso: string): string | null {
+  return needsSunday && !isPayWeekSunday(iso)
+    ? 'A salary change takes effect on a pay-week Sunday — pick a Sunday as the effective date.'
+    : null;
+}
+
 function IndividualPayAdder({
   roster,
   preselectEmail,
@@ -3235,6 +3533,8 @@ function IndividualPayAdder({
   deptName,
   existingEmails,
   onAdd,
+  onAddSalary,
+  salaryUnavailableReason,
 }: {
   roster: RosterEntry[];
   deptKey: string;
@@ -3245,11 +3545,14 @@ function IndividualPayAdder({
   preselectEmail?: string | null;
   onPreselectConsumed?: () => void;
   onAdd: (emp: RosterEntry, regular: number, ot: number | undefined, currency: PayCurrency, effectiveDate: string) => void;
+  onAddSalary: (emp: RosterEntry, amount: number, period: SalaryPeriod, currency: PayCurrency, effectiveDate: string) => void;
+  salaryUnavailableReason: string | null;
 }) {
   const [empEmail, setEmpEmail] = useState('');
   const [open, setOpen] = useState(false);
   const [filterByDept, setFilterByDept] = useState(true);
   const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
+  const [editorBasis, setEditorBasis] = useState<PayBasis>('hourly');
 
   // A member row's "Set rate" hands its email over here.
   //
@@ -3389,11 +3692,28 @@ function IndividualPayAdder({
                   onCancel={() => {
                     setOpen(false);
                     setEmpEmail('');
+                    setEditorBasis('hourly');
                   }}
                   onSave={(regular, ot, currency) => {
                     onAdd(emp, regular, ot, currency, effectiveDate);
                     setOpen(false);
                     setEmpEmail('');
+                    setEditorBasis('hourly');
+                  }}
+                  salary={{
+                    unavailableReason: salaryUnavailableReason,
+                    dateError: salaryDateError(editorBasis === 'salary', effectiveDate),
+                    onBasisChange: (b) => {
+                      setEditorBasis(b);
+                      // The hourly default (next Monday) is mid-week for a salary.
+                      if (b === 'salary' && !isPayWeekSunday(effectiveDate)) setEffectiveDate(nextSundayIso());
+                    },
+                    onSave: (amount, period, currency) => {
+                      onAddSalary(emp, amount, period, currency, effectiveDate);
+                      setOpen(false);
+                      setEmpEmail('');
+                      setEditorBasis('hourly');
+                    },
                   }}
                 />
               </div>
@@ -3523,14 +3843,21 @@ function RateHistoryPanel({ email, refreshKey = 0 }: { email: string; refreshKey
 function IndividualPayRow({
   structure,
   onSave,
+  onSaveSalary,
   onRemove,
+  salaryUnavailableReason,
 }: {
   structure: PayStructure;
   onSave: (regular: number, ot: number | undefined, currency: PayCurrency, effectiveDate: string) => void;
+  onSaveSalary: (amount: number, period: SalaryPeriod, currency: PayCurrency, effectiveDate: string) => void;
   onRemove: () => void;
+  salaryUnavailableReason: string | null;
 }) {
+  const isSalary = isSalaryStructure(structure);
   const [editing, setEditing] = useState(false);
-  const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
+  // A salaried row's next change is a basis change either way — it starts on a Sunday.
+  const [effectiveDate, setEffectiveDate] = useState<string>(() => (isSalary ? nextSundayIso() : nextMondayIso()));
+  const [editorBasis, setEditorBasis] = useState<PayBasis>(isSalary ? 'salary' : 'hourly');
   return (
     <div className="rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950">
       <div className="flex items-center justify-between gap-3">
@@ -3539,10 +3866,24 @@ function IndividualPayRow({
             {structure.employeeName || structure.employeeEmail}
           </span>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500">
-            <span className="font-medium text-emerald-600 dark:text-emerald-400">
-              {formatRate(structure.regularRate, structure.currency)}
-            </span>
-            {structure.otRate != null && (
+            {isSalary ? (
+              <>
+                <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                  {formatSalary(structure.salaryAmount, structure.salaryPeriod, structure.currency)}
+                </span>
+                <span
+                  title="Flat every pay week — Hubstaff hours, overtime and the weekend rate don't change it."
+                  className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                >
+                  Salary
+                </span>
+              </>
+            ) : (
+              <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                {formatRate(structure.regularRate, structure.currency)}
+              </span>
+            )}
+            {!isSalary && structure.otRate != null && (
               <span>OT {formatRate(structure.otRate, structure.currency)}</span>
             )}
             <span className="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
@@ -3583,6 +3924,19 @@ function IndividualPayRow({
                 onSave={(regular, ot, currency) => {
                   onSave(regular, ot, currency, effectiveDate);
                   setEditing(false);
+                }}
+                salary={{
+                  unavailableReason: salaryUnavailableReason,
+                  // Onto a salary, or off one: both are dated basis changes.
+                  dateError: salaryDateError(editorBasis === 'salary' || isSalary, effectiveDate),
+                  onBasisChange: (b) => {
+                    setEditorBasis(b);
+                    if ((b === 'salary' || isSalary) && !isPayWeekSunday(effectiveDate)) setEffectiveDate(nextSundayIso());
+                  },
+                  onSave: (amount, period, currency) => {
+                    onSaveSalary(amount, period, currency, effectiveDate);
+                    setEditing(false);
+                  },
                 }}
               />
             </div>
@@ -5741,7 +6095,15 @@ function SearchResultRow({
 }) {
   // The chip shows the layer the engine actually pays from.
   const rateChip =
-    comp.rateSource === 'individual' && comp.override
+    comp.rateSource === 'individual' && comp.override && isSalaryStructure(comp.override)
+      ? {
+          // A salary has no hourly rate — never "₱0.00/hr".
+          text: formatSalary(comp.override.salaryAmount, comp.override.salaryPeriod, comp.override.currency),
+          suffix: ' salary',
+          title: 'Individual salary — paid flat every pay week; Hubstaff hours do not change it',
+          own: true,
+        }
+      : comp.rateSource === 'individual' && comp.override
       ? {
           text: formatRate(comp.override.regularRate, comp.override.currency),
           suffix: '',
@@ -5856,7 +6218,18 @@ function PersonCompCard({
   onAddAssignment: (a: BonusAssignment) => void;
   onRemoveAssignment: (id: string) => void;
 }) {
-  const [effectiveDate, setEffectiveDate] = useState<string>(nextMondayIso);
+  // A salaried person's next change is a dated basis change either way (Sunday only).
+  const overrideIsSalary = comp.override ? isSalaryStructure(comp.override) : false;
+  const [effectiveDate, setEffectiveDate] = useState<string>(() =>
+    overrideIsSalary ? nextSundayIso() : nextMondayIso(),
+  );
+  const [editorBasis, setEditorBasis] = useState<PayBasis>(overrideIsSalary ? 'salary' : 'hourly');
+  // Post-migration every structure reads back with a basis; an override without one means the
+  // salary columns don't exist yet. With no override the server is the one that says so.
+  const salaryUnavailableReason =
+    comp.override && comp.override.payBasis === undefined
+      ? 'Salaries aren’t set up yet — the salary migration hasn’t been applied.'
+      : null;
   const [pickBonus, setPickBonus] = useState('');
   // Bumped (after a beat -- the POST writes history asynchronously via
   // `void syncRateHistory`) so the panel refetches after an in-card save.
@@ -5926,6 +6299,28 @@ function PersonCompCard({
         regularRate: regular,
         otRate: ot,
         currency,
+        // Explicitly hourly: saving here over a salary ends it (the route dates the switch).
+        payBasis: 'hourly',
+      },
+      effectiveDate,
+    );
+    scheduleHistoryRefresh();
+  };
+
+  const saveSalary = (amount: number, period: SalaryPeriod, currency: PayCurrency) => {
+    onUpsertPay(
+      {
+        id: comp.override?.id ?? newPayId(),
+        scope: 'employee',
+        departmentKey: writeDeptKey,
+        employeeEmail: comp.override?.employeeEmail ?? person.email,
+        employeeName: person.name,
+        regularRate: 0,
+        otRate: undefined,
+        currency,
+        payBasis: 'salary',
+        salaryPeriod: period,
+        salaryAmount: amount,
       },
       effectiveDate,
     );
@@ -6007,8 +6402,26 @@ function PersonCompCard({
                   initial={editorInitial}
                   saveLabel={comp.override ? 'Update rate' : 'Set individual rate'}
                   onSave={saveRate}
+                  salary={{
+                    unavailableReason: salaryUnavailableReason,
+                    dateError: salaryDateError(editorBasis === 'salary' || overrideIsSalary, effectiveDate),
+                    onBasisChange: (b) => {
+                      setEditorBasis(b);
+                      if ((b === 'salary' || overrideIsSalary) && !isPayWeekSunday(effectiveDate)) {
+                        setEffectiveDate(nextSundayIso());
+                      }
+                    },
+                    onSave: saveSalary,
+                  }}
                 />
-                {comp.override && (
+                {overrideIsSalary && (
+                  // The route refuses a delete of a salary structure: ending a salary is DATED,
+                  // so it is a switch to Hourly above, never a removal.
+                  <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                    To end this salary, switch to Hourly above with a Sunday effective date.
+                  </p>
+                )}
+                {comp.override && !overrideIsSalary && (
                   <button
                     type="button"
                     onClick={() => {
@@ -6021,6 +6434,26 @@ function PersonCompCard({
                     Remove individual rate (falls back to the rates sheet / department default)
                   </button>
                 )}
+              </>
+            ) : overrideIsSalary && comp.override && isSalaryStructure(comp.override) ? (
+              // A salaried person has no hourly rate to show — the stat IS the salary.
+              <>
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+                  <RateStat
+                    label="Salary"
+                    value={formatSalary(comp.override.salaryAmount, comp.override.salaryPeriod, comp.override.currency)}
+                  />
+                  <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                    {comp.override.currency}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <span>
+                    Individual salary -- paid flat every pay week; Hubstaff hours, overtime and the
+                    weekend rate don&rsquo;t change it.
+                  </span>
+                  <ByLine who={comp.override.updatedBy ?? comp.override.createdBy} />
+                </div>
               </>
             ) : shownRate ? (
               <>

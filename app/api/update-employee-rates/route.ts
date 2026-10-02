@@ -158,19 +158,28 @@ export async function POST(req: Request) {
       const regNum = toNumOrNull(regularRate);
       const otNum = toNumOrNull(otRate);
       if (regNum != null) {
+        // `*`, not a named `pay_basis` column: before the salary migration that column does
+        // not exist and naming it would fail this lookup for every hourly person.
         const { data: structRows, error: structErr } = await supabase
           .from('payment_catalog_pay_structures')
-          .select('id')
+          .select('*')
           .eq('scope', 'employee')
           .ilike('employee_email', recipientNorm);
+        // A SALARY structure is never given an hourly rate from here: its regular_rate is pinned
+        // to 0 so an engine that missed the salary basis pays ₱0, not this figure
+        // (salaried-pay-basis.md). Switching a salaried person to hourly is a dated save in the
+        // Payment Catalog, which also writes the salary history.
+        const hourlyRows = (structRows ?? []).filter(
+          (r) => (r as { pay_basis?: string | null }).pay_basis !== 'salary',
+        );
         if (structErr) {
           // eslint-disable-next-line no-console
           console.warn('[update-employee-rates] catalog lookup failed:', structErr.message);
-        } else if (structRows && structRows.length > 0) {
+        } else if (hourlyRows.length > 0) {
           const { error: syncErr } = await supabase
             .from('payment_catalog_pay_structures')
             .update({ regular_rate: regNum, ot_rate: otNum, updated_by: actor.user_name })
-            .in('id', structRows.map((r) => (r as { id: string }).id));
+            .in('id', hourlyRows.map((r) => (r as { id: string }).id));
           if (syncErr) {
             // eslint-disable-next-line no-console
             console.warn('[update-employee-rates] catalog structure sync failed:', syncErr.message);

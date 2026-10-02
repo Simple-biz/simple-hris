@@ -6,7 +6,15 @@ import {
   deletePayStructure,
   deletePayStructures,
   listEmployeeStructuresForEmail,
+  getPayStructureById,
 } from '@/lib/supabase/pay-structures-db';
+import {
+  listSalaryHistoryForEmail,
+  writeSalaryHistoryRow,
+  type SalaryHistoryWriteFields,
+} from '@/lib/supabase/salary-history-db';
+import { buildSalaryHistoryByEmail, isPayWeekSunday, nextSundayIso } from '@/lib/payroll/salary-basis';
+import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { historySupersedeFloor, shadowEmployeeStructures } from '@/lib/payroll/rate-override';
 import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
@@ -192,6 +200,92 @@ async function syncRateHistory(
   }
 }
 
+type SalaryPlan =
+  | { ok: true; write: SalaryHistoryWriteFields | null }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Whether this employee-scope save writes a dated `employee_salary_history` row, and which —
+ * or why it is refused. A row is written when the save SETS a salary, or switches a person
+ * whose latest history row is a salary back to hourly. Either one must be dated to a pay-week
+ * Sunday: a switch inside a week would make it a partial week, and the partial-week divisor is
+ * Kane's ruling (salaried-pay-basis.md, NEEDS 3). Hourly saves for people never salaried write
+ * nothing here and keep their exact old behaviour.
+ */
+async function planSalaryHistoryWrite(s: PayStructure, effectiveDate: string | null): Promise<SalaryPlan> {
+  const email = normEmail(s.employeeEmail ?? '') ?? '';
+  const isSalary = s.payBasis === 'salary';
+  const prior = await listSalaryHistoryForEmail(email);
+
+  if (isSalary) {
+    if (prior.state === 'not_configured') {
+      return { ok: false, status: 409, error: 'Salaries are not set up yet — the salary migration has not been applied.' };
+    }
+    if (prior.state === 'unavailable') {
+      return { ok: false, status: 500, error: `Could not read this person's salary history: ${prior.error ?? 'unknown error'}. Try again.` };
+    }
+    // One person, one individual structure. Rate resolution keys on email and the newest-created
+    // structure wins (bonus-catalog.md §5.6), so a second structure filed under another department
+    // could out-rank the salary — the engines would then hold every week (structure_mismatch).
+    const { structures: mine, error: listErr } = await listEmployeeStructuresForEmail(email);
+    if (listErr) {
+      return { ok: false, status: 500, error: `Could not check this person's other individual rates: ${listErr}. Try again.` };
+    }
+    const elsewhere = mine.filter(
+      (x) => x.departmentKey.trim().toLowerCase() !== s.departmentKey.trim().toLowerCase(),
+    );
+    if (elsewhere.length > 0) {
+      const where = elsewhere.map((x) => formatDeptLabel(x.departmentKey)).join(', ');
+      return {
+        ok: false,
+        status: 409,
+        error: `${s.employeeName || email} also has an individual rate under ${where}. Remove it first — a person can hold only one structure while salaried.`,
+      };
+    }
+  }
+
+  // An hourly save writes a row only when it switches a salary OFF. An unreadable history means
+  // we cannot tell; the save proceeds and, if it was a switch, the engines see the structure and
+  // the history disagree and HOLD the week (structure_mismatch) — loud, never hourly-by-accident.
+  const latest = prior.state === 'loaded' ? buildSalaryHistoryByEmail(prior.rows).get(email)?.[0] : undefined;
+  const switchesOff = !isSalary && latest != null && latest.basis !== 'hourly';
+  if (!isSalary && !switchesOff) return { ok: true, write: null };
+
+  // No default: a switch onto or off a salary moves money from a date, so the date is the
+  // clerk's to state (every editor sends one). It is also what keeps the hourly history the
+  // same save writes on the very same day as the salary row.
+  const effectiveIso = (effectiveDate ?? '').trim().slice(0, 10);
+  if (!effectiveIso) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Pick the pay-week Sunday this ${isSalary ? 'salary starts' : 'switch back to hourly takes effect'} (e.g. ${nextSundayIso(todayMidnight())}).`,
+    };
+  }
+  if (!isPayWeekSunday(effectiveIso)) {
+    return {
+      ok: false,
+      status: 400,
+      error: isSalary
+        ? 'A salary starts on a pay-week Sunday. Pick a Sunday as the effective date.'
+        : 'Switching a salaried person back to hourly takes effect on a pay-week Sunday. Pick a Sunday as the effective date.',
+    };
+  }
+  const base = {
+    email,
+    effectiveIso,
+    todayIso: fmtIsoDate(todayMidnight()),
+    note: isSalary ? 'Salary set via Payment Catalog' : 'Back to hourly via Payment Catalog',
+  };
+  return {
+    ok: true,
+    write:
+      isSalary && s.salaryPeriod && s.salaryAmount != null
+        ? { ...base, basis: 'salary', period: s.salaryPeriod, amount: s.salaryAmount, currency: s.currency }
+        : { ...base, basis: 'hourly' },
+  };
+}
+
 export async function GET() {
   // Pay structures ARE the authoritative pay rates (regularRate/otRate per
   // department/employee). Accounting/CEO only — the GET used to be ungated, so
@@ -233,8 +327,38 @@ export async function POST(request: Request) {
   // itself). Drives the Rate History note + the audit-log attribution.
   const source = normalizeSource(body.source, PAYMENT_CATALOG_SOURCE);
 
+  // ── Salaried pay basis (docs/features/salaried-pay-basis.md) ──
+  // A salary is a DATED fact about a person: every save that sets a salary, or switches a
+  // salaried person back to hourly, writes a dated row to employee_salary_history — the spine
+  // both pay engines resolve the week from. Decided BEFORE the upsert so a refusal writes nothing.
+  const salaryPlan = s.scope === 'employee' ? await planSalaryHistoryWrite(s, body.effectiveDate ?? null) : null;
+  if (salaryPlan && !salaryPlan.ok) {
+    return NextResponse.json({ error: salaryPlan.error }, { status: salaryPlan.status });
+  }
+  // A switch onto or off a salary was validated against `body.effectiveDate` itself (required,
+  // a Sunday), so the hourly rate history written below starts on that very same day.
+
   const { row, error } = await upsertPayStructure(s, actor);
   if (error) return NextResponse.json({ error }, { status: 500 });
+
+  if (salaryPlan?.ok && salaryPlan.write) {
+    // Awaited: a salary in the catalog with no dated row is a week the engines refuse to price
+    // (they resolve `unknown`, never hourly), so the clerk must hear about a failure now.
+    const { error: histErr } = await writeSalaryHistoryRow({
+      ...salaryPlan.write,
+      structureId: row?.id ?? s.id,
+      actor,
+    });
+    if (histErr) {
+      invalidateRateProfilesCache();
+      return NextResponse.json(
+        {
+          error: `Saved to the Payment Catalog, but ${histErr}. Save again — until it lands this person's week is held, not paid.`,
+        },
+        { status: 500 },
+      );
+    }
+  }
 
   // Rates & Profiles overlays employee-scope catalog rates onto its cached
   // merge — a structure change must show there immediately, not after the TTL.
@@ -278,7 +402,13 @@ export async function POST(request: Request) {
   }
 
   if (s.scope === 'employee') {
-    if (isFixerOverride) {
+    if (s.payBasis === 'salary') {
+      // A salary is NOT an hourly rate: nothing goes to employee_rate_history, the
+      // employee_hourly_rates cache, the Google rates sheet or the Hogan Pay Plan sheet — each is
+      // PHP-per-HOUR, and a weekly amount there would be priced as an hourly rate by every reader
+      // (the §5.3 corruption class). The employee "hourly rate updated" notice is not sent either:
+      // it renders hourly figures only.
+    } else if (isFixerOverride) {
       // Awaited: the fixer's response must mean "the week prices from this".
       // A history failure surfaces as an error the clerk can retry — the
       // upsert above is idempotent, so a second click finishes the job.
@@ -315,6 +445,11 @@ export async function POST(request: Request) {
         regular_rate: s.regularRate,
         ot_rate: s.otRate ?? null,
         currency: s.currency,
+        pay_basis: s.payBasis ?? 'hourly',
+        salary_period: s.payBasis === 'salary' ? (s.salaryPeriod ?? null) : null,
+        salary_amount: s.payBasis === 'salary' ? (s.salaryAmount ?? null) : null,
+        // The switch onto / off a salary, when this save made one.
+        salary_history: salaryPlan?.ok && salaryPlan.write ? salaryPlan.write.basis : null,
         effective_date: body.effectiveDate ?? null,
         // Complete override (fixer only): what the save retired, so the trail
         // can answer "where did their Hogan rate go" without a table diff.
@@ -336,6 +471,22 @@ export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+  // Removing a SALARY structure would leave the dated history saying salary with no structure
+  // behind it — every later week resolves `unknown` and is held. The switch off a salary has a
+  // date, so it is made by saving the person back to Hourly, never by a delete.
+  const { structure: target, error: readErr } = await getPayStructureById(id);
+  if (readErr) {
+    return NextResponse.json({ error: `Could not check the pay structure before removing it: ${readErr}` }, { status: 500 });
+  }
+  if (target && target.payBasis === 'salary') {
+    return NextResponse.json(
+      {
+        error: `${target.employeeName || target.employeeEmail || 'This person'} is salaried. Switch them back to Hourly (dated to a pay-week Sunday) before removing the structure.`,
+      },
+      { status: 409 },
+    );
+  }
 
   const { error } = await deletePayStructure(id);
   if (error) return NextResponse.json({ error }, { status: 500 });

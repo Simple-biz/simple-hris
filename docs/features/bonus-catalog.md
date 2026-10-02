@@ -765,6 +765,10 @@ HR onboarding reads department-scoped structures as the prefilled-rate source
 (`src/lib/supabase/department-rates.ts`), and -- as of 2026-06-16 -- all pay
 math resolves rates through them at compute time.
 
+**An individual structure can instead be a SALARY** (2026-10-02, §5.8 and
+`salaried-pay-basis.md`): a flat weekly amount that Hubstaff hours do not change.
+A salary is never legal on a department structure.
+
 ### 5.1 Compute-time overlay (`src/lib/payroll/resolve-rate.ts`)
 
 The overlay is a **pure in-memory** layer -- it **never writes to the DB**. It
@@ -1001,7 +1005,9 @@ them (and the sheet sync would later read it back as PHP). The overlay handles
 USD->PHP at pay-calc time instead. PHP structures still write all of the above.
 The employee `rate.change` notification fires for **both** currencies, and the
 payload now carries `currency`. Department-scoped saves never call
-`syncRateHistory` at all.
+`syncRateHistory` at all. **A SALARY save never calls it either** (2026-10-02):
+every one of those stores is PHP-per-HOUR, so a weekly amount there is this same
+corruption class. A salary is dated in `employee_salary_history` instead (§5.8).
 
 ### 5.4 Known gap
 
@@ -1077,7 +1083,35 @@ The one-line fix alone would make things **worse**: `syncRateHistory` guards on
 `s.currency !== 'USD'`, so a genuine COP structure would start writing COP numbers
 into the PHP-denominated `employee_rate_history`, `employee_hourly_rates`, the Google
 Sheet rates tab and the Hogan Pay Plan sheet -- exactly the corruption §5.3 was
-written to stop. **Both changes ship together or neither does.**
+written to stop. **Both changes ship together or neither does.** For the same reason
+a **salary** can be held in PHP or USD only. COP is refused for a salary, never
+stored as PHP.
+
+### 5.8 Salary structures *(added 2026-10-02 — governing doc `salaried-pay-basis.md`)*
+
+Kane: *"Lets add an option in here instead of the regular hourly and ot hourly … a flat rate
+everytime no matter their hubstaff hours"*. Every individual editor (the adder, the individual
+row, the Search person card) has an **Hourly | Salary** toggle. The department editor does not:
+a salary is a dated fact about a person (`salaried-pay-basis.md` §2).
+
+Rules that are easy to break from this file:
+
+- **A salary row stores `regularRate = 0` and no OT.** Every reader that doesn't know the basis
+  then prices ₱0, never a believable figure. `winningRate()` carries `salary`. The member-list
+  chip, the Search row/card and the individual row all read it first, so nothing prints
+  `₱0.00/hr` for a salaried person.
+- **Only Week can be saved.** Day and Month are shown disabled with the reason (Kane's open
+  rulings). PHP or USD only.
+- **A change onto or off a salary is dated to a pay-week Sunday.** Switching to Salary moves the
+  editor's date to next Sunday, and Save is disabled (with the reason) on any other day. The route
+  refuses a missing or non-Sunday date. Saving Hourly over a salary row clears `payBasis` and both
+  salary figures; that is the switch-off.
+- **Removing a salary structure is refused** (`409`). Switch to Hourly instead. The Search card
+  hides its remove link for a salary and says so.
+- **One structure per person while salaried.** A salary save is refused when the person holds an
+  individual rate under another department. Name the shadow and remove it first.
+- **Before the migration the toggle is disabled:** once the columns exist, every row reads back
+  with a `payBasis`, and a catalog where none does is a database without them.
 
 ---
 

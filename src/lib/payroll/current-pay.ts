@@ -101,9 +101,17 @@ import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
 import {
   buildCatalogRateIndex,
   resolveEmployeeCatalogRate,
+  resolveEmployeeCatalogStructure,
   resolveDeptCatalogRate,
   resolveDeptLabelForRate,
 } from "@/lib/payroll/resolve-rate";
+import { listAllSalaryHistory } from "@/lib/supabase/salary-history-db";
+import {
+  buildSalaryHistoryByEmail,
+  parseIsoDay,
+  resolveSalaryWeek,
+  structureBasisClaim,
+} from "@/lib/payroll/salary-basis";
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -178,6 +186,19 @@ export interface CurrentPayEntry {
    */
   departmentKey: string | null;
   departmentName: string | null;
+  /**
+   * How this week was priced (docs/features/salaried-pay-basis.md). `salary` = the flat weekly
+   * salary in `regularPayPHP`, OT 0, Hubstaff hours informational only. `held` = a salaried week
+   * that cannot be priced (partial week, records disagree, history unreadable …): every pay
+   * field is null and `hasRate` false, exactly like a person with no rate, so Payment Dispatch
+   * excludes it (`no_pay`) instead of paying a guess.
+   */
+  payBasis: 'hourly' | 'salary' | 'held';
+  /** Why a salaried week was held — set only when `payBasis === 'held'`. */
+  salaryHeldDetail: string | null;
+  /** The flat salary, native + PHP-equivalent — set only when `payBasis === 'salary'`. Lets an
+   *  engine-reconstructed statement render its Salary line instead of Hours × Rate. */
+  salary: { period: string; amountNative: number; currency: PayCurrency; amountPhp: number } | null;
 }
 
 export interface CurrentPayResult {
@@ -736,6 +757,7 @@ export async function computeCurrentPay(
     hslTransferEffective,
     deptRegistry,
     approvedAdjustmentFacts,
+    salaryHistoryResult,
   ] = await Promise.all([
     hubstaffPromise,
     getEmployeeHourlyRatesRows(),
@@ -774,6 +796,9 @@ export async function computeCurrentPay(
     supabase
       ? fetchApprovedTimeAdjustments(supabase)
       : Promise.resolve(new Map<string, Map<string, ApprovedAdjustmentFacts>>()),
+    // The dated salary timeline (salaried-pay-basis.md). Never best-effort: a failed read is
+    // `unavailable`, which HOLDS every structure-salaried person instead of pricing them hourly.
+    listAllSalaryHistory(),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -855,6 +880,37 @@ export async function computeCurrentPay(
   // historical gating lives in the dashboard estimate path
   // (member-monthly-pay.ts), not here.
   const catalogIndex = buildCatalogRateIndex(payStructuresResult.structures, deptRegistrySafe);
+
+  // ── Salaried pay basis (docs/features/salaried-pay-basis.md) ──
+  // The same resolver the Payroll Wizard calls (resolveSalaryWeek), so the two engines agree on
+  // who is salaried this week and what it pays. The partial-week hold needs each salaried
+  // leaver's last day; that read is the heavy offboarded-roster merge, so it runs ONLY when
+  // somebody could be salaried at all — a week with no salary anywhere costs nothing extra.
+  const salaryHistory = buildSalaryHistoryByEmail(salaryHistoryResult.rows);
+  const anySalaryOnRecord =
+    payStructuresResult.structures.some((s) => s.payBasis === 'salary') ||
+    [...salaryHistory.values()].some((rows) => rows.some((r) => r.basis !== 'hourly')) ||
+    salaryHistoryResult.state === 'unavailable';
+  const lastDayByEmail = new Map<string, Date | 'unknown'>();
+  let offboardedReadFailed = false;
+  if (anySalaryOnRecord) {
+    // Imported lazily: recently-offboarded is `server-only`, and this module's pure pricing
+    // functions (computeProratedRowPay) are imported by unit tests outside Next.
+    const { listRecentlyOffboardedPeople } = await import("@/lib/roster/recently-offboarded");
+    const off = await listRecentlyOffboardedPeople(90).catch((e: unknown) => ({
+      people: [],
+      hoursWeekFloor: null,
+      error: e instanceof Error ? e.message : "offboarded roster read failed",
+    }));
+    if (off.error) offboardedReadFailed = true;
+    for (const p of off.people) {
+      const last = parseIsoDay(p.off_boarded_at) ?? "unknown";
+      for (const e of [p.work_email, p.personal_email, p.hubstaff_email]) {
+        const n = normEmail(e);
+        if (n) lastDayByEmail.set(n, last);
+      }
+    }
+  }
 
   // ── Bonus prep ───────────────────────────────────────────────────────
   // 1. Determine the dispatch week's date range. Two paths:
@@ -1191,9 +1247,47 @@ export async function computeCurrentPay(
       regularHours = Math.max(0, totalHours - otHours);
     }
 
+    // Salaried pay basis: the person's dated basis for THIS pay week, from the shared resolver.
+    // `salary` replaces Regular AND OT with the flat weekly amount — Hubstaff hours move no money
+    // (Kane, 2026-10-02). `held` prices nothing, exactly like a person with no rate.
+    const personEmails = aliasesByEmail.get(em) ?? [em];
+    const salaryWeek = resolveSalaryWeek(
+      {
+        history: salaryHistory,
+        historyState: salaryHistoryResult.state,
+        emails: personEmails,
+        structure: payStructuresResult.error
+          ? { kind: 'unavailable' }
+          : structureBasisClaim(resolveEmployeeCatalogStructure(catalogIndex, personEmails)),
+        week: payWindow,
+        startDate: startDateByEmail.get(em) ?? null,
+        lastDay:
+          personEmails.map((a) => lastDayByEmail.get(a)).find((v) => v !== undefined) ??
+          lastDayByEmail.get(em) ??
+          null,
+      },
+      fx,
+    );
+    // Without the offboarded list the partial-week hold cannot be checked, so a salaried week
+    // is held rather than paid whole for someone who may have left mid-week.
+    const salaryOutcome =
+      salaryWeek.kind === 'salary' && offboardedReadFailed
+        ? {
+            kind: 'held' as const,
+            reason: 'leavers_unavailable' as const,
+            detail: 'The offboarded list could not be read to confirm a whole salary week.',
+          }
+        : salaryWeek;
+
     let regularPayPHP: number | null;
     let otPayPHP: number | null;
-    if (prorated) {
+    if (salaryOutcome.kind === 'salary') {
+      regularPayPHP = salaryOutcome.pay.amountPhp;
+      otPayPHP = 0;
+    } else if (salaryOutcome.kind === 'held') {
+      regularPayPHP = null;
+      otPayPHP = null;
+    } else if (prorated) {
       regularPayPHP = prorated.regularPayPHP;
       otPayPHP = prorated.otPayPHP;
     } else {
@@ -1203,8 +1297,10 @@ export async function computeCurrentPay(
     const initialPayPHP =
       regularPayPHP != null && otPayPHP != null ? regularPayPHP + otPayPHP : null;
 
-    // Bonus computation — gated by week + per-employee eligibility + has-rates.
-    const hasRates = reg != null || ot != null;
+    // Bonus computation — gated by week + per-employee eligibility + has-rates. A salaried week
+    // counts as rated (bonuses ride on top unchanged, CHOSEN 3); a held one does not.
+    const hasRates =
+      salaryOutcome.kind === 'salary' ? true : salaryOutcome.kind === 'held' ? false : reg != null || ot != null;
     const startDate = startDateByEmail.get(em) ?? null;
     // 30-days check uses the Monday of the pay week for both HSL and non-HSL.
     const empHasThirtyDays =
@@ -1276,11 +1372,22 @@ export async function computeCurrentPay(
       totalPayPHP: totalPayPHP != null ? Math.round(totalPayPHP * 100) / 100 : null,
       totalPayUSD: totalPayUSD != null ? Math.round(totalPayUSD * 100) / 100 : null,
       totalPayCOP,
-      hasRate: reg != null,
-      payCurrency,
+      hasRate: salaryOutcome.kind === 'salary' ? true : salaryOutcome.kind === 'held' ? false : reg != null,
+      payCurrency: salaryOutcome.kind === 'salary' ? salaryOutcome.pay.currency : payCurrency,
       countryCurrency: countryCurrencyByEmail.get(em) ?? null,
       departmentKey: empDeptKey,
       departmentName: empDeptName,
+      payBasis: salaryOutcome.kind,
+      salaryHeldDetail: salaryOutcome.kind === 'held' ? salaryOutcome.detail : null,
+      salary:
+        salaryOutcome.kind === 'salary'
+          ? {
+              period: salaryOutcome.pay.period,
+              amountNative: salaryOutcome.pay.amountNative,
+              currency: salaryOutcome.pay.currency,
+              amountPhp: salaryOutcome.pay.amountPhp,
+            }
+          : null,
     };
   }
 

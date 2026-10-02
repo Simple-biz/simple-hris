@@ -89,6 +89,9 @@ function payEntry(over: Partial<CurrentPayEntry> = {}): CurrentPayEntry {
     countryCurrency: null,
     departmentKey: 'edit',
     departmentName: 'Edit Team',
+    payBasis: 'hourly',
+    salaryHeldDetail: null,
+    salary: null,
     ...over,
   };
 }

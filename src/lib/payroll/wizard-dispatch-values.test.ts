@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  catalogClaimFromStructure,
   pickWizardSnapshotEntry,
   resolveWizardRowValues,
   snapshotEntryIsItemized,
@@ -131,6 +132,61 @@ describe('snapshotRateContradictsCatalog', () => {
       snapshotRateContradictsCatalog(snap({ regularRate: undefined, otRate: undefined }), { regular: 225, ot: 337.5 }),
       false,
     );
+  });
+
+  // ── Salaried pay basis (salaried-pay-basis.md §3.5): the guard must stay ON ──
+  const SALARY_CLAIM = { regular: 0, ot: null, salary: { period: 'week', amount: 25_000, currency: 'PHP' } };
+  const salarySnap = (amountNative = 25_000, currency = 'PHP') =>
+    snap({
+      regularRate: null,
+      otRate: null,
+      regularPay: 25_000,
+      salary: { period: 'week', amountNative, currency, amountPhp: 25_000 },
+    });
+
+  it('rejects an HOURLY-priced snapshot of a person whose structure is now a salary', () => {
+    assert.equal(snapshotRateContradictsCatalog(snap(), SALARY_CLAIM), true);
+  });
+
+  it('accepts a snapshot priced at the same salary; rejects a different amount or currency', () => {
+    assert.equal(snapshotRateContradictsCatalog(salarySnap(), SALARY_CLAIM), false);
+    assert.equal(snapshotRateContradictsCatalog(salarySnap(20_000), SALARY_CLAIM), true);
+    assert.equal(snapshotRateContradictsCatalog(salarySnap(25_000, 'USD'), SALARY_CLAIM), true);
+  });
+
+  it('rejects a SALARY-priced snapshot of a person switched back to hourly', () => {
+    assert.equal(snapshotRateContradictsCatalog(salarySnap(), { regular: 225, ot: 337.5, salary: null }), true);
+  });
+
+  it('a salary structure missing its figures matches no snapshot', () => {
+    const broken = { regular: 0, ot: null, salary: { period: 'week', amount: Number.NaN, currency: 'PHP' } };
+    assert.equal(snapshotRateContradictsCatalog(salarySnap(), broken), true);
+  });
+});
+
+describe('catalogClaimFromStructure', () => {
+  it('claims a PHP hourly rate, skips a USD hourly rate, and claims any salary natively', () => {
+    assert.deepEqual(
+      catalogClaimFromStructure({ scope: 'employee', employeeEmail: 'A@x.com', regularRate: 225, otRate: 337.5, currency: 'PHP' }),
+      { email: 'a@x.com', claim: { regular: 225, ot: 337.5, salary: null } },
+    );
+    assert.equal(
+      catalogClaimFromStructure({ scope: 'employee', employeeEmail: 'a@x.com', regularRate: 10, currency: 'USD' }),
+      null,
+    );
+    assert.deepEqual(
+      catalogClaimFromStructure({
+        scope: 'employee',
+        employeeEmail: 'a@x.com',
+        regularRate: 0,
+        currency: 'USD',
+        payBasis: 'salary',
+        salaryPeriod: 'week',
+        salaryAmount: 500,
+      }),
+      { email: 'a@x.com', claim: { regular: 0, ot: null, salary: { period: 'week', amount: 500, currency: 'USD' } } },
+    );
+    assert.equal(catalogClaimFromStructure({ scope: 'department', regularRate: 175, currency: 'PHP' }), null);
   });
 });
 

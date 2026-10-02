@@ -32,9 +32,29 @@ export interface TimeAdjustmentView {
   days: TimeAdjustmentDayView[];
 }
 
+/**
+ * A week priced as a flat SALARY (docs/features/salaried-pay-basis.md) — the payload's
+ * `salary` block. `amountPhp` is the money (it equals `mfPay`); the native amount + currency
+ * say what the person is on.
+ */
+export interface SalaryView {
+  period: string;
+  amountNative: number;
+  currency: string;
+  amountPhp: number;
+}
+
 export interface PayStubView {
   name: string;
   department: string;
+  /**
+   * Set when the week was paid as a flat SALARY: the statement then renders ONE "Salary"
+   * earnings line for `mfPay` INSTEAD of the Regular / Overtime / Weekend Hours × Rate lines —
+   * a salary has no hourly rate, so those lines would print "40.00h × ₱0.00" over a real
+   * amount. Hours stay on the view for reference. Null for every hourly week and every payload
+   * staged before 2026-10-02, which render byte-identical to before.
+   */
+  salary: SalaryView | null;
   /**
    * Mid-week department transfer — the disclosure that sits UNDER the
    * Department line: **"Lead Gen to HSL"**.
@@ -273,6 +293,44 @@ export function showsOrphanageLine(view: Pick<PayStubView, 'orphanagePay'>): boo
  */
 export function showsTimeAdjustmentLine(view: Pick<PayStubView, 'timeAdjustment'>): boolean {
   return view.timeAdjustment != null && Math.abs(view.timeAdjustment.payPhp) >= MONEY_EPSILON;
+}
+
+const SALARY_PERIOD_WORD: Record<string, string> = { day: 'daily', week: 'weekly', month: 'monthly' };
+const SALARY_PERIOD_UNIT: Record<string, string> = { day: 'day', week: 'week', month: 'month' };
+
+/** The Salary earnings line's label — `Salary (weekly)`. Shared by every renderer. */
+export function salaryLineLabel(s: SalaryView): string {
+  const word = SALARY_PERIOD_WORD[s.period];
+  return word ? `Salary (${word})` : 'Salary';
+}
+
+/**
+ * The Salary line's detail cell. A PHP salary reads `Flat · hours not counted`; a USD one names
+ * the native figure the person is on (`$500.00 USD / week`), because the amount column is the
+ * PHP it converted to at this cycle's FX. Derived HERE so the in-app statement and the email
+ * cannot word it differently.
+ */
+export function formatSalaryDetail(s: SalaryView): string {
+  if (s.currency === 'PHP') return 'Flat · hours not counted';
+  const unit = SALARY_PERIOD_UNIT[s.period] ?? s.period;
+  const native =
+    s.currency === 'USD'
+      ? `$${s.amountNative.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`
+      : `${s.amountNative.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${s.currency}`;
+  return `${native} / ${unit} · flat`;
+}
+
+/** The payload's `salary` block, or null (hourly week, or staged before 2026-10-02). */
+export function parseSalaryBlock(payload: Json): SalaryView | null {
+  const raw = obj(payload).salary;
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Record<string, unknown>;
+  const amountPhp = num(s.amount_php);
+  const amountNative = num(s.amount_native);
+  const period = str(s.period);
+  const currency = str(s.currency) || 'PHP';
+  if (!period) return null;
+  return { period, amountNative, currency, amountPhp };
 }
 
 /**
@@ -775,6 +833,7 @@ export function mapPayloadToPayStub(payload: Json, payPeriod?: Json): PayStubVie
   return {
     name: str(p.name),
     department: str(p.department_name) || '—',
+    salary: parseSalaryBlock(payload),
     departmentTransfer: deriveDepartmentTransfer(payload),
     weekStart,
     weekEnd,

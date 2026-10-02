@@ -5,9 +5,11 @@ import {
   formatCop,
   formatHours,
   formatPhp,
+  formatSalaryDetail,
   formatStatementDate,
   formatTimeAdjustmentDetail,
   formatUsd,
+  salaryLineLabel,
   showsOrphanageLine,
   showsTimeAdjustmentLine,
   type PayStubView,
@@ -548,6 +550,18 @@ export function PayStubStatement({
                 joins the label and the detail cell shows `₱old → ₱new` plus the
                 per-rate hour basis. Lines paid at one rate (view.proration null
                 or that line's entry null) render classic, byte-identical. */}
+            {/* A SALARIED week (salaried-pay-basis.md) has no hourly rate: ONE "Salary" line
+                carries the flat amount instead of the Hours × Rate lines, which would print
+                "40.00h × ₱0.00" beside real money. Hourly stubs render unchanged. */}
+            {view.salary ? (
+              <EarningRow
+                label={salaryLineLabel(view.salary)}
+                detail={formatSalaryDetail(view.salary)}
+                amount={php(view.mfPay)}
+                state={fs.regular}
+              />
+            ) : (
+            <>
             <EarningRow
               label={view.otIsDifferential ? 'M-F Hours' : 'Regular Hours'}
               badge={view.proration?.regular ? <ProratedChip /> : null}
@@ -610,6 +624,8 @@ export function PayStubStatement({
                 amount={php(view.weekendPay)}
                 state={fs.weekend}
               />
+            )}
+            </>
             )}
             {/* Approved time adjustment. It sits directly after the hours lines,
                 the same place the Reports XLSX puts its columns, so the document

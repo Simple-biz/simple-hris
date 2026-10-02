@@ -42,7 +42,9 @@ export type ValidationFlagCode =
   | 'gross_mismatch'
   | 'not_dispatchable'
   | 'ot_ratio'
-  | 'rate_source';
+  | 'rate_source'
+  /** A salaried week the engine refused to price (salaried-pay-basis.md) — pays nothing. */
+  | 'salary_held';
 
 export type ValidationFlag = {
   code: ValidationFlagCode;
@@ -99,6 +101,14 @@ export type BreakdownInput = {
     sheetRate: number | null;
     paidRate: number | null;
   } | null;
+  /**
+   * Set when the week is priced as a flat SALARY (salaried-pay-basis.md): `regularRate` and
+   * `otRate` are then null BY DESIGN and `regularPay` is the salary, so "no rate" and
+   * "pay without hours" do not apply. Absent/null = an hourly row.
+   */
+  salary?: { amountPhp: number } | null;
+  /** Set when a salaried week was HELD — it pays nothing, and says why. */
+  salaryHeld?: { label: string; detail: string } | null;
 };
 
 export type PayrollBreakdown = {
@@ -150,10 +160,19 @@ function deriveFlags(
 ): ValidationFlag[] {
   const flags: ValidationFlag[] = [];
   const hasHours = b.hours.total > 0;
-  const hasRate = input.regularRate != null;
+  const isSalary = input.salary != null;
+  const hasRate = input.regularRate != null || isSalary;
   const paidSomething = num(input.initialPay) > 0;
 
-  if (hasHours && !hasRate) {
+  if (input.salaryHeld) {
+    // Says WHY instead of "no pay rate resolved", which would send Accounting to set an hourly
+    // rate on someone who is salaried.
+    flags.push({
+      code: 'salary_held',
+      severity: 'red',
+      message: `${input.salaryHeld.label}: ${input.salaryHeld.detail} This line pays nothing until it is fixed or paid by hand.`,
+    });
+  } else if (hasHours && !hasRate) {
     flags.push({
       code: 'no_rate',
       severity: 'red',
@@ -169,7 +188,8 @@ function deriveFlags(
     });
   }
 
-  if (!hasHours && b.gross > 0) {
+  // A salary pays whatever the hours were — money with no hours behind it is the rule there.
+  if (!hasHours && b.gross > 0 && !isSalary) {
     flags.push({
       code: 'pay_without_hours',
       severity: 'red',

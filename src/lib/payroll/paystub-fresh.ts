@@ -29,6 +29,7 @@ import type { WizardFinalPayEntry } from "@/lib/payroll/paystub-recovery";
 // money a clerk sent and the statement that person received could be priced from
 // different carriers. See src/lib/payroll/wizard-dispatch-values.ts.
 import {
+  catalogClaimFromStructure,
   snapshotEntryIsItemized,
   snapshotIsNewerThanLock,
   snapshotRateContradictsCatalog,
@@ -61,6 +62,8 @@ export interface FreshPaystubEntry {
 export interface CatalogRateClaim {
   regular: number;
   ot: number | null;
+  /** Set for a SALARY structure — the snapshot must carry this salary (salaried-pay-basis.md). */
+  salary?: { period: string; amount: number; currency: string } | null;
 }
 
 /**
@@ -77,14 +80,12 @@ export async function getCatalogRateClaimsByEmail(): Promise<Map<string, Catalog
     const { structures } = await listPayStructures();
     // Insertion order is created_at ASC, so a later duplicate for the same
     // email wins — the same last-write-wins rule as buildCatalogRateIndex.
+    // One builder shared with Payment Dispatch's client queue (catalogClaimFromStructure):
+    // hourly PHP structures claim their rate; SALARY structures (any currency, compared
+    // natively) claim their salary, so the guard is no longer off for salaried people.
     for (const s of structures) {
-      if (s.scope !== "employee" || s.currency !== "PHP") continue;
-      const em = (s.employeeEmail ?? "").trim().toLowerCase();
-      if (!em || !Number.isFinite(s.regularRate)) continue;
-      map.set(em, {
-        regular: s.regularRate,
-        ot: s.otRate != null && Number.isFinite(s.otRate) ? s.otRate : null,
-      });
+      const c = catalogClaimFromStructure(s);
+      if (c) map.set(c.email, c.claim);
     }
   } catch {
     // Catalog unavailable — return an empty map so merging degrades gracefully.
@@ -550,6 +551,35 @@ export function mergeSnapshotIntoStaged(
       : (entry.departmentKey ?? null);
   const deptChanged = hasDeptField && (nextDeptName !== oldDeptName || nextDeptKey !== oldDeptKey);
 
+  // ── Salary block (snapshots since 2026-10-02, salaried-pay-basis.md) ──
+  // The block IS the statement's "Salary" earnings line and explains `pay_php.regular`, so it
+  // travels in the same write as the figures — the same tri-state as the blocks above:
+  // undefined = an older snapshot that cannot speak for it, keep the staged block; null = an
+  // hourly week, clear a stale one; a value = this salary. A salaried stub left carrying an
+  // hourly-priced block (or the reverse) would render Hours × Rate lines over a flat amount.
+  const oldSalary = p.salary && typeof p.salary === "object" ? (p.salary as Record<string, unknown>) : null;
+  const hasSalaryField = entry.salary !== undefined;
+  const nextSalary = !hasSalaryField
+    ? oldSalary
+    : entry.salary
+      ? {
+          period: entry.salary.period,
+          amount_native: entry.salary.amountNative,
+          currency: entry.salary.currency,
+          amount_php: entry.salary.amountPhp,
+          effective_from: entry.salary.effectiveFrom ?? null,
+        }
+      : null;
+  const salaryChanged =
+    hasSalaryField &&
+    (!oldSalary !== !nextSalary ||
+      (oldSalary != null &&
+        nextSalary != null &&
+        (oldSalary.period !== nextSalary.period ||
+          oldSalary.currency !== nextSalary.currency ||
+          !sameAmount(oldSalary.amount_native, nextSalary.amount_native) ||
+          !sameAmount(oldSalary.amount_php, nextSalary.amount_php))));
+
   // Field-by-field change detection (NOT JSON.stringify — jsonb round-trips
   // reorder keys, which would flag every merge as a change). fx_rate is part of
   // the statement too (the USD line), so an fx-only snapshot update must merge.
@@ -563,6 +593,7 @@ export function mergeSnapshotIntoStaged(
     timeAdjChanged ||
     transferChanged ||
     deptChanged ||
+    salaryChanged ||
     (snapFx > 0 && !sameAmount(oldPeriod.fx_rate, snapFx)) ||
     (nextNote ?? null) !== ((typeof p.adjustment_note === "string" ? p.adjustment_note : null) ?? null);
   if (!changed) return base;
@@ -584,6 +615,8 @@ export function mergeSnapshotIntoStaged(
     ...(hasTransferField ? { department_transfer: nextTransfer } : {}),
     // The Department line follows the wizard's current resolution (see above).
     ...(hasDeptField ? { department_name: nextDeptName, department_key: nextDeptKey } : {}),
+    // Same rule for the salary block (see above).
+    ...(hasSalaryField ? { salary: nextSalary } : {}),
     rates_php: nextRates,
     pay_php: nextPay,
     adjustment_note: nextNote,

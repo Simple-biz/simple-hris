@@ -33,6 +33,7 @@ import {
   applyCopEquivalent,
   type PayStubView,
   type ProrationBlockRaw,
+  type SalaryView,
 } from "@/lib/payroll/paystub-view";
 import type { DepartmentTransferBlockRaw } from "@/lib/payroll/department-transfer-legs";
 import {
@@ -284,6 +285,9 @@ function buildView(p: {
   mesaDisbursement: number;
   totalPayPhp: number;
   fxRate: number;
+  /** The flat salary the week paid (salaried-pay-basis.md) — the statement then renders ONE
+   *  Salary line. Required, so neither reconstruction path can forget a salaried week. */
+  salary: SalaryView | null;
 }): PayStubView {
   const wknd = p.weekend ?? null;
   const hogan = p.hoganSheet ?? null;
@@ -391,6 +395,7 @@ function buildView(p: {
     totalPayUsd: p.fxRate > 0 ? round2(p.totalPayPhp / p.fxRate) : 0,
     // COP-country payees get this stamped by the caller (applyCopEquivalent).
     totalPayCop: null,
+    salary: p.salary,
     // Same derivation the payload path uses (parse → per-line views), so the
     // fast-path stub shows the identical chip/basis a staged payload would.
     proration: deriveProrationFields(
@@ -509,6 +514,15 @@ export async function reconstructStubForWeek(params: {
               days: Array.isArray(fp.timeAdjustmentDays) ? fp.timeAdjustmentDays : [],
             }
           : null,
+      // Flat salary week — snapshots since 2026-10-02; older ones (and hourly weeks) have none.
+      salary: fp.salary
+        ? {
+            period: fp.salary.period,
+            amountNative: fp.salary.amountNative,
+            currency: fp.salary.currency,
+            amountPhp: fp.salary.amountPhp,
+          }
+        : null,
       pab: round2(fp.perfectAttendanceBonus as number),
       tech: round2(fp.techBonus as number),
       performanceBonus: round2(fp.otherBonuses as number),
@@ -639,6 +653,11 @@ export async function reconstructStubForWeek(params: {
     mesaDisbursement,
     totalPayPhp,
     fxRate,
+    // A pre-itemization snapshot never carries a salary (it predates the field), so only the
+    // engine can say this week was salaried.
+    salary: fp?.salary
+      ? { period: fp.salary.period, amountNative: fp.salary.amountNative, currency: fp.salary.currency, amountPhp: fp.salary.amountPhp }
+      : entry?.salary ?? null,
   });
   return { sourceFile: params.sourceFile, paidAt: params.paidAt, payDate: payDate(), view };
 }

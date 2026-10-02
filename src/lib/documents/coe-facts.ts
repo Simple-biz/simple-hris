@@ -547,6 +547,21 @@ export async function resolveCoeFacts(
 
   const comp = computePersonComp({ email: norm, aliases, department: team }, indexes);
   const rate = winningRate(comp);
+  // A SALARIED person has no hourly rate, and the certificate's wording states one
+  // (an hourly + overtime rate on a 40h week). Refuse rather than certify a salary as
+  // "₱0.00/hr" — the salary wording for the certificate is not built
+  // (salaried-pay-basis.md, Open items).
+  if (rate?.salary) {
+    return {
+      facts: null,
+      blocked: {
+        code: 'no_rate',
+        message:
+          'You are on a salary, and this certificate states an hourly rate. Accounting will need to issue your Certificate of Engagement manually for now.',
+      },
+      error: null,
+    };
+  }
   // A zero rate is not a rate. US/externally-paid people carry a 0 (or blank)
   // rates-sheet row — business-logic.md calls this "paid externally" — and
   // computePersonComp faithfully mirrors the engine by treating 0 as present.

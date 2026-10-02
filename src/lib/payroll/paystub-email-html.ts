@@ -24,9 +24,11 @@ import {
   formatCop,
   formatHours,
   formatPhp,
+  formatSalaryDetail,
   formatStatementDate,
   formatUsd,
   formatTimeAdjustmentDetail,
+  salaryLineLabel,
   showsOrphanageLine,
   showsTimeAdjustmentLine,
   type PayStubView,
@@ -261,7 +263,17 @@ export function renderPayStubEmailHtml(
      weekday-by-subtraction split with a full-rate "Overtime" line. Non-HSL
      weeks have `hasWeekend: false` — no Weekend row at all, and weekday ===
      the full-week totals, so those statements are unchanged. */
-  const earnings: string[] = [
+  // A SALARIED week (salaried-pay-basis.md): ONE "Salary" line for the flat amount replaces the
+  // Hours × Rate lines — the same branch as the in-app statement, the same shared strings.
+  const earnings: string[] = view.salary
+    ? [
+        renderRow({
+          label: salaryLineLabel(view.salary),
+          detail: esc(formatSalaryDetail(view.salary)),
+          amount: php(view.mfPay),
+        }),
+      ]
+    : [
     renderRow({
       label: view.otIsDifferential ? 'M-F Hours' : 'Regular Hours',
       prorated: Boolean(pror?.regular),
@@ -279,7 +291,7 @@ export function renderPayStubEmailHtml(
       amount: php(view.weekdayOtPay),
     }),
   ];
-  if (view.hasWeekend) {
+  if (view.hasWeekend && !view.salary) {
     earnings.push(
       renderRow({
         label: 'Weekend Hours',

@@ -66,13 +66,77 @@ export interface WizardSnapshotEntry {
   /** Presence-only here: an HSL sheet-form row stores a DERIVED OT differential
    *  in `otRate`, which legitimately never matches the catalog's OT column. */
   hoganSheet?: object | null;
+  /** Set when the wizard priced this week as a flat SALARY (salaried-pay-basis.md): then
+   *  `regularRate`/`otRate` are null and `regularPay` is the salary. Absent on hourly rows and
+   *  on every snapshot published before 2026-10-02. */
+  salary?: SnapshotSalary | null;
+}
+
+/** The salary a snapshot was priced at, in its NATIVE currency (comparable exactly to the
+ *  structure, unlike a USD hourly rate whose PHP-equivalent floats with FX). */
+export interface SnapshotSalary {
+  period: string;
+  amountNative: number;
+  currency: string;
+  amountPhp: number;
+  effectiveFrom?: string | null;
 }
 
 /** An employee-scope Payment Catalog rate (PHP) — the rate a snapshot must agree
- *  with to be trusted. Structurally the `CatalogRateClaim` of paystub-fresh. */
+ *  with to be trusted. Structurally the `CatalogRateClaim` of paystub-fresh.
+ *  `salary` is set when the structure is a SALARY: the snapshot must then carry the
+ *  same salary, and an hourly-priced snapshot is stale (and vice versa). */
 export interface CatalogRateClaimLike {
   regular: number;
   ot: number | null;
+  salary?: { period: string; amount: number; currency: string } | null;
+}
+
+/**
+ * The claim one Pay Structure makes on a snapshot — the ONE builder both the server
+ * (`getCatalogRateClaimsByEmail`) and Payment Dispatch's client queue use, so they cannot
+ * drift. Hourly: employee-scope PHP structures only (a USD/COP hourly rate's PHP-equivalent
+ * floats with FX, so no exact comparison exists). Salary: any currency, compared natively.
+ */
+export function catalogClaimFromStructure(s: {
+  scope?: string;
+  employeeEmail?: string | null;
+  regularRate?: number;
+  otRate?: number | null;
+  currency?: string;
+  payBasis?: string;
+  salaryPeriod?: string | null;
+  salaryAmount?: number | null;
+}): { email: string; claim: CatalogRateClaimLike } | null {
+  if (s?.scope !== 'employee') return null;
+  const email = (s.employeeEmail ?? '').trim().toLowerCase();
+  if (!email) return null;
+  if (s.payBasis === 'salary') {
+    // A salary row missing its figures claims NaN, which no snapshot can match: every
+    // snapshot for the person is then rejected and the lock prices the week instead.
+    return {
+      email,
+      claim: {
+        regular: 0,
+        ot: null,
+        salary: {
+          period: s.salaryPeriod ?? '',
+          amount: typeof s.salaryAmount === 'number' ? s.salaryAmount : Number.NaN,
+          currency: s.currency ?? '',
+        },
+      },
+    };
+  }
+  if (s.currency !== 'PHP') return null;
+  if (typeof s.regularRate !== 'number' || !Number.isFinite(s.regularRate)) return null;
+  return {
+    email,
+    claim: {
+      regular: s.regularRate,
+      ot: typeof s.otRate === 'number' && Number.isFinite(s.otRate) ? s.otRate : null,
+      salary: null,
+    },
+  };
 }
 
 /** `payload.pay_php`, exactly as the wizard staged it. Every field optional: a
@@ -219,6 +283,20 @@ export function snapshotRateContradictsCatalog(
   if (!claim) return false;
   const snapReg = numOrNull(entry.regularRate);
   const snapOt = numOrNull(entry.otRate);
+  // ── Salaried pay basis (salaried-pay-basis.md §3.5) ──
+  // Without these two arms the freshness guard is OFF for salaried people by construction: a
+  // stale tab that priced the person HOURLY after a switch to salary — or a salary after a
+  // switch back — would carry no rate to contradict and win.
+  const snapSalary = entry.salary ?? null;
+  if (claim.salary) {
+    if (!snapSalary) return snapReg != null || snapOt != null;
+    return (
+      snapSalary.period !== claim.salary.period ||
+      snapSalary.currency !== claim.salary.currency ||
+      !(Math.abs(snapSalary.amountNative - claim.salary.amount) <= 0.005)
+    );
+  }
+  if (snapSalary) return true;
   const regStale = snapReg != null && Math.abs(snapReg - claim.regular) > 0.005;
   // An HSL sheet-form row's `otRate` is the DERIVED 0.5× differential, which
   // never matches the catalog's standalone OT column and doesn't need to — the

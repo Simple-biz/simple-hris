@@ -4,7 +4,14 @@ import React, { useMemo } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { Check, Loader2, Minus, CalendarClock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { formatPhp, formatHours, showsOrphanageLine, type PayStubView } from '@/lib/payroll/paystub-view';
+import {
+  formatPhp,
+  formatHours,
+  formatSalaryDetail,
+  salaryLineLabel,
+  showsOrphanageLine,
+  type PayStubView,
+} from '@/lib/payroll/paystub-view';
 import type { PaycycleStep, PaycycleTrack } from '@/lib/employee/paycycle-steps';
 import {
   ARRIVAL_NOTE,
@@ -262,6 +269,18 @@ function MoneyRow({
 function StatementLines({ view }: { view: PayStubView }) {
   const rows = useMemo(() => {
     const out: React.ReactNode[] = [];
+    if (view.salary) {
+      // A salaried week (salaried-pay-basis.md): one flat Salary line, the same branch and
+      // strings as the Pay Stub — hours do not set the amount, so they are not its hint.
+      out.push(
+        <MoneyRow
+          key="salary"
+          label={salaryLineLabel(view.salary)}
+          hint={formatSalaryDetail(view.salary)}
+          amount={view.mfPay}
+        />,
+      );
+    } else {
     out.push(
       <MoneyRow
         key="regular"
@@ -276,7 +295,8 @@ function StatementLines({ view }: { view: PayStubView }) {
         amount={view.weekdayOtPay ?? view.otPay}
       />,
     );
-    if (view.hasWeekend) {
+    }
+    if (view.hasWeekend && !view.salary) {
       out.push(
         <MoneyRow
           key="weekend"

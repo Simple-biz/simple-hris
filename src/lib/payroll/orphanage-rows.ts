@@ -24,7 +24,7 @@
 
 import { normEmail } from '@/lib/email/norm-email';
 
-import { priceOrphanageHours, type OrphanagePriceOk } from './orphanage-pay-pricing';
+import { priceOrphanageHours, type OrphanagePriceOk, type OrphanagePriceRefusal } from './orphanage-pay-pricing';
 
 /** One candidate row before matching: where it came from is irrelevant here. */
 export interface OrphanageHourRow {
@@ -49,6 +49,9 @@ export interface OrphanageRowTarget {
   /** Hours already worked this pay week — what the orphanage hours stack on. */
   workedRegularHours: number;
   deptKey: string | undefined;
+  /** The row is priced as a flat SALARY this week (salaried-pay-basis.md): it has no hourly
+   *  rate, so orphanage hours cannot be priced and the line is refused, never priced at ₱0. */
+  salaried?: boolean;
 }
 
 export interface OrphanageResolveContext {
@@ -330,6 +333,17 @@ function resolveTarget(emKey: string, ctx: OrphanageResolveContext): OrphanageRo
 }
 
 function priceForTarget(target: OrphanageRowTarget, hours: number, emKey: string, ctx: OrphanageResolveContext) {
+  // A salaried week has no hourly rate to price orphanage hours at, and the rates-index
+  // fallback would read the salary structure's pinned 0. How a salaried person's orphanage
+  // hours pay is not ruled (salaried-pay-basis.md), so the line is refused with that reason.
+  if (target.salaried) {
+    const refusal: OrphanagePriceRefusal = {
+      ok: false,
+      code: 'no_regular_rate',
+      reason: 'Salaried this week — a salary has no hourly rate to price orphanage hours at. Enter the amount by hand.',
+    };
+    return refusal;
+  }
   // PHP regular rate. Prefer the row's computed rate; fall back to the rates index.
   const rate: number | null = target.regularRate ?? ctx.regularRateFallback(target.email, emKey);
 

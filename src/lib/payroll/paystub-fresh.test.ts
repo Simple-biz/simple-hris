@@ -861,3 +861,69 @@ test('a staged payload with NO block and a zeroed snapshot compare equal — no 
   const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER);
   assert.equal(r.refreshed, false);
 });
+
+// ── Salaried pay basis (2026-10-02, salaried-pay-basis.md §3.5) ──────────────
+// The freshness guard used to be OFF for salaried people by construction: the
+// claim read employee-scope PHP hourly rates only. A salary structure now claims
+// its salary, and the snapshot's `salary` block travels with the figures it
+// explains — same tri-state as the weekend / proration / time-adjustment blocks.
+
+const SALARY_CLAIM: CatalogRateClaim = {
+  regular: 0,
+  ot: null,
+  salary: { period: 'week', amount: 25000, currency: 'PHP' },
+};
+
+function salarySnapEntry(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return snapEntry({
+    final: 24900,
+    regularPay: 25000,
+    otPay: 0,
+    initial: 25000,
+    regularRate: null,
+    otRate: null,
+    salary: { period: 'week', amountNative: 25000, currency: 'PHP', amountPhp: 25000, effectiveFrom: '2026-07-26' },
+    ...over,
+  });
+}
+
+test('a salaried snapshot merges and carries its salary block onto the stub', () => {
+  const r = mergeSnapshotIntoStaged(stagedRow(), snapValue(salarySnapEntry()), SNAP_NEWER, SALARY_CLAIM);
+  assert.equal(r.refreshed, true);
+  const p = r.payload as Record<string, unknown>;
+  assert.deepEqual(p.salary, {
+    period: 'week',
+    amount_native: 25000,
+    currency: 'PHP',
+    amount_php: 25000,
+    effective_from: '2026-07-26',
+  });
+  assert.deepEqual(p.rates_php, { regular: null, ot: null });
+  assert.equal((p.pay_php as Record<string, unknown>).regular, 25000);
+});
+
+test('a stale tab that priced a now-SALARIED person hourly is rejected', () => {
+  const r = mergeSnapshotIntoStaged(stagedRow(), snapValue(snapEntry()), SNAP_NEWER, SALARY_CLAIM);
+  assert.equal(r.staleRateSnapshot, true);
+  assert.equal(r.refreshed, false);
+});
+
+test('a stale salary snapshot for a person switched back to hourly is rejected', () => {
+  const r = mergeSnapshotIntoStaged(stagedRow(), snapValue(salarySnapEntry()), SNAP_NEWER, { ...CLAIM_225, salary: null });
+  assert.equal(r.staleRateSnapshot, true);
+});
+
+test('an hourly snapshot with salary: null clears a stale salary block from the stub', () => {
+  const staged = stagedRow();
+  (staged.payload as Record<string, unknown>).salary = {
+    period: 'week',
+    amount_native: 25000,
+    currency: 'PHP',
+    amount_php: 25000,
+    effective_from: '2026-07-26',
+  };
+  const entry = snapEntry({ regularRate: 225, otRate: 337.5, regularPay: 9000, salary: null });
+  const r = mergeSnapshotIntoStaged(staged, snapValue(entry), SNAP_NEWER, { ...CLAIM_225, salary: null });
+  assert.equal(r.refreshed, true);
+  assert.equal((r.payload as Record<string, unknown>).salary, null);
+});

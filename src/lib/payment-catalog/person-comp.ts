@@ -20,7 +20,12 @@ import {
   type SystemBonus,
   type SystemBonusCode,
 } from '@/lib/payment-catalog/system-bonus';
-import type { PayCurrency, PayStructure } from '@/lib/payment-catalog/pay-structure';
+import {
+  isSalaryStructure,
+  type PayCurrency,
+  type PayStructure,
+  type SalaryPeriod,
+} from '@/lib/payment-catalog/pay-structure';
 import type { BonusAssignment } from '@/lib/bonus-catalog/types';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
 import { slugifyDeptKey } from '@/lib/departments/registry';
@@ -218,21 +223,44 @@ export function computePersonComp(person: PersonCompSubject, idx: PersonCompInde
 }
 
 /** The rate layer the engine pays, in its native currency. `null` when the
- *  person has no rate anywhere — a COE cannot be issued in that case. */
+ *  person has no rate anywhere — a COE cannot be issued in that case.
+ *
+ *  `salary` is set when the winning layer is an individual SALARY structure
+ *  (salaried-pay-basis.md): `regular` is then 0 and `ot` null by construction, so
+ *  every caller must read `salary` first — a chip printing "₱0.00/hr" or a
+ *  certificate quoting an hourly rate for a salaried person is the misstatement.
+ *  The weekly salary still pays only through the dated history; this states what
+ *  the catalog row says. */
 export function winningRate(
   comp: PersonComp,
-): { regular: number; ot: number | null; currency: PayCurrency; source: PersonComp['rateSource'] } | null {
+): {
+  regular: number;
+  ot: number | null;
+  currency: PayCurrency;
+  source: PersonComp['rateSource'];
+  salary: { period: SalaryPeriod; amount: number } | null;
+} | null {
   if (comp.rateSource === 'individual' && comp.override) {
+    if (isSalaryStructure(comp.override)) {
+      return {
+        regular: 0,
+        ot: null,
+        currency: comp.override.currency,
+        source: 'individual',
+        salary: { period: comp.override.salaryPeriod, amount: comp.override.salaryAmount },
+      };
+    }
     return {
       regular: comp.override.regularRate,
       ot: comp.override.otRate ?? null,
       currency: comp.override.currency,
       source: 'individual',
+      salary: null,
     };
   }
   if (comp.rateSource === 'sheet' && comp.sheetRate?.reg != null) {
     // The rates sheet is PHP-only by construction.
-    return { regular: comp.sheetRate.reg, ot: comp.sheetRate.ot, currency: 'PHP', source: 'sheet' };
+    return { regular: comp.sheetRate.reg, ot: comp.sheetRate.ot, currency: 'PHP', source: 'sheet', salary: null };
   }
   if (comp.rateSource === 'department' && comp.deptBase) {
     return {
@@ -240,6 +268,7 @@ export function winningRate(
       ot: comp.deptBase.otRate ?? null,
       currency: comp.deptBase.currency,
       source: 'department',
+      salary: null,
     };
   }
   return null;

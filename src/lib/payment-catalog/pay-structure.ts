@@ -15,6 +15,37 @@ export type PayCurrency = 'PHP' | 'USD' | 'COP';
  *  hardcoding `['PHP','USD']` so a new currency is a one-line addition. */
 export const PAY_CURRENCIES: readonly PayCurrency[] = ['PHP', 'USD', 'COP'];
 
+/**
+ * How a structure prices a person (Kane, 2026-10-02 — docs/features/salaried-pay-basis.md):
+ *   hourly → `regularRate` × Hubstaff hours, plus OT — every structure before this date.
+ *   salary → a flat `salaryAmount` per `salaryPeriod`; Hubstaff hours move no money.
+ * A salary is legal on an EMPLOYEE-scope structure only: a salary is a dated fact about a
+ * person, never a department property (the DB CHECK `pay_structures_salary_shape` agrees).
+ */
+export type PayBasis = 'hourly' | 'salary';
+export type SalaryPeriod = 'day' | 'week' | 'month';
+export const SALARY_PERIODS: readonly SalaryPeriod[] = ['day', 'week', 'month'];
+
+/**
+ * The periods the pay engines can price TODAY. Day and month are in the data model, but how
+ * a daily or monthly amount maps onto the weekly pay run is Kane's ruling and has not been
+ * made (salaried-pay-basis.md, NEEDS 1/2). The editor shows them disabled and the server
+ * refuses them, so no salary is ever stored that no engine can price.
+ */
+export const PRICEABLE_SALARY_PERIODS: readonly SalaryPeriod[] = ['week'];
+
+/** A salary can be held in PHP or USD. COP is refused: the structure write path stores COP as
+ *  PHP (bonus-catalog.md §5.7, OPEN), which would silently re-denominate a salary. */
+export const SALARY_CURRENCIES: readonly PayCurrency[] = ['PHP', 'USD'];
+
+export const SALARY_PERIOD_LABEL: Record<SalaryPeriod, string> = {
+  day: 'Day',
+  week: 'Week',
+  month: 'Month',
+};
+
+const SALARY_PERIOD_SUFFIX: Record<SalaryPeriod, string> = { day: '/day', week: '/wk', month: '/mo' };
+
 export interface PayStructure {
   id: string;
   scope: PayScope;
@@ -25,11 +56,19 @@ export interface PayStructure {
   employeeEmail?: string;
   /** Display name captured at assignment time. */
   employeeName?: string;
-  /** Regular hourly rate in `currency`. */
+  /** Regular hourly rate in `currency`. ALWAYS 0 on a salary structure: a reader that
+   *  was never taught the salary basis then pays ₱0 (loud), never a plausible hourly
+   *  figure (salaried-pay-basis.md §3.2). */
   regularRate: number;
-  /** Overtime hourly rate in `currency` (optional). */
+  /** Overtime hourly rate in `currency` (optional). Absent on a salary structure. */
   otRate?: number;
   currency: PayCurrency;
+  /** Absent on rows read before the salary migration — read it with `payBasisOf`. */
+  payBasis?: PayBasis;
+  /** Set exactly when `payBasis === 'salary'`. */
+  salaryPeriod?: SalaryPeriod;
+  /** The flat amount per `salaryPeriod`, in `currency`. Set exactly when salaried. */
+  salaryAmount?: number;
   /** Author attribution (set server-side from the session). */
   createdBy?: string | null;
   createdAt?: string | null;
@@ -84,10 +123,71 @@ export function formatRate(amount: number | null | undefined, currency: PayCurre
   return `${sym}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/hr`;
 }
 
+/** The structure's basis; a row with no `payBasis` predates the salary migration and is hourly. */
+export function payBasisOf(s: Pick<PayStructure, 'payBasis'>): PayBasis {
+  return s.payBasis === 'salary' ? 'salary' : 'hourly';
+}
+
+/** A salary structure with both figures present — the only shape the engines price from. */
+export function isSalaryStructure(
+  s: Pick<PayStructure, 'payBasis' | 'salaryPeriod' | 'salaryAmount'>,
+): s is Pick<PayStructure, 'payBasis'> & { payBasis: 'salary'; salaryPeriod: SalaryPeriod; salaryAmount: number } {
+  return s.payBasis === 'salary' && s.salaryPeriod != null && s.salaryAmount != null;
+}
+
+/** "₱25,000.00/wk" — a salary in its currency, period-suffixed (never "/hr"). */
+export function formatSalary(
+  amount: number | null | undefined,
+  period: SalaryPeriod,
+  currency: PayCurrency,
+): string {
+  if (amount == null || !Number.isFinite(amount)) return '-';
+  const sym = CURRENCY_SYMBOL[currency] ?? '';
+  return `${sym}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${SALARY_PERIOD_SUFFIX[period]}`;
+}
+
 /** Human-readable validity check for a pay structure. */
 export function validatePayStructure(
-  s: Pick<PayStructure, 'scope' | 'regularRate' | 'otRate' | 'currency' | 'employeeEmail'>,
+  s: Pick<
+    PayStructure,
+    'scope' | 'regularRate' | 'otRate' | 'currency' | 'employeeEmail' | 'payBasis' | 'salaryPeriod' | 'salaryAmount'
+  >,
 ): { ok: boolean; error?: string } {
+  if (s.payBasis != null && s.payBasis !== 'hourly' && s.payBasis !== 'salary') {
+    return { ok: false, error: 'Pay basis must be hourly or salary.' };
+  }
+  if (s.payBasis === 'salary') {
+    if (s.scope !== 'employee') {
+      return { ok: false, error: 'A salary can only be set for an individual, never a whole department.' };
+    }
+    if (!s.salaryPeriod || !SALARY_PERIODS.includes(s.salaryPeriod)) {
+      return { ok: false, error: 'Choose whether the salary is per day, week, or month.' };
+    }
+    if (!PRICEABLE_SALARY_PERIODS.includes(s.salaryPeriod)) {
+      return {
+        ok: false,
+        error: `A salary per ${s.salaryPeriod} can't be paid yet — how it maps onto the weekly pay run hasn't been decided. Use a weekly salary.`,
+      };
+    }
+    if (s.salaryAmount == null || !Number.isFinite(s.salaryAmount) || s.salaryAmount < 0) {
+      return { ok: false, error: 'Enter a non-negative salary amount.' };
+    }
+    if (!SALARY_CURRENCIES.includes(s.currency)) {
+      return { ok: false, error: 'A salary can be held in PHP or USD only.' };
+    }
+    if (!s.employeeEmail) {
+      return { ok: false, error: 'Employee pay structure requires an email.' };
+    }
+    // The hourly rate on a salary row is pinned to 0 and OT is absent, so a reader that does
+    // not know the salary basis prices ₱0 — never a believable hourly figure.
+    if (s.regularRate !== 0 || s.otRate != null) {
+      return { ok: false, error: 'A salary structure carries no hourly or OT rate.' };
+    }
+    return { ok: true };
+  }
+  if (s.salaryPeriod != null || s.salaryAmount != null) {
+    return { ok: false, error: 'An hourly structure carries no salary figures.' };
+  }
   if (s.regularRate == null || !Number.isFinite(s.regularRate) || s.regularRate < 0) {
     return { ok: false, error: 'Enter a non-negative regular rate.' };
   }

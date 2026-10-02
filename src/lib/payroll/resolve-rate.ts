@@ -33,7 +33,9 @@ import { deptKeyAliasSlugs, type DepartmentRegistryEntry } from '@/lib/departmen
 import {
   type PayStructure,
   type PayCurrency,
+  type PayBasis,
   defaultOtRate,
+  payBasisOf,
 } from '@/lib/payment-catalog/pay-structure';
 import { phpPerUnit, type FxRates } from '@/lib/fx/currency-fx';
 import { normEmail } from '@/lib/email/norm-email';
@@ -64,6 +66,11 @@ export interface ResolvedCatalogRate {
   currency: PayCurrency;
   /** Which scope matched. */
   source: 'employee' | 'department';
+  /** `salary` when the matched structure is a salary (salaried-pay-basis.md): then
+   *  `regPhp`/`otPhp` are 0 BY CONSTRUCTION (the structure stores no hourly rate), so a
+   *  caller that never learned the salary basis prices ₱0 — loud — instead of a plausible
+   *  hourly figure. Callers that price money resolve the week through `resolveSalaryBasis`. */
+  payBasis: PayBasis;
 }
 
 /**
@@ -97,11 +104,18 @@ export function buildCatalogRateIndex(
 }
 
 function toResolved(s: PayStructure, fx: FxRates): ResolvedCatalogRate {
-  const regNative = Number.isFinite(s.regularRate) ? s.regularRate : 0;
+  const payBasis = payBasisOf(s);
+  // A salary structure has no hourly rate: pin both to 0 whatever the row holds, so the
+  // hourly chain can never price a salaried person from a stray figure.
+  const regNative = payBasis === 'salary' ? 0 : Number.isFinite(s.regularRate) ? s.regularRate : 0;
   // OT is optional in the catalog; fall back to the documented 1.5× default so a
   // catalog-covered employee never mixes a catalog regular with a sheet OT.
   const otNative =
-    s.otRate != null && Number.isFinite(s.otRate) ? s.otRate : defaultOtRate(regNative);
+    payBasis === 'salary'
+      ? 0
+      : s.otRate != null && Number.isFinite(s.otRate)
+        ? s.otRate
+        : defaultOtRate(regNative);
   // PHP-equivalent of 1 unit of the structure's currency (USD via usdToPhp, COP
   // via the USD-anchored cross-rate, PHP -> 1).
   const factor = phpPerUnit(s.currency, fx);
@@ -112,6 +126,7 @@ function toResolved(s: PayStructure, fx: FxRates): ResolvedCatalogRate {
     otNative,
     currency: s.currency,
     source: s.scope === 'employee' ? 'employee' : 'department',
+    payBasis,
   };
 }
 
@@ -128,12 +143,25 @@ export function resolveEmployeeCatalogRate(
   emails: string | Iterable<string>,
   fx: FxRates,
 ): ResolvedCatalogRate | null {
+  const s = resolveEmployeeCatalogStructure(index, emails);
+  return s ? toResolved(s, fx) : null;
+}
+
+/**
+ * The employee-scope STRUCTURE `resolveEmployeeCatalogRate` resolves — first alias with a
+ * structure wins, the very same walk — so the salary cross-check (`structureBasisClaim` in
+ * salary-basis.ts) judges exactly the row the rate came from.
+ */
+export function resolveEmployeeCatalogStructure(
+  index: CatalogRateIndex,
+  emails: string | Iterable<string>,
+): PayStructure | null {
   const list = typeof emails === 'string' ? [emails] : Array.from(emails);
   for (const e of list) {
     const em = normEmail(e);
     if (!em) continue;
     const s = index.byEmail.get(em);
-    if (s) return toResolved(s, fx);
+    if (s) return s;
   }
   return null;
 }
