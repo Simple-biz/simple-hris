@@ -15,6 +15,8 @@ import {
   type NpdFormulaContext,
 } from '@/lib/npd/formulas';
 import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/sheet';
+import { TAB_CACHE_KEYS, clearTabCache, getTabCache, readTabCacheStamp, setTabCache } from '@/lib/accounting/tab-cache';
+import { parseNpdSheetPayload, touchNpdSheetIndex, type NpdSheetPayload } from '@/lib/npd/npd-cache';
 
 /**
  * One NPD sheet (tab × pay week) on the client: load, local edits, undo/redo and
@@ -48,6 +50,14 @@ import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/s
  *    column formulas are part of the sheet: saved with it, undone with it (an undo
  *    step is rows AND settings together), and never carried over from another
  *    week. The server recalculates every formula cell on save, with the same module.
+ *  - CACHE (Kane, 2026-10-02: "add caching on this please so we dont have to load the
+ *    data everytime"): a sheet seen before PAINTS from the Accounting tab cache at once,
+ *    but only as a picture. The session's `meta` and `saved` stay null until the live
+ *    read lands, so nothing can be typed, saved, locked or synced onto a copy that may
+ *    be stale (`refreshing`). The live read ALWAYS runs. If it fails, the cached copy
+ *    stays on screen, read-only, with the error (`refreshError`), never an empty grid.
+ *    The cache is written from server truth only (`writeSheetCache`: a load, a
+ *    confirmed save, a confirmed lock), never from edits that have not been saved.
  *  - GOOGLE SHEET SYNC (`importSheet`): the rows a sync fetched REPLACE the target
  *    tab × week — rows, rate, and the column formulas reset to the Google Sheet's —
  *    as one undo step, saved at once through the normal save (so the removed-rows
@@ -111,11 +121,38 @@ type Session = {
   blocked: boolean;
   /** A Google Sheet sync not saved yet: the next save carries it, and the server stamps its time. */
   syncTag: SyncTag | null;
+  /** Painted from the cache and the live read has not landed: read-only, and the load is silent. */
+  cachedPaint: boolean;
   undo: Snapshot[];
   redo: Snapshot[];
 };
 
 const keyOf = (sheet: NpdSheetKind, week: string) => `${sheet}:${week}`;
+
+/**
+ * Mirror what the SERVER confirmed for this sheet into the tab cache: called only
+ * after a load, a save or a lock succeeded, when `meta`, `saved` and `savedSettings`
+ * are all server truth. Keeps the most recently used sheets only.
+ */
+function writeSheetCache(s: Session) {
+  if (!s.meta || !s.saved || !s.savedSettings) return;
+  const key = TAB_CACHE_KEYS.npdSheet(s.sheet, s.week);
+  const payload: NpdSheetPayload = {
+    version: s.meta.version,
+    rowCount: s.meta.rowCount,
+    updatedAt: s.meta.updatedAt,
+    updatedBy: s.meta.updatedBy,
+    lockedAt: s.meta.lockedAt,
+    lockedBy: s.meta.lockedBy,
+    usdPerPhp: s.savedSettings.rateText.trim() === '' ? null : s.savedSettings.rateText.trim(),
+    columnFormulas: { ...s.savedSettings.columnFormulas },
+    rows: trimTrailingBlankRows(s.saved).map((r) => ({ id: r.id, values: [...r.values], overrides: [...r.overrides], formulas: { ...r.formulas } })),
+  };
+  setTabCache(key, payload);
+  const { keep, evict } = touchNpdSheetIndex(getTabCache(TAB_CACHE_KEYS.npdSheetIndex), key);
+  for (const k of evict) clearTabCache(k);
+  setTabCache(TAB_CACHE_KEYS.npdSheetIndex, keep);
+}
 type PendingImport = { key: string; payload: NpdImportPayload; resolve: (r: LockResult) => void };
 
 const isDirty = (s: Session) => s.saved !== null && (s.rows !== s.saved || s.settings !== s.savedSettings);
@@ -164,6 +201,12 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
   const [settings, setSettingsState] = useState<NpdSettings>(NO_SETTINGS);
   const [syncStamp, setSyncStamp] = useState<NpdSyncStamp | null>(null);
+  /** A cached copy is on screen and the live read has not landed: read-only. */
+  const [refreshing, setRefreshing] = useState(false);
+  /** The live read failed while a cached copy was on screen (it stays, read-only). */
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  /** When the cached copy on screen was cached (epoch ms). */
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
 
   const sessionRef = useRef<Session | null>(null);
   const pendingImportRef = useRef<PendingImport | null>(null);
@@ -246,6 +289,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
         s.meta = metaFrom(j);
         s.saved = sent;
         s.savedSettings = sentSettings;
+        writeSheetCache(s);
         if (sentTag && s.syncTag === sentTag) {
           s.syncTag = null;
           if (typeof j.syncedAt === 'string') {
@@ -298,8 +342,12 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   // ── Load ────────────────────────────────────────────────────────────────
   const load = useCallback(async (s: Session) => {
     if (!live(s)) return;
-    setLoadState('loading');
-    setLoadError(null);
+    // Over a cached copy the read is silent: the copy stays painted (read-only) meanwhile.
+    const silent = s.cachedPaint;
+    if (!silent) {
+      setLoadState('loading');
+      setLoadError(null);
+    }
     try {
       const res = await fetch(
         `/api/accounting/npd?sheet=${encodeURIComponent(s.sheet)}&week=${encodeURIComponent(s.week)}`,
@@ -308,8 +356,12 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!live(s)) return;
       if (!res.ok) {
-        setLoadError(typeof j.error === 'string' ? j.error : `Could not load the sheet (${res.status})`);
-        setLoadState(j.missing === true ? 'missing' : 'error');
+        const message = typeof j.error === 'string' ? j.error : `Could not load the sheet (${res.status})`;
+        if (silent) setRefreshError(message);
+        else {
+          setLoadError(message);
+          setLoadState(j.missing === true ? 'missing' : 'error');
+        }
         settlePendingImport(s, { ok: false, message: 'The sheet could not be loaded, so nothing from the Google Sheet was put on it.' });
         return;
       }
@@ -341,6 +393,11 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       setSaveError(null);
       setSaveState('idle');
       setLoadState('ready');
+      s.cachedPaint = false;
+      setRefreshing(false);
+      setRefreshError(null);
+      setCachedAt(null);
+      writeSheetCache(s);
       const pending = pendingImportRef.current;
       if (pending && pending.key === keyOf(s.sheet, s.week)) {
         pendingImportRef.current = null;
@@ -348,8 +405,12 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       }
     } catch (e) {
       if (!live(s)) return;
-      setLoadError(e instanceof Error ? e.message : 'Could not load the sheet');
-      setLoadState('error');
+      const message = e instanceof Error ? e.message : 'Could not load the sheet';
+      if (silent) setRefreshError(message);
+      else {
+        setLoadError(message);
+        setLoadState('error');
+      }
       settlePendingImport(s, { ok: false, message: 'The sheet could not be loaded, so nothing from the Google Sheet was put on it.' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -370,6 +431,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       timer: null,
       blocked: false,
       syncTag: null,
+      cachedPaint: false,
       undo: [],
       redo: [],
     };
@@ -380,9 +442,28 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       pendingImportRef.current = null;
       pending.resolve({ ok: false, message: 'You moved to another sheet before the Google Sheet rows were put on it, so nothing was changed.' });
     }
-    setMeta(null);
-    setRowsState([]);
-    setSettingsState(NO_SETTINGS);
+    // Seen before: paint the cached copy at once, as a PICTURE only. `s.meta` and
+    // `s.saved` stay null, so `editable()`, `lock()` and a sync all wait for the live
+    // read, which always runs.
+    const cacheKey = TAB_CACHE_KEYS.npdSheet(sheet, week);
+    const cached = parseNpdSheetPayload(sheet, getTabCache(cacheKey));
+    s.cachedPaint = !!cached;
+    if (cached) {
+      setMeta(metaFrom(cached as unknown as Record<string, unknown>));
+      setRowsState(ensureSpareRows(cached.rows, NPD_COLUMNS[sheet].length, newRowId));
+      setSettingsState({ rateText: cached.usdPerPhp ?? '', columnFormulas: cached.columnFormulas });
+      setLoadError(null);
+      setLoadState('ready');
+      setRefreshing(true);
+      setCachedAt(readTabCacheStamp(cacheKey) ?? null);
+    } else {
+      setMeta(null);
+      setRowsState([]);
+      setSettingsState(NO_SETTINGS);
+      setRefreshing(false);
+      setCachedAt(null);
+    }
+    setRefreshError(null);
     setConflict(null);
     setSaveError(null);
     setSaveState('idle');
@@ -677,6 +758,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     const { status, ok, j } = await patchLock({ action: 'lock', sheet: s.sheet, week: s.week, expectedVersion: s.meta.version });
     if (ok || status === 423) {
       s.meta = { ...s.meta, lockedAt: (j.lockedAt as string | null) ?? null, lockedBy: (j.lockedBy as string | null) ?? null };
+      writeSheetCache(s);
       clearTimer(s);
       if (live(s)) {
         setMeta(s.meta);
@@ -744,6 +826,12 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     importSheet,
     /** The last sync whose save landed in this page (the server's timestamp). */
     syncStamp,
+    /** A cached copy is on screen and the live read has not landed yet: read-only. */
+    refreshing,
+    /** The live read failed over a cached copy (which stays on screen, read-only). */
+    refreshError,
+    /** When that cached copy was cached (epoch ms), for "the copy from …". */
+    cachedAt,
   };
 }
 

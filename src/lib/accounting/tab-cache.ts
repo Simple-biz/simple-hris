@@ -517,4 +517,25 @@ export const TAB_CACHE_KEYS = {
    * filter or sub-tab falls back to the default rather than being trusted.
    */
   documentsView: 'documents:view',
+  /**
+   * NPD (Accounting → New Payroll Dashboard; docs/features/npd-dashboard.md § Caching).
+   * The sheets carry per-person pay and bank last-4s: the BANNED category. The seed
+   * only PAINTS, and it is read-only until the live read lands (nothing can be typed,
+   * saved, locked or synced onto a cached copy); the mount fetch ALWAYS runs; never a
+   * skip flag. Written from server truth only: a load, a confirmed save, a confirmed
+   * lock. At most `NPD_CACHED_SHEETS_MAX` sheets, most recently used, tracked in
+   * `npdSheetIndex`; payloads are re-validated on read (src/lib/npd/npd-cache.ts).
+   * Pinned in the banned list in `tab-cache.test.ts`.
+   */
+  npdSheet: (sheet: string, week: string) => `npd:sheet:${sheet}:${week}`,
+  npdSheetIndex: 'npd:sheet-index',
+  /** NPD's week menu (every tab × week that has a sheet). Paint only; always re-read. */
+  npdWeeks: 'npd:weeks',
+  /** The sync bar: the Payroll Wizard's week and each tab's "Last synced". Paint only; always re-read. */
+  npdSyncWeek: 'npd:sync-week',
+  /**
+   * The week NPD was left on (UI selection only, like `documentsView`), so returning lands
+   * where you were and on the sheet the cache holds. Re-validated on read: a Sunday or nothing.
+   */
+  npdView: 'npd:view',
 } as const;

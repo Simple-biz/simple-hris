@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, NPD_SHEETS, NPD_SHEET_LABELS, isNpdSheetKind, type NpdSheetKind } from '@/lib/npd/columns';
 import { NPD_UNLOCK_REASON_MAX, defaultNpdWeek, isBlankRow, shiftWeek, weekLabel } from '@/lib/npd/sheet';
+import { TAB_CACHE_KEYS, getTabCache, setTabCache } from '@/lib/accounting/tab-cache';
+import { parseNpdView, parseNpdWeeks } from '@/lib/npd/npd-cache';
 import NpdGoogleSheetSync, { type NpdSyncData, type NpdSyncTarget } from './NpdGoogleSheetSync';
 import NpdSheetGrid from './NpdSheetGrid';
 import { contextOf, useNpdSheet, type LockResult } from './useNpdSheet';
@@ -68,8 +70,17 @@ function formatStamp(iso: string | null): string {
 
 export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
   const [sheet, setSheet] = useState<NpdSheetKind>(readStoredSheet);
-  const [week, setWeek] = useState<string | null>(null);
-  const [weeks, setWeeks] = useState<WeekEntry[] | null>(null);
+  // Seen before: the week menu and the opening week paint from the cache at once; the
+  // live list is still read on every open (docs/features/npd-dashboard.md § Caching).
+  const [weeks, setWeeks] = useState<WeekEntry[] | null>(() => parseNpdWeeks(getTabCache(TAB_CACHE_KEYS.npdWeeks)));
+  // Returning in the same browser session lands on the week you left (whose sheet the cache
+  // holds); otherwise the newest week the cached list knew; otherwise the live rule below.
+  const [week, setWeek] = useState<string | null>(
+    () => parseNpdView(getTabCache(TAB_CACHE_KEYS.npdView))?.week ?? weeks?.find((w) => w.rowCount > 0)?.week ?? null,
+  );
+  useEffect(() => {
+    if (week) setTabCache(TAB_CACHE_KEYS.npdView, { week });
+  }, [week]);
   const [weeksError, setWeeksError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
@@ -82,7 +93,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
   const ctx = useMemo(() => contextOf(ctl.settings), [ctl.settings]);
   const [rateDraft, setRateDraft] = useState<string | null>(null);
   const [rateError, setRateError] = useState<string | null>(null);
-  const rateEditable = canEdit && !ctl.locked && !ctl.conflict && ctl.loadState === 'ready';
+  const rateEditable = canEdit && !ctl.locked && !ctl.conflict && ctl.loadState === 'ready' && !ctl.refreshing;
   const commitRate = () => {
     if (rateDraft === null) return;
     const problem = ctl.setRate(rateDraft);
@@ -110,6 +121,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
         return null;
       }
       setWeeks(j.weeks);
+      setTabCache(TAB_CACHE_KEYS.npdWeeks, j.weeks);
       setWeeksError(null);
       return j.weeks;
     } catch (e) {
@@ -177,7 +189,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
 
   const hasSavedRows = !!ctl.meta && ctl.meta.version > 0 && ctl.meta.rowCount > 0;
   const lockBlockedBy =
-    ctl.loadState !== 'ready'
+    ctl.loadState !== 'ready' || ctl.refreshing
       ? 'The sheet is still loading.'
       : !hasSavedRows
         ? 'Nothing to lock yet: paste or type the sheet first.'
@@ -258,6 +270,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
         </div>
         <SaveStatus
           readOnly={readOnly}
+          cachedCopy={ctl.refreshing ? (ctl.refreshError ? 'failed' : 'refreshing') : null}
           locked={ctl.locked}
           loading={ctl.loadState === 'loading'}
           saveState={ctl.saveState}
@@ -468,6 +481,19 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           </p>
         </div>
       )}
+      {ctl.refreshing && ctl.refreshError && (
+        <Banner tone="amber" icon={<CloudAlert className="h-4 w-4" />}>
+          <p className="font-semibold">This sheet could not be refreshed.</p>
+          <p>
+            {ctl.refreshError} You are looking at the copy saved on this device
+            {ctl.cachedAt ? ` at ${formatStamp(new Date(ctl.cachedAt).toISOString())}` : ''}. It stays read-only until the
+            latest copy loads, so nothing is typed over an old one.
+          </p>
+          <button type="button" onClick={ctl.reload} className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-700">
+            <RefreshCw className="h-3.5 w-3.5" /> Try again
+          </button>
+        </Banner>
+      )}
       {ctl.saveState === 'error' && (
         <Banner tone="red" icon={<CloudAlert className="h-4 w-4" />}>
           <p className="font-semibold">Your latest edits are not saved.</p>
@@ -492,8 +518,14 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           onUseFormulaAgain={ctl.useFormulaAgain}
           columns={columns}
           rows={ctl.rows}
-          readOnly={readOnly || !!ctl.conflict || ctl.locked}
-          readOnlyNotice={ctl.locked ? 'This sheet is locked in. Unlock it to make changes.' : undefined}
+          readOnly={readOnly || !!ctl.conflict || ctl.locked || ctl.refreshing}
+          readOnlyNotice={
+            ctl.locked
+              ? 'This sheet is locked in. Unlock it to make changes.'
+              : ctl.refreshing
+                ? 'Checking this is the latest copy. You can edit it as soon as it loads.'
+                : undefined
+          }
           canUndo={ctl.canUndo}
           canRedo={ctl.canRedo}
           onCommit={ctl.commit}
@@ -512,6 +544,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
 
 function SaveStatus({
   readOnly,
+  cachedCopy,
   locked,
   loading,
   saveState,
@@ -519,6 +552,8 @@ function SaveStatus({
   onRetry,
 }: {
   readOnly: boolean;
+  /** A cached copy is painted: its live read is on its way, or it failed. Never green: nothing was confirmed. */
+  cachedCopy: 'refreshing' | 'failed' | null;
   locked: boolean;
   loading: boolean;
   saveState: ReturnType<typeof useNpdSheet>['saveState'];
@@ -534,6 +569,20 @@ function SaveStatus({
     );
   }
   if (loading) return null;
+  if (cachedCopy === 'refreshing') {
+    return (
+      <span className={cn(base, 'border-zinc-200 bg-white text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300')} role="status">
+        <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" /> Refreshing…
+      </span>
+    );
+  }
+  if (cachedCopy === 'failed') {
+    return (
+      <span className={cn(base, 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200')} role="status">
+        <CloudAlert className="h-3.5 w-3.5" /> Not refreshed
+      </span>
+    );
+  }
   if (locked && saveState !== 'locked') {
     return (
       <span className={cn(base, 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300')} role="status">

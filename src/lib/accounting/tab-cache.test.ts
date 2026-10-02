@@ -335,6 +335,11 @@ test('the skip flag is confined to lookup lists and aggregate snapshots', async 
     'payrollReadiness',
     'payrollNotesOffboarded',
     'documentsQueue',
+    // NPD: per-person pay on an editable sheet (2026-10-02).
+    'npdSheet',
+    'npdWeeks',
+    'npdSyncWeek',
+    'npdView',
   ];
 
   const offenders: string[] = [];

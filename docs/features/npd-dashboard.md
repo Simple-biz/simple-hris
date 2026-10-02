@@ -38,6 +38,7 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | Google Sheet sync: route (wizard week + rows) | `app/api/accounting/npd/google-sheet/route.ts` |
 | Google Sheet sync: the button on each tab | `src/components/npd/NpdGoogleSheetSync.tsx` (applied by `useNpdSheet.importSheet`) |
 | Google Sheet sync: the progress bar's phases (pure) | `src/lib/npd/sync-progress.ts` (+ `.test.ts`) |
+| Cache: what is kept and how a cached copy is re-checked (pure) | `src/lib/npd/npd-cache.ts` (+ `.test.ts`); keys in `src/lib/accounting/tab-cache.ts` |
 | Sync vs the live Google Sheet, every week, every cell (read-only) | `scripts/verify-npd-google-sheet-sync.mts` |
 | Tab registration | `rbac/accounting-tabs.ts` · `rbac/view-tabs.ts` · `rbac/feature-permissions.ts` · `pages/visibility.ts` · `presence/page-label.ts` · `collab/CollabLayer.tsx` · `App.tsx` |
 
@@ -76,7 +77,8 @@ from the old sheet is still recognised.
 A sheet is keyed by `(sheet, week_start)`, where `week_start` is the **Sunday** that starts the
 Sun–Sat pay week (CHECK in the SQL, `isSundayIso` in the route). The page opens on the newest week
 that has rows on either tab, otherwise on the last **completed** week (`defaultNpdWeek`, Manila
-date). The ◀ ▶ stepper and the week menu are shared by both tabs. The **Week** column is a free
+date), unless you were on a week earlier in this browser session: then it reopens on that week
+(§ Caching). The ◀ ▶ stepper and the week menu are shared by both tabs. The **Week** column is a free
 cell Accounting pastes. It is never checked against the sheet's week, and that is not a bug.
 
 ## Saving: autosave, whole sheet, atomic, version-checked
@@ -349,8 +351,48 @@ is left.
   pattern" that `payroll-wizard-hris-vs-npd.md` reserved for NPD data.
 - View-only users can select and copy. The grid opens no editor, and the server refuses a PUT
   regardless.
-- Not in the Accounting tab cache (CHOSEN 7): an editable sheet always reads live, because a stale
-  paint would let someone type over an old copy.
+- **In the Accounting tab cache since 2026-10-02, as a picture only** (§ Caching). The first build
+  kept NPD out of it (CHOSEN 7) *"because a stale paint would let someone type over an old copy"*.
+  Kane overturned that choice on 2026-10-02 (*"Make sure to add caching on this please so we dont
+  have to load the data everytime"*). The reason stands and is now enforced instead: a cached copy is
+  read-only until the live read lands.
+
+## Caching
+
+Kane, 2026-10-02: *"Make sure to add caching on this please so we dont have to load the data
+everytime lol"*. NPD uses the shared Accounting tab cache (`accounting-dashboard-cache.md`:
+sessionStorage only, stamped with the viewer, 12 h, purged on sign-out). Keys: `npdSheet(tab, week)`,
+`npdSheetIndex`, `npdWeeks`, `npdSyncWeek`, `npdView`. This settles item 321, the same ask that session
+`4a8c39d3` stopped on with an either/or: Kane's *"so we dont have to load the data everytime"* is its
+option (b), plus (a)'s remembered week.
+
+- **A sheet seen before paints at once, but only as a picture.** The session's version and saved
+  rows stay unset until the live read lands, so a cached copy cannot be typed on, saved, locked,
+  given a rate or synced onto. The grid says *"Checking this is the latest copy"*, the pill says
+  **Refreshing…**, and Lock in and the rate box are off. A sync clicked meanwhile waits for the live
+  read (`importSheet`). **Never let a cached copy become editable before the live read**: that is
+  how someone types over an old copy, the hazard CHOSEN 7 named.
+- **Every open still reads live.** NPD rows are per-person pay, the store's banned category: no skip
+  flag (`tab-cache.test.ts` lists `npdSheet`, `npdWeeks` and `npdSyncWeek`).
+- **A failed live read over a cached copy keeps the copy, read-only**, with an amber *"This sheet could
+  not be refreshed"* banner, the time it was cached, and Try again. The pill says **Not refreshed**,
+  never a green Saved, because nothing about that copy was confirmed this time. It is never an
+  empty grid (§ Saving).
+- **Written from server truth only** (`writeSheetCache`, exactly three calls): after a load, after a
+  confirmed save, and after a confirmed lock. Edits that have not been saved never reach it, and
+  neither does a save refused by a conflict or a lock.
+- **Re-checked before it paints** (`parseNpdSheetPayload`): the envelope guarantees viewer, version
+  and age, not shape. A wrong cell count, a non-text cell, an unknown column, or a sheet cached for
+  the other tab drops the copy, and the page loads as if nothing were cached.
+- **At most 4 sheets** (`NPD_CACHED_SHEETS_MAX`, most recently used, `npdSheetIndex`). One sheet is a
+  few hundred kB and the quota is shared with every Accounting tab.
+- **NPD reopens where you left it.** The tab was already remembered. The week is now remembered too
+  (`npdView`, a UI selection, re-checked as a real Sunday), so returning lands on the sheet the cache
+  holds. With nothing remembered it opens on the newest week the cached list knew, then on the live
+  rule (§ One sheet per tab per pay week). The live list updates the menu and never switches weeks
+  under you.
+- **The week menu and the sync bar** (the wizard's week and each tab's *Last synced*) paint from the
+  cache the same way and are always re-read.
 
 ## The grid
 
@@ -404,7 +446,9 @@ column must be parsed and refused exactly as that step's paste contract says.
   Payroll CSV says *The All Dept Google Sheet is not configured* (503), and nothing changes. That env var is now
   load-bearing for NPD: never remove it as "the rates sync is off".
 - Verified 2026-10-02 (sync): 21 pure tests; NPD + wiring 146/146; the live-sheet check above (0 mismatches, re-run
-  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (55/55 with the progress bar: under the button and its
+  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (69/69 with the cache, the remembered week included: a reload paints the cached rows,
+  week menu and sync bar before a slow live read, nothing on that copy can be typed, a failed refresh keeps the
+  copy read-only under Not refreshed, Try again loads it live; 55/55 with the progress bar: under the button and its
   width, each phase, green only after the save lands, red on failure, fades back, reduced motion, phone). It covered: each tab shows only its own button; an empty week
   loads without asking and saves at version 0 with the sheet's rate; a week with rows asks first, and Cancel changes
   nothing; Replace swaps rows, rate and column formulas; Undo restores all three; a locked week is refused; leaving

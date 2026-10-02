@@ -37,6 +37,7 @@ store nor the CEO store but the shared one:
 | `payroll-clerk/useDispatchQueue.ts` | `dispatchQueue` |
 | `ceo/CeoOverviewKpis.tsx` | `ceo:overview-kpis`, `ceo:viewer-name:<email>` |
 | `ceo/CeoFinancialReports.tsx` | the financial-report snapshot |
+| `npd/useNpdSheet.ts` · `npd/NpdDashboard.tsx` · `npd/NpdGoogleSheetSync.tsx` (NPD, 2026-10-02) | `npdSheet(tab, week)` + `npdSheetIndex`, `npdWeeks`, `npdSyncWeek`, `npdView` (UI selection) |
 
 ## Lifetime
 
@@ -268,6 +269,26 @@ been frozen at page load and transfers never moved a headcount
 seed is already on the page as `initialData.employees`, and ~1,200 names and emails
 in sessionStorage buy nothing. The roster and its off-board set commit together or
 not at all, the same pairing discipline as the CAS pairs above.
+
+### NPD joined, as a picture only (2026-10-02)
+
+Kane: *"Make sure to add caching on this please so we dont have to load the data everytime lol"*.
+NPD had been kept out deliberately (`npd-dashboard.md`, CHOSEN 7): it is an **editable** sheet, and a
+stale paint invites typing over an old copy. Kane overturned the choice; the reason became a rule.
+
+- **`npdSheet(tab, week)`**, one sheet per entry, and **`npdSheetIndex`**: at most four sheets, most
+  recently used, because one sheet is a few hundred kB of this store's shared quota. Per-person pay,
+  so the banned category (no skip flag; listed in `tab-cache.test.ts`). **The seed is read-only**:
+  `useNpdSheet` paints it but leaves the session's version and saved rows unset, so nothing can be
+  typed, saved, locked or synced onto it until the live read lands. A failed live read keeps the copy
+  on screen, still read-only, under an amber *Not refreshed* pill, never green and never empty.
+- Written from **server truth only**: a load, a confirmed save, a confirmed lock (`writeSheetCache`,
+  test-pinned at three calls). Re-validated on read in `src/lib/npd/npd-cache.ts`, because the
+  envelope does not guarantee shape.
+- **`npdWeeks`** (the week menu) and **`npdSyncWeek`** (the wizard's week and each tab's *Last
+  synced*): paint, then always re-read.
+- **`npdView`**: the week NPD was left on. A UI selection like `documentsView`, re-checked as a real
+  Sunday on read, so returning lands on the sheet the cache holds.
 
 ## Adding another dataset
 

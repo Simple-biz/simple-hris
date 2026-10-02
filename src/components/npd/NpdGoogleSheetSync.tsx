@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 import { NPD_SHEET_LABELS, type NpdSheetKind } from '@/lib/npd/columns';
 import { GOOGLE_SHEET_TABS, type NpdImportSummary } from '@/lib/npd/google-sheet-import';
 import { weekLabel } from '@/lib/npd/sheet';
+import { TAB_CACHE_KEYS, getTabCache, setTabCache } from '@/lib/accounting/tab-cache';
+import { parseNpdSyncWeek } from '@/lib/npd/npd-cache';
 import {
   SYNC_PHASE_MOTION,
   SYNC_PHASE_VALUE,
@@ -141,7 +143,8 @@ export default function NpdGoogleSheetSync({
   onApply: (sheet: NpdSheetKind, data: NpdSyncData) => Promise<LockResult>;
   disabled: boolean;
 }) {
-  const [wizardWeek, setWizardWeek] = useState<WizardWeek | null>(null);
+  // Seen before: the wizard's week and "Last synced" paint from the cache; always re-read below.
+  const [wizardWeek, setWizardWeek] = useState<WizardWeek | null>(() => parseNpdSyncWeek(getTabCache(TAB_CACHE_KEYS.npdSyncWeek)));
   const [wizardError, setWizardError] = useState<string | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
@@ -199,12 +202,14 @@ export default function NpdGoogleSheetSync({
         const j = (await res.json().catch(() => ({}))) as Partial<WizardWeek> & { error?: string };
         if (cancelled) return;
         if (res.ok && j.week && j.sourceFile) {
-          setWizardWeek({
+          const read: WizardWeek = {
             week: j.week,
             sourceFile: j.sourceFile,
             lastSync: j.lastSync ?? null,
             lastSyncError: j.lastSyncError ?? (j.lastSync ? null : 'When this week was last synced could not be read.'),
-          });
+          };
+          setWizardWeek(read);
+          setTabCache(TAB_CACHE_KEYS.npdSyncWeek, read);
         } else setWizardError(j.error ?? `The Payroll Wizard's week could not be read (${res.status}).`);
       } catch (e) {
         if (!cancelled) setWizardError(e instanceof Error ? e.message : "The Payroll Wizard's week could not be read.");

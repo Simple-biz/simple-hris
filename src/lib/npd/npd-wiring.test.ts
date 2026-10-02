@@ -371,3 +371,45 @@ describe('Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)', () =>
     assert.match(read('app', 'api', 'cron', 'sync-rates-from-sheet', 'route.ts'), /const RATES_SHEET_SYNC_DISABLED = true;/);
   });
 });
+
+describe('NPD cache (Kane, 2026-10-02: "add caching on this please")', () => {
+  const hook = read('src', 'components', 'npd', 'useNpdSheet.ts');
+  const dash = read('src', 'components', 'npd', 'NpdDashboard.tsx');
+
+  test('a cached copy only PAINTS: the seed never sets the session’s version or saved rows, and the live read always runs', () => {
+    const seed = hook.slice(hook.indexOf('const cached = parseNpdSheetPayload(sheet, getTabCache(cacheKey));'), hook.indexOf('void load(s);'));
+    assert.ok(seed.length > 0);
+    assert.ok(!/s\.meta\s*=|s\.saved\s*=|s\.savedSettings\s*=/.test(seed), 'editable() / lock() / a sync stay blocked on a cached copy');
+    assert.match(seed, /setRefreshing\(true\)/);
+    assert.ok(hook.indexOf('void load(s);') > hook.indexOf('const cached = parseNpdSheetPayload'), 'the live read follows the seed, unconditionally');
+  });
+
+  test('the cache is written from server truth only: after a load, a confirmed save, a confirmed lock', () => {
+    const calls = hook.split('writeSheetCache(s);').length - 1;
+    assert.equal(calls, 3);
+    const load = hook.slice(hook.indexOf('const load = useCallback'), hook.indexOf('useEffect(() => {\n    mountedRef.current = true;\n    if (!week) return;'));
+    assert.ok(load.indexOf('writeSheetCache(s);') > load.indexOf('s.savedSettings = s.settings;'));
+    const save = hook.slice(hook.indexOf('const saveNow = useCallback'), hook.indexOf('const scheduleSave'));
+    assert.ok(save.indexOf('writeSheetCache(s);') > save.indexOf('if (!res.ok) {'), 'only after the failure branches');
+    assert.ok(!/setTabCache\(TAB_CACHE_KEYS\.npdSheet\(/.test(hook.replace(/function writeSheetCache[\s\S]*?\n}\n/, '')), 'nothing else writes a sheet');
+  });
+
+  test('read-only while refreshing; a failed refresh keeps the copy and says so', () => {
+    assert.match(dash, /readOnly=\{readOnly \|\| !!ctl\.conflict \|\| ctl\.locked \|\| ctl\.refreshing\}/);
+    assert.match(dash, /const rateEditable = [^;]*!ctl\.refreshing;/);
+    assert.match(dash, /ctl\.loadState !== 'ready' \|\| ctl\.refreshing\s*\? 'The sheet is still loading\.'/);
+    assert.match(dash, /This sheet could not be refreshed\./);
+    // A cached copy is never shown as green "Saved": nothing about it was confirmed this time.
+    assert.match(dash, /cachedCopy=\{ctl\.refreshing \? \(ctl\.refreshError \? 'failed' : 'refreshing'\) : null\}/);
+    const status = dash.slice(dash.indexOf('function SaveStatus'));
+    assert.ok(status.indexOf("cachedCopy === 'failed'") < status.indexOf('<CircleCheck'), 'checked before the green pill');
+    const load = hook.slice(hook.indexOf('const load = useCallback'));
+    assert.match(load, /if \(silent\) setRefreshError\(message\);/);
+  });
+
+  test('never a skip flag on NPD data, and sessionStorage only through the shared store', () => {
+    for (const f of [hook, dash, read('src', 'components', 'npd', 'NpdGoogleSheetSync.tsx')]) {
+      assert.ok(!/hasFetchedThisSession|markFetchedThisSession|localStorage/.test(f));
+    }
+  });
+});
