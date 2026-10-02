@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
-import { builtinSubOptionsWithPinned } from '@/lib/departments/builtin-subs';
+import { builtinSubOptionsWithPinned, placeableSubIndex } from '@/lib/departments/builtin-subs';
 import { useBuiltinSubs } from '@/lib/departments/use-builtin-subs';
 import { toast } from 'sonner';
 import {
@@ -2327,14 +2327,24 @@ function BypassSetupDialog({
   // stale green check on a DIFFERENT address than the one being checked.
   const verifyReq = useRef<object | null>(null);
 
+  // The same map the sub-team picker offers from, so a DATA sub-team it lists
+  // (`hsl:attorney`, Payment Catalog → Departments) is one this gate accepts.
+  const builtinSubs = useBuiltinSubs();
+  const placeableSubs = useMemo(() => placeableSubIndex(builtinSubs), [builtinSubs]);
+
   const emailNorm = workEmail.trim().toLowerCase();
   const workEmailValid = isPlausibleEmail(emailNorm) && emailNorm.endsWith('@simple.biz');
   const personalValid = isPlausibleEmail(personalEmail.trim());
   // `isPlaceableDeptLabel` rather than a bare non-empty check: this dialog writes
   // straight to the master list + Sheet, and a bare "HSL" would place the hire on
-  // the parent fallback rate with no sub-team chosen.
+  // the parent fallback rate with no sub-team chosen. WITH the map, exactly as
+  // /api/hr/onboarding-bypass gates it — called without one it knows only the
+  // code teams, and a data team picked above left Promote disabled (2026-10-02).
   const fieldsReady =
-    fullName.trim().length > 0 && personalValid && isPlaceableDeptLabel(dept) && workEmailValid;
+    fullName.trim().length > 0 &&
+    personalValid &&
+    isPlaceableDeptLabel(dept, placeableSubs) &&
+    workEmailValid;
   const verified = verifyState === 'exists';
 
   // Reset everything when the dialog closes so the next open starts clean.
@@ -3445,6 +3455,20 @@ function GenerateLinkDialog({
 
 // --- Set-work-email dialog (mints @simple.biz + stages a pending hire) -----
 
+/**
+ * The set-work-email route's department gate, mirrored so Save enables exactly
+ * when the route will accept: map-aware inside the HSL family (a DATA sub-team
+ * such as `hsl:attorney` is placeable, a bare "HSL" never is), non-empty
+ * everywhere else — the route checks only the HSL arm, so passing the map for
+ * other departments would refuse here what the server takes.
+ */
+function isStageableDeptLabel(
+  dept: string,
+  placeableSubs: ReturnType<typeof placeableSubIndex>,
+): boolean {
+  return isPlaceableDeptLabel(dept, isHslFamilyLabel(dept) ? placeableSubs : undefined);
+}
+
 function SetOnboardingWorkEmailDialog({
   row,
   onClose,
@@ -3473,6 +3497,8 @@ function SetOnboardingWorkEmailDialog({
   const [projectNames, setProjectNames] = useState<string[]>([]);
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  const builtinSubs = useBuiltinSubs();
+  const placeableSubs = useMemo(() => placeableSubIndex(builtinSubs), [builtinSubs]);
 
   const fullName = row?.full_name?.trim() || row?.invite_name?.trim() || '';
   // Prefer the hire's structured parts (reduced to the same tokens splitFullName
@@ -3669,7 +3695,7 @@ function SetOnboardingWorkEmailDialog({
     !busy &&
     emailValid &&
     available === true &&
-    isPlaceableDeptLabel(dept) &&
+    isStageableDeptLabel(dept, placeableSubs) &&
     projectNames.length > 0;
 
   async function save() {
@@ -4519,6 +4545,8 @@ function BulkDeptGroup({
   const needsDept = groupKey === '__none__';
   const [dept, setDept] = useState(initialDept);
   const [projects, setProjects] = useState<string[]>([]);
+  const builtinSubs = useBuiltinSubs();
+  const placeableSubs = useMemo(() => placeableSubIndex(builtinSubs), [builtinSubs]);
 
   const deptKey = dept.trim().toLowerCase();
   const typical = deptKey ? deptRates.get(deptKey) : undefined;
@@ -4530,8 +4558,9 @@ function BulkDeptGroup({
   // Compensation readiness is informational only — a group can be set before
   // Accounting fills the Payment Catalog (rate stays null until they do). The
   // DEPARTMENT is not informational: `isPlaceableDeptLabel` refuses a bare "HSL"
-  // so a whole batch can't land on the parent fallback rate un-sub-teamed.
-  const configValid = isPlaceableDeptLabel(dept) && projects.length > 0;
+  // so a whole batch can't land on the parent fallback rate un-sub-teamed. Each
+  // row goes through set-work-email, so this is that route's gate.
+  const configValid = isStageableDeptLabel(dept, placeableSubs) && projects.length > 0;
 
   const usableRows = rows.filter((r) => {
     if (doneIds.has(r.id)) return false;
@@ -4971,10 +5000,11 @@ function DepartmentSelect({
           'dark:bg-input/30',
         )}
       >
-        <SelectPrimitive.Value
-          placeholder={loading ? 'Loading departments…' : 'Select department'}
-          className="flex-1 text-left"
-        />
+        {/* Same text the list item shows (`formatDeptLabel`), not the raw value. */}
+        <SelectPrimitive.Value className="flex-1 text-left">
+          {(v: string) =>
+            v ? formatDeptLabel(v) : loading ? 'Loading departments…' : 'Select department'}
+        </SelectPrimitive.Value>
         <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
@@ -5090,7 +5120,14 @@ function SubDepartmentSelect({
               : 'border-zinc-300 hover:border-zinc-400 dark:border-input dark:hover:border-zinc-500',
           )}
         >
-          <SelectPrimitive.Value placeholder="Select HSL sub-department" className="flex-1 text-left" />
+          {/* Root carries no `items`, so Base UI's default would print the raw
+              `hsl:<key>` value in the trigger — a storage key on screen (§12). */}
+          <SelectPrimitive.Value className="flex-1 text-left">
+            {(v: string) =>
+              v
+                ? (options.find((o) => o.value === v)?.label ?? formatDeptLabel(v))
+                : 'Select HSL sub-department'}
+          </SelectPrimitive.Value>
           <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
         </SelectPrimitive.Trigger>
         <SelectPrimitive.Portal>
