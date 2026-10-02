@@ -30,7 +30,7 @@
  *
  *   1. the plan still declares the row, byte-exact (a rename orphans it)
  *   2. the plan's SP still matches what was queued (a re-score makes it stale)
- *   3. Fibonacci, and the 8-SP task cap
+ *   3. the task scale (2, 3, 5, 8 — `sp-scale.mts`), and the 8-SP task cap
  *   4. Done still means: a Completed Date, and zero open blockers
  *   5. the Completed Date STILL equals the last sha's commit date — git is asked
  *      again, so a rebase or amend between queue and flush fails the row rather
@@ -51,6 +51,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { SKILL_DIR, REPO_ROOT, PLAN_TASKS } from './monday.mts';
 import type { PassRow } from './pass.mts';
+import { taskSpProblems } from './sp-scale.mts';
 
 export const PENDING_PATH = path.join(SKILL_DIR, 'pending-sp.json');
 
@@ -169,8 +170,6 @@ function isAncestorOfOriginMain(sha: string): boolean {
   }
 }
 
-const FIB = new Set([1, 2, 3, 5, 8]);
-
 /**
  * Re-verify one queued entry against the CURRENT repo and plan. Returns the
  * reasons it must not be written; empty means it is still true.
@@ -191,8 +190,7 @@ export function revalidate(entry: PendingEntry): string[] {
   if (plan.sp !== entry.planSp) {
     bad.push(`re-scored since queueing (queued ${entry.planSp} SP, plan now says ${plan.sp}) — the queued score is stale`);
   }
-  if (!FIB.has(plan.sp)) bad.push(`non-Fibonacci ${plan.sp} SP`);
-  if (plan.sp > 8) bad.push(`over the 8-SP task cap (${plan.sp}) — that is an epic`);
+  bad.push(...taskSpProblems(row.name, plan.sp));
 
   if (row.status === 'Done') {
     if (!row.completed) bad.push('Done with no Completed Date');

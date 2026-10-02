@@ -261,8 +261,11 @@ export interface PlanTask {
   name: string; // without the "[HRIS] " prefix (added at sync time)
   type: TaskType;
   /**
-   * Fibonacci. **Over** 8 is an epic, so 8 is a legal task score (the SP auditor's company rule —
-   * on a Fibonacci scale the next step up is 13, so "over 8" and ">= 13" are the same rule).
+   * 2, 3, 5 or 8. **3 is the default** and 2 is rare (small work such as docs). There is no 1 SP
+   * (Kane, 2026-10-02). The 24 rows already scored 1 are exempt by exact name in the skill's
+   * `scripts/sp-scale.mts`, and its `selfcheck()` refuses any other. **Over** 8 is an epic, so 8 is
+   * a legal task score (the SP auditor's company rule: on a Fibonacci scale the next step up is 13,
+   * so "over 8" and ">= 13" are the same rule).
    */
   sp: number;
   /**

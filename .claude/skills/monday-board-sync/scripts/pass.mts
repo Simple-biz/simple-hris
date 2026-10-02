@@ -783,6 +783,7 @@
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
+import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
 export const PASS_DATE = '2026-10-01';
 export const AUDIT_RANGE = '31fd9c0a..57e712f9';
@@ -844,8 +845,6 @@ export const ROWS: PassRow[] = [
   },
 ];
 
-const FIB = new Set([1, 2, 3, 5, 8]);
-
 /** Commit date of a sha, `YYYY-MM-DD`. Throws if git cannot resolve it — unverifiable is a failure. */
 function shaDate(sha: string): string {
   return execFileSync('git', ['log', '-1', '--date=short', '--format=%ad', sha], {
@@ -858,6 +857,9 @@ export function selfcheck(): string[] {
   const bad: string[] = [];
   const planByName = new Map(PLAN_TASKS.map((t) => [t.name, t]));
   const seen = new Set<string>();
+
+  // The whole plan, not only this pass's rows: the reconciler creates every missing plan row.
+  bad.push(...planSpProblems(PLAN_TASKS));
 
   for (const row of ROWS) {
     if (seen.has(row.name)) bad.push(`duplicate pass row: ${row.name.slice(0, 60)}`);
@@ -873,8 +875,7 @@ export function selfcheck(): string[] {
       bad.push(`no PLAN_TASKS entry matches byte-exact — would target the wrong row or none: ${row.name.slice(0, 70)}`);
       continue;
     }
-    if (!FIB.has(plan.sp)) bad.push(`non-Fibonacci ${plan.sp} SP: ${row.name.slice(0, 55)}`);
-    if (plan.sp > 8) bad.push(`over the 8-SP cap (${plan.sp}) — that is an epic, not a task: ${row.name.slice(0, 55)}`);
+    for (const p of taskSpProblems(row.name, plan.sp)) bad.push(`${p}: ${row.name.slice(0, 55)}`);
 
     if (row.status === 'Done') {
       if (!row.completed) bad.push(`Done with no Completed Date: ${row.name.slice(0, 55)}`);

@@ -18,8 +18,9 @@ Three rules govern everything below.
    recorded**, never assumed.
 2. **Show the work, then stop.** Every pass renders a review and waits for Kane. Approval is a
    message bound to a proposal hash; silence is not approval.
-3. **Over 8 SP is an epic, not a task.** 8 SP is a legal task score (Fibonacci: the next step is 13,
-   so "over 8" and "≥ 13" are the same rule).
+3. **A task scores 2, 3, 5 or 8. 3 is the default, and over 8 is an epic.** There is no 1 SP (Kane,
+   2026-10-02). 8 SP is a legal task score (Fibonacci: the next step is 13, so "over 8" and "≥ 13"
+   are the same rule).
 
 ## Architecture — why there are two writers and why that is safe
 
@@ -169,10 +170,31 @@ Check the candidate pool against recent velocity before calling the sprint plann
 backlog.
 
 ### 3. Estimate
-Fibonacci only (1, 2, 3, 5, 8), per dev-resources.simple.biz/story-points. Calibrate against
-**current-sprint neighbours** — the Sprint 26 rows run 1–5, averaging ~3.5 — never against the bulk
-import epics, which were scored at whole-feature granularity. Over 8 becomes an epic on Roadmap &
-Epics with child tasks.
+**2, 3, 5 or 8, and nothing else.** That is the Fibonacci scale at dev-resources.simple.biz/story-points
+without its 1. Kane, 2026-10-02: *"remove 1sp for sprint tasks all SP should be 2 above but 2SP Is
+rare like documentation depending on volume but 3sp should be common"*.
+
+| SP | When |
+|---|---|
+| ~~1~~ | **Retired.** Never score a new row 1. Work that felt like a 1 is a 3, or a 2 if it qualifies below. |
+| 2 | **Rare.** Small work such as documentation, and only when the volume is small. A large doc is a 3 or more. |
+| **3** | **The default.** Most rows should land here. |
+| 5 | Larger than a normal task. |
+| 8 | The largest task. Over 8 becomes an epic on Roadmap & Epics with child tasks. |
+
+The scale is defined once, in `scripts/sp-scale.mts`. `selfcheck()` runs it over the **whole plan**,
+not just the pass's rows, because a full apply creates every missing plan row. `revalidate()` and
+`verify.mts` use the same file. **24 rows already sat at 1 SP on 2026-10-02**: 16 Done, 8 open. They
+are exempt by exact name in `LEGACY_ONE_SP_ROWS`, and that list only ever shrinks. Never add a name
+to it. A legacy row that is re-scored or renamed must leave the list, and `selfcheck()` fails until
+it does. Never re-score a Done one: its Actual SP is a record. Re-scoring the 8 open ones is Kane's
+call (Open item 327).
+
+Calibrate against **current-sprint neighbours**, never against the bulk import epics, which were
+scored at whole-feature granularity. Measured before the floor: the Sprint 26 rows ran 1–5,
+averaging ~3.5. On 2026-10-02 the plan's 464 rows were 24 at 1, 86 at 2, 158 at 3, 172 at 5 and
+24 at 8. **Neither is a target any more.** Under the new rule 3 is the most common score and 2 is
+rare. The old mix had more 5s than 3s, and 86 rows at 2.
 
 **Do not port Gridline's children-sum-to-parent rule.** HRIS Epic SP is an independent rollup of
 sub-features: HRIS-01 is 101 SP with zero task rows. Asserting the sum would fail on almost every epic.
@@ -206,7 +228,7 @@ finding about drift, not an obstacle to route around, and the fix is never to de
 ### 6. Verify by re-reading
 `verify.mts`. **Never report a sync as done off the write log** — the log says what was sent, not what
 the board holds. With an empty `ROWS` it also serves as the standalone board audit: name parity both
-directions, the SP-cap sweep, blank Estimated SP, phantom Actual SP, and the project rollup.
+directions, the SP-cap sweep, the 2-SP floor sweep (legacy rows counted, not failed), blank Estimated SP, phantom Actual SP, and the project rollup.
 
 ### 7. Record it
 Update `docs/features/monday-board-sync.md` and the `monday-hris-board-sync` memory entry.

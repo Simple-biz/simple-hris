@@ -160,10 +160,41 @@ deployed branch carries the actual change, not merely a sha with the right ances
 
 ## Story points
 
-Fibonacci only (1, 2, 3, 5, 8), per dev-resources.simple.biz/story-points. **Over 8 is an epic**, so
-8 is a legal task score — on a Fibonacci scale the next step is 13, so "over 8" and "≥ 13" are the
-same rule. Calibrate against current-sprint neighbours (Sprint 26 rows run 1–5, averaging ~3.5),
-never against the bulk-import epics, which were scored at whole-feature granularity.
+**A task scores 2, 3, 5 or 8.** That is the Fibonacci scale at dev-resources.simple.biz/story-points
+without its 1. Kane removed the 1 on 2026-10-02: *"remove 1sp for sprint tasks all SP should be 2
+above but 2SP Is rare like documentation depending on volume but 3sp should be common"*.
+
+- **3 is the default.** Most rows land here.
+- **2 is rare.** It is for small work such as documentation, and only when the volume is small. A
+  large doc is a 3 or more.
+- **1 is retired.** No new row scores 1.
+- **Over 8 is an epic**, so 8 is a legal task score. On a Fibonacci scale the next step is 13, so
+  "over 8" and "≥ 13" are the same rule.
+
+The scale lives in one file, `.claude/skills/monday-board-sync/scripts/sp-scale.mts`. Before
+2026-10-02, `pass.mts` and `pending-sp.mts` each declared their own `{1, 2, 3, 5, 8}`. Three checks
+enforce it:
+
+| Check | What it refuses |
+|---|---|
+| `selfcheck()` (review, apply, export, run-approved) | any **plan** row off the scale, not only the pass's rows. A full apply's reconciler creates every missing plan row, so a 1-SP row in `hris-plan.ts` would reach the board without being in the pass. |
+| `revalidate()` (flush) | a queued row whose plan score is off the scale |
+| `verify.mts` | a board row of ours under 2 SP that is not on the legacy list. Legacy rows are counted, not failed |
+
+**The 24 rows already at 1 SP are exempt by exact name** (`LEGACY_ONE_SP_ROWS`). The rule applies to
+new rows only. 16 of them are Done, and their Actual SP is a record, so they are never re-scored. 8
+are open, and re-scoring them adds bonus SP, which is Kane's call (Open item 327). **The list is
+closed and only ever shrinks.** `selfcheck()` fails on any listed name that is no longer in the plan
+at 1 SP, so a re-scored or renamed row has to leave the list.
+
+**Gap, not closed by this:** the in-app button (`POST /api/admin/monday-sync` → `sync.ts`) runs the
+reconciler with no `selfcheck()`, so it would create a 1-SP plan row. It 502s in production today
+(`MONDAY` is unset in Vercel), and every skill pass goes through `selfcheck()` first.
+
+Calibrate against current-sprint neighbours, never against the bulk-import epics, which were scored
+at whole-feature granularity. Measured before the floor: the Sprint 26 rows ran 1–5, averaging ~3.5.
+On 2026-10-02 the plan's 464 rows were 24 at 1, 86 at 2, 158 at 3, 172 at 5 and 24 at 8. **Neither
+is a target any more.** Under the new rule 3 is the most common score and 2 is rare.
 
 **Epic SP is an independent rollup and does NOT equal the sum of its task rows** — HRIS-01 is 101 SP
 with zero task rows. The Gridline sum-to-parent invariant is deliberately not implemented here;

@@ -9,8 +9,9 @@
  * Checks
  *   1. every pass row exists, with the intended Status and (for Done rows) the Completed Date
  *   2. every PLAN_TASKS row exists on the board byte-exact, and no orphan carries our prefix
- *   3. invariants an SP auditor would check: nothing over the 8-SP cap, open rows have an Estimated
- *      SP, unshipped rows carry no Actual SP, Done rows have a Completed Date
+ *   3. invariants an SP auditor would check: nothing over the 8-SP cap, nothing under the 2-SP floor
+ *      except the frozen LEGACY_ONE_SP_ROWS, open rows have an Estimated SP, unshipped rows carry no
+ *      Actual SP, Done rows have a Completed Date
  *   4. the project rollup and its Sprint Tasks relation cover the whole plan
  *
  * It does NOT check that an epic's SP equals the sum of its tasks. HRIS epic SP is an independent
@@ -32,6 +33,7 @@ import {
   taskItemName,
 } from './monday.mts';
 import { ROWS } from './pass.mts';
+import { LEGACY_ONE_SP_ROWS } from './sp-scale.mts';
 
 const fails: string[] = [];
 const num = (v: string) => (v === '' || v == null || Number.isNaN(Number(v)) ? null : Number(v));
@@ -95,6 +97,8 @@ if (orphans.length) fails.push(`${orphans.length} orphan rows (likely renames) n
 
 console.log('\n=== 3  invariants ===');
 const over: string[] = [];
+const underFloor: string[] = [];
+let legacyOneSp = 0;
 const blankEst: string[] = [];
 const phantomAct: string[] = [];
 const doneNoDate: string[] = [];
@@ -105,12 +109,17 @@ for (const t of ours) {
   const status = t.cols[TASK_COLS.status] ?? '(blank)';
   const sp = est ?? act;
   if (sp != null && sp > 8) over.push(`${t.id} ${sp}SP ${status} ${t.name.slice(0, 58)}`);
+  if (sp != null && sp < 2) {
+    if (sp === 1 && LEGACY_ONE_SP_ROWS.has(t.name.slice('[HRIS] '.length))) legacyOneSp++;
+    else underFloor.push(`${t.id} ${sp}SP ${status} ${t.name.slice(0, 58)}`);
+  }
   if (!SHIPPED.has(status) && est == null) blankEst.push(`${t.id} ${status} ${t.name.slice(0, 58)}`);
   if (act != null && status !== 'Done') phantomAct.push(`${t.id} act=${act} ${status} ${t.name.slice(0, 52)}`);
   if (status === 'Done' && !(t.cols[TASK_COLS.completed] ?? '')) doneNoDate.push(`${t.id} ${t.name.slice(0, 62)}`);
 }
 for (const [label, list] of [
   ['rows over the 8-SP cap', over],
+  ['rows under the 2-SP floor (not legacy)', underFloor],
   ['open rows with a blank Estimated SP', blankEst],
   ['unshipped rows carrying an Actual SP', phantomAct],
   ['Done rows with no Completed Date', doneNoDate],
@@ -120,6 +129,8 @@ for (const [label, list] of [
   if (list.length > 12) console.log(`     ... and ${list.length - 12} more`);
 }
 if (over.length) fails.push(`${over.length} rows over the 8-SP cap`);
+if (underFloor.length) fails.push(`${underFloor.length} rows under the 2-SP floor`);
+console.log(`  legacy 1-SP rows (frozen 2026-10-02, exempt): ${legacyOneSp} of ${LEGACY_ONE_SP_ROWS.size}`);
 if (phantomAct.length) fails.push(`${phantomAct.length} unshipped rows carry an Actual SP`);
 // Pre-existing Done rows with no date are a known historical artefact, reported but not fatal.
 if (doneNoDate.length) console.log('     (historical: HRIS has never written Completed Date before this skill)');
