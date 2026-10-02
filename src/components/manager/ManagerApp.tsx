@@ -1867,7 +1867,7 @@ function PersonFinder({
             {listed.map((m, i) => {
               const email = m.work_email ?? m.personal_email ?? null;
               const online = activeSet.has(m);
-              const dept = formatDeptLabel(m.department);
+              const deptLabel = formatDeptLabel(m.department);
               return (
                 <li key={email ?? m.name ?? `member-${i}`}>
                   <button
@@ -1886,7 +1886,7 @@ function PersonFinder({
                         {m.name ?? email ?? '—'}
                       </p>
                       <p className="truncate text-[11px] text-zinc-600 dark:text-zinc-400">
-                        {dept || 'No department'}
+                        {deptLabel || 'No department'}
                       </p>
                     </div>
                     <ChevronRight className="h-4 w-4 shrink-0 text-zinc-400 transition-colors group-hover:text-secondary dark:text-zinc-600" />

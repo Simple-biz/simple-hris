@@ -96,6 +96,18 @@ const ALLOWED_SNIPPETS: ReadonlyArray<{ snippet: string; why: string }> = [
     why: 'Prose, not a value.',
   },
   {
+    snippet: "{m.kind === 'within' ? ' (same department, different team)' : ''}",
+    why:
+      'Prose, not a value — EditBuiltinManagersDialog People-step move list; the two ' +
+      'department VALUES on the line above it are already through formatDeptLabel.',
+  },
+  {
+    snippet: '{insights && <KpiInsightCardsSkeleton calculator="dept" />}',
+    why:
+      '`calculator` is a `KpiInsightCalculator` kind (`dept` | `hsl`, KpiInsightCards.tsx) ' +
+      'choosing which calculator the skeleton mimics — a string constant, never a roster cell.',
+  },
+  {
     snippet: '{card.department}',
     why:
       "`card.department` is already through formatDeptLabel inside buildIdCard " +

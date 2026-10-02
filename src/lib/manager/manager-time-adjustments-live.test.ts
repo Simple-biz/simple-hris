@@ -189,12 +189,14 @@ test('the shell passes a stable callback, never an inline arrow', () => {
 
 test('hours are never interpolated raw into the shell gallery', () => {
   // `{r.requested_hours}h` printed `4.566666666666666h` on the Overview hero.
+  // Any receiver, not just `r`: the gallery's row is now `row`, and a pattern
+  // pinned to one variable name passed vacuously the moment it was renamed.
   assert.ok(
-    !/\{r\.requested_hours\}h/.test(shellSource),
+    !/\{\s*[A-Za-z_$][\w$]*\??\.requested_hours\s*\}/.test(shellSource),
     'raw hours must go through fmtAdjustmentHours before reaching a screen',
   );
   assert.ok(
-    /fmtAdjustmentHours\(r\.requested_hours\)/.test(shellSource),
+    /fmtAdjustmentHours\(\s*[A-Za-z_$][\w$]*\??\.requested_hours\s*\)/.test(shellSource),
     'the Overview gallery must format its hours',
   );
 });

@@ -1092,8 +1092,15 @@ filter, not a label.
 **Enforced by test.** `src/lib/departments/dept-label-render.test.ts` pins the
 formatter for both sub-team keyspaces *and* source-scans `src/components/**/*.tsx`
 for a JSX child that renders a department value without it. Keys, URLs, counts,
-type literals and plural prose are excluded by pattern; the four remaining
-exceptions are named in `ALLOWED_SNIPPETS` with a reason each. Verified
+type literals and plural prose are excluded by pattern; every remaining
+exception is named in `ALLOWED_SNIPPETS` by its exact source line, with a reason
+each — four on 2026-08-24, seven on 2026-10-02 (`{card.department}`, a view model
+already formatted upstream; a `' (same department, different team)'` sentence;
+and `calculator="dept"`, a calculator kind). **An entry is for a line that is not
+a department value at all; a value that only *looks* unwrapped because it was
+formatted into a local is fixed by naming the local `deptLabel`** (which
+`NOT_A_LABEL` already treats as formatted), not by an entry — that is how
+`ManagerApp.tsx`'s `{dept || 'No department'}` was closed. Verified
 non-vacuous: a probe component rendering `{row.department ?? '—'}` fails it.
 
 > **Open.** Aggregation surfaces (CEO headcount-by-department, HR department
