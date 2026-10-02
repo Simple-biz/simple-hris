@@ -18,6 +18,7 @@ import CeoOverviewKpis from './CeoOverviewKpis';
 import CeoFinancialReports from './CeoFinancialReports';
 import BizAiTab from './BizAiTab';
 import PeopleTab from '@/components/people/PeopleTab';
+import { isExcludedFromPayAction } from '@/lib/people/pay-action-exclusions';
 import AnnouncementWall from '@/components/announcements/AnnouncementWall';
 import AnnouncementComposer from '@/components/announcements/AnnouncementComposer';
 import SWall from '@/components/swall/SWall';
@@ -196,7 +197,14 @@ export default function CeoApp() {
                 // can still browse, search, reveal banking, export, and send a
                 // one-off payment (canPay) — the Pay action is exempt from the
                 // profile-edit lock and gated server-side by rate visibility.
-                <PeopleTab view="ceo" viewerEmail={viewerEmail} canEdit={false} canPay />
+                // An account in `pay-action-exclusions.ts` keeps View but never
+                // sees Pay (Kane, 2026-10-02: rob@).
+                <PeopleTab
+                  view="ceo"
+                  viewerEmail={viewerEmail}
+                  canEdit={false}
+                  canPay={viewerEmail != null && !isExcludedFromPayAction(viewerEmail)}
+                />
               )}
               {activeTab === 'announcements' && (
                 <CeoAnnouncements viewerEmail={viewerEmail} />

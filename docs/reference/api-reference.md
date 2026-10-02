@@ -3639,7 +3639,7 @@ of cells — the matches were not re-run).
 | `/api/people/[email]/reveal-banking` | POST | `requireRateVisibilitySession` | [employee-profile](../features/employee-profile.md) · [people-bank-card](../features/people-bank-card.md) |
 | `/api/people/bank-changes` | GET | `requireRateVisibilitySession` | — **no doc** |
 | `/api/people/offboarded` | GET | `requireRateVisibilitySession` | [people-offboarded-pay](../features/people-offboarded-pay.md) |
-| `/api/people/pay` | POST | `requireRateVisibilitySession` | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
+| `/api/people/pay` | POST | `requireRateVisibilitySession` + 403 for `isExcludedFromPayAction` (rob@) | [people-offboarded-pay](../features/people-offboarded-pay.md) · [urgent-payments](../features/urgent-payments.md) |
 | `/api/people/request-bank-info` | POST | `requireFeatureEditAnyView` | — **no doc** |
 | `/api/people/special-transfers` | GET | `authorizeEmail` | [employee-dashboard-cache](../features/employee-dashboard-cache.md) |
 | `/api/people/stats` | GET | `requireRateVisibilitySession` | — **no doc** |

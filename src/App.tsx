@@ -43,6 +43,7 @@ import AccountingCollabLayer from '@/components/accounting/AccountingCollabLayer
 import PayrollLivePublisher from '@/components/payroll-live/PayrollLivePublisher';
 import BonusCatalog from '@/components/accounting/BonusCatalog';
 import PeopleTab from '@/components/people/PeopleTab';
+import { isExcludedFromPayAction } from '@/lib/people/pay-action-exclusions';
 import AccountingTransfers from '@/components/accounting/AccountingTransfers';
 import AccountingDocuments from '@/components/accounting/AccountingDocuments';
 import NpdDashboard from '@/components/npd/NpdDashboard';
@@ -386,7 +387,7 @@ export default function App({ initialData }: { initialData?: InitialAccountingDa
             view="accounting"
             viewerEmail={sessionEmail}
             canEdit={canEditAccountingTab('people', roles, featurePerms)}
-            canPay={roles.includes('ceo')}
+            canPay={roles.includes('ceo') && !isExcludedFromPayAction(sessionEmail)}
           />
         );
       case 'npd':

@@ -4,6 +4,7 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { deniedResponse, requireRateVisibilitySession } from '@/lib/auth/authorize-email';
 import { sendUrgentPaymentAlert } from '@/lib/people/urgent-payment-notify';
+import { EXCLUDED_PAY_ERROR, isExcludedFromPayAction } from '@/lib/people/pay-action-exclusions';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,11 +15,15 @@ export const runtime = 'nodejs';
 // Dispatch → Urgent → One-off Payments, where a clerk actually sends it. No
 // money moves here; this is only the request. Gated by rate visibility
 // (admin / accounting / ceo) so the CEO — who is otherwise read-only on People —
-// can still file a payment.
+// can still file a payment. A named account in `pay-action-exclusions.ts` is
+// refused here even though it passes the gate — the UI hides its Pay too.
 export async function POST(request: Request) {
   try {
     const authz = await requireRateVisibilitySession();
     if (!authz.ok) return deniedResponse(authz);
+    if (isExcludedFromPayAction(authz.sessionEmail)) {
+      return NextResponse.json({ error: EXCLUDED_PAY_ERROR }, { status: 403 });
+    }
 
     const body = (await request.json()) as {
       work_email?: string;
