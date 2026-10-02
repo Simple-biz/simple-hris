@@ -2277,7 +2277,44 @@ export const PLAN_TASKS: PlanTask[] = [
   // ae33f9fd are the findings their fixes close, so they are evidence on those rows. 64728b4b is pass
   // 36's own staging. f3b95535 is a ~70-line docs sweep, the same class as the docs-only commits pass 36
   // gave no row.
-  { epic: 'HRIS-26', name: 'Every Transfers list pages the whole table — HR, Accounting, Manager and the export', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: 'The Payroll Wizard Validation step gets HRIS vs NPD — paste NPD’s figures, match each work email to within a set number of cents, and list who is left out', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: 'Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub’s Hours × Rate multiplies out', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-26', name: 'Every Transfers list pages the whole table - HR, Accounting, Manager and the export', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "The Payroll Wizard Validation step gets HRIS vs NPD - paste NPD's figures, match each work email to within a set number of cents, and list who is left out", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub's Hours x Rate multiplies out", type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
+
+  // —── PASS 38 · 2026-10-02 · Oct 1-2, 21 rows, 98 SP, all Sprint 30 ─────────────────────────────────
+  // Kane: "Give me all the HRIS - WITHHELD SP similar to the monday board format ... I will be copy
+  // pasting this into the board myself". The API budget was dead (20:56Z, reset 00:00Z), so the board
+  // gets these BY HAND. Names are plain ASCII on purpose (no em-dash, curly quote, x-sign or arrow): a
+  // hand paste is the documented normalisation risk (monday-board-sync.md:45), and the reconciler
+  // matches byte-exact, so a row Kane pastes is adopted, not duplicated, only if every byte survives.
+  // Pass 37's three names above were renamed to ASCII for the same reason; none was ever on the board.
+  //
+  // Range 57e712f9..89b4347f, 40 commits, clustered by FILE OVERLAP. 37 are on origin/main; 7c7f7046,
+  // b9c658cc and 89b4347f are local only, so those three rows are In Progress. No row: 64fcf38e (pass 36's own
+  // staging) and the one-line audit commits a2e091f3 / 5fe285bc / 92a880be / 16589600 / e68eb9c9 /
+  // 23b425f5 (findings and measurements; a2e091f3 is evidence on the existing deletion-cron row, which
+  // 5025844b now fixes). Scored on the 2026-10-02 scale: 3 is the default, 2 only for small docs.
+  { epic: 'HRIS-12', name: 'Every HR tab paints from the tab cache, and the shared panels paint and then always refetch', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-10', name: 'Cold Manager tabs paint from the cache, the Leaves tab included, with hire rows cached as a projection', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Every Notifications panel gets Unread and Need Action tiles, and every card carries an Eastern time stamp', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-12', name: 'Opening HR Notifications no longer re-sends 140 onboarding notifications - the backfill asks per submission', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  // Done on the DELIVERABLE: a doc-only Spike's output is the doc, on origin/main (the security re-read
+  // row above set the precedent). 3 SP, not 2: 52 findings is not small volume.
+  { epic: 'HRIS-05', name: 'OWASP Top 10 2025 security audit of HRIS - 52 findings, 6 Critical', type: 'Spike', sp: 3, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "NPD runs the Google Sheet's own formulas, editable from a right-click", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'HRIS vs NPD Save output - an append-only saved version per pay week', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard history backfilled from Carla's sheet, with an archive page", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-28', name: "Admin Penny shows an employee's ID card - rendered by its own tool, never picked from the file list", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-12', name: 'HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-15', name: 'The test suite is green again - 5,556 of 5,556 pass', type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-23', name: 'rob@ keeps View on People but never sees or files Pay', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-11', name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
 ];

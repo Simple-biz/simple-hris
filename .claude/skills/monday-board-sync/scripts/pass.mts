@@ -785,16 +785,20 @@ import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from
 import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
-export const PASS_DATE = '2026-10-01';
-export const AUDIT_RANGE = '31fd9c0a..57e712f9';
-export const AUDIT_COMMITS = 12;
+export const PASS_DATE = '2026-10-02';
+export const AUDIT_RANGE = '31fd9c0a..89b4347f';
+export const AUDIT_COMMITS = 52;
 
-/** The standing proof state of every Pending Deploy row in passes 36-37 — pushed is not deployed. */
+/** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
 const ON_MAIN =
-  'Every sha is an ancestor of origin/main (0 ahead / 0 behind after a fetch on 2026-10-01), and ' +
+  'Every sha is an ancestor of origin/main (re-checked after a fetch on 2026-10-02), and ' +
   'Vercel deploys main, but nobody has confirmed this live in prod. It goes Done on Kane\'s word ' +
   'that he has looked at it, with the last sha\'s commit date as the Completed Date.';
 const pd = (what: string) => `PENDING DEPLOY. ${what} ${ON_MAIN}`;
+const LOCAL_ONLY =
+  'IN PROGRESS: committed on local main and NOT on origin/main (main was 3 ahead after a fetch on ' +
+  '2026-10-02). Kane pushes; once it is on origin/main it is Pending Deploy.';
+const ip = (what: string) => `${LOCAL_ONLY} ${what}`;
 export const GITHUB_COMMIT = 'https://github.com/Simple-biz/simple-hris/commit/';
 
 export interface PassRow {
@@ -826,22 +830,165 @@ export const ROWS: PassRow[] = [
   // scripts/tmp-verify-pass36.ids.json, so they leave this array. Nothing here is Done: Kane has not
   // said he has looked at any of these in prod.
   {
-    name: 'Every Transfers list pages the whole table — HR, Accounting, Manager and the export',
+    name: 'Every Transfers list pages the whole table - HR, Accounting, Manager and the export',
     status: 'Pending Deploy',
     shas: ['27082696', '0f783bf4'],
     basis: pd('Every list reader in department-transfer-requests.ts ended in .limit(300) (pending 500, and the cron read was un-ranged, so the 1,000-row cap applied). The table holds 434 rows, so HR showed "Completed 299", Accounting and its CSV/XLSX/PDF export stopped at 300, and the per-department Done / Release readers cut the newest 300 across ALL teams before filtering. All seven readers now drain through selectEveryTransferRow (selectAllPaged, ordered by timestamp + id, a sheared read retried once then refused). 12 tests against a 1,000-row-capped double, mutation-checked. 27082696 is the finding (audit item 290); 0f783bf4 is the fix (item 291).'),
   },
   {
-    name: 'The Payroll Wizard Validation step gets HRIS vs NPD — paste NPD’s figures, match each work email to within a set number of cents, and list who is left out',
+    name: "The Payroll Wizard Validation step gets HRIS vs NPD - paste NPD's figures, match each work email to within a set number of cents, and list who is left out",
     status: 'Pending Deploy',
     shas: ['e8c0cdba', '7e6a50e3', '9ed71b58', '505e3a99', 'ff397af1', '851777f6'],
     basis: pd('Kane, 2026-09-30, over six commits on the same files (HrisNpdComparison.tsx, hris-npd-compare.ts). The CURRENT rule: Step 7 Validation gets an HRIS vs NPD tab, also in the full-screen view. Step 1 is NPD Figures (paste work emails and dollars; every unreadable line is listed). Step 2 is the output, with a search bar: one row per person, the union of both sides, green when HRIS and NPD agree within N cents, red with the difference, or Not in HRIS / Not in NPD. Nobody is dropped. The match is on the WORK EMAIL only. N defaults to 3 and Kane sets it in an "off by" box; it is never saved. People configured not to be paid this week (Excluded on Final Pay, or the department paused in Step 1) are left out and listed. HRIS $ is the staged final over the cycle FX, rounded as dispatch stages it. Compares only, and writes nothing. ~3,000 lines with tests. Audit items 292-297.'),
   },
   {
-    name: 'Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub’s Hours × Rate multiplies out',
+    name: "Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub's Hours x Rate multiplies out",
     status: 'Pending Deploy',
     shas: ['ae33f9fd', '57e712f9'],
     basis: pd('Item 298: non-HSL pay was priced on WHOLE SECONDS while every statement prints 2dp hours, so 492 of 780 hours lines on the 09-20 → 09-26 stubs did not multiply out (12.54h × PHP 427.50 ≠ PHP 5,358.71). Kane: "only 2 decimals!" From the Sun 2026-09-27 pay week (TWO_DP_HOURS_PRICING_FROM), the wizard, proratePayForMidPeriodChange and Dispatch\'s computeProratedRowPay all price splitTwoDpHoursWeek: the total rounds half-up on integer seconds, then splits at 40 h. 237 lines of tests. MONEY, recorded: pay moves by fractions of a peso per line from that week on; Sep 20-26 and earlier keep their whole-seconds money, and their stubs still print the mismatch. Audit item 299.'),
+  },
+  // —── PASS 38 · 2026-10-02 · 21 new rows / 98 SP + 1 existing row's status, all Sprint 30 ─────────
+  // Kane pastes these BY HAND (the API budget died at 20:56Z). This array is still the record: selfcheck
+  // proves every name is in the plan byte-exact, every Done row's date is its last sha's commit date,
+  // and no unshipped row carries a date. 1 Done (the OWASP audit, on its deliverable), 18 Pending Deploy
+  // with 4 of them blocked, 3 In Progress (not pushed). Nothing else is Done: Kane has not said he has
+  // looked at any of them in prod.
+  {
+    name: "Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
+    status: 'Pending Deploy',
+    shas: ["a2e091f3", "5025844b"],
+    basis: pd("The EXISTING S30 row, Ready to Start until now. 5025844b is the fix: process-scheduled-deletions holds a row on any of four signals (a live work email, a live personal email, an in-flight or later hire, or time in the current Hubstaff upload), never writes or clears on a hold, and fires nothing when any guard read fails. 296 lines of tests. a2e091f3 is the finding (item 301): 83 overdue timers, 3 on people who are working, and 0 cron audit rows ever."),
+    blockers: ["CRON_SECRET is unset in Vercel, so the reaper has never run and cannot until Kane sets it (memory scheduled-deletion-cron-never-ran)"],
+  },
+  {
+    name: "Every HR tab paints from the tab cache, and the shared panels paint and then always refetch",
+    status: 'Pending Deploy',
+    shas: ["70381811"],
+    basis: pd("Item 303. Every HR tab paints from src/lib/hr/tab-cache.ts; the shared panels (Leave requests, Announcements, Hiring cards, New Hire checklist, Notifications, S-WALL) paint from it but never skip their fetch. 18 files, 86 lines of tests."),
+  },
+  {
+    name: "Cold Manager tabs paint from the cache, the Leaves tab included, with hire rows cached as a projection",
+    status: 'Pending Deploy',
+    shas: ["9dbc17bc", "c5555f3d"],
+    basis: pd("Items 304 and 306, clustered on ManagerApp.tsx and src/lib/manager/tab-cache.ts. A cold Manager tab paints from mgr-tab:, hire rows are cached as a projection (hire-row-cache.ts, 99 lines of tests), and the Leaves tab joins (Kane chose B)."),
+  },
+  {
+    name: "Every Notifications panel gets Unread and Need Action tiles, and every card carries an Eastern time stamp",
+    status: 'Pending Deploy',
+    shas: ["abf5f7a0"],
+    basis: pd("Item 305. Unread is a SERVER count (the list stops at 1,000 rows; the heaviest recipients hold 12-14k), Need Action counts one per submission, a failed read shows a dash and never 0, and every card is stamped like \"April 5, 1999 : 8:00 AM EST\" on the America/New_York clock. One shared panel, so all nine dashboards. 163 lines of tests."),
+  },
+  {
+    name: "Opening HR Notifications no longer re-sends 140 onboarding notifications - the backfill asks per submission",
+    status: 'Pending Deploy',
+    shas: ["97f1bdef"],
+    basis: pd("Item 305. The backfill decided \"already notified\" from one unpaged read, which stopped at 1,000 rows, so all 7 pending submissions looked new and went to 20 HR recipients on every open (140 rows). It now asks per submission and inserts nothing on any failed check. Measured read-only: an open now inserts 0. The existing duplicates stay; cleaning them is Kane's call."),
+  },
+  {
+    name: "OWASP Top 10 2025 security audit of HRIS - 52 findings, 6 Critical",
+    status: 'Done',
+    completed: '2026-10-01',
+    shas: ["d18ad5af"],
+    basis: "DONE ON THE DELIVERABLE. A doc-only Spike: the audit is the output, and it is on origin/main (SECURITY_AUDIT.md, pre-release-security-readiness.md, the docs/README row). 52 findings, 6 Critical; it also found two SECURITY_AUDIT rows wrongly marked RESOLVED (#26, #4). Items 307-308. The findings themselves are open work, not part of this row.",
+  },
+  {
+    name: "NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week",
+    status: 'Pending Deploy',
+    shas: ["f92527b3"],
+    basis: pd("Item 309. A manual paste sheet below Payroll Wizard, two tabs, one sheet per tab and pay week, cells kept verbatim, autosaved through an atomic RPC with a version check. Base migration APPLIED (measured 2026-10-02: npd_sheets exists)."),
+    blockers: ["No one holds the npd grant (measured 0 on 2026-10-02). Admins see NPD already; Aliviah needs Admin > Roles > Accounting > NPD > Edit"],
+  },
+  {
+    name: "NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps",
+    status: 'Pending Deploy',
+    shas: ["f39bed0d", "6a2c1f22"],
+    basis: pd("Items 310 and 325. The lock lives in the database (npd_lock_sheet / npd_unlock_sheet, and the save refuses a locked week), and 6a2c1f22 moves Lock in / Unlock into a modal with timestamps. Lock in migration APPLIED 2026-10-02 ~18:59Z, 39/39 checks (npd_sheets.locked_at measured present)."),
+  },
+  {
+    name: "NPD runs the Google Sheet's own formulas, editable from a right-click",
+    status: 'Pending Deploy',
+    shas: ["a24daf85", "f255de46"],
+    basis: pd("Item 313. An 890-line formula engine with 296 lines of tests evaluates the sheet's own formulas, and a right-click edits them. Formulas migration APPLIED 2026-10-02 ~19:00Z, 32/32 checks (npd_sheets.usd_per_php measured present); f255de46 records both applies."),
+  },
+  {
+    name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp",
+    status: 'Pending Deploy',
+    shas: ["c28a7041", "b9768e46", "4b8fbff7"],
+    basis: pd("Item 320. One sync button per tab, the wizard's CURRENT week only (the PUT refuses any other), a server Last synced stamp, and a progress bar driven by the sync's real phases that glides on the compositor (4b8fbff7). No migration: it saves through npd_save_sheet_v2."),
+  },
+  {
+    name: "NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view",
+    status: 'Pending Deploy',
+    shas: ["ee10cff5", "bb7d675c", "ab6df389", "1b4fa0a8"],
+    basis: pd("Items 321, 323 and 324, clustered on NpdDashboard.tsx / NpdSheetGrid.tsx. The tab cache holds a PICTURE only: read-only until the live read lands, never editable. A skeleton holds the layout so nothing moves, the grid draws only the rows in view (grid-window.ts), and ee10cff5 drops the header paragraph."),
+  },
+  {
+    name: "HRIS vs NPD Save output - an append-only saved version per pay week",
+    status: 'Pending Deploy',
+    shas: ["ee8e5a8b"],
+    basis: pd("Item 314. Save appends a version per week; a database trigger refuses any update. The Save button is off until its migration runs; the rest of the tab works without it."),
+    blockers: ["Migration NOT APPLIED: payroll_wizard_npd_comparisons does not exist (measured 2026-10-02, PGRST205, with a negative control). Run scripts/apply-payroll-wizard-npd-comparisons-migration.mts --apply"],
+  },
+  {
+    name: "Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain",
+    status: 'Pending Deploy',
+    shas: ["7458fc5a", "c3197d8d", "54958e52"],
+    basis: pd("Item 315, plus its polish (c3197d8d) and fix (54958e52), clustered on src/components/accounting-scoreboard/. Access is the board's member list, never an HRIS role. It writes no pay. Migration APPLIED 2026-10-01, 121/121 checks. It works today at /accounting-scoreboard on the main HRIS host."),
+    blockers: ["The accounting-bonus.vercel.app domain is not set up: Vercel domain, ACCOUNTING_SCOREBOARD_HOST env, and the OAuth redirect URI (accounting-scoreboard.md Deploy notes, PENDING Kane)"],
+  },
+  {
+    name: "Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu",
+    status: 'Pending Deploy',
+    shas: ["c476ffe8", "8a4a514d"],
+    basis: pd("Items 317 and 318. Payroll Timing comes from the wizard's own cycle-stamped start, never the global lock, and every past week is checked. Adds a stop-light Overview and a phone burger menu."),
+  },
+  {
+    name: "Accounting Scoreboard history backfilled from Carla's sheet, with an archive page",
+    status: 'Pending Deploy',
+    shas: ["789fb0fa"],
+    basis: pd("Item 319. The board's past is filled from Carla's sheet: a day belongs to the sheet OR the board, never both. The archive migration and the fill are APPLIED (11/11 read-back checks; accounting_scoreboard_archive measured present 2026-10-02). The record is 189, not the sheet's typed 129."),
+  },
+  {
+    name: "Admin Penny shows an employee's ID card - rendered by its own tool, never picked from the file list",
+    status: 'Pending Deploy',
+    shas: ["9eda01e1"],
+    basis: pd("Kane: the ID card query returned the Penny mascot, because a time-adjustment attachment IS the mascot PNG. get_employee_id_card now renders the card with the employee's own painter, and id_card is refused on the file list by name. Withheld from CEO."),
+  },
+  {
+    name: "HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney",
+    status: 'Pending Deploy',
+    shas: ["071297ce"],
+    basis: pd("The HR onboarding gates had no map for DATA sub-teams, so picking hsl:attorney disabled Bypass and Save. A gate now reads its picker's map. 79 lines of tests."),
+  },
+  {
+    name: "The test suite is green again - 5,556 of 5,556 pass",
+    status: 'Pending Deploy',
+    shas: ["88237d71"],
+    basis: pd("Closes Open items 203, 107, 96 and 43. Mostly test fixes, plus a 4-line ManagerApp.tsx change, which is why this is not Done on use."),
+  },
+  {
+    name: "Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person",
+    status: 'Pending Deploy',
+    shas: ["4ef0da13"],
+    basis: pd("Item 322, MONEY. A salary is a dated fact about a person, legal on an individual Pay Structure only. One resolver for the wizard and current pay returns hourly, salary or HELD, and a held row pays nothing. The migration is APPLIED, measured 2026-10-02: payment_catalog_pay_structures.pay_basis and employee_salary_history.pay_basis both exist, and a negative-control column errors 42703. That contradicts the PENDING note in salaried-pay-basis.md; --verify was not run."),
+  },
+  {
+    name: "rob@ keeps View on People but never sees or files Pay",
+    status: 'In Progress',
+    shas: ["7c7f7046"],
+    basis: ip("pay-action-exclusions.ts is the one list: the UI hides Pay and /api/people/pay returns 403 for anyone on it. 53 lines of tests."),
+  },
+  {
+    name: "Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default",
+    status: 'In Progress',
+    shas: ["b9c658cc"],
+    basis: ip("Kane 2026-10-02. One scale file (sp-scale.mts) checked over the whole plan; the 24 rows already at 1 SP are exempt by name on a list that only shrinks. Item 327."),
+  },
+  {
+    name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache",
+    status: 'In Progress',
+    shas: ["89b4347f"],
+    basis: ip("Items 328-329, committed by a concurrent session while this pass was being built. The CEO Overview drops its full-page skeleton and loads the way the Accounting Overview does; Payments to send joins the tab cache (payments-live-cache.ts, 103 lines of tests), and the rolling payout is extracted into accounting/rolling-payout.tsx."),
   },
 ];
 

@@ -246,6 +246,11 @@ Engagement manually"*) rather than certify a salary as an hourly rate.
 
 ## Deploy notes
 
+- **Measured 2026-10-02 ~21:00Z (session `334b41c6`, read-only, a Monday board pass): the columns are PRESENT.**
+  `payment_catalog_pay_structures.pay_basis` and `employee_salary_history.pay_basis` both select, and a
+  negative-control column on the same table errors `42703`. So the migration, or part of it, has run.
+  `--verify` was **not** run, so the constraints, the index and the service-role-only history are
+  unchecked. The PENDING note below stays until Kane confirms, or until `--verify` passes.
 - **Migration — PENDING (Kane).** `references/sql/alter/2026-10-02_salary_pay_basis.sql`, via
   `node --import tsx scripts/apply-salary-pay-basis-migration.mts --apply` (needs `DATABASE_URL`,
   the session pooler, [[migration-apply-needs-database-url]]). Run it without a flag first: that is

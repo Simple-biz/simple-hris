@@ -2360,3 +2360,66 @@ Kane: *"Push"*, *"Continue"*, then *"Lets make sure all unfinished tasks from S2
 
 **Owed at 00:00Z 10-02:** `tmp-move-s29-open.mts --apply` → `verify-one.mts` on the 65 ids plus the
 10 moved → `review.mts` (pass 37) → Kane's hash → `apply.mts --apply --only-new`. Open item 300.
+
+## Pass 38 — 2026-10-02 — the withheld SP, as paste files Kane enters BY HAND
+
+Kane: *"Give me all the HRIS - WITHHELD SP similar to the monday board format every column should be
+the same as I will be copy pasting this into the board myself now check also our last github commits
+and all that see if we can close everything"*. Session `334b41c6`.
+
+**The API budget was dead** (`DAILY_LIMIT_EXCEEDED` at 20:56:27Z, retry 11,010 s → 00:00Z 10-03), so
+the board gets this pass by hand. No API write was made. Kane pastes it himself, so this does not
+contradict the no-CSV-import rule (line 45). That rule is about the importer rewriting a character, and
+the pass closes that risk instead: **every name Kane pastes is plain ASCII** (no em-dash, curly quote,
+x-sign or arrow). Pass 37's three names were renamed to ASCII for the same reason. That was free,
+because none of them had ever reached the board.
+
+**The three waiting rooms, measured:** `pending-sp.json` owes **0** (70 entries, all flushed). Pass 37
+was **staged and never applied** (3 rows / 14 SP). The 40 commits `57e712f9..89b4347f` had **no rows**.
+They cluster by file overlap into **21 new rows / 98 SP**, plus a status change on one existing row.
+No row: `64fcf38e` (pass 36's staging) and six one-line audit commits (findings and measurements).
+
+**`docs/audits/2026-10-02-monday-withheld-sp.tsv`: 24 rows / 112 SP, all Sprint 30.** Its columns are
+the board's own: Name · Owner · Type · Status · Priority · Estimated SP · Actual SP · Sprint · Project ·
+Epic · Completed Date, plus the evidence for the item update. It is generated from `ROWS` + `PLAN_TASKS`
+after `selfcheck()` passed (25 rows), so the file and the plan cannot disagree.
+- **1 Done / 3 SP:** the OWASP audit. It is a doc-only Spike, Done on its deliverable, the precedent
+  the security re-read row set. Its Completed Date is its commit date, 2026-10-01.
+- **20 Pending Deploy / 101 SP**, 3 of them blocked, measured read-only today with negative controls:
+  - HRIS vs NPD Save: `payroll_wizard_npd_comparisons` does **not** exist.
+  - NPD: **0** `npd` grants.
+  - Accounting Scoreboard: its own domain is not set up yet. It works on the main host.
+  - (The existing deletion-cron row is a fourth blocked row: `CRON_SECRET` is unset.)
+- **3 In Progress / 8 SP:** `7c7f7046`, `b9c658cc` and `89b4347f` are not on origin/main. `89b4347f`
+  (the CEO Overview, items 328-329) was committed by a concurrent session while this pass was being built.
+
+**A doc PENDING claim was wrong.** The salaried-pay-basis migration's columns are **present**
+(`payment_catalog_pay_structures.pay_basis` and `employee_salary_history.pay_basis` both select, and a
+negative-control column errors 42703), while its doc and memory said PENDING. `salaried-pay-basis.md`
+now carries the measurement beside the note. The note stays until `--verify` or Kane confirms.
+
+**Existing rows, by hand:**
+1. The 10 S29 → S30 moves pass 36 owed are still **not done**: no progress file, and the budget died
+   before the mover ran. Change Sprint to "Sprint 30" on each.
+2. The deletion-cron row goes **Ready to Start → Pending Deploy**. `5025844b` fixes it, and
+   `CRON_SECRET` still blocks it.
+
+**"Can we close everything?" No, not without Kane's word.**
+`docs/audits/2026-10-02-monday-close-on-confirmation.tsv` lists the **58 open rows / 188 SP** that are
+clean:
+- every sha is on origin/main
+- the last status written was Pending Deploy
+- no blocker is recorded
+- the last sha's commit date falls inside the row's sprint
+
+Each is written as Done, with Actual SP = Estimated SP and Completed Date = the last sha's date. **They
+go Done only when Kane says he has looked at them in prod.** Pushed is Pending Deploy, and the honesty
+gate does not change for a hand paste. The other **13 open rows cannot close:** each was rolled into S30
+with a recorded blocker, or was never started. Their commit dates fall before S30's window, so a Done
+needs a fresh completion, not the old date. Two of the blockers are now cleared: the `support.closed`
+widen and `employee_schedule_periods` were measured APPLIED on 10-01 (item 302). The Support rows still
+have 0 grants.
+
+**Owed:** Kane's paste, then a `verify.mts` re-read once the budget resets. The re-read checks name
+parity: a pasted name that differs by one byte shows up as an orphan plus a missing row. Then
+`verify-one` on pass 36's 65 ids, which have never been re-read. Open item 330.
