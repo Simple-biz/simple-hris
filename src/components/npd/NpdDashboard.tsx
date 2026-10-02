@@ -409,7 +409,14 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
       </div>
 
       {canEdit && (
-        <NpdGoogleSheetSync sheet={sheet} stamp={ctl.syncStamp} targetOf={syncTargetOf} onApply={onSyncApply} disabled={switching} />
+        <NpdGoogleSheetSync
+          sheet={sheet}
+          stamp={ctl.syncStamp}
+          saveFailed={ctl.saveState === 'error' || ctl.saveState === 'conflict' || ctl.saveState === 'locked'}
+          targetOf={syncTargetOf}
+          onApply={onSyncApply}
+          disabled={switching}
+        />
       )}
 
       {/* ── Messages ────────────────────────────────────────────────────── */}

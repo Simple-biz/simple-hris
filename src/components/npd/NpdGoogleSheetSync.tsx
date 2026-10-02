@@ -7,6 +7,13 @@ import { cn } from '@/lib/utils';
 import { NPD_SHEET_LABELS, type NpdSheetKind } from '@/lib/npd/columns';
 import { GOOGLE_SHEET_TABS, type NpdImportSummary } from '@/lib/npd/google-sheet-import';
 import { weekLabel } from '@/lib/npd/sheet';
+import {
+  creepSyncProgress,
+  enterSyncPhase,
+  isTerminalPhase,
+  isWorkingPhase,
+  type SyncPhase,
+} from '@/lib/npd/sync-progress';
 import type { LockResult, NpdImportPayload, NpdSyncStamp } from './useNpdSheet';
 
 /**
@@ -23,6 +30,12 @@ import type { LockResult, NpdImportPayload, NpdSyncStamp } from './useNpdSheet';
  * shows when this tab last synced that week ("Last synced …"), stamped by the server
  * when the sync's save landed.
  *
+ * PROGRESS (Kane, 2026-10-02: "make the button have a progress bar below the button's
+ * border"): a 3 px bar under the button, its exact width, driven by the sync's real
+ * phases (src/lib/npd/sync-progress.ts). It turns green and full ONLY when the server
+ * confirmed the save (the `stamp` changed), amber while it waits for Replace / Cancel,
+ * red on any failure. Its space is always reserved, so nothing moves when it appears.
+ *
  * Read first, then confirm: the rows are fetched (GET /api/accounting/npd/google-sheet),
  * and a week that already has saved rows asks before they are replaced. A locked
  * week is refused here and again by the server's save. Shown to edit grants only.
@@ -38,7 +51,17 @@ export type NpdSyncData = NpdImportPayload & {
 /** What NPD holds for a tab × week: saved rows (null = unknown) and its lock. */
 export type NpdSyncTarget = { rows: number | null; locked: boolean };
 
-type Busy = { kind: NpdSheetKind; step: 'reading' | 'applying' };
+/** The bar under the button: one run of one tab's sync. `leaving` = fading out. */
+type Progress = { kind: NpdSheetKind; phase: SyncPhase; pct: number; leaving: boolean };
+
+const PHASE_STATUS: Record<SyncPhase, (sheet: NpdSheetKind) => string> = {
+  reading: (s) => `Reading the Google Sheet’s “${GOOGLE_SHEET_TABS[s].title}” tab…`,
+  confirm: () => 'Waiting for you to replace or cancel.',
+  applying: (s) => `Putting the rows on ${NPD_SHEET_LABELS[s]}…`,
+  saving: () => 'Saving to NPD…',
+  done: () => 'Saved.',
+  failed: () => 'Not synced.',
+};
 type LastSync = { at: string; by: string; tab: string | null };
 type WizardWeek = {
   week: string;
@@ -66,6 +89,14 @@ const ICON_TONE: Record<NpdSheetKind, string> = {
   all_departments: 'text-sky-600 dark:text-sky-400',
   hsl: 'text-violet-600 dark:text-violet-400',
 };
+const TRACK_TONE: Record<NpdSheetKind, string> = {
+  all_departments: 'bg-sky-100 dark:bg-sky-950/70',
+  hsl: 'bg-violet-100 dark:bg-violet-950/70',
+};
+const FILL_TONE: Record<NpdSheetKind, string> = {
+  all_departments: 'bg-sky-500 dark:bg-sky-400',
+  hsl: 'bg-violet-500 dark:bg-violet-400',
+};
 
 function summaryLine(d: NpdSyncData): string {
   const s = d.summary;
@@ -84,6 +115,7 @@ function summaryLine(d: NpdSyncData): string {
 export default function NpdGoogleSheetSync({
   sheet,
   stamp,
+  saveFailed,
   targetOf,
   onApply,
   disabled,
@@ -92,6 +124,8 @@ export default function NpdGoogleSheetSync({
   sheet: NpdSheetKind;
   /** A sync whose save landed in this page: the server's timestamp (newer than the one read on load). */
   stamp: NpdSyncStamp | null;
+  /** The sheet on screen could not save (error, conflict, locked meanwhile): a sync waiting on that save failed. */
+  saveFailed: boolean;
   /** What NPD holds for that tab × week right now. */
   targetOf: (sheet: NpdSheetKind, week: string) => NpdSyncTarget;
   /** Switch to the tab × week and put the rows on it (saved straight away). */
@@ -100,9 +134,15 @@ export default function NpdGoogleSheetSync({
 }) {
   const [wizardWeek, setWizardWeek] = useState<WizardWeek | null>(null);
   const [wizardError, setWizardError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<Busy | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  /** The page's last sync stamp when this run started: a DIFFERENT one means this run's save landed. */
+  const stampAtRunRef = useRef<NpdSyncStamp | null>(null);
+
+  /** Move the bar to a phase. A finished run (done / failed) only ever ends; it is never resumed. */
+  const toPhase = (phase: SyncPhase) =>
+    setProgress((p) => (p && !isTerminalPhase(p.phase) ? { ...p, phase, pct: enterSyncPhase(p.pct, phase) } : p));
 
   // The tab on screen now, for a read that finishes after the person moved on.
   const sheetRef = useRef(sheet);
@@ -112,7 +152,39 @@ export default function NpdGoogleSheetSync({
   useEffect(() => {
     setConfirm(null);
     setOutcome(null);
+    setProgress(null);
   }, [sheet]);
+
+  // Ease forward inside a phase whose length is unknown.
+  const working = !!progress && isWorkingPhase(progress.phase);
+  useEffect(() => {
+    if (!working) return;
+    const t = window.setInterval(
+      () => setProgress((p) => (p && isWorkingPhase(p.phase) ? { ...p, pct: creepSyncProgress(p.pct, p.phase) } : p)),
+      90,
+    );
+    return () => window.clearInterval(t);
+  }, [working]);
+
+  // Green and full only when the server confirmed this run's save; red if that save failed.
+  const phase = progress?.phase ?? null;
+  const progressKind = progress?.kind ?? null;
+  useEffect(() => {
+    if (phase !== 'applying' && phase !== 'saving') return;
+    if (stamp && stamp !== stampAtRunRef.current && stamp.sheet === progressKind) toPhase('done');
+    else if (phase === 'saving' && saveFailed) toPhase('failed');
+  }, [stamp, saveFailed, phase, progressKind]);
+
+  // A finished bar holds a moment, then fades; its space stays reserved.
+  useEffect(() => {
+    if (phase !== 'done' && phase !== 'failed') return;
+    const fade = window.setTimeout(() => setProgress((p) => (p ? { ...p, leaving: true } : p)), phase === 'done' ? 1100 : 2600);
+    const clear = window.setTimeout(() => setProgress((p) => (p && isTerminalPhase(p.phase) ? null : p)), phase === 'done' ? 1450 : 2950);
+    return () => {
+      window.clearTimeout(fade);
+      window.clearTimeout(clear);
+    };
+  }, [phase]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,20 +212,27 @@ export default function NpdGoogleSheetSync({
 
   const apply = async (kind: NpdSheetKind, data: NpdSyncData) => {
     setConfirm(null);
-    setBusy({ kind, step: 'applying' });
+    toPhase('applying');
     const r = await onApply(kind, data);
-    setBusy(null);
+    toPhase(r.ok ? 'saving' : 'failed');
     setOutcome({
       kind,
       ok: r.ok,
-      message: r.ok ? `Synced ${summaryLine(data)}. Saving it to NPD now; the time below updates once it is saved.` : (r.message ?? 'Nothing was synced.'),
+      message: r.ok ? `Synced ${summaryLine(data)}.` : (r.message ?? 'Nothing was synced.'),
     });
+  };
+
+  const cancelConfirm = () => {
+    setConfirm(null);
+    setProgress((p) => (p ? { ...p, leaving: true } : p));
+    window.setTimeout(() => setProgress((p) => (p?.phase === 'confirm' ? null : p)), 350);
   };
 
   const run = async (kind: NpdSheetKind) => {
     setOutcome(null);
     setConfirm(null);
-    setBusy({ kind, step: 'reading' });
+    stampAtRunRef.current = stamp;
+    setProgress({ kind, phase: 'reading', pct: enterSyncPhase(0, 'reading'), leaving: false });
     let data: NpdSyncData | null = null;
     let error: string | null = null;
     try {
@@ -176,17 +255,17 @@ export default function NpdGoogleSheetSync({
     if (sheetRef.current !== kind) {
       // They moved to the other tab while the Google Sheet was being read: a sync
       // never pulls them back to fill a tab they left.
-      setBusy(null);
+      setProgress(null);
       return;
     }
     if (!data) {
-      setBusy(null);
+      toPhase('failed');
       setOutcome({ kind, ok: false, message: `${error} Nothing was changed.` });
       return;
     }
     const target = targetOf(kind, data.week);
     if (target.locked) {
-      setBusy(null);
+      toPhase('failed');
       setOutcome({
         kind,
         ok: false,
@@ -198,7 +277,7 @@ export default function NpdGoogleSheetSync({
       await apply(kind, data);
       return;
     }
-    setBusy(null);
+    toPhase('confirm');
     setConfirm({ kind, data, rows: target.rows });
   };
 
@@ -210,6 +289,17 @@ export default function NpdGoogleSheetSync({
   const fromServer = wizardWeek?.lastSync?.[sheet] ?? null;
   const last: LastSync | null =
     fromPage && (!fromServer || Date.parse(fromPage.at) >= Date.parse(fromServer.at)) ? { at: fromPage.at, by: fromPage.by, tab: fromPage.tab } : fromServer;
+
+  const bar = progress && progress.kind === sheet ? progress : null;
+  const running = !!bar && !isTerminalPhase(bar.phase);
+  const fill =
+    bar?.phase === 'done'
+      ? 'bg-emerald-500 dark:bg-emerald-400'
+      : bar?.phase === 'failed'
+        ? 'bg-red-500 dark:bg-red-400'
+        : bar?.phase === 'confirm'
+          ? 'bg-amber-400 dark:bg-amber-300'
+          : FILL_TONE[sheet];
 
   return (
     <section
@@ -249,27 +339,54 @@ export default function NpdGoogleSheetSync({
             </p>
           )}
         </div>
-        <button
-          type="button"
-          disabled={disabled || !!busy || !!confirm}
-          onClick={() => void run(sheet)}
-          title={`Load the Google Sheet’s “${GOOGLE_SHEET_TABS[sheet].title}” tab for the Payroll Wizard’s week onto ${NPD_SHEET_LABELS[sheet]}`}
-          className={cn(btn, TONE[sheet])}
-        >
-          {busy?.kind === sheet ? (
-            <LoaderCircle className={cn('h-3.5 w-3.5 animate-spin', ICON_TONE[sheet])} />
-          ) : (
-            <RefreshCw className={cn('h-3.5 w-3.5', ICON_TONE[sheet])} />
-          )}
-          {GOOGLE_SHEET_TABS[sheet].button}
-        </button>
+        {/* The button and, under its border, the bar: one column, the bar exactly as wide as the button. */}
+        <div className="flex shrink-0 flex-col gap-1">
+          <button
+            type="button"
+            disabled={disabled || running || !!confirm}
+            aria-busy={running || undefined}
+            onClick={() => void run(sheet)}
+            title={`Load the Google Sheet’s “${GOOGLE_SHEET_TABS[sheet].title}” tab for the Payroll Wizard’s week onto ${NPD_SHEET_LABELS[sheet]}`}
+            // Busy, not unavailable: full strength while its own sync runs.
+            className={cn(btn, TONE[sheet], running && 'disabled:cursor-progress disabled:opacity-100')}
+          >
+            {bar && isWorkingPhase(bar.phase) ? (
+              <LoaderCircle className={cn('h-3.5 w-3.5 animate-spin motion-reduce:animate-none', ICON_TONE[sheet])} />
+            ) : (
+              <RefreshCw className={cn('h-3.5 w-3.5', ICON_TONE[sheet])} />
+            )}
+            {GOOGLE_SHEET_TABS[sheet].button}
+          </button>
+          <div
+            data-testid="npd-sync-progress"
+            data-phase={bar?.phase ?? 'idle'}
+            role={bar ? 'progressbar' : undefined}
+            aria-hidden={bar ? undefined : true}
+            aria-label={bar ? `${GOOGLE_SHEET_TABS[sheet].button}: ${PHASE_STATUS[bar.phase](sheet)}` : undefined}
+            aria-valuemin={bar ? 0 : undefined}
+            aria-valuemax={bar ? 100 : undefined}
+            aria-valuenow={bar ? Math.round(bar.pct) : undefined}
+            className={cn(
+              'relative h-[3px] w-full overflow-hidden rounded-full transition-opacity duration-300 ease-out',
+              TRACK_TONE[sheet],
+              bar && !bar.leaving ? 'opacity-100' : 'opacity-0',
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                'absolute inset-0 origin-left rounded-full transition-[transform,background-color] duration-200 ease-out motion-reduce:transition-none',
+                fill,
+              )}
+              style={{ transform: `scaleX(${(bar?.pct ?? 0) / 100})` }}
+            />
+          </div>
+        </div>
       </div>
 
-      {busy && busy.kind === sheet && (
+      {bar && !bar.leaving && bar.phase !== 'done' && bar.phase !== 'failed' && bar.phase !== 'confirm' && (
         <p className="text-[11px] text-zinc-600 dark:text-zinc-400" role="status">
-          {busy.step === 'reading'
-            ? `Reading the Google Sheet’s “${GOOGLE_SHEET_TABS[busy.kind].title}” tab…`
-            : `Putting the rows on ${NPD_SHEET_LABELS[busy.kind]}…`}
+          {PHASE_STATUS[bar.phase](sheet)}
         </p>
       )}
 
@@ -297,7 +414,7 @@ export default function NpdGoogleSheetSync({
           </button>
           <button
             type="button"
-            onClick={() => setConfirm(null)}
+            onClick={cancelConfirm}
             className={cn(btn, 'border-transparent text-amber-900 hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-900/40')}
           >
             Cancel

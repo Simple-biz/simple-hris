@@ -37,6 +37,7 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | Google Sheet sync: the read-only fetch | `src/lib/google-sheets/fetch-npd-sheet.ts` |
 | Google Sheet sync: route (wizard week + rows) | `app/api/accounting/npd/google-sheet/route.ts` |
 | Google Sheet sync: the button on each tab | `src/components/npd/NpdGoogleSheetSync.tsx` (applied by `useNpdSheet.importSheet`) |
+| Google Sheet sync: the progress bar's phases (pure) | `src/lib/npd/sync-progress.ts` (+ `.test.ts`) |
 | Sync vs the live Google Sheet, every week, every cell (read-only) | `scripts/verify-npd-google-sheet-sync.mts` |
 | Tab registration | `rbac/accounting-tabs.ts` · `rbac/view-tabs.ts` · `rbac/feature-permissions.ts` · `pages/visibility.ts` · `presence/page-label.ts` · `collab/CollabLayer.tsx` · `App.tsx` |
 
@@ -280,6 +281,17 @@ and *"MAKE SURE when we sync only the current week and add a timestamp"*. Built 
   A read that failed says so, never "not synced". A sync that was cancelled, refused or never saved is
   never shown as synced, and an Undo before the save drops the tag. No migration: the trail is the
   record. The other way is a `synced_at` column on `npd_sheets`, which needs another ALTER.
+- **The progress bar under the button tells the truth** (Kane, 2026-10-02: *"make the button have a
+  progress bar below the button's border"*). It is a 3 px bar directly under the button, exactly the
+  button's width, and its space is always reserved, so nothing moves when it appears. It follows the
+  sync's **real phases** (`sync-progress.ts`): reading the Google Sheet eases toward 60%, waiting for
+  Replace / Cancel holds still in amber, putting the rows on eases toward 78%, and saving toward 95%.
+  Inside a phase the fill is an estimate, so **no percentage is printed**. **It turns green and full
+  ONLY when this run's save is confirmed** (a new server stamp; one `toPhase('done')`, test-pinned),
+  and **red on any failure**, including a save that errors, conflicts or meets a lock. A finished bar
+  holds a moment, then fades. It is announced as a `progressbar` with the phase in its label. The busy
+  button stays at full strength (busy, not unavailable). Under reduced motion the fill jumps instead
+  of easing, and the spinner stops. Never let a timer fill it to 100.
 - **A row belongs to a week by its parsed Week cell** (`Week 9/20/26 - 9/26/26`; case, spacing round
   the dash and 2- or 4-digit years allowed), **never by its position**. A week's rows are scattered
   through the tab (17 and 24 blocks on 2026-10-02). Every row labelled with that week is taken, in
@@ -386,7 +398,8 @@ column must be parsed and refused exactly as that step's paste contract says.
   Payroll CSV says *The All Dept Google Sheet is not configured* (503), and nothing changes. That env var is now
   load-bearing for NPD: never remove it as "the rates sync is off".
 - Verified 2026-10-02 (sync): 21 pure tests; NPD + wiring 146/146; the live-sheet check above (0 mismatches, re-run
-  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36. It covered: each tab shows only its own button; an empty week
+  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (49/49 with the progress bar: under the button and its
+  width, each phase, green only after the save lands, red on failure, fades back, reduced motion, phone). It covered: each tab shows only its own button; an empty week
   loads without asking and saves at version 0 with the sheet's rate; a week with rows asks first, and Cancel changes
   nothing; Replace swaps rows, rate and column formulas; Undo restores all three; a locked week is refused; leaving
   the sheet mid-load or the tab mid-read drops the sync; no rows says so; view-only gets no button; phone width does

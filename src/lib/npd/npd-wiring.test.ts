@@ -308,7 +308,7 @@ describe('Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)', () =>
 
   test('NPD shows the two buttons to edit grants only, and the hook replaces then saves at once', () => {
     const dash = read('src', 'components', 'npd', 'NpdDashboard.tsx');
-    assert.match(dash, /\{canEdit && \(\s*<NpdGoogleSheetSync sheet=\{sheet\} stamp=\{ctl\.syncStamp\} targetOf=\{syncTargetOf\} onApply=\{onSyncApply\} disabled=\{switching\} \/>\s*\)\}/);
+    assert.match(dash, /\{canEdit && \(\s*<NpdGoogleSheetSync\s+sheet=\{sheet\}\s+stamp=\{ctl\.syncStamp\}\s+saveFailed=\{[^}]+\}\s+targetOf=\{syncTargetOf\}\s+onApply=\{onSyncApply\}\s+disabled=\{switching\}\s+\/>\s*\)\}/);
     const onApply = dash.slice(dash.indexOf('const onSyncApply'));
     assert.ok(onApply.indexOf('await ctl.flush()') < onApply.indexOf('await switchTo('), 'edits on screen are saved before a sync replaces them');
     const sync = read('src', 'components', 'npd', 'NpdGoogleSheetSync.tsx');
@@ -316,6 +316,10 @@ describe('Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)', () =>
     assert.match(sync, /\{GOOGLE_SHEET_TABS\[sheet\]\.button\}/);
     assert.match(sync, /onClick=\{\(\) => void run\(sheet\)\}/);
     assert.ok(!sync.includes('NPD_SHEETS.map'), 'never both buttons at once');
+    // The bar under the button goes green ONLY on a confirmed save: a new stamp from the server.
+    assert.match(sync, /if \(stamp && stamp !== stampAtRunRef\.current && stamp\.sheet === progressKind\) toPhase\('done'\);/);
+    assert.equal((sync.match(/toPhase\('done'\)/g) ?? []).length, 1, 'nothing else marks a sync done');
+    assert.match(sync, /role=\{bar \? 'progressbar' : undefined\}/);
     assert.ok(sync.includes('if (target.locked)'), 'a locked week is refused before anything is applied');
     const hook = read('src', 'components', 'npd', 'useNpdSheet.ts');
     const applyImport = hook.slice(hook.indexOf('const applyImport'), hook.indexOf('const importSheet'));
