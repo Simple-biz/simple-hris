@@ -43,6 +43,7 @@ import {
   type NpdRow,
 } from '@/lib/npd/sheet';
 import { newRowId } from './useNpdSheet';
+import { rowRenderPlan, visibleRowWindow } from '@/lib/npd/grid-window';
 
 /**
  * The NPD spreadsheet grid. Governing doc: docs/features/npd-dashboard.md.
@@ -72,6 +73,8 @@ import { newRowId } from './useNpdSheet';
  */
 
 export const ROW_HEAD_W = 52;
+/** A body row's height before it is measured (h-8 cells + a 1 px border). */
+const DEFAULT_ROW_H = 33;
 export const SHEET_FONT = 'text-[13px]';
 
 type Editing = { row: number; col: number; draft: string; initial: string; mode: 'type' | 'edit' };
@@ -149,6 +152,58 @@ export default function NpdSheetGrid({
   const draggingRef = useRef(false);
   const scrollIntentRef = useRef(false);
 
+  // ── Rows drawn: the visible window, plus the pinned rows (src/lib/npd/grid-window.ts) ──
+  // Kane, 2026-10-02: "its extremly lag switching between tabs though". Drawing all
+  // 600 people's rows (18,600 cells) froze a tab switch for up to 0.9 s at a time.
+  const theadRef = useRef<HTMLTableSectionElement | null>(null);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const [rowH, setRowH] = useState(DEFAULT_ROW_H);
+  const rowHRef = useRef(DEFAULT_ROW_H);
+  const rowCountRef = useRef(rows.length);
+  rowCountRef.current = rows.length;
+  const [win, setWin] = useState({ start: 0, end: 48 });
+  const recomputeWindow = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const next = visibleRowWindow({
+      scrollTop: el.scrollTop,
+      viewportHeight: el.clientHeight,
+      headerHeight: theadRef.current?.offsetHeight ?? 0,
+      rowHeight: rowHRef.current,
+      rowCount: rowCountRef.current,
+    });
+    setWin((w) => (w.start === next.start && w.end === next.end ? w : next));
+  }, []);
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (!raf)
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          recomputeWindow();
+        });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(onScroll) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro?.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [recomputeWindow]);
+  // The real row height (borders, zoom, fonts), from a drawn row, so every spacer is exact.
+  useLayoutEffect(() => {
+    const h = tbodyRef.current?.querySelector<HTMLElement>('tr[aria-rowindex]')?.getBoundingClientRect().height;
+    if (h && h > 0 && Math.abs(h - rowHRef.current) > 0.01) {
+      rowHRef.current = h;
+      setRowH(h);
+    }
+    recomputeWindow();
+  }, [rows.length, recomputeWindow]);
+
   const lastRow = Math.max(0, rows.length - 1);
   const lastCol = columns.length - 1;
   const clampPos = useCallback(
@@ -178,6 +233,14 @@ export default function NpdSheetGrid({
       return info;
     };
   }, [sheet, ctx, columns]);
+  // Always drawn wherever they are: the active cell's row (keyboard moves scroll it into
+  // view), the row being edited (its editor must not unmount) and the formula menu's row.
+  const editingRow = editing?.row ?? -1;
+  const menuRowIndex = menu?.row ?? -1;
+  const plan = useMemo(
+    () => rowRenderPlan(rows.length, win, [f.row, editingRow, menuRowIndex]),
+    [rows.length, win, f.row, editingRow, menuRowIndex],
+  );
   const columnHasFormula = useMemo(
     () => columns.map((c) => !!formulaBehind(sheet, { formulas: {} }, c.key, ctx)),
     [sheet, ctx, columns],
@@ -726,7 +789,7 @@ export default function NpdSheetGrid({
               <col key={c.key} style={{ width: c.width }} />
             ))}
           </colgroup>
-          <thead>
+          <thead ref={theadRef}>
             {/* Column letters, as in the Google Sheet, so a formula like =H5*1.5 reads the same. */}
             <tr aria-hidden>
               <th className="sticky left-0 top-0 z-30 h-[22px] border-b border-r border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900" />
@@ -782,8 +845,22 @@ export default function NpdSheetGrid({
               })}
             </tr>
           </thead>
-          <tbody onMouseDown={onMouseDown} onMouseOver={onMouseOver} onDoubleClick={onDoubleClick} onContextMenu={onContextMenu}>
-            {rows.map((row, r) => {
+          <tbody
+            ref={tbodyRef}
+            onMouseDown={onMouseDown}
+            onMouseOver={onMouseOver}
+            onDoubleClick={onDoubleClick}
+            onContextMenu={onContextMenu}
+          >
+            {plan.map((seg) =>
+              seg.kind === 'gap' ? (
+                // Stands for rows not drawn, exactly as tall as they are: scroll height and positions never move.
+                <tr key={`gap-${seg.at}`} aria-hidden data-npd-gap>
+                  <td colSpan={columns.length + 1} style={{ height: seg.rows * rowH, padding: 0, border: 0 }} />
+                </tr>
+              ) : (
+                Array.from({ length: seg.to - seg.from }, (_, i) => seg.from + i).map((r) => {
+              const row = rows[r]!;
               const rowSelected = r >= sel.r0 && r <= sel.r1;
               const isEditRow = editing?.row === r;
               return (
@@ -806,7 +883,9 @@ export default function NpdSheetGrid({
                   onSelectRow={selectRow}
                 />
               );
-            })}
+                })
+              ),
+            )}
           </tbody>
         </table>
         {menu && menuAt && menuRow && menuKey && (

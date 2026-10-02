@@ -424,3 +424,19 @@ describe('NPD loading state (Kane, 2026-10-02: "Change the table to be skeleton 
     assert.match(sk, /animate-pulse motion-reduce:animate-none/);
   });
 });
+
+describe('NPD grid draws only the rows in view (Kane, 2026-10-02: "its extremly lag switching between tabs")', () => {
+  const grid = read('src', 'components', 'npd', 'NpdSheetGrid.tsx');
+  test('rows come from the render plan, never all of them', () => {
+    const body = grid.slice(grid.indexOf('<tbody'), grid.indexOf('</tbody>'));
+    assert.match(body, /\{plan\.map\(\(seg\) =>/);
+    assert.ok(!/rows\.map\(\(row, r\)/.test(body), 'the body never maps every row');
+  });
+  test('the active cell, the open editor and the formula menu rows are always drawn', () => {
+    assert.match(grid, /rowRenderPlan\(rows\.length, win, \[f\.row, editingRow, menuRowIndex\]\)/);
+  });
+  test('spacers are as tall as the rows they stand for, from the measured row height', () => {
+    assert.match(grid, /style=\{\{ height: seg\.rows \* rowH, padding: 0, border: 0 \}\}/);
+    assert.match(grid, /querySelector<HTMLElement>\('tr\[aria-rowindex\]'\)\?\.getBoundingClientRect\(\)\.height/);
+  });
+});

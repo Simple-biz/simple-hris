@@ -33,6 +33,7 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | Route | `app/api/accounting/npd/route.ts` |
 | Page · grid · client save logic | `src/components/npd/NpdDashboard.tsx` · `NpdSheetGrid.tsx` · `useNpdSheet.ts` |
 | Loading state: the grid's skeleton | `src/components/npd/NpdSheetSkeleton.tsx` |
+| Which rows the grid draws (pure) | `src/lib/npd/grid-window.ts` (+ `.test.ts`) |
 | Rail label | `src/components/npd/NpdNavLabel.tsx` (wired in `src/components/Sidebar.tsx`) |
 | Google Sheet sync: sheet rows → NPD rows (pure) | `src/lib/npd/google-sheet-import.ts` (+ `.test.ts`) |
 | Google Sheet sync: the read-only fetch | `src/lib/google-sheets/fetch-npd-sheet.ts` |
@@ -413,6 +414,21 @@ on 2026-10-02. Everything above the grid therefore keeps its loaded size while l
 Never make any of these render nothing while loading. A sheet painted from the cache (§ Caching)
 needs no skeleton at all.
 
+**The grid draws only the rows in view** (Kane, 2026-10-02: *"its extremly lag switching between tabs
+though"*). A 600-person sheet used to draw all 18,600 cells on every tab or week switch. In a dev build
+that took 1.8–2.1 s, with the page frozen for up to 0.9 s at a time. It now draws the visible rows plus
+12 either side (`grid-window.ts`): 25 rows, 750 cells. A switch measured ~100–160 ms in a production
+build, with the longest freeze 65–79 ms (2026-10-02). Three rows are **always drawn wherever they
+are**:
+- the active cell's row, so keyboard moves (Ctrl+arrows included) scroll it into view;
+- the row being edited, so its editor never unmounts mid-edit, even scrolled away;
+- the row whose formula menu is open, because the menu is placed under that cell.
+
+Between drawn rows sit spacer rows **exactly as tall as the rows they stand for**, using the row height
+measured from a drawn row. The scroll length and every row's position are therefore the same as if
+every row were drawn. Copy, paste, select-all, delete and undo work on the model, never on the DOM, so
+undrawn rows are never missed. **Never go back to mapping every row in the body.**
+
 Cells render as text with one floating editor (a `textarea`, so line breaks survive) on the active
 cell. Rows are memoised, and the model keeps untouched rows' identity, so an edit re-renders one row.
 Paste parses Google Sheets' TSV, including quoted cells with line breaks or tabs and doubled
@@ -463,7 +479,7 @@ column must be parsed and refused exactly as that step's paste contract says.
   Payroll CSV says *The All Dept Google Sheet is not configured* (503), and nothing changes. That env var is now
   load-bearing for NPD: never remove it as "the rates sync is off".
 - Verified 2026-10-02 (sync): 21 pure tests; NPD + wiring 146/146; the live-sheet check above (0 mismatches, re-run
-  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (69/69 with the cache, the remembered week included: a reload paints the cached rows,
+  after HSL moved to its gid); a bundled browser fixture with a mocked API, 36/36 (78/78 with the 600-person drawn-rows checks; 69/69 with the cache, the remembered week included: a reload paints the cached rows,
   week menu and sync bar before a slow live read, nothing on that copy can be typed, a failed refresh keeps the
   copy read-only under Not refreshed, Try again loads it live; 55/55 with the progress bar: under the button and its
   width, each phase, green only after the save lands, red on failure, fades back, reduced motion, phone). It covered: each tab shows only its own button; an empty week
