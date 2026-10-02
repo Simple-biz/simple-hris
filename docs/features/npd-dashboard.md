@@ -374,23 +374,23 @@ column must be parsed and refused exactly as that step's paste contract says.
   on 2026-10-01: the three tables exist with RLS on and **0 rows**, and `npd_save_sheet` exists. Its
   dry run had passed 46/46 earlier that day. The create file is the applied record and is **never
   edited**; later changes ship as `references/sql/alter/` files.
-- **Lock in migration PENDING:** `node --import tsx scripts/apply-npd-sheets-lock-migration.mts --apply`
-  (needs `DATABASE_URL`, session pooler; see [[migration-apply-needs-database-url]]). **Dry run against
-  production 2026-10-01: 39/39** (objects, privileges, and a lock that really refuses saves); rolled
-  back, and a re-probe confirmed nothing changed. The script refuses to run without the base tables.
-  It is safe before or after the code deploys (see § Lock in, the last-but-one bullet).
-- **Formulas migration PENDING, AFTER Lock in:** `node --import tsx scripts/apply-npd-formulas-migration.mts --apply`.
-  **Dry run against production 2026-10-01: 32/32.** Lock in was not applied yet, so the dry run
-  rehearsed Lock in + formulas together and rolled both back. `--apply` refuses to run before Lock in.
-  **Order: Lock in `--apply` → formulas `--apply` → push.** The formulas code saves through
-  `npd_save_sheet_v2`. Until that exists, a save fails loudly (*NPD formulas are not set up yet*) with
-  the edits kept on screen. The original `npd_save_sheet` is kept, so older code still saves.
+- **Lock in migration APPLIED 2026-10-02 ~18:59Z** (session `1c11c3eb`, on Kane's *"run the npd
+  formula mts for me please"* and his pick "Apply both"): `node --import tsx scripts/apply-npd-sheets-lock-migration.mts --apply`,
+  **39/39 checks** after commit (objects, privileges, and a lock that really refuses saves). The
+  2026-10-01 dry run had also passed 39/39. Controls ran in rolled-back savepoints, so no row was
+  written. Needs `DATABASE_URL` (session pooler; see [[migration-apply-needs-database-url]]).
+- **Formulas migration APPLIED 2026-10-02 ~19:00Z** (same session, right after Lock in):
+  `node --import tsx scripts/apply-npd-formulas-migration.mts --apply`, **32/32 checks** after commit.
+  A dry run minutes earlier had passed 32/32 too, with Lock in rehearsed inside it.
+  `npd_save_sheet_v2` now exists, so the formulas code and the Google Sheet sync can save. The
+  original `npd_save_sheet` is kept, so code not yet redeployed still saves. **Remaining order: push**
+  (Kane's). The code that saves through v2 is committed but not pushed.
 - **Grant PENDING:** Admin → Roles → Accounting → **NPD (New Payroll Dashboard)** → Edit for each
   person who will paste (Aliviah). Measured 2026-10-01: **0** active `npd` grants. Admins see it
   already.
 - **Google Sheet sync (2026-10-02): no migration.** It saves through `npd_save_sheet_v2`, so it needs the
-  **formulas migration applied** like any save. Before that, a synced sheet stays on screen with *NPD formulas
-  are not set up yet*. Env: `GOOGLE_SHEETS_RATES_SHEET_ID` (+ optional `GOOGLE_SHEETS_RATES_TAB_NAME`, default
+  **formulas migration applied** like any save (applied 2026-10-02, above). Before that, a synced sheet
+  stayed on screen with *NPD formulas are not set up yet*. Env: `GOOGLE_SHEETS_RATES_SHEET_ID` (+ optional `GOOGLE_SHEETS_RATES_TAB_NAME`, default
   "All Dept") for **All Dept Payroll CSV only**, and the existing `GOOGLE_SHEETS_SERVICE_ACCOUNT_*` for both.
   **Hogan Payroll Sync needs no sheet env**: its spreadsheet and gid are pinned in code. All are set in
   `.env.local`. **Vercel production is PENDING confirmation for `GOOGLE_SHEETS_RATES_SHEET_ID`**: the old wizard
