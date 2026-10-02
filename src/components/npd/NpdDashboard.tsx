@@ -254,11 +254,6 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-700 dark:text-orange-300">NPD</p>
             <h2 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">New Payroll Dashboard</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              The payroll sheet, one per pay week. Sync it from the Google Sheet, paste it in, or type it here. Nothing is
-              imported from HRIS. The calculated columns use the Google Sheet’s own formulas: right-click a cell to see or
-              edit one.
-            </p>
           </div>
         </div>
         <SaveStatus
