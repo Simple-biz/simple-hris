@@ -826,7 +826,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
   // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
   // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
-  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-01a', name: 'Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'Critical' },
   // 2 SP: both 2026-08-19 migrations had silently never applied because the password's `@` was not
   // percent-encoded in DATABASE_URL — an unencoded @ truncates the host instead of erroring.
   { epic: 'HRIS-15', name: 'Migration applies never ran: an unencoded @ in DATABASE_URL silently truncated the host', type: 'Bug', sp: 2, done: true, sprint: 'S27' },
@@ -2301,7 +2301,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // Done on the DELIVERABLE: a doc-only Spike's output is the doc, on origin/main (the security re-read
   // row above set the precedent). 3 SP, not 2: 52 findings is not small volume.
   { epic: 'HRIS-05', name: 'OWASP Top 10 2025 security audit of HRIS - 52 findings, 6 Critical', type: 'Spike', sp: 3, done: true, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-02a', name: 'NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-02a', name: 'NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-02a', name: "NPD runs the Google Sheet's own formulas, editable from a right-click", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-02a', name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },

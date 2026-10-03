@@ -923,6 +923,20 @@ export const ROWS: PassRow[] = [
     shas: ["7c7f7046"],
     basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. Every sha is on origin/main; the Completed Date is the commit date.",
   },
+  {
+    name: "Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
+    status: 'Done',
+    completed: '2026-10-01',
+    shas: ["a2e091f3", "5025844b"],
+    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:40 EDT: \"Deletion Cron - is already redeployed! close it\". Its one blocker was CRON_SECRET; Kane set it in Vercel Production and redeployed (his word; Vercel env is not readable from here). The hold that is this row shipped in 5025844b. MEASURED 2026-10-03 00:41Z: 0 hr.employee.scheduled_deletion audit rows, so the cron has not run yet, and 83 rows are due. Its first run sends offboarding_delete for every due row the hold does not catch (3 were held on 10-01). Every sha is on origin/main; the Completed Date is the last sha's commit date.",
+  },
+  {
+    name: "NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week",
+    status: 'Done',
+    completed: '2026-10-01',
+    shas: ["f92527b3"],
+    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:40 EDT: \"NPD - Done!\". Its blocker is MEASURED cleared: 2 active npd grants (Edit), read 2026-10-03 00:41Z, where there were 0 on 10-02. Base migration applied. Confirmed live by Kane. Every sha is on origin/main; the Completed Date is the commit date.",
+  },
 ];
 
 /** Commit date of a sha, `YYYY-MM-DD`. Throws if git cannot resolve it — unverifiable is a failure. */

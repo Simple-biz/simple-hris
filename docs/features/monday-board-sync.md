@@ -2526,3 +2526,15 @@ they close with `dateBasis: 'external'` on 2026-10-02, the day he confirmed them
 3. Gridline `audit_board.py --sprint "Sprint 30"`
 
 Open item 332.
+
+**Pass 39 grows to 11 rows / 54 SP (2026-10-03 00:41Z).** Kane: *"Deletion Cron - is already redeployed!
+close it"* and *"NPD - Done!"*. Both are staged Done:
+- **NPD:** its grant blocker is measured cleared, with 2 Edit grants.
+- **Deletion cron:** `CRON_SECRET` is set, on Kane's word. The cron had **not run yet** at 00:41Z (0
+  audit rows), and 83 rows are due.
+
+Kane also wrote *"NPD Save - Migration is done!"*, but it is **not**. `--verify` against Postgres shows
+every object missing, and PostgREST agrees (PGRST205). The script's default is a dry run that rolls back,
+so the row stays Pending Deploy until `--apply` runs. **HSL scheduling stays open**, waiting on GYD
+(Kane). The Missing Bank Info n8n JSON was handed over (Desktop + clipboard). The re-paste stays PENDING
+until Kane does it. Open item 333.
