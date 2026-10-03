@@ -367,6 +367,22 @@ export default function OrphanageOmsPanel({
               {pulling ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
               {pulling ? 'Pulling…' : pull ? 'Load again' : 'Load Orphanage Hours'}
             </Button>
+            {/* Send to OMS. It only OPENS the modal, which carries the loading (Kane: "not in the
+                button but in a small modal"). LIVE only: the route cannot see the Test switch, so
+                this button is the guard. The span carries the reason, because a disabled button
+                gets no hover. */}
+            <span title={sendBlockedReason ?? 'Return each person’s regular and OT hours and paid amount to OMS'} className="inline-flex">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={omsReturn.open}
+                disabled={!!sendBlockedReason}
+                className="h-9 gap-2 px-3"
+              >
+                <CloudUpload className="h-4 w-4" />
+                Send to OMS
+              </Button>
+            </span>
           </div>
         </div>
 

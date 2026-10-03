@@ -280,10 +280,16 @@ grant select, insert on public.hris_orphanage_returns to <that role>;
    pushes stay as history; the HRIS never deletes them.
 2. **PENDING — Kane sets `OMS_RETURN_TABLE`** (e.g. `hris_orphanage_returns`) in `.env.local`
    **and Vercel production**. Unset ⇒ the modal says so and Send stays disabled.
-3. **PENDING — the "Send to OMS" button is NOT wired into the panel.** The modal, hook and
-   gating (`sendBlockedReason`, `returnAliases`, `omsReturn.open` in `OrphanageOmsPanel.tsx`)
-   are in place and the dialog is mounted, but the one edit that adds the button to the
-   Refresh / Load row was refused by the session's permission classifier on 2026-09-28 and
-   was not retried. Until someone adds it, nothing opens the modal. Audit item 235.
+3. **The "Send to OMS" button is wired (2026-10-03, Kane: *"Send to OMS - fix this code wise"*;
+   committed, NOT pushed).** It sits after **Load Orphanage Hours** in the Refresh / Load row and
+   only opens the modal: no spinner, because the modal carries the loading. It is disabled while
+   `sendBlockedReason` is set (Test mode, replay, no period), and its wrapper's `title` names the
+   reason, because a disabled button gets no hover. `src/lib/oms/oms-panel-wiring.test.ts` pins
+   the four points (it opens the modal, the disabled guard, Test and replay both block, and no
+   spinner), so the button cannot silently disappear again. From 2026-09-28 to 2026-10-03 the modal
+   shipped with nothing opening it: the one edit that added the button was refused by a permission
+   classifier and not retried. Audit items 235, 334. **Steps 1 and 2 are still PENDING**: until OMS
+   creates the table and `OMS_RETURN_TABLE` is set, the button opens a modal that says *"Sending to
+   OMS is not set up"*.
 
 No HRIS migration: what we sent is recorded in the audit row and held by OMS's own table.
