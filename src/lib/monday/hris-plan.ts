@@ -2306,7 +2306,7 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-02a', name: "NPD runs the Google Sheet's own formulas, editable from a right-click", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-02a', name: "NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-02a', name: 'NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-02a', name: 'HRIS vs NPD Save output - an append-only saved version per pay week', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'HRIS vs NPD Save output - an append-only saved version per pay week', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-06', name: "Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-06', name: "Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-06', name: "Accounting Scoreboard history backfilled from Carla's sheet, with an archive page", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },

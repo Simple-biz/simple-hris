@@ -945,6 +945,13 @@ export const ROWS: PassRow[] = [
     shas: ["87c407ff"],
     basis: "DONE on Kane's word. Kane, 2026-10-02 ~21:20 EDT, on the live n8n workflow: \"it already existed\", then \"udpated!\". He confirmed the Build Recipients node now runs the code with the card-safety trust note (n8n is not readable from here). The code last landed 2026-09-25 (87c407ff, on origin/main); the row is the live paste, so the Completed Date is the day Kane confirmed it, inside Sprint 30. Closes item 207.",
   },
+  {
+    name: "HRIS vs NPD Save output - an append-only saved version per pay week",
+    status: 'Done',
+    completed: '2026-10-01',
+    shas: ["ee8e5a8b"],
+    basis: "DONE on Kane's word plus MEASUREMENT. Kane, 2026-10-02 ~21:45 EDT: \"NPD Saved done applying the migration\". Its one blocker, the migration, is measured APPLIED: --verify straight to Postgres passes every check (both tables, the save function, the no-UPDATE trigger, the APPEND-ONLY comment, RLS on, zero policies, no anon/authenticated privileges), and both tables read through PostgREST (0 rows). Every sha is on origin/main; the Completed Date is the commit date.",
+  },
 ];
 
 /** Commit date of a sha, `YYYY-MM-DD`. Throws if git cannot resolve it — unverifiable is a failure. */

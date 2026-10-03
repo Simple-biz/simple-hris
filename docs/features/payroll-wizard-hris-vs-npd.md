@@ -381,7 +381,7 @@ applied yet.
 
 ## Deploy notes
 
-**Save output needs a migration: PENDING (Kane).**
+**Save output's migration: APPLIED 2026-10-02 by Kane** (*"NPD Saved done applying the migration"*). Measured the same night: `--verify` straight to Postgres passes every check (both tables, the save function, the no-UPDATE trigger, the APPEND-ONLY comment, RLS on, zero policies, no anon/authenticated privileges), and both tables read through PostgREST (0 rows). An earlier run that night had been the rolled-back rehearsal, which is why a 00:41Z check found nothing.
 `references/sql/create/2026-10-01_payroll_wizard_npd_comparisons.sql`, applied with
 `node --import tsx scripts/apply-payroll-wizard-npd-comparisons-migration.mts --apply`. With no
 flag the script runs a rolled-back rehearsal; `--verify` only re-checks. It needs `DATABASE_URL`
