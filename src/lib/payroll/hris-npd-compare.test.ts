@@ -526,3 +526,44 @@ describe('filterHrisNpdRows — display only', () => {
     assert.equal(c.totals.people, 3);
   });
 });
+
+// ─── People configured not to be paid: rows with the reason, never compared (Kane, 2026-10-02) ──
+
+describe('the table lines: compared rows + people configured not to be paid', async () => {
+  const m = await import('./hris-npd-compare');
+  const c = m.compareHrisNpd({
+    hrisRows: [
+      { email: 'b@simple.biz', name: 'Bee', php: 6152, dispatchable: true, excluded: false },
+      { email: 'a@simple.biz', name: 'Ay', php: 6152, dispatchable: true, excluded: true },
+    ],
+    npdRows: m.parseNpdPaste('a@simple.biz\t100.00\nb@simple.biz\t100.00\nc@simple.biz\t5.00').rows,
+    fxRate: 61.52,
+    hrisState: 'settled',
+    pausedEmails: new Set(['c@simple.biz']),
+  });
+
+  test('both kinds, sorted together by work email; the not-paid ones are not in counts or totals', () => {
+    const lines = m.hrisNpdDisplayRows(c);
+    assert.deepEqual(lines.map((l) => [l.kind, l.workEmail]), [
+      ['not_paid', 'a@simple.biz'],
+      ['compared', 'b@simple.biz'],
+      ['not_paid', 'c@simple.biz'],
+    ]);
+    assert.deepEqual(c.counts, { match: 1, mismatch: 0, not_in_hris: 0, not_in_npd: 0 });
+    assert.equal(c.totals.npdCents, 10000);
+    assert.equal(c.totals.people, 1);
+  });
+
+  test('the Not paid chip shows only them; a verdict chip never shows them; the search covers both', () => {
+    const lines = m.hrisNpdDisplayRows(c);
+    assert.deepEqual(m.filterHrisNpdDisplay(lines, { status: 'not_paid' }).map((l) => l.workEmail), ['a@simple.biz', 'c@simple.biz']);
+    assert.deepEqual(m.filterHrisNpdDisplay(lines, { status: 'match' }).map((l) => l.workEmail), ['b@simple.biz']);
+    assert.deepEqual(m.filterHrisNpdDisplay(lines, { needle: 'ay' }).map((l) => l.workEmail), ['a@simple.biz']);
+    assert.equal(m.filterHrisNpdDisplay(lines, {}).length, 3);
+  });
+
+  test('every reason has the words the Match column states', () => {
+    assert.equal(m.HRIS_NPD_NOT_PAID_REASON.excluded.short, 'Excluded on Final Pay');
+    assert.equal(m.HRIS_NPD_NOT_PAID_REASON.paused.short, 'Department paused this week');
+  });
+});

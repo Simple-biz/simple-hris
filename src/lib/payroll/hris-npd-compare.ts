@@ -691,23 +691,84 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
 
 // ─── Display filter ───────────────────────────────────────────────────────────
 
-export type HrisNpdFilter = 'all' | HrisNpdStatus;
+/** The table's chips: All, each verdict, and the people configured not to be paid. */
+export type HrisNpdFilter = 'all' | HrisNpdStatus | 'not_paid';
 
 /**
- * The table's search + status chips. DISPLAY ONLY: totals and counts are always the whole
- * comparison's. The needle matches the row's work email and its name.
+ * Why a person is not paid this week, as the Match column states it (Kane, 2026-10-02: "if
+ * they are configured to not be paid it will state the reason in the match column"). `short`
+ * is the cell; `detail` is its tooltip.
+ */
+export const HRIS_NPD_NOT_PAID_REASON: Readonly<Record<HrisNpdLeftOutReason, { short: string; detail: string }>> = {
+  excluded: {
+    short: 'Excluded on Final Pay',
+    detail: 'Excluded on the Final Pay table (do not pay) this week, so HRIS pays them nothing and they are not compared.',
+  },
+  paused: {
+    short: 'Department paused this week',
+    detail: "Their department's \"Pay this week\" is off (Step 1 → Configuration), so HRIS pays them nothing and they are not compared.",
+  },
+};
+
+/**
+ * One line of the table. A `compared` row carries a verdict; a `not_paid` row is someone
+ * configured not to be paid this week (`HrisNpdComparison.leftOut`): it is shown, with the
+ * reason in the Match column, but never compared — no ✓/✗, and never in the counts, the
+ * totals or the tab's badge.
+ */
+export type HrisNpdDisplayRow =
+  | { kind: 'compared'; key: string; workEmail: string; row: HrisNpdRow }
+  | { kind: 'not_paid'; key: string; workEmail: string; leftOut: HrisNpdLeftOut };
+
+/** Every line of the table — compared rows and not-paid rows — sorted together by work email. */
+export function hrisNpdDisplayRows(comparison: Pick<HrisNpdComparison, 'rows' | 'leftOut'>): HrisNpdDisplayRow[] {
+  const out: HrisNpdDisplayRow[] = [
+    ...comparison.rows.map((r) => ({ kind: 'compared' as const, key: r.key, workEmail: r.workEmail, row: r })),
+    ...comparison.leftOut.map((l) => ({
+      kind: 'not_paid' as const,
+      key: `not_paid:${l.reason}:${l.workEmail.toLowerCase()}`,
+      workEmail: l.workEmail,
+      leftOut: l,
+    })),
+  ];
+  return out.sort((a, b) => a.workEmail.localeCompare(b.workEmail) || a.key.localeCompare(b.key));
+}
+
+/**
+ * The table's search + chips over every line. DISPLAY ONLY: totals and counts are always the
+ * whole comparison's. The needle matches the work email and the name.
+ */
+export function filterHrisNpdDisplay(
+  rows: readonly HrisNpdDisplayRow[],
+  opts: { needle?: string; status?: HrisNpdFilter },
+): HrisNpdDisplayRow[] {
+  const needle = (opts.needle ?? '').trim().toLowerCase();
+  const status = opts.status ?? 'all';
+  return rows.filter((d) => {
+    if (status === 'not_paid' ? d.kind !== 'not_paid' : status !== 'all' && (d.kind !== 'compared' || d.row.status !== status)) {
+      return false;
+    }
+    if (!needle) return true;
+    const name = d.kind === 'compared' ? d.row.name : d.leftOut.name;
+    return `${d.workEmail} ${name ?? ''}`.toLowerCase().includes(needle);
+  });
+}
+
+/**
+ * The compared rows only, by the same search + chips. DISPLAY ONLY. (The table shows
+ * `filterHrisNpdDisplay`; this stays for callers that want verdict rows alone.)
  */
 export function filterHrisNpdRows(
   rows: readonly HrisNpdRow[],
   opts: { needle?: string; status?: HrisNpdFilter },
 ): HrisNpdRow[] {
-  const needle = (opts.needle ?? '').trim().toLowerCase();
-  const status = opts.status ?? 'all';
-  return rows.filter((r) => {
-    if (status !== 'all' && r.status !== status) return false;
-    if (!needle) return true;
-    return `${r.workEmail} ${r.name ?? ''}`.toLowerCase().includes(needle);
-  });
+  const out: HrisNpdRow[] = [];
+  const shown = filterHrisNpdDisplay(
+    rows.map((r) => ({ kind: 'compared' as const, key: r.key, workEmail: r.workEmail, row: r })),
+    opts,
+  );
+  for (const d of shown) if (d.kind === 'compared') out.push(d.row);
+  return out;
 }
 
 /** Cents → the number `formatMoney(…, 'USD')` renders. */
