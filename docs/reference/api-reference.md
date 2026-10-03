@@ -3238,6 +3238,25 @@ and returns **200** `{ week, sourceFile, tab, rows: [{ values, overrides, sheetR
 header or column (named) or more than 2,000 rows; **503** `{ missing: true }` when the spreadsheet env is not set; **502** when
 Google cannot be read.
 
+### `GET /api/payroll-wizard/npd-feed?sourceFile=<wizard week key>[&known=<allDeptVersion>,<hslVersion>]` — HRIS vs NPD reads the locked sheets *(added 2026-10-02)*
+
+[npd-feed/route.ts](../../app/api/payroll-wizard/npd-feed/route.ts). Governing doc:
+[payroll-wizard-hris-vs-npd.md](../features/payroll-wizard-hris-vs-npd.md) § NPD's locked sheets feed the step.
+Gate: `requireFeatureAccess('accounting', 'payroll_wizard', 'view')` **and** `requireFeatureAccess('accounting', 'npd', 'view')`;
+without the NPD grant **403** `{ needsGrant: true }`. **Read-only**: writes and audits nothing. The NPD week is the filename
+range's start, which must be a Sunday (**409** `{ noWeek: true }` otherwise; no calendar fallback). **200** `{ week, tabs:
+{ all_departments, hsl }, feed }`, each tab `{ state: 'none' }` | `{ state: 'unlocked', version, rowCount, updatedAt, updatedBy }` |
+`{ state: 'locked', version, rowCount, lockedAt, lockedBy }`. `feed` is **null unless BOTH tabs are locked** (an unlocked tab's rows
+are never read). Then it is `{ versions, text, linesBySheet, usWorkersRows }`, where `text` is the paste
+`buildNpdFeedText` makes (signature line, then `<tab> row N ⇥ Work Email ⇥ PHP USD Conversion` per non-blank row), or
+`'unchanged'` when `known` equals both locked versions (headers only, no rows). **500/503** on a failed read, never "not locked".
+
+`POST /api/payroll-wizard/npd-comparison` (Save output) gained one refusal the same day. When the snapshot's `paste_text` is a
+feed (it starts with the signature), it is proven against the sheets after validation and before the hash: same week, both
+still locked at the signature's versions, identical rebuilt text. Otherwise **409** `{ npdChanged: true }` (NPD changed),
+**400** (not NPD's text, or another week), or **500/503** (NPD unreadable). Nothing is saved in any of those cases. The audit row
+adds `npd_source` (`locked_sheets` + `npd_week` + `npd_versions`, or `paste`).
+
 ---
 
 ## 24. Accounting Scoreboard *(added 2026-10-01)*
@@ -3615,6 +3634,7 @@ of cells — the matches were not re-run).
 | `/api/payroll-wizard/bank-exemptions` | GET, POST, DELETE | `requireFeatureAccess` | [payroll-readiness](../features/payroll-readiness.md) |
 | `/api/payroll-wizard/manual-validation` | GET, PATCH | `requireFeatureAccess` | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
 | `/api/payroll-wizard/npd-comparison` | GET, POST | `requireFeatureAccess` | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) § Saving the output |
+| `/api/payroll-wizard/npd-feed` | GET | `requireFeatureAccess` ×2 (`payroll_wizard` + `npd` view) | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) § NPD's locked sheets feed the step |
 | `/api/payroll-wizard/notes` | GET, POST, PATCH, DELETE | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |
 | `/api/payroll-wizard/notes/adjustment` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/payroll-wizard/notes/workers` | GET | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |

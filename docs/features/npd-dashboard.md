@@ -194,7 +194,8 @@ browser's figures are never trusted; only cells the row lists as typed over keep
 Each row stores `formula_overrides` and `formula_cells`. `npd.sheet.saved` records a changed rate or
 changed column formulas (from → to).
 
-Not connected to anything yet: the HRIS vs NPD step still takes its own paste.
+The HRIS vs NPD step reads the stored figures once both tabs are locked, PHP USD Conversion only
+(§ Read by the HRIS vs NPD step).
 
 ## Lock in
 
@@ -249,8 +250,10 @@ Departments and HSL lock separately; one sheet = one lock).
 - **Before the Lock in migration is applied**, header reads use `select('*')` and treat missing lock
   columns as unlocked. That is true, because nothing can be locked without `npd_lock_sheet`. Saves
   keep working, and Lock in answers 503 *"Lock in is not set up yet"*.
-- Locked does not mean "sent" or "paid". Nothing reads the lock yet. The HRIS vs NPD step still takes
-  its own paste.
+- Locked does not mean "sent" or "paid". **Since 2026-10-02 one thing reads the lock**: the Payroll
+  Wizard's HRIS vs NPD step takes NPD's figures from both sheets once **both** tabs are locked for its
+  week, and goes back to its paste when either is unlocked (§ Read by the HRIS vs NPD step). So a lock
+  now decides what that step compares, and an unlock takes the figures away from it.
 
 ## Google Sheet sync (All Dept Payroll CSV · Hogan Payroll Sync)
 
@@ -469,11 +472,28 @@ Keys: arrows (Shift extends, Ctrl jumps) · Enter / F2 / double-click edit · ty
 Enter ↓ · Tab → · Esc cancels · Alt+Enter is a line break · Delete clears · Ctrl+Z / Y ·
 Ctrl+A · Ctrl+C / X / V.
 
-## Not connected to anything yet
+## Read by the HRIS vs NPD step (2026-10-02)
 
-The HRIS vs NPD Validation step (`payroll-wizard-hris-vs-npd.md`) still takes its own paste and
-does not read these tables. Wiring it is a separate decision. If it is ever wired, the dollar
-column must be parsed and refused exactly as that step's paste contract says.
+Kane, 2026-10-02: *"once the values from NPD are both locked from ALL DEPT AND HSL - The values from
+there will automatically feed here in the validation step"*. The Payroll Wizard's HRIS vs NPD step
+(`payroll-wizard-hris-vs-npd.md` § NPD's locked sheets feed the step) now reads these tables. It is
+the **only** reader besides this page, and it is held to the following, seen from NPD's side:
+
+- **Only when BOTH tabs are locked** for the NPD week that matches the wizard's week (the filename
+  range's Sunday, no calendar fallback). An unlocked tab's rows are never sent to it.
+- **Two columns only**: **Work Email** (the key) and **PHP USD Conversion** (the figure). No name, no
+  bank columns, and **not Total Pay US Workers**, which it counts and says it does not compare.
+- **The dollar column is parsed and refused exactly as that step's paste contract says**, as this
+  section required before it was wired: the two sheets become a paste (`buildNpdFeedText`) that goes
+  through `parseNpdPaste` unchanged. A row with no work email, a blank dollar cell, `#VALUE!` or ₱ is
+  a listed refusal, labelled `All Departments row N` / `HSL row N`. Blank rows are skipped.
+- **Read-only**, through its own route (`GET /api/payroll-wizard/npd-feed`, service role), which needs
+  the **`npd` view grant as well as `payroll_wizard` view**. Having the wizard still does not give NPD.
+- **The lock is what makes it trustworthy.** A save of that step's output names the versions it
+  compared, and it is refused (nothing saved) unless both sheets are still locked at exactly those
+  versions and rebuild to the same text. Unlocking a tab to fix a cell therefore sends the step back to
+  pasting until it is locked again, and a stale output cannot be saved as if it were current.
+- Nothing here changed to allow this: no column, no function, no migration, no grant.
 
 ## Deploy notes
 

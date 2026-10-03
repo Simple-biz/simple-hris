@@ -5,7 +5,11 @@ import path from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import HrisNpdComparison, { type HrisNpdSaveProps, type HrisNpdStep } from '@/components/payroll/HrisNpdComparison';
+import HrisNpdComparison, {
+  type HrisNpdFeedProps,
+  type HrisNpdSaveProps,
+  type HrisNpdStep,
+} from '@/components/payroll/HrisNpdComparison';
 import {
   compareHrisNpd,
   parseNpdPaste,
@@ -38,6 +42,25 @@ type Mount = {
   onOpenFullScreen?: () => void;
   /** Save output's state; defaults to a week with nothing saved and the button live. */
   save?: Partial<HrisNpdSaveProps>;
+  /** NPD's locked sheets; defaults to a week where neither tab is locked (the paste is the input). */
+  npdFeed?: Partial<HrisNpdFeedProps>;
+};
+
+/** Neither NPD tab locked: the paste is the input, exactly as before 2026-10-02. */
+const NPD_NOT_LOCKED: HrisNpdFeedProps = {
+  view: {
+    state: 'ready',
+    week: '2026-09-20',
+    tabs: {
+      all_departments: { state: 'unlocked', version: 1, rowCount: 3, updatedAt: null, updatedBy: null },
+      hsl: { state: 'none' },
+    },
+    feed: null,
+  },
+  refreshing: false,
+  lastError: null,
+  checkedAt: null,
+  onRefresh: () => {},
 };
 
 const NOT_SAVED: HrisNpdSaveProps = {
@@ -66,6 +89,7 @@ function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: M
       pasteText: paste,
       onPasteChange: () => {},
       parse,
+      npdFeed: { ...NPD_NOT_LOCKED, ...mount.npdFeed },
       comparison,
       fxRate: over.fxRate ?? FX,
       hrisPeople: 3,
@@ -439,8 +463,14 @@ describe('HRIS vs NPD — the wizard mounts ONE overlay for both sections (sourc
   it('the step rides in the SAME week-stamped state as the paste, so another week starts on step 1', () => {
     assert.match(src, /useState<\{ sourceFile: string \| null; text: string; step: HrisNpdStep \}>/);
     assert.match(src, /step: prev\.sourceFile === calcSourceFile && text\.trim\(\) !== '' \? prev\.step : 'input'/);
-    assert.match(src, /const npdStep: HrisNpdStep = npdPasteForThisWeek \? npdPaste\.step : 'input';/);
+    assert.match(src, /const npdPasteStep: HrisNpdStep = npdPasteForThisWeek \? npdPaste\.step : 'input';/);
     assert.match(src, /step: npdStep,\n\s+onStepChange: setNpdStep,/);
+  });
+
+  it("NPD's locked sheets keep their OWN week-stamped step, opening on the output (2026-10-02)", () => {
+    assert.match(src, /useState<\{ sourceFile: string \| null; step: HrisNpdStep \}>\(\{\n\s+sourceFile: null,\n\s+step: 'output',/);
+    assert.match(src, /const npdFeedStepNow: HrisNpdStep = npdFeedStep\.sourceFile === calcSourceFile \? npdFeedStep\.step : 'output';/);
+    assert.match(src, /const npdStep: HrisNpdStep = npdFeedActive \? npdFeedStepNow : npdPasteStep;/);
   });
 
   it('the sections are defined once — in ValidationFullScreen.tsx — never again in the wizard', () => {

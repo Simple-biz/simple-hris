@@ -37,6 +37,7 @@ import {
   Check,
   ClipboardPaste,
   Loader2,
+  Lock,
   Maximize2,
   PowerOff,
   Save,
@@ -67,12 +68,53 @@ import {
   type NpdPasteParse,
 } from '@/lib/payroll/hris-npd-compare';
 import type { HrisNpdSaveMeta } from '@/lib/payroll/hris-npd-snapshot';
+import type { NpdFeedTabStatus } from '@/lib/payroll/hris-npd-feed';
+import type { NpdSheetKind } from '@/lib/npd/columns';
 
 /**
  * The tab's two steps (Kane, 2026-09-30): `input` = step 1, **NPD Figures** (the paste);
  * `output` = step 2, the comparison, with the input hidden.
  */
 export type HrisNpdStep = 'input' | 'output';
+
+/**
+ * What the wizard knows about NPD's LOCKED sheets for this week (Kane, 2026-10-02: "once the
+ * values from NPD are both locked from ALL DEPT AND HSL - The values from there will
+ * automatically feed here"). `ready` with a `feed` = BOTH tabs are locked and their figures
+ * ARE the NPD side: the paste box is set aside. `ready` without one = the lock state, and the
+ * paste is still the input. A failed check is an error, never "not locked".
+ */
+export type HrisNpdFeedView =
+  | { state: 'loading' }
+  | { state: 'error'; message: string; needsGrant: boolean }
+  | {
+      state: 'ready';
+      /** NPD's pay-week Sunday for the wizard's week. */
+      week: string;
+      tabs: Record<NpdSheetKind, NpdFeedTabStatus>;
+      feed: null | {
+        versions: Record<NpdSheetKind, number>;
+        linesBySheet: Record<NpdSheetKind, number>;
+        /** Rows carrying Total Pay US Workers, which is not compared. */
+        usWorkersRows: number;
+      };
+    };
+
+export type HrisNpdFeedProps = {
+  view: HrisNpdFeedView;
+  /** A re-check is in flight. */
+  refreshing: boolean;
+  /** A re-check failed; what was read before stays, and this says so beside it. */
+  lastError: string | null;
+  /** When NPD was last checked (ISO), for the "checked at" line. */
+  checkedAt: string | null;
+  onRefresh: () => void;
+};
+
+/** True while NPD's locked sheets are the NPD figures for this week. */
+export function npdFeedIsActive(view: HrisNpdFeedView): boolean {
+  return view.state === 'ready' && view.feed != null;
+}
 
 /**
  * **Save output** (Kane, 2026-10-01: "save the output for the current week"). The WIZARD
@@ -100,9 +142,14 @@ export type HrisNpdSaveProps = {
  * (payroll-wizard-manual-validation.md § Full screen is a portal).
  */
 export type HrisNpdPanelProps = {
+  /** The operator's paste — the textarea's text. Set aside while `npdFeed` is active. */
   pasteText: string;
   onPasteChange: (text: string) => void;
+  /** The parse of the NPD text the comparison READS: NPD's locked sheets when both are
+   *  locked (`npdFeed`), otherwise the paste. */
   parse: NpdPasteParse;
+  /** NPD's locked sheets for this week (2026-10-02). */
+  npdFeed: HrisNpdFeedProps;
   comparison: Comparison;
   /** This cycle's USD→PHP rate (PHP per $1) — the divisor behind every HRIS dollar figure. */
   fxRate: number;
@@ -562,6 +609,7 @@ export default function HrisNpdComparison({
   pasteText,
   onPasteChange,
   parse,
+  npdFeed,
   comparison,
   fxRate,
   hrisPeople,
@@ -582,6 +630,8 @@ export default function HrisNpdComparison({
   const deferredSearch = useDeferredValue(search);
 
   const { hold, counts, totals } = comparison;
+  // NPD's locked sheets are the input this week (2026-10-02): step 1 shows them, not a paste box.
+  const fromNpd = npdFeedIsActive(npdFeed.view);
   // Step 2 exists only while a line is read — there is no output of nothing, so an emptied
   // or unreadable paste always shows step 1.
   const canOutput = parse.rows.length > 0;
@@ -634,7 +684,13 @@ export default function HrisNpdComparison({
                     onClick={() => goTo(s.key)}
                     disabled={disabled}
                     aria-current={active ? 'step' : undefined}
-                    title={disabled ? 'Paste at least one readable line on NPD Figures first' : undefined}
+                    title={
+                      disabled
+                        ? fromNpd
+                          ? 'NPD’s locked sheets have no readable line'
+                          : 'Paste at least one readable line on NPD Figures first'
+                        : undefined
+                    }
                     className={cn(
                       'inline-flex items-center gap-2 rounded-full py-0.5 pr-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45',
                       active
@@ -665,19 +721,24 @@ export default function HrisNpdComparison({
           <button
             type="button"
             onClick={() => goTo('input')}
-            title="Back to NPD Figures — the input"
+            title={fromNpd ? 'Back to NPD Figures — NPD’s locked sheets' : 'Back to NPD Figures — the input'}
             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
           >
-            <ClipboardPaste className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" aria-hidden />
+            {fromNpd ? (
+              <Lock className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" aria-hidden />
+            ) : (
+              <ClipboardPaste className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" aria-hidden />
+            )}
             <span>
-              NPD Figures · {parse.rows.length} line{parse.rows.length === 1 ? '' : 's'} read
+              {fromNpd ? 'NPD locked sheets' : 'NPD Figures'} · {parse.rows.length} {fromNpd ? 'row' : 'line'}
+              {parse.rows.length === 1 ? '' : 's'} read
             </span>
             {parse.refusals.length > 0 && (
               <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
                 {parse.refusals.length} skipped
               </span>
             )}
-            <span className="text-violet-700 dark:text-violet-300">Edit</span>
+            <span className="text-violet-700 dark:text-violet-300">{fromNpd ? 'View' : 'Edit'}</span>
           </button>
         )}
       </div>
@@ -702,6 +763,7 @@ export default function HrisNpdComparison({
           pasteText={pasteText}
           onPasteChange={onPasteChange}
           parse={parse}
+          feed={npdFeed}
           hrisPeople={hrisPeople}
           onLoadOutput={loadOutput}
           fillHeight={fillHeight}

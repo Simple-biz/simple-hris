@@ -28,8 +28,10 @@ export const runtime = 'nodejs';
  * week. Governing doc: docs/features/npd-dashboard.md.
  *
  * Gate: the `npd` accounting feature — `view` to read, `edit` to save, lock and
- * unlock — admin bypass inside `requireFeatureAccess`. Nothing else reads these
- * tables.
+ * unlock — admin bypass inside `requireFeatureAccess`. The one other reader is the
+ * Payroll Wizard's HRIS vs NPD step (`app/api/payroll-wizard/npd-feed/route.ts`,
+ * 2026-10-02): read-only, BOTH tabs locked only, Work Email + PHP USD Conversion
+ * only, behind this same `npd` view grant plus `payroll_wizard` view.
  *
  * Lock in (PATCH): a locked sheet takes no save. The database enforces it
  * (npd_save_sheet raises npd_sheet_locked under the row lock), and this route

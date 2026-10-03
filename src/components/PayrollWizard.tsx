@@ -390,10 +390,13 @@ import {
   type BreakdownInput,
 } from '@/lib/payroll/validation-breakdown';
 import HrisNpdComparison, {
+  type HrisNpdFeedProps,
+  type HrisNpdFeedView,
   type HrisNpdPanelProps,
   type HrisNpdSaveProps,
   type HrisNpdStep,
 } from '@/components/payroll/HrisNpdComparison';
+import { NPD_FEED_RECHECK_MS, parseNpdFeedPayload } from '@/lib/payroll/hris-npd-feed';
 import {
   compareHrisNpd,
   DEFAULT_MATCH_TOLERANCE_CENTS,
@@ -2980,6 +2983,29 @@ export default function PayrollWizard({
     saving: boolean;
     savedJson: string | null;
   }>({ sourceFile: null, latest: { state: 'loading' }, saving: false, savedJson: null });
+  /**
+   * HRIS vs NPD — NPD's LOCKED sheets for this week (Kane, 2026-10-02: "once the values from
+   * NPD are both locked from ALL DEPT AND HSL - The values from there will automatically feed
+   * here"). Stamped with the week like `npdPaste`, so another week's lock state is never
+   * shown. `text` is the feed (`buildNpdFeedText`), present only while BOTH tabs are locked;
+   * it is then the NPD text the comparison reads, and the paste is set aside. Read through the
+   * read-only `/api/payroll-wizard/npd-feed`; never saved by the wizard (Save output stores it
+   * inside the saved output, like a paste).
+   */
+  const [npdFeed, setNpdFeed] = useState<{
+    sourceFile: string | null;
+    view: HrisNpdFeedView;
+    text: string | null;
+    refreshing: boolean;
+    lastError: string | null;
+    checkedAt: string | null;
+  }>({ sourceFile: null, view: { state: 'loading' }, text: null, refreshing: false, lastError: null, checkedAt: null });
+  /** The step while the locked sheets are the input: its own week-stamped state, opening on
+   *  the OUTPUT — the figures arrived on their own, so the mismatches show first. */
+  const [npdFeedStep, setNpdFeedStep] = useState<{ sourceFile: string | null; step: HrisNpdStep }>({
+    sourceFile: null,
+    step: 'output',
+  });
   const [pendingDisputeRows, setPendingDisputeRows] = useState<Array<{
     id: string;
     work_email: string;
@@ -10639,7 +10665,131 @@ export default function PayrollWizard({
 
   const npdPasteForThisWeek = npdPaste.sourceFile === calcSourceFile;
   const npdPasteText = npdPasteForThisWeek ? npdPaste.text : '';
-  const npdStep: HrisNpdStep = npdPasteForThisWeek ? npdPaste.step : 'input';
+  const npdPasteStep: HrisNpdStep = npdPasteForThisWeek ? npdPaste.step : 'input';
+
+  /* ── HRIS vs NPD: NPD's locked sheets feed the step (2026-10-02) ─────────────
+     When Accounting → NPD has BOTH tabs locked in for this week, their Work Email + PHP USD
+     Conversion are the NPD side, automatically; the paste is the input only until then
+     (payroll-wizard-hris-vs-npd.md § NPD's locked sheets feed the step). Checked on every
+     week change, again whenever the tab is opened, once a minute while it is open and the
+     page is visible, and on Refresh. A failed check is an error, never "not locked", and a
+     failed RE-check keeps what was read before and says so. */
+  const npdFeedRef = useRef(npdFeed);
+  useEffect(() => {
+    npdFeedRef.current = npdFeed;
+  }, [npdFeed]);
+  const npdFeedSeq = useRef(0);
+  const loadNpdFeed = React.useCallback((file: string, opts: { useKnown: boolean }) => {
+    const seq = ++npdFeedSeq.current;
+    const held = npdFeedRef.current;
+    const heldFeed =
+      held.sourceFile === file && held.view.state === 'ready' && held.view.feed && held.text != null ? held.view.feed : null;
+    const heldText = held.sourceFile === file ? held.text : null;
+    const known = opts.useKnown && heldFeed ? `&known=${heldFeed.versions.all_departments},${heldFeed.versions.hsl}` : '';
+    setNpdFeed((prev) =>
+      prev.sourceFile === file
+        ? { ...prev, refreshing: true }
+        : { sourceFile: file, view: { state: 'loading' }, text: null, refreshing: true, lastError: null, checkedAt: null },
+    );
+    void (async () => {
+      let res: Response | null = null;
+      let json: { error?: string; needsGrant?: boolean } & Record<string, unknown> = {};
+      try {
+        res = await fetch(`/api/payroll-wizard/npd-feed?sourceFile=${encodeURIComponent(file)}${known}`, { cache: 'no-store' });
+        json = (await res.json().catch(() => ({}))) as typeof json;
+      } catch {
+        res = null;
+      }
+      // Only the newest check may land: a week switch or a Refresh supersedes this one.
+      if (seq !== npdFeedSeq.current) return;
+      const fail = (message: string, needsGrant: boolean) =>
+        setNpdFeed((prev) => {
+          if (prev.sourceFile !== file) return prev;
+          // A failed RE-check never throws away what was read: it says so beside it.
+          if (prev.view.state === 'ready') return { ...prev, refreshing: false, lastError: message };
+          return { sourceFile: file, view: { state: 'error', message, needsGrant }, text: null, refreshing: false, lastError: null, checkedAt: null };
+        });
+      if (!res) return fail('the server could not be reached.', false);
+      if (!res.ok) return fail(json.error?.trim() || `HTTP ${res.status}.`, res.status === 403 && json.needsGrant === true);
+      const payload = parseNpdFeedPayload(json);
+      if (!payload) return fail('its reply could not be read.', false);
+      const checkedAt = new Date().toISOString();
+      if (payload.feed === 'unchanged') {
+        // Still locked at exactly the versions held. If they are somehow not held, read it whole.
+        if (
+          !heldFeed ||
+          heldFeed.versions.all_departments !== (payload.tabs.all_departments as { version: number }).version ||
+          heldFeed.versions.hsl !== (payload.tabs.hsl as { version: number }).version
+        ) {
+          loadNpdFeed(file, { useKnown: false });
+          return;
+        }
+        setNpdFeed((prev) =>
+          prev.sourceFile === file
+            ? { ...prev, view: { state: 'ready', week: payload.week, tabs: payload.tabs, feed: heldFeed }, refreshing: false, lastError: null, checkedAt }
+            : prev,
+        );
+        return;
+      }
+      const feed = payload.feed;
+      setNpdFeed({
+        sourceFile: file,
+        view: {
+          state: 'ready',
+          week: payload.week,
+          tabs: payload.tabs,
+          feed: feed ? { versions: feed.versions, linesBySheet: feed.linesBySheet, usWorkersRows: feed.usWorkersRows } : null,
+        },
+        text: feed ? feed.text : null,
+        refreshing: false,
+        lastError: null,
+        checkedAt,
+      });
+      // Newly arrived (or re-locked) NPD figures open a fresh output, the way Load output does.
+      if (feed && feed.text !== heldText) {
+        setNpdFeedStep({ sourceFile: file, step: 'output' });
+        setHrisNpdSearch('');
+        setHrisNpdFilter('all');
+      }
+    })();
+  }, []);
+  const hrisNpdOpen = currentStep === 7 && validationSection === 'hris_vs_npd';
+  useEffect(() => {
+    if (!calcSourceFile) return;
+    const file = calcSourceFile;
+    loadNpdFeed(file, { useKnown: true });
+    if (!hrisNpdOpen) return;
+    const recheck = () => {
+      if (document.visibilityState === 'visible') loadNpdFeed(file, { useKnown: true });
+    };
+    const id = window.setInterval(recheck, NPD_FEED_RECHECK_MS);
+    document.addEventListener('visibilitychange', recheck);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', recheck);
+    };
+  }, [calcSourceFile, hrisNpdOpen, loadNpdFeed]);
+
+  const npdFeedForThisWeek = calcSourceFile != null && npdFeed.sourceFile === calcSourceFile;
+  const npdFeedView: HrisNpdFeedView = npdFeedForThisWeek ? npdFeed.view : { state: 'loading' };
+  /** The locked sheets' text, only while BOTH NPD tabs are locked for this week. */
+  const npdFeedText = npdFeedForThisWeek && npdFeedView.state === 'ready' && npdFeedView.feed ? npdFeed.text : null;
+  const npdFeedActive = npdFeedText != null;
+  const npdFeedStepNow: HrisNpdStep = npdFeedStep.sourceFile === calcSourceFile ? npdFeedStep.step : 'output';
+  const npdStep: HrisNpdStep = npdFeedActive ? npdFeedStepNow : npdPasteStep;
+  const hrisNpdFeedProps = useMemo<HrisNpdFeedProps>(
+    () => ({
+      view: npdFeedView,
+      refreshing: npdFeedForThisWeek && npdFeed.refreshing,
+      lastError: npdFeedForThisWeek ? npdFeed.lastError : null,
+      checkedAt: npdFeedForThisWeek ? npdFeed.checkedAt : null,
+      onRefresh: () => {
+        if (calcSourceFile) loadNpdFeed(calcSourceFile, { useKnown: false });
+      },
+    }),
+    [npdFeedView, npdFeedForThisWeek, npdFeed.refreshing, npdFeed.lastError, npdFeed.checkedAt, calcSourceFile, loadNpdFeed],
+  );
+
   const setNpdPasteText = React.useCallback(
     (text: string) =>
       setNpdPaste((prev) => ({
@@ -10651,21 +10801,30 @@ export default function PayrollWizard({
     [calcSourceFile],
   );
   const setNpdStep = React.useCallback(
-    (step: HrisNpdStep) =>
+    (step: HrisNpdStep) => {
+      // The step of whichever input is in use: the locked sheets keep their own.
+      if (npdFeedActive) {
+        setNpdFeedStep({ sourceFile: calcSourceFile, step });
+        return;
+      }
       setNpdPaste((prev) =>
         prev.sourceFile === calcSourceFile
           ? { ...prev, step }
           : { sourceFile: calcSourceFile, text: '', step: 'input' },
-      ),
-    [calcSourceFile],
+      );
+    },
+    [calcSourceFile, npdFeedActive],
   );
-  const npdPasteParse = useMemo(() => parseNpdPaste(npdPasteText), [npdPasteText]);
+  /** The NPD text the comparison READS: NPD's locked sheets while both are locked, else the
+   *  paste. One parse feeds the table, the counts, the badge and Save output. */
+  const npdSourceText = npdFeedText ?? npdPasteText;
+  const npdParse = useMemo(() => parseNpdPaste(npdSourceText), [npdSourceText]);
 
   const hrisNpdComparison = useMemo(
     () =>
       compareHrisNpd({
         hrisRows: npdHrisRows,
-        npdRows: npdPasteParse.rows,
+        npdRows: npdParse.rows,
         fxRate: usdToPhpRate,
         hrisState: hrisNpdUsdState,
         unavailableSources: PAY_STUB_SOURCE_KEYS.filter((k) => paystubSourceStates[k] === 'unavailable'),
@@ -10677,7 +10836,7 @@ export default function PayrollWizard({
       }),
     [
       npdHrisRows,
-      npdPasteParse.rows,
+      npdParse.rows,
       usdToPhpRate,
       hrisNpdUsdState,
       paystubSourceStates,
@@ -10702,11 +10861,13 @@ export default function PayrollWizard({
     () =>
       buildHrisNpdSnapshot({
         comparison: hrisNpdComparison,
-        parse: npdPasteParse,
-        pasteText: npdPasteText,
+        parse: npdParse,
+        // The text the NPD side was read from — the locked sheets' feed or the paste. The
+        // server re-derives the NPD side from it, and proves a feed against the sheets.
+        pasteText: npdSourceText,
         fxRate: usdToPhpRate,
       }),
-    [hrisNpdComparison, npdPasteParse, npdPasteText, usdToPhpRate],
+    [hrisNpdComparison, npdParse, npdSourceText, usdToPhpRate],
   );
   const npdSaveForThisWeek = calcSourceFile != null && npdSave.sourceFile === calcSourceFile;
 
@@ -10775,11 +10936,19 @@ export default function PayrollWizard({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sourceFile: file, snapshot }),
         });
-        const out = (await res.json().catch(() => ({}))) as { latest?: unknown; unchanged?: boolean; error?: string };
+        const out = (await res.json().catch(() => ({}))) as {
+          latest?: unknown;
+          unchanged?: boolean;
+          error?: string;
+          npdChanged?: boolean;
+        };
         const meta = res.ok ? parseHrisNpdSaveMeta(out.latest) : null;
         if (!meta) {
           toast.error(out.error?.trim() || `Could not save the output (HTTP ${res.status}).`);
           settle({});
+          // NPD's locked sheets moved under this output: read them again, so the output on
+          // screen is the one that can be saved.
+          if (res.status === 409 && out.npdChanged) loadNpdFeed(file, { useKnown: false });
           return;
         }
         // The server's answer replaces the line — never an optimistic "Saved".
@@ -10794,7 +10963,7 @@ export default function PayrollWizard({
         settle({});
       }
     })();
-  }, [calcSourceFile, isReplay, hrisNpdSnapshot]);
+  }, [calcSourceFile, isReplay, hrisNpdSnapshot, loadNpdFeed]);
 
   const hrisNpdSaveProps = useMemo<HrisNpdSaveProps>(() => {
     const latest: HrisNpdSaveProps['latest'] = npdSaveForThisWeek ? npdSave.latest : { state: 'loading' };
@@ -19961,7 +20130,8 @@ export default function PayrollWizard({
         const hrisNpdPanelProps: HrisNpdPanelProps = {
           pasteText: npdPasteText,
           onPasteChange: setNpdPasteText,
-          parse: npdPasteParse,
+          parse: npdParse,
+          npdFeed: hrisNpdFeedProps,
           comparison: hrisNpdComparison,
           fxRate: usdToPhpRate,
           hrisPeople: finalPayRows.length,

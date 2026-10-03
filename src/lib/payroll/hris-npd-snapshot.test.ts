@@ -351,10 +351,18 @@ describe('the wizard', () => {
   });
 
   test('the snapshot is built from the SAME comparison and parse the table renders', () => {
+    // Since 2026-10-02 the NPD text is NPD's locked sheets when both are locked, else the
+    // paste (`npdSourceText`). ONE parse of it feeds the comparison, the panel and the save,
+    // and the saved paste_text is exactly the text that parse read.
+    assert.match(WIZARD, /const npdSourceText = npdFeedText \?\? npdPasteText;/);
+    assert.match(WIZARD, /const npdParse = useMemo\(\(\) => parseNpdPaste\(npdSourceText\), \[npdSourceText\]\);/);
+    assert.match(WIZARD, /npdRows: npdParse\.rows,/);
+    assert.match(WIZARD, /parse: npdParse,\n\s+npdFeed: hrisNpdFeedProps,/);
     assert.match(
       WIZARD,
-      /buildHrisNpdSnapshot\(\{\s*comparison: hrisNpdComparison,\s*parse: npdPasteParse,\s*pasteText: npdPasteText,\s*fxRate: usdToPhpRate,?\s*\}\)/,
+      /buildHrisNpdSnapshot\(\{\s*comparison: hrisNpdComparison,\s*parse: npdParse,(?:\s*\/\/[^\n]*)*\s*pasteText: npdSourceText,\s*fxRate: usdToPhpRate,?\s*\}\)/,
     );
+    assert.doesNotMatch(WIZARD, /parseNpdPaste\(npdPasteText\)/);
   });
 
   test('the save state rides in the ONE panel props object, so step and full screen agree', () => {
