@@ -2538,3 +2538,11 @@ every object missing, and PostgREST agrees (PGRST205). The script's default is a
 so the row stays Pending Deploy until `--apply` runs. **HSL scheduling stays open**, waiting on GYD
 (Kane). The Missing Bank Info n8n JSON was handed over (Desktop + clipboard). The re-paste stays PENDING
 until Kane does it. Open item 333.
+
+**Pass 39's 12 rows were closed BY HAND (Kane, 2026-10-02 ~21:35 EDT: *"Done"*).** He worked from
+`Monday_Close_By_Hand_2026-10-02.csv`: Status Done, Actual SP = SP, and the Completed Date listed.
+Hand edits to rows that already exist cost no API budget and cannot duplicate. So at the 00:00Z
+10-04 reset, pass 39 is a **read-back** (`verify-one` per row) before any write. Re-applying is
+idempotent, but it would spend about 36 calls re-posting evidence notes that Kane may not want. Ask
+him. Also checked that night: nothing left in Sprint 30 can close through code alone. Every
+remaining open row waits on a person or a system (item 335).
