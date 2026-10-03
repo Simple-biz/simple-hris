@@ -440,7 +440,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // approved the three Ready to Start rows only). The four Pending Deploy rows STAY in S28: their
   // code landed inside S28, and S29 attribution is Sep 15-25, so a move would put their Completed
   // Date outside their own sprint and selfcheck() would refuse to ever mark them Done.
-  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: false, sprint: 'S30' },
+  { epic: 'HRIS-14', name: 'Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports', type: 'Integration', sp: 5, done: true, sprint: 'S30' },
   { epic: 'HRIS-14', name: 'CSV imports admin tab — split of legacy Csv Imports', type: 'Feature', sp: 3, done: true, sprint: 'S19' },
   { epic: 'HRIS-14', name: 'Master-list sync race + orphaned-upload guard', type: 'Bug', sp: 3, done: true, sprint: 'S24' },
   { epic: 'HRIS-14', name: 'Webhooks admin + bank-info-missing red-alarm notify email', type: 'Integration', sp: 2, done: true, sprint: 'S25' },
@@ -1881,7 +1881,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // 3 SP: Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750 — a first pass stranded in
   // staging. The restore is BUILT and --apply is still NOT RUN, re-measured 2026-09-16 (192 rows both
   // at zero). OPEN RULING. See [[lead-gen-qc-first-pass-stranded-in-staging]].
-  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-16', name: 'Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'Critical' },
   // 2 SP Spike: the Sep 14 Carla meeting record plus four findings measured the same day — there is no
   // QC Manager role to flip on (granting `qc` makes jackie@ an OFFICER and re-deals the live week), the
   // transferred status has never once fired and cannot, an absent officer does not block the week, and
@@ -2096,7 +2096,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // nobody answers (`expired`) AND when an agent addresses it (`addressed`); naming only the first
   // understates what shipped. Kane overrode Carla's signed Decision 2 to build this first — a
   // named, dated reversal, not drift. See [[employee-support-blueprint-pending]].
-  { epic: 'HRIS-17', name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-17', name: 'Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
 
   // 5 SP: PURE MODULES AND COLUMNS, NO SCREEN. The name says "the columns behind them" rather than
   // "the triage line" on purpose: `src/components/tickets/` holds no SupportTicketsTab, so a name
@@ -2107,13 +2107,13 @@ export const PLAN_TASKS: PlanTask[] = [
   // is a 404 and not a 403, and an employee reply to a closed ticket reopens it as a CAS while a
   // staff reply does not. The staff-only trial gate Carla signed is STILL only a comment, so the
   // Help button ships to every employee.
-  { epic: 'HRIS-17', name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-17', name: 'Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
 
   // 5 SP: the 834-line staff route out of the mixed `push` commit. NAMED NARROWLY — "read and
   // triage", never "gets its API": `app/api/support/tickets/` holds route.ts ALONE, the plan's
   // `[id]/reply` route does not exist, and grep finds ZERO callers, so no staff member can answer
   // a ticket through any API and the route is dead code in production until the tab body lands.
-  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
 
   // 3 SP, a Bug because it repairs a regression a SIBLING row caused: hosting Employee Support at
   // /tickets tied the dev Kanban's rendering to a client-side roles fetch, so the Board vanished
@@ -2131,7 +2131,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // after a same-day reversal (sub-team bonus targets; Filing/Intake). One is Done on measurement
   // (the GML reconcile, both counts 1,247 on 2026-09-23); the rest wait for Kane to name them.
   { epic: 'HRIS-06', name: 'Discovery can add an external member to its KPI calculator', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Medium' },
-  { epic: 'HRIS-17', name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-17', name: 'The Support Tickets staff board renders its own queue, and staff can reply to a ticket', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-06', name: 'Edit Department manager access is scoped — one list per HSL sub-team, never one collapsed family list', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-26', name: 'The Edit Department People step moves someone as a real department transfer, never a registry note', type: 'Feature', sp: 5, done: true, sprint: 'S29', priority: 'Medium' },
   { epic: 'HRIS-06', name: 'Built-in departments can have sub-departments, HSL included — code teams pinned, data teams under hsl: labels', type: 'Feature', sp: 8, done: true, sprint: 'S29', priority: 'High' },
@@ -2196,7 +2196,7 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-26', name: 'A manager may transfer someone out of a department they also manage, and never releases their own request', type: 'Bug', sp: 3, done: true, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The support.closed CHECK widen is NOT applied (measured 2026-09-29: one Close was
   // rejected on 09-25 at 20:03Z, and 0 notifications of the type exist), and there are still 0 Support grants.
-  { epic: 'HRIS-17', name: 'Closing a Support ticket notifies the employee', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-17', name: 'Closing a Support ticket notifies the employee', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-25', name: 'The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The warning lives in the n8n workflow JSON, and the live workflow runs whatever was
   // pasted last. The re-paste is PENDING (session-log item 207). Nothing here can measure n8n.
@@ -2314,7 +2314,7 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-12', name: 'HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-15', name: 'The test suite is green again - 5,556 of 5,556 pass', type: 'Chore', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-06', name: 'Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'Critical' },
-  { epic: 'HRIS-23', name: 'rob@ keeps View on People but never sees or files Pay', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-23', name: 'rob@ keeps View on People but never sees or files Pay', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-15', name: 'Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
-  { epic: 'HRIS-11', name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-11', name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache", type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
 ];

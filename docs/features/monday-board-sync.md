@@ -2480,3 +2480,49 @@ re-synced from `ROWS`: 20 Done, 4 Pending Deploy.
 **Budget:** the 20:00 EDT `--only-new` now carries 83 rows, ~250 calls on top of the board read, the 10
 moves and Gridline's pass. That is more than pass 36's day held. The queue makes a budget death cost a
 flush, not the SP. Run the new rows first; they are first in `ROWS`.
+
+### Applied 2026-10-03 00:12-00:55Z, and pass 39 staged
+
+Kane: *"Push to monday now!"* The probe at 00:12:32Z was alive. Session `simple-hris-7c`, which wrote
+`a9119036` (Kane's word closing 77 rows), was told by message and stood down, so nothing raced.
+- **`review.mts` → `cdc14833d185`**, in the shape on record: 24 created · 83 corrected · 78 Done / 281
+  SP · 5 held. "Push to monday now!" was taken as the go, the pass 36 precedent.
+- **`apply.mts --apply --only-new` wrote 83/83** (exit 0): 24 creates, then 59 corrections. The ids are
+  in `scripts/tmp-verify-pass38.ids.json`. The values are acknowledged mutations and **not yet re-read**.
+  The new rows carry **no epic relation** until a full reconcile runs.
+- **`tmp-move-s29-open.mts --apply` moved 10/10** to Sprint 30. After it, no open HRIS plan row is filed
+  in Sprint 29.
+- **Gridline's stored pass** (`apply_pending.py`) wrote 1 create (`#13391`, id 13197648625) and 9 moves,
+  one of them the DB_TRUSTED_CONNECTION close. **Its Sprint 30 audit died on the budget** after 700
+  items (reset 00:00Z 10-04). Its `PENDING_PUSH.md` was **not** removed, because the delete was blocked
+  by the permission classifier. Kane decides; the pass is archived as
+  `passes/plan_2026-10-01_etf-s30-rollover.py`.
+
+**Pass 39, staged, 9 rows / 43 SP, all Done.** Kane: *"I want them closed!"*, then *"Close all the
+employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is
+done and robs, and etc"*. Only the rows he **named** close:
+- the five Employee Support rows
+- the Lead Gen QC row
+- the Google Sheet sync row
+- rob@ and the CEO Overview
+
+**Sprint 30 anyway is now Kane's ruling** (item 300, option b). Seven of these were coded before S30, so
+they close with `dateBasis: 'external'` on 2026-10-02, the day he confirmed them. That replaces pass
+32's keep-it-in-S29 rule for rows Kane moves himself.
+
+"Etc" was **not** read as a blanket. These stay open, and each has a step outside git:
+- Tickets emails (webhooks inactive)
+- the deletion cron (`CRON_SECRET`)
+- NPD (0 grants)
+- NPD Save (migration missing)
+- Missing Bank Info (n8n)
+- Send to OMS (no button)
+- HSL scheduling (its blocker was measured cleared; it needs his word)
+- the null-preferred spike and the backlog rate-override row (never started)
+
+**Owed at 00:00Z 10-04:**
+1. `verify-one` on the 83 + 10
+2. `review.mts` for pass 39 → hash → apply
+3. Gridline `audit_board.py --sprint "Sprint 30"`
+
+Open item 332.

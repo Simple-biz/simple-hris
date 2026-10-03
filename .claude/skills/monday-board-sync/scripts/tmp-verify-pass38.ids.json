@@ -1,0 +1,434 @@
+{
+ "pass": 38,
+ "approved": "cdc14833d185",
+ "appliedAt": "2026-10-03T00:18Z",
+ "written": [
+  {
+   "id": "13197647411",
+   "item": "[HRIS] Every Transfers list pages the whole table - HR, Accounting, Manager and the export",
+   "status": "Done"
+  },
+  {
+   "id": "13197624269",
+   "item": "[HRIS] The Payroll Wizard Validation step gets HRIS vs NPD - paste NPD's figures, match each work email to within a set number of cents, and list who is left out",
+   "status": "Done"
+  },
+  {
+   "id": "13197624270",
+   "item": "[HRIS] Non-HSL hours are priced at 2dp from the Sep 27 pay week, so a pay stub's Hours x Rate multiplies out",
+   "status": "Done"
+  },
+  {
+   "id": "12863029482",
+   "item": "[HRIS] Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
+   "status": "Pending Deploy"
+  },
+  {
+   "id": "13197629369",
+   "item": "[HRIS] Every HR tab paints from the tab cache, and the shared panels paint and then always refetch",
+   "status": "Done"
+  },
+  {
+   "id": "13197629678",
+   "item": "[HRIS] Cold Manager tabs paint from the cache, the Leaves tab included, with hire rows cached as a projection",
+   "status": "Done"
+  },
+  {
+   "id": "13197618848",
+   "item": "[HRIS] Every Notifications panel gets Unread and Need Action tiles, and every card carries an Eastern time stamp",
+   "status": "Done"
+  },
+  {
+   "id": "13197647524",
+   "item": "[HRIS] Opening HR Notifications no longer re-sends 140 onboarding notifications - the backfill asks per submission",
+   "status": "Done"
+  },
+  {
+   "id": "13197618683",
+   "item": "[HRIS] OWASP Top 10 2025 security audit of HRIS - 52 findings, 6 Critical",
+   "status": "Done"
+  },
+  {
+   "id": "13197629698",
+   "item": "[HRIS] NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week",
+   "status": "Pending Deploy"
+  },
+  {
+   "id": "13197629170",
+   "item": "[HRIS] NPD Lock in - a locked tab-week refuses every save in the database, confirmed in a modal with timestamps",
+   "status": "Done"
+  },
+  {
+   "id": "13197624276",
+   "item": "[HRIS] NPD runs the Google Sheet's own formulas, editable from a right-click",
+   "status": "Done"
+  },
+  {
+   "id": "13197619996",
+   "item": "[HRIS] NPD syncs each tab from the Google Sheet for the wizard's current week, with a progress bar and a Last synced stamp",
+   "status": "Done"
+  },
+  {
+   "id": "13197624368",
+   "item": "[HRIS] NPD opens fast - a read-only cached picture, a skeleton while it loads, and a grid that draws only the rows in view",
+   "status": "Done"
+  },
+  {
+   "id": "13197624632",
+   "item": "[HRIS] HRIS vs NPD Save output - an append-only saved version per pay week",
+   "status": "Pending Deploy"
+  },
+  {
+   "id": "13197624398",
+   "item": "[HRIS] Accounting Scoreboard in HRIS - Carla's sheet as a live board with 10 sections, a collections log and Setup, on its own domain",
+   "status": "Done"
+  },
+  {
+   "id": "13197630027",
+   "item": "[HRIS] Accounting Scoreboard Payroll Timing from the Payroll Wizard's own start, with a stop-light Overview and a phone menu",
+   "status": "Done"
+  },
+  {
+   "id": "13197624304",
+   "item": "[HRIS] Accounting Scoreboard history backfilled from Carla's sheet, with an archive page",
+   "status": "Done"
+  },
+  {
+   "id": "13197647781",
+   "item": "[HRIS] Admin Penny shows an employee's ID card - rendered by its own tool, never picked from the file list",
+   "status": "Done"
+  },
+  {
+   "id": "13197620175",
+   "item": "[HRIS] HR onboarding Bypass and Save accept data sub-teams such as hsl:attorney",
+   "status": "Done"
+  },
+  {
+   "id": "13197620252",
+   "item": "[HRIS] The test suite is green again - 5,556 of 5,556 pass",
+   "status": "Done"
+  },
+  {
+   "id": "13197647782",
+   "item": "[HRIS] Salaried pay basis - a flat weekly salary on an individual Pay Structure, dated per person",
+   "status": "Done"
+  },
+  {
+   "id": "13197635330",
+   "item": "[HRIS] rob@ keeps View on People but never sees or files Pay",
+   "status": "Pending Deploy"
+  },
+  {
+   "id": "13197620254",
+   "item": "[HRIS] Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default",
+   "status": "Done"
+  },
+  {
+   "id": "13197619918",
+   "item": "[HRIS] The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache",
+   "status": "Pending Deploy"
+  },
+  {
+   "id": "13180401736",
+   "item": "[HRIS] The HSL Branches KPI calculator can score the upcoming week",
+   "status": "Done"
+  },
+  {
+   "id": "13180407547",
+   "item": "[HRIS] The Accounting → People Pay button shows only for the CEO — the button, not the pay route",
+   "status": "Done"
+  },
+  {
+   "id": "13180416473",
+   "item": "[HRIS] Anniversary Gifts pick their gift from Gift items, items show a reference price again, and the free-form Suggestions card is gone",
+   "status": "Done"
+  },
+  {
+   "id": "13180413261",
+   "item": "[HRIS] Gift Tracker Orders — approved gifts are locked into a priced PDF invoice, and the tab badge counts the gifts still open",
+   "status": "Done"
+  },
+  {
+   "id": "13180425284",
+   "item": "[HRIS] A Gift Tracker order invoice can be deleted, and locking one shows a Creating invoice overlay",
+   "status": "Done"
+  },
+  {
+   "id": "13180440388",
+   "item": "[HRIS] The Gift Tracker Submissions tab pages at 20",
+   "status": "Done"
+  },
+  {
+   "id": "13180375319",
+   "item": "[HRIS] CEO Penny runs on Opus 5.5 with every Admin tool, and can map who holds access over whom",
+   "status": "Done"
+  },
+  {
+   "id": "13180439995",
+   "item": "[HRIS] A leaver with no master row gets termination documents from the pay ledger, never by writing a master row back, and the starting rate is optional",
+   "status": "Done"
+  },
+  {
+   "id": "13180375348",
+   "item": "[HRIS] The Payment Dispatch hero leads with the pay week — one Start/Stop control, no heading or source filename, and a finished processor shows a green check",
+   "status": "Done"
+  },
+  {
+   "id": "13180375350",
+   "item": "[HRIS] A failed pay read on Payment Dispatch shows an error instead of claiming no Hubstaff cycle was uploaded",
+   "status": "Done"
+  },
+  {
+   "id": "13180424490",
+   "item": "[HRIS] A rehire’s promote reactivates their own off-boarded master row instead of leaving them invisible, and refuses a row on a different personal email",
+   "status": "Done"
+  },
+  {
+   "id": "13180375010",
+   "item": "[HRIS] The Payment Catalog re-reads the roster on refetch, so a transfer moves the sub-team headcounts",
+   "status": "Done"
+  },
+  {
+   "id": "13180439850",
+   "item": "[HRIS] A Personal Email cell holding a name instead of an address no longer wins paystub delivery, and five of the six paystubs it blocked are sent",
+   "status": "Done"
+  },
+  {
+   "id": "13180401754",
+   "item": "[HRIS] Employees can no longer pick their sending bank — only Accounting sets it, and the approval queue is retired",
+   "status": "Done"
+  },
+  {
+   "id": "13180416945",
+   "item": "[HRIS] The Employee Profile puts the ID card beside the information, matches the Overview navy in dark mode, and drops the Selected channel line",
+   "status": "Done"
+  },
+  {
+   "id": "13180401757",
+   "item": "[HRIS] A manager may transfer someone out of a department they also manage, and never releases their own request",
+   "status": "Done"
+  },
+  {
+   "id": "13180425705",
+   "item": "[HRIS] The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry",
+   "status": "Done"
+  },
+  {
+   "id": "13180384960",
+   "item": "[HRIS] The People Bank changes feed filters by bank type",
+   "status": "Done"
+  },
+  {
+   "id": "13180424282",
+   "item": "[HRIS] The Current Banks Who banks here list has unique row keys",
+   "status": "Done"
+  },
+  {
+   "id": "13180425766",
+   "item": "[HRIS] The Start Processing peer modal names who started it, and the cue is no longer cut at 12 seconds",
+   "status": "Done"
+  },
+  {
+   "id": "13180425350",
+   "item": "[HRIS] People Search Bar — find a person by name or work email and read their bank details inline, as the first People tab",
+   "status": "Done"
+  },
+  {
+   "id": "13180393133",
+   "item": "[HRIS] The Search Bar person record gets Profile, Payroll and PAB tabs, and Payroll counts the bonuses",
+   "status": "Done"
+  },
+  {
+   "id": "13180392905",
+   "item": "[HRIS] Integrations → Data catalog — every dataset outside systems may read, may one day read, or never will",
+   "status": "Done"
+  },
+  {
+   "id": "13180413443",
+   "item": "[HRIS] HR Onboarding loads every submission and staged hire past 1,000, and splits Archived from Archived/Complete",
+   "status": "Done"
+  },
+  {
+   "id": "13180425193",
+   "item": "[HRIS] HR Onboarding All shows live submissions only, Archived gets its own pill, and the hero card and Lead Gen Bulk promote button are gone",
+   "status": "Done"
+  },
+  {
+   "id": "13180401898",
+   "item": "[HRIS] Three more readers capped at 1,000 rows now page — the work-email taken set, the New Hire Checklist and the rates sync",
+   "status": "Done"
+  },
+  {
+   "id": "13180425254",
+   "item": "[HRIS] The AI/API Team’s own managers read SP Rankings on My Team, and the Employee tab stays Kane’s",
+   "status": "Done"
+  },
+  {
+   "id": "13180417035",
+   "item": "[HRIS] My Team Appointments ranking for Lead Gen and Callback — most appointments set, with tenure",
+   "status": "Done"
+  },
+  {
+   "id": "13180393279",
+   "item": "[HRIS] My Team Rankings leaderboard for appointment teams — average appointments per day, week and month",
+   "status": "Done"
+  },
+  {
+   "id": "13180425488",
+   "item": "[HRIS] PM Team Rankings rank by bonus earned, shown as KPI items",
+   "status": "Done"
+  },
+  {
+   "id": "13180440873",
+   "item": "[HRIS] KPI Rankings for every per-person KPI-bonus department, cached per department, with Client VA order-only",
+   "status": "Done"
+  },
+  {
+   "id": "13180402109",
+   "item": "[HRIS] Rankings gets a top-3 podium, a board-shaped skeleton and search by name or work email",
+   "status": "Done"
+  },
+  {
+   "id": "13180407784",
+   "item": "[HRIS] Rankings View — one person’s KPI and ranking performance, week by week",
+   "status": "Done"
+  },
+  {
+   "id": "13180417093",
+   "item": "[HRIS] HR, QC and Accounting get KPI Rankings and View as team boards",
+   "status": "Done"
+  },
+  {
+   "id": "13180416960",
+   "item": "[HRIS] HSL sub-teams get KPI Rankings and View, ranked on the KPI Calculator’s stored bonus",
+   "status": "Done"
+  },
+  {
+   "id": "13180407728",
+   "item": "[HRIS] The Overview Payroll Notes card tracks wizard Steps 1–8, open steps first, in place of New hires and Attrition",
+   "status": "Done"
+  },
+  {
+   "id": "13180425890",
+   "item": "[HRIS] The Hi Kane payroll cycle greeting lists the unfinished wizard steps and jumps to Step N",
+   "status": "Done"
+  },
+  {
+   "id": "13180425879",
+   "item": "[HRIS] The Issues table moves smoothly, and a time-adjustment proof opens in a viewer with Next and a preview strip",
+   "status": "Done"
+  },
+  {
+   "id": "13180402552",
+   "item": "[HRIS] The Payroll Wizard’s all-uploads PAB merge is one streamed server call, byte-identical to the old result",
+   "status": "Done"
+  },
+  {
+   "id": "13180417471",
+   "item": "[HRIS] The Employee Overview PAB calendar follows a wizard PAB Period save live",
+   "status": "Done"
+  },
+  {
+   "id": "13180455871",
+   "item": "[HRIS] Every Payroll Wizard write leaves an audit row with the right actor, the Hubstaff uploader included",
+   "status": "Done"
+  },
+  {
+   "id": "13180402169",
+   "item": "[HRIS] KPI Calculator Add External Member finds people in the manager’s other departments",
+   "status": "Done"
+  },
+  {
+   "id": "13180417457",
+   "item": "[HRIS] Lead Gen can save and lock its KPI week again — the replace-set delete no longer puts every kept id in the URL",
+   "status": "Done"
+  },
+  {
+   "id": "13180402692",
+   "item": "[HRIS] Orientation on My Team pages its weeks, and each week’s people, at 10",
+   "status": "Done"
+  },
+  {
+   "id": "13180402420",
+   "item": "[HRIS] The offboarding queue dialogs render light in light mode",
+   "status": "Done"
+  },
+  {
+   "id": "13180426052",
+   "item": "[HRIS] Seven more HSL KPI branches are scored from the Payment Catalog — their hardcoded rules retired, and the Mgr column dropped",
+   "status": "Done"
+  },
+  {
+   "id": "13180402818",
+   "item": "[HRIS] KPI Calculator insight cards — department spotlight, top earner and the Sent-to-Accounting trend",
+   "status": "Done"
+  },
+  {
+   "id": "13180408309",
+   "item": "[HRIS] Carla gets a Jellyfish Jam play bubble every five active minutes",
+   "status": "Done"
+  },
+  {
+   "id": "13180407892",
+   "item": "[HRIS] The Employee KPI Bonus figures refetch when the kpi.scored toast arrives, not after a reload",
+   "status": "Done"
+  },
+  {
+   "id": "13180448063",
+   "item": "[HRIS] The Orphanage paste adds up a person’s repeated lines and prices the total once",
+   "status": "Done"
+  },
+  {
+   "id": "13180449464",
+   "item": "[HRIS] The Start Processing cue plays one minute, then fades out",
+   "status": "Done"
+  },
+  {
+   "id": "13180457217",
+   "item": "[HRIS] KPI figures are live on every dashboard — a server Broadcast from all six KPI write routes",
+   "status": "Done"
+  },
+  {
+   "id": "13180425886",
+   "item": "[HRIS] Payment Dispatch holds every pending payee under US$15.00 at Threshold on load, and says how many",
+   "status": "Done"
+  },
+  {
+   "id": "13180440813",
+   "item": "[HRIS] The Pending and Excluded queues swap their violet avatar gradient for lime → green",
+   "status": "Done"
+  },
+  {
+   "id": "13180408161",
+   "item": "[HRIS] The HSL Branches KPI Calculator gets the insight cards, and both calculators’ loading skeletons reserve the card row",
+   "status": "Done"
+  },
+  {
+   "id": "13180426436",
+   "item": "[HRIS] A received gift can no longer be flipped back, nobody records or clears their own gift, and Clear needs a written reason",
+   "status": "Done"
+  },
+  {
+   "id": "13180426438",
+   "item": "[HRIS] The Manager Bonus History tab is retired",
+   "status": "Done"
+  },
+  {
+   "id": "13180426077",
+   "item": "[HRIS] The Sep 29 docs sweep — 31 sessions documented, Termination Letters and Update Bank Info get feature docs, and the reference and UI standards catch up",
+   "status": "Done"
+  }
+ ],
+ "movedToS30": [
+  "12620595935",
+  "12620645283",
+  "12863029482",
+  "12881288126",
+  "13070861896",
+  "13070853274",
+  "13117360653",
+  "13106104113",
+  "13106102665",
+  "13106100498"
+ ]
+}
