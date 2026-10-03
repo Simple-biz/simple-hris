@@ -937,6 +937,14 @@ export const ROWS: PassRow[] = [
     shas: ["f92527b3"],
     basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:40 EDT: \"NPD - Done!\". Its blocker is MEASURED cleared: 2 active npd grants (Edit), read 2026-10-03 00:41Z, where there were 0 on 10-02. Base migration applied. Confirmed live by Kane. Every sha is on origin/main; the Completed Date is the commit date.",
   },
+  {
+    name: "The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code",
+    status: 'Done',
+    completed: '2026-10-02',
+    dateBasis: 'external',
+    shas: ["87c407ff"],
+    basis: "DONE on Kane's word. Kane, 2026-10-02 ~21:20 EDT, on the live n8n workflow: \"it already existed\", then \"udpated!\". He confirmed the Build Recipients node now runs the code with the card-safety trust note (n8n is not readable from here). The code last landed 2026-09-25 (87c407ff, on origin/main); the row is the live paste, so the Completed Date is the day Kane confirmed it, inside Sprint 30. Closes item 207.",
+  },
 ];
 
 /** Commit date of a sha, `YYYY-MM-DD`. Throws if git cannot resolve it — unverifiable is a failure. */

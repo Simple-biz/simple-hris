@@ -2200,7 +2200,7 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-25', name: 'The bank-update OTP page and its code email warn that Simple never asks for a card number, CVV or expiry', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'High' },
   // ROLLS TO S30. The warning lives in the n8n workflow JSON, and the live workflow runs whatever was
   // pasted last. The re-paste is PENDING (session-log item 207). Nothing here can measure n8n.
-  { epic: 'HRIS-25', name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code', type: 'n8n Workflow', sp: 1, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-25', name: 'The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code', type: 'n8n Workflow', sp: 1, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-19', name: 'The People Bank changes feed filters by bank type', type: 'Feature', sp: 2, done: true, sprint: 'S29', priority: 'Low' },
   { epic: 'HRIS-06', name: 'The Current Banks Who banks here list has unique row keys', type: 'Bug', sp: 1, done: true, sprint: 'S29', priority: 'Low' },
   // Supersedes the 12-second bound in the S29 row 'Start Processing plays one bounded cue…'. That row

@@ -265,7 +265,7 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
 | --- | --- | --- | --- |
 | The page | amber `CardSafetyNotice` on the email, code and edit steps (`step !== 'done'`) | *"Never share your card number, CVV or expiry date"* / *"Simple employees will never ask for these — not on this page, by email, chat or phone. If anyone does, it's a scam. We only need your account or wallet details to pay you."* | Code on `origin/main` (`d21a0a3b`, item 215); deploy unverified. `page.tsx:228, 377-401` |
 | OTP code email | amber box in the HTML, one line in the text body | *"Never share your card number, CVV or expiry date. Simple employees will never ask for them — by email, chat or phone. If anyone does, it's a scam."* | Ships with the deploy (`87c407ff`). `otp-email.ts:44, 76` |
-| Missing Bank Info email | the grey trust note in *Build Recipients*, deliberately not red | *"Simple employees will never ask for your password, a payment, or your card number, CVV or expiry date — if anyone does, it's a scam."* | **PENDING Kane:** the repo JSON is not what n8n runs until the node is re-pasted or re-imported. `bank-info-missing-notify.workflow.json:23`; [[bank-info-notify-webhook]] |
+| Missing Bank Info email | the grey trust note in *Build Recipients*, deliberately not red | *"Simple employees will never ask for your password, a payment, or your card number, CVV or expiry date — if anyone does, it's a scam."* | **Live since 2026-10-02** (Kane, 2026-10-02 ~21:20 EDT: *"it already existed"*, then *"udpated!"*): the live n8n node now runs this code. Kane's word; n8n is not readable from here. `bank-info-missing-notify.workflow.json:23`; [[bank-info-notify-webhook]] |
 
 ## Limits and expiry
 
@@ -407,8 +407,8 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
   `N8N_BANK_INFO_NOTIFY_SECRET` (pair with `REQUIRED_SECRET` in the n8n node,
   `bank-info-notify.ts:55-60`), and `NEXTAUTH_SECRET` (the pepper). The two `BANK_UPDATE_*`
   are not in `.env.example` ([system-architecture.md:406-407](../reference/system-architecture.md)).
-- **PENDING Kane: re-paste the n8n *Build Recipients* node** (item 207). Until then the Missing
-  Bank Info email does not carry the card warning.
+- **DONE 2026-10-02: the n8n *Build Recipients* node was re-pasted** (item 207; Kane, 2026-10-02 ~21:20 EDT: *"it already existed"*, then *"udpated!"*).
+  The Missing Bank Info email now carries the card warning. That rests on Kane's word, because n8n is not readable from here.
 - **Not recorded in the repo: whether `bank-payout-update.vercel.app`**, the hard-coded CTA host
   in that node, **is the `BANK_UPDATE_PUBLIC_HOST` domain.** Env values are not in the tree.
 - **Item 221 containment is Kane's click:** Supabase → Authentication → turn off new sign-ups
@@ -422,8 +422,8 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
   the `verify-otp` `reason` enumeration, the save's lock gate failing open on a read error, the
   audit row not enforced, and a save landing after the person left mid-session. Plus the prefill
   hazard for item 221's fix order. None is fixed.
-- **207** (Sep 23 log): n8n re-paste PENDING. Page and OTP email code pushed (item 215), deploy
-  unverified.
+- **207** (Sep 23 log): n8n re-paste DONE 2026-10-02 on Kane's word. Page and OTP email code pushed
+  (item 215), deploy unverified.
 - **221** (Sep 25 log): OPEN CRITICAL, anon key reads `employee_ids`. This page adds one hazard
   to its fix order (§Security notes, second bullet).
 - **182** (Sep 16 log): the alternate-work-email gap, still unchecked on this flow (rule 3).
