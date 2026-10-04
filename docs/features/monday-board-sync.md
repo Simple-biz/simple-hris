@@ -2546,3 +2546,42 @@ Hand edits to rows that already exist cost no API budget and cannot duplicate. S
 idempotent, but it would spend about 36 calls re-posting evidence notes that Kane may not want. Ask
 him. Also checked that night: nothing left in Sprint 30 can close through code alone. Every
 remaining open row waits on a person or a system (item 335).
+
+### 2026-10-04 — the hand close made 11 duplicates; fixed, pass 39 applied, verified
+
+Kane: *"Check our latest sprint 30 Ive done something by hand please fix anyt mistakes"*, then
+*"go run it"* and *"if there are duplicates make sure the big one is remained"*. Session `334b41c6`.
+The budget was alive at 23:00Z.
+
+**What the hand close did.** At 2026-10-03 00:57-00:58Z, **11 NEW items** were created with the exact
+names of existing rows. That was `Monday_Close_By_Hand_2026-10-02.csv` pasted as new items, not used as
+a guide for editing. Two of the copies were wrong:
+- the triage API copy had 8/8 SP against the plan's 5
+- the "reaches the employee" copy was blank, with Type Chore
+
+None carried a priority, an epic or evidence. Meanwhile 8 originals stayed Pending Deploy or Ready to
+Start. Live chat was Done with no date, and HRIS vs NPD Save had its Actual SP and date but was still
+Pending Deploy. Item 338's screenshot finding was this half-state. **Lesson:** never hand Kane a CSV of
+rows that already exist. Monday's paste creates new items, and a byte-identical duplicate name shadows
+the original in the reconciler (`apply.mts` refuses the ambiguous target). Give him a list to edit, or
+run the API.
+
+**Fix (all read back):**
+1. **Archived the 11 copies** (restorable for 30 days). Each was re-read first and refused unless it
+   was created 10-03 00:5x, its name equalled its original's, and the original was active in S30. The
+   log is in `scripts/tmp-archive-dupes-2026-10-04.json`. Every original was kept, because it holds
+   the history and evidence.
+2. **"Keep the big one" (Kane):** the only pair where the copy was bigger was the triage API row (8 vs
+   5). It is **re-scored 5 → 8 in the plan**, as Kane's ruling, and its Estimated SP was written to 8.
+   The original still holds the row.
+3. **Pass 39 applied**, hash `eccfc62d414c`, `--only-new`: 13/13 corrected, 9 status transitions, 44
+   SP newly Done.
+4. Gridline `#12981` was in the S30 group with a Backlog label. It is now labelled Sprint 30.
+
+**Read back** (two group reads, no full-board page): S30 = **48 HRIS rows, 0 duplicates**. Every plan
+row has the right Status, Est/Actual SP and Completed Date. The 16 Gridline rows are all labelled Sprint
+30, and S29 has no unfinished HRIS row. **One difference is left, and it is Kane's to settle:** he
+closed *Tickets board notifies the requester* (12881288126) by hand on 2026-10-02, but `ticket_replied`
+and `ticket_moved` are still `active=false` with an EMPTY url (re-measured 23:0xZ 10-04; config last
+saved 09-12). He either keeps it Done, on the in-app leg, which makes the plan `done: true`, or it goes
+back to Pending Deploy. Item 341.

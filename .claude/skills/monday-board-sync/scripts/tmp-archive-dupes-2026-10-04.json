@@ -1,0 +1,68 @@
+[
+ {
+  "copy": "13197699751",
+  "orig": "12620595935",
+  "name": "[HRIS] Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197711782",
+  "orig": "12863029482",
+  "name": "[HRIS] Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197701867",
+  "orig": "13070853274",
+  "name": "[HRIS] Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197679079",
+  "orig": "13106100498",
+  "name": "[HRIS] The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197711650",
+  "orig": "13106102665",
+  "name": "[HRIS] Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197701854",
+  "orig": "13117360653",
+  "name": "[HRIS] The Support Tickets staff board renders its own queue, and staff can reply to a ticket",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197700041",
+  "orig": "13180401801",
+  "name": "[HRIS] The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197701859",
+  "orig": "13180440232",
+  "name": "[HRIS] Closing a Support ticket notifies the employee",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197711772",
+  "orig": "13197619918",
+  "name": "[HRIS] The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197679194",
+  "orig": "13197629698",
+  "name": "[HRIS] NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week",
+  "archived": "archived"
+ },
+ {
+  "copy": "13197699775",
+  "orig": "13197635330",
+  "name": "[HRIS] rob@ keeps View on People but never sees or files Pay",
+  "archived": "archived"
+ }
+]

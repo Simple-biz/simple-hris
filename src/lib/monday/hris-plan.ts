@@ -2113,7 +2113,9 @@ export const PLAN_TASKS: PlanTask[] = [
   // triage", never "gets its API": `app/api/support/tickets/` holds route.ts ALONE, the plan's
   // `[id]/reply` route does not exist, and grep finds ZERO callers, so no staff member can answer
   // a ticket through any API and the route is dead code in production until the tab body lands.
-  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  // Re-scored 5 → 8 by Kane, 2026-10-04 ("make sure the big one is remained"): his hand-made duplicate
+  // carried 8 SP; the duplicate was archived and the original keeps the bigger score.
+  { epic: 'HRIS-17', name: 'The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
 
   // 3 SP, a Bug because it repairs a regression a SIBLING row caused: hosting Employee Support at
   // /tickets tied the dev Kanban's rendering to a client-side roles fetch, so the Board vanished
