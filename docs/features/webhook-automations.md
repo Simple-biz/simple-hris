@@ -131,6 +131,16 @@ once-per-anything claim: every employee-filed COE sends one email. It adds `requ
 `PROTECTED_PAYLOAD_KEYS`, and its payload never carries a pay figure. Full rules:
 [coe-request-notify.md](./coe-request-notify.md).
 
+### Edits apply only to a URL set on the card (2026-10-05)
+
+`resolveWebhookDelivery` returns the saved `recipients` / `payload_overrides` **only when the URL
+comes from the same `webhooks.config` entry**. A URL from an env var (or a legacy key) carries none,
+so that path mails the code defaults whatever the editor shows. The dialog now says so: when it is
+posting to an env URL (badge **Env URL**) it shows an amber *"Your edits here are not applied yet"*
+note above Recipients. `payment_cycle_complete` and `coe_request_notify` still have an env fallback
+and so still have this gap (Open items 352, not changed here). `mesa_request_notify` has **no** env
+fallback, so its edits always apply.
+
 ### `mesa_request_notify` — the third one (2026-10-05)
 
 Same shape as the COE one: a **fixed default** (carla@simple.biz + april@simple.biz), "Default ±

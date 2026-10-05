@@ -9,7 +9,12 @@ import {
   buildMesaRequestPayload,
   isMesaNotifyRequestType,
 } from './request-notify-payload';
-import { PROTECTED_PAYLOAD_KEYS, WEBHOOK_AUTOMATIONS } from '@/lib/webhooks/webhook-config';
+import {
+  PROTECTED_PAYLOAD_KEYS,
+  WEBHOOK_AUTOMATIONS,
+  applyRecipientOverride,
+  validateAutomationConfig,
+} from '@/lib/webhooks/webhook-config';
 
 const row = {
   id: '11111111-2222-4333-8444-555555555555',
@@ -139,5 +144,72 @@ describe('the one trigger', () => {
     // The email body is fixed in the workflow and carries no money either.
     assert.equal(wf.includes('amount_needed'), false);
     assert.equal(wf.includes('explanation'), false);
+  });
+});
+
+// Kane, 2026-10-05: "make sure that in ADMIN we can edit the recipients". The
+// editor saves an override on the slug's webhooks.config entry; the notifier runs
+// the SAME applyRecipientOverride over the SAME defaults and builds the payload
+// from the result. These pin that chain, and that nothing can route around it.
+describe('recipients edited in Admin → Webhooks are the ones mailed', () => {
+  const recipientsFor = (override: unknown) => {
+    const v = validateAutomationConfig({ recipients: override, payload_overrides: null });
+    assert.ok(v.ok, JSON.stringify(v));
+    const { effective } = applyRecipientOverride(MESA_REQUEST_DEFAULT_RECIPIENTS, v.config.recipients);
+    return (buildMesaRequestPayload({ row, recipients: effective }).recipients as { email: string }[]).map(
+      (r) => r.email,
+    );
+  };
+
+  test('no edit = the two defaults', () => {
+    const { effective } = applyRecipientOverride(MESA_REQUEST_DEFAULT_RECIPIENTS, null);
+    assert.deepEqual(effective.map((r) => r.email), ['carla@simple.biz', 'april@simple.biz']);
+  });
+
+  test('Default ± changes: remove one default, add someone else', () => {
+    assert.deepEqual(
+      recipientsFor({ mode: 'role', add: ['Maya@Simple.biz'], remove: ['carla@simple.biz'], custom: [] }),
+      ['april@simple.biz', 'maya@simple.biz'],
+    );
+  });
+
+  test('Fixed list replaces the defaults outright', () => {
+    assert.deepEqual(
+      recipientsFor({ mode: 'custom', add: [], remove: [], custom: ['jane@simple.biz'] }),
+      ['jane@simple.biz'],
+    );
+  });
+
+  test('removing every default leaves nobody — the notifier refuses rather than sending empty', () => {
+    assert.deepEqual(
+      recipientsFor({ mode: 'role', add: [], remove: ['carla@simple.biz', 'april@simple.biz'], custom: [] }),
+      [],
+    );
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/mesa/request-notify.ts'), 'utf8');
+    assert.match(src, /effective\.length === 0/);
+    assert.match(src, /reason: "no_recipients"/);
+  });
+
+  test('the only URL source is the Admin card — an env URL would drop the edits', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/mesa/request-notify.ts'), 'utf8');
+    assert.match(src, /resolveWebhookDelivery\(MESA_REQUEST_NOTIFY_SLUG\)/);
+    assert.equal(src.includes('envVars'), false);
+    assert.equal(src.includes('N8N_MESA_REQUEST_NOTIFY_WEBHOOK_URL'), false);
+    // The send path applies the saved override to the defaults, not a fixed list.
+    assert.match(src, /applyRecipientOverride\(defaults, delivery\.recipients\)/);
+  });
+
+  test('the Admin editor serves this slug (descriptor + runtime), so the card offers Open automation', () => {
+    const route = fs.readFileSync(path.join(process.cwd(), 'app/api/admin/webhooks/automation/route.ts'), 'utf8');
+    assert.match(route, /\[MESA_REQUEST_NOTIFY_SLUG\]: \{/);
+    assert.match(route, /defaults: listMesaRequestDefaultRecipients/);
+    const card = fs.readFileSync(path.join(process.cwd(), 'src/components/admin/AdminWebhooks.tsx'), 'utf8');
+    assert.match(card, /slug: 'mesa_request_notify'/);
+  });
+
+  test('the editor warns when an env URL means its edits are not applied', () => {
+    const dialog = fs.readFileSync(path.join(process.cwd(), 'src/components/admin/WebhookAutomationDialog.tsx'), 'utf8');
+    assert.match(dialog, /status === 'env' && \(/);
+    assert.match(dialog, /Your edits here are not applied yet/);
   });
 });

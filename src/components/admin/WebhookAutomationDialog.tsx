@@ -311,6 +311,22 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
               <p className="mt-1 leading-relaxed">{data.descriptor.trigger}</p>
             </div>
 
+            {/* resolveWebhookDelivery applies the saved recipients + payload keys only
+                when the URL comes from THIS card. An env-var URL carries none, so the
+                code defaults are mailed whatever this editor says — say so, rather
+                than show a list that isn't the one being sent (2026-10-05). */}
+            {status === 'env' && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+                <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <strong className="font-semibold">Your edits here are not applied yet.</strong> This
+                  automation is posting to a URL from a server environment variable, and that path mails
+                  the default recipients. Paste the webhook URL on this card and switch it Active, and the
+                  list below becomes the one that is mailed.
+                </span>
+              </div>
+            )}
+
             <div className="grid gap-5 lg:grid-cols-2">
               {/* Recipients */}
               <section className="space-y-3">

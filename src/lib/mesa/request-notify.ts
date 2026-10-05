@@ -30,11 +30,18 @@ import {
  * is imported.
  */
 
-/** Admin → Webhooks slug first, env fallback. `null` = not wired up yet. */
+/**
+ * Admin → Webhooks slug ONLY — deliberately no env fallback. `null` = not wired up yet.
+ *
+ * The recipients are edited in Admin → Webhooks → Open automation and saved on the
+ * slug's `webhooks.config` entry. `resolveWebhookDelivery` applies those edits only
+ * when the URL also comes from that entry: an env-var URL carries no overrides, so
+ * the email would go to the code defaults while the editor showed the edited list
+ * (Kane, 2026-10-05: "make sure that in ADMIN we can edit the recipients"). With the
+ * card as the only source, an edited list is always the list that is mailed.
+ */
 export function resolveMesaRequestDelivery() {
-  return resolveWebhookDelivery(MESA_REQUEST_NOTIFY_SLUG, {
-    envVars: ["N8N_MESA_REQUEST_NOTIFY_WEBHOOK_URL"],
-  });
+  return resolveWebhookDelivery(MESA_REQUEST_NOTIFY_SLUG);
 }
 
 /**

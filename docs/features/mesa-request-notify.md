@@ -58,10 +58,25 @@ with the member's balance, in the HRIS.
 
 A department key is sent as its label (`hsl:case_managers` → `HSL — Case Managers`), never the slug.
 
-## Recipients: fixed defaults, not a role
+## Recipients: fixed defaults, edited in Admin
 
-`MESA_REQUEST_DEFAULT_RECIPIENTS = [carla@simple.biz, april@simple.biz]`. The editor works exactly
-as it does for the COE email:
+`MESA_REQUEST_DEFAULT_RECIPIENTS = [carla@simple.biz, april@simple.biz]`. Kane, 2026-10-05: *"make
+sure that in ADMIN we can edit the recipients"*.
+
+**To change who is mailed:** Admin → Webhooks & Integrations → Webhooks → **MESA Request → Notify
+Accounting (n8n)** → **Open automation** → Recipients → **Save**. The card and its Open automation
+button are there even before a URL is pasted, and a save made then is kept on the slug's entry
+(inactive) and applies as soon as the URL is switched on. Saving is admin-only
+(`requireAdminSession`) and audited `webhook.automation_updated`.
+
+**The Admin card is the ONLY URL source — there is no env fallback.** `resolveWebhookDelivery`
+applies the saved recipients only when the URL comes from that same `webhooks.config` entry; a URL
+from an env var carries no overrides, so the email would go to carla@ + april@ while the editor
+showed the edited list. `resolveMesaRequestDelivery` therefore passes no `envVars`, and a test fails
+if one is added. The COE and celebration automations still have an env fallback with this gap (Open
+items 352); the editor now says so whenever it is in play (*"Your edits here are not applied yet"*).
+
+The editor works exactly as it does for the COE email:
 
 - The first mode reads **Default ± changes**. "Remove" crosses a default out (it stays visible,
   struck through, with a restore button), and "add" mails extra people. **Fixed list** replaces the
@@ -106,8 +121,8 @@ refused. **It has not run inside n8n.**
    Attach the **hris@simple.biz** Gmail OAuth2 credential to **Send MESA Alert (Gmail · hris@simple.biz)**;
    that account is the sender. Then Activate.
 2. HRIS: Admin → Webhooks & Integrations → Webhooks → **MESA Request → Notify Accounting (n8n)**.
-   Paste the production webhook URL, toggle Active, then Save. Env fallback:
-   `N8N_MESA_REQUEST_NOTIFY_WEBHOOK_URL`.
+   Paste the production webhook URL, toggle Active, then Save. **There is no env fallback**: the card
+   is the only place the URL may come from, so the recipients edited there are the ones mailed.
 3. Check it: open the card's **Open automation**. carla@ and april@ should be listed under "default".
    Click **Send test run to me**; a `[TEST RUN]` email should arrive from hris@simple.biz.
 
