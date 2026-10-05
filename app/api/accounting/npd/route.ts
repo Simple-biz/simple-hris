@@ -5,6 +5,7 @@ import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureAccess, requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { isNpdSheetKind } from '@/lib/npd/columns';
 import { recomputeSheet } from '@/lib/npd/formulas';
+import { chunkNpdRows, encodeNpdStreamLine, type NpdStreamLine } from '@/lib/npd/load-stream';
 import { isSundayIso, removedRows, rowForAudit, validateLockBody, validateSaveBody } from '@/lib/npd/sheet';
 import { resolveCurrentWeek } from '@/lib/payroll/payroll-readiness';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
@@ -53,9 +54,24 @@ function failed(f: NpdFailure) {
   return NextResponse.json({ error: f.error, missing: f.missing }, { status: f.missing ? 503 : 500, headers: NO_STORE });
 }
 
+/** The streamed sheet read (src/lib/npd/load-stream.ts). */
+const NDJSON_HEADERS = {
+  'Content-Type': 'application/x-ndjson; charset=utf-8',
+  'Cache-Control': 'no-store',
+  // Defensive: some proxies buffer streamed responses without this (payment-catalog/departments does the same).
+  'X-Accel-Buffering': 'no',
+};
+
 /**
- * GET ?sheet=hsl&week=2026-09-20 → that sheet, whole.
- * GET ?list=weeks               → every tab + week that has a sheet.
+ * GET ?sheet=hsl&week=2026-09-20 → that sheet, whole, STREAMED as NDJSON (load-stream.ts),
+ *                                 so the loading card can say what is really happening.
+ * GET ?list=weeks               → every tab + week that has a sheet (plain JSON).
+ *
+ * The sheet's header is read BEFORE the stream starts, while a clean status is still
+ * possible: a missing table is a 503 and a failed read a 500, as before. Then the stream
+ * reports each real step (attempt N's header, the rows read, a retry when a save landed
+ * mid-read), then the consistent sheet, its rows in lines of 50, and `end` with the count.
+ * A failure after that point is an `error` line. The browser refuses anything partial.
  */
 export async function GET(req: Request) {
   const authz = await requireFeatureAccess('accounting', 'npd', 'view');
@@ -77,24 +93,71 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'week must be a Sunday (YYYY-MM-DD)' }, { status: 400 });
   }
 
-  const r = await readNpdSheet(sheet, week);
-  if (!r.ok) return failed(r);
-  return NextResponse.json(
-    {
-      sheet,
-      week,
-      version: r.meta.version,
-      rowCount: r.meta.rowCount,
-      updatedAt: r.meta.updatedAt,
-      updatedBy: r.meta.updatedBy,
-      lockedAt: r.meta.lockedAt,
-      lockedBy: r.meta.lockedBy,
-      usdPerPhp: r.meta.usdPerPhp,
-      columnFormulas: r.meta.columnFormulas,
-      rows: r.rows,
+  const head = await readNpdSheetMeta(sheet, week);
+  if (!head.ok) return failed(head);
+  const first = head.meta;
+
+  const encoder = new TextEncoder();
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const emit = (line: NpdStreamLine) => {
+        if (cancelled) return;
+        try {
+          controller.enqueue(encoder.encode(encodeNpdStreamLine(line)));
+        } catch {
+          cancelled = true; // the browser went away (switched week, closed the page)
+        }
+      };
+      try {
+        emit({ type: 'header', attempt: 1, version: first.version, rowCount: first.rowCount });
+        const r = await readNpdSheet(sheet, week, {
+          first,
+          onProgress: (p) =>
+            emit(
+              p.step === 'header'
+                ? { type: 'header', attempt: p.attempt, version: p.version, rowCount: p.rowCount }
+                : p.step === 'read'
+                  ? { type: 'read', attempt: p.attempt, rows: p.rows }
+                  : { type: 'retry', attempt: p.attempt },
+            ),
+        });
+        if (!r.ok) {
+          emit({ type: 'error', error: r.error, missing: r.missing });
+          return;
+        }
+        emit({
+          type: 'sheet',
+          sheet,
+          week,
+          version: r.meta.version,
+          rowCount: r.meta.rowCount,
+          updatedAt: r.meta.updatedAt,
+          updatedBy: r.meta.updatedBy,
+          lockedAt: r.meta.lockedAt,
+          lockedBy: r.meta.lockedBy,
+          usdPerPhp: r.meta.usdPerPhp,
+          columnFormulas: r.meta.columnFormulas,
+          rows: r.rows.length,
+        });
+        for (const chunk of chunkNpdRows(r.rows)) emit({ type: 'rows', rows: chunk });
+        emit({ type: 'end', rows: r.rows.length });
+      } catch (e) {
+        emit({ type: 'error', error: e instanceof Error ? e.message : 'Could not load the sheet', missing: false });
+      } finally {
+        try {
+          if (!cancelled) controller.close();
+        } catch {
+          /* already closed */
+        }
+      }
     },
-    { headers: NO_STORE },
-  );
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  return new Response(stream, { headers: NDJSON_HEADERS });
 }
 
 /**

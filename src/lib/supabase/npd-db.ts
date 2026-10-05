@@ -18,6 +18,7 @@
  */
 import { classifyTableProbe } from '@/lib/db/probe-verdict';
 import { NPD_ROW_TABLES, type NpdSheetKind } from '@/lib/npd/columns';
+import { NPD_READ_ATTEMPTS } from '@/lib/npd/load-progress';
 import { fromDbRecord, toDbRecords, type NpdRow } from '@/lib/npd/sheet';
 import { createSupabaseServiceRoleClient } from './server';
 import { selectAllPaged } from './select-all-paged';
@@ -130,37 +131,56 @@ export async function readNpdSheetMeta(
   return { ok: true, meta: data ? metaOf(data as HeaderRow) : EMPTY_META };
 }
 
+/** What `readNpdSheet` reports as it goes (NPD's loading card, src/lib/npd/load-stream.ts). */
+export type NpdReadProgress =
+  | { step: 'header'; attempt: number; version: number; rowCount: number }
+  | { step: 'read'; attempt: number; rows: number }
+  | { step: 'retry'; attempt: number };
+
 /**
  * One sheet, whole. The header and the rows are two requests, so a save landing
  * between them could pair version N with version N+1's rows — and the next save
  * would then be refused as a conflict the editor cannot explain. So the header
  * is read again after the rows and the read retried until the two agree.
+ *
+ * `first`: a header the caller has just read (the GET route reads it before it starts
+ * streaming, so a missing table is still a 503); attempt 1 uses it instead of reading
+ * it again. Later attempts always read their own. `onProgress` is told each step.
  */
 export async function readNpdSheet(
   sheet: NpdSheetKind,
   week: string,
+  opts: { first?: NpdSheetMeta; onProgress?: (p: NpdReadProgress) => void } = {},
 ): Promise<{ ok: true; meta: NpdSheetMeta; rows: NpdRow[] } | NpdFailure> {
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { ok: false, missing: false, error: 'Supabase client unavailable' };
   const table = NPD_ROW_TABLES[sheet];
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const before = await readNpdSheetMeta(sheet, week);
-    if (!before.ok) return before;
-    if (!before.meta.sheetId) return { ok: true, meta: before.meta, rows: [] };
-    const sheetId = before.meta.sheetId;
+  for (let attempt = 1; attempt <= NPD_READ_ATTEMPTS; attempt += 1) {
+    let beforeMeta: NpdSheetMeta;
+    if (attempt === 1 && opts.first) beforeMeta = opts.first;
+    else {
+      const before = await readNpdSheetMeta(sheet, week);
+      if (!before.ok) return before;
+      beforeMeta = before.meta;
+      if (attempt > 1) opts.onProgress?.({ step: 'header', attempt, version: beforeMeta.version, rowCount: beforeMeta.rowCount });
+    }
+    if (!beforeMeta.sheetId) return { ok: true, meta: beforeMeta, rows: [] };
+    const sheetId = beforeMeta.sheetId;
 
     const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
       // `*`: fromDbRecord reads exactly this tab's columns (columns.ts) and ignores the rest.
       supabase.from(table).select('*').eq('sheet_id', sheetId).order('row_no', { ascending: true }).range(from, to),
     );
     if (error) return failure({ message: error });
+    opts.onProgress?.({ step: 'read', attempt, rows: rows.length });
 
     const after = await readNpdSheetMeta(sheet, week);
     if (!after.ok) return after;
-    if (after.meta.version === before.meta.version) {
-      return { ok: true, meta: before.meta, rows: rows.map((r) => fromDbRecord(sheet, r)) };
+    if (after.meta.version === beforeMeta.version) {
+      return { ok: true, meta: beforeMeta, rows: rows.map((r) => fromDbRecord(sheet, r)) };
     }
+    if (attempt < NPD_READ_ATTEMPTS) opts.onProgress?.({ step: 'retry', attempt: attempt + 1 });
   }
   return { ok: false, missing: false, error: 'The sheet kept changing while it was being read. Try again.' };
 }

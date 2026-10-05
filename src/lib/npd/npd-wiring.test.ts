@@ -384,14 +384,34 @@ describe('NPD cache (Kane, 2026-10-02: "add caching on this please")', () => {
     assert.ok(hook.indexOf('void load(s);') > hook.indexOf('const cached = parseNpdSheetPayload'), 'the live read follows the seed, unconditionally');
   });
 
-  test('the cache is written from server truth only: after a load, a confirmed save, a confirmed lock', () => {
-    const calls = hook.split('writeSheetCache(s);').length - 1;
-    assert.equal(calls, 3);
+  test('the cache is written from server truth only: after a finished read, a confirmed save, a confirmed lock', () => {
+    const loader = read('src', 'components', 'npd', 'npd-sheet-loader.ts');
+    // The hook: a confirmed save and a confirmed lock, nothing else. Its load writes nothing:
+    // the loader wrote that read already (2026-10-05, so a read nobody is watching is kept too).
+    assert.equal(hook.split('writeSheetCache(s);').length - 1, 2);
     const load = hook.slice(hook.indexOf('const load = useCallback'), hook.indexOf('useEffect(() => {\n    mountedRef.current = true;\n    if (!week) return;'));
-    assert.ok(load.indexOf('writeSheetCache(s);') > load.indexOf('s.savedSettings = s.settings;'));
+    assert.ok(load.length > 0 && !/writeSheetCache|writeNpdSheetCache|setTabCache/.test(load), 'the load path writes nothing itself');
     const save = hook.slice(hook.indexOf('const saveNow = useCallback'), hook.indexOf('const scheduleSave'));
     assert.ok(save.indexOf('writeSheetCache(s);') > save.indexOf('if (!res.ok) {'), 'only after the failure branches');
-    assert.ok(!/setTabCache\(TAB_CACHE_KEYS\.npdSheet\(/.test(hook.replace(/function writeSheetCache[\s\S]*?\n}\n/, '')), 'nothing else writes a sheet');
+    const lock = hook.slice(hook.indexOf('const lock = useCallback'), hook.indexOf('const unlock = useCallback'));
+    assert.ok(lock.indexOf('writeSheetCache(s);') > lock.indexOf('if (ok || status === 423) {'), 'only once the lock is confirmed');
+    assert.match(hook, /function writeSheetCache\(s: Session\) \{\n  if \(!s\.meta \|\| !s\.saved \|\| !s\.savedSettings\) return;\n  writeNpdSheetCache\(/);
+    // The loader: exactly one write, of a WHOLE read (outcome.ok), for the viewer it was started for.
+    const calls = loader.replace(/export function writeNpdSheetCache[\s\S]*?\n}\n/, '').split('writeNpdSheetCache(').length - 1;
+    assert.equal(calls, 1);
+    const then = loader.slice(loader.indexOf('const promise = readStream('), loader.indexOf('inflight.set(key, { controller, promise });'));
+    assert.match(then, /if \(outcome\.ok\) \{\n\s+if \(identity !== null && boundAccountingCacheIdentity\(\) === identity\) writeNpdSheetCache\(sheet, week, outcome\.payload\);/);
+    // Nothing else, anywhere in NPD, writes a sheet or the sheet index.
+    const dir = path.join(root, 'src', 'components', 'npd');
+    const libDir = path.join(root, 'src', 'lib', 'npd');
+    const files = [
+      ...fs.readdirSync(dir).map((f) => path.join(dir, f)),
+      ...fs.readdirSync(libDir).filter((f) => !f.endsWith('.test.ts')).map((f) => path.join(libDir, f)),
+    ];
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n').replace(/export function writeNpdSheetCache[\s\S]*?\n}\n/, '');
+      assert.ok(!/setTabCache\(TAB_CACHE_KEYS\.npdSheet(Index)?\b/.test(src) && !/setTabCache\(key, \{\n\s+\.\.\.payload/.test(src), `${path.basename(f)} writes no sheet`);
+    }
   });
 
   test('read-only while refreshing; a failed refresh keeps the copy and says so', () => {
@@ -408,9 +428,95 @@ describe('NPD cache (Kane, 2026-10-02: "add caching on this please")', () => {
   });
 
   test('never a skip flag on NPD data, and sessionStorage only through the shared store', () => {
-    for (const f of [hook, dash, read('src', 'components', 'npd', 'NpdGoogleSheetSync.tsx')]) {
-      assert.ok(!/hasFetchedThisSession|markFetchedThisSession|localStorage/.test(f));
+    for (const f of [
+      hook,
+      dash,
+      read('src', 'components', 'npd', 'NpdGoogleSheetSync.tsx'),
+      read('src', 'components', 'npd', 'npd-sheet-loader.ts'),
+      read('src', 'components', 'npd', 'NpdLoadProgress.tsx'),
+    ]) {
+      assert.ok(!/hasFetchedThisSession|markFetchedThisSession|localStorage|indexedDB/.test(f));
     }
+  });
+});
+
+describe('NPD loading a sheet (Kane, 2026-10-05: "a loading bar modal … separate from All department and HSL … accurate")', () => {
+  const route = read('app', 'api', 'accounting', 'npd', 'route.ts');
+  const get = route.slice(route.indexOf('export async function GET'), route.indexOf('export async function PUT'));
+  const hook = read('src', 'components', 'npd', 'useNpdSheet.ts');
+  const dash = read('src', 'components', 'npd', 'NpdDashboard.tsx');
+  const loader = read('src', 'components', 'npd', 'npd-sheet-loader.ts');
+  const card = read('src', 'components', 'npd', 'NpdLoadProgress.tsx');
+
+  test('the header is read BEFORE the stream starts, so a missing table is still a 503 and a failed read a 500', () => {
+    const head = get.indexOf('const head = await readNpdSheetMeta(sheet, week);');
+    assert.ok(head > 0);
+    assert.ok(get.indexOf('if (!head.ok) return failed(head);') > head);
+    assert.ok(get.indexOf('if (!head.ok) return failed(head);') < get.indexOf('new ReadableStream'), 'refused with a status, not inside the stream');
+  });
+
+  test('the stream reports real steps only, then the consistent sheet, its rows, and the count', () => {
+    assert.match(get, /readNpdSheet\(sheet, week, \{\n\s+first,\n\s+onProgress:/, 'the steps come from the read itself');
+    const sheetLine = get.indexOf("type: 'sheet',");
+    const rowsLine = get.indexOf("emit({ type: 'rows', rows: chunk })");
+    const end = get.indexOf("emit({ type: 'end', rows: r.rows.length });");
+    assert.ok(sheetLine > get.indexOf('if (!r.ok) {') && sheetLine < rowsLine && rowsLine < end, 'no row is sent before the read is consistent');
+    assert.match(get, /return new Response\(stream, \{ headers: NDJSON_HEADERS \}\);/);
+    assert.match(route, /'Content-Type': 'application\/x-ndjson; charset=utf-8',\n\s+'Cache-Control': 'no-store',/);
+    assert.match(get, /emit\(\{ type: 'error', error: r\.error, missing: r\.missing \}\);/, 'a failed read mid-stream is an error line, never an empty sheet');
+  });
+
+  test('the browser assembles the stream fail-closed and the hook never applies part of a sheet', () => {
+    assert.match(loader, /const asm = createNpdStreamAssembler\(sheet, week\);/);
+    assert.match(loader, /const out = asm\.finish\(\);\n\s+return out\.ok \? \{ ok: true, payload: out\.payload \} : failed\(out\.error, out\.missing\);/);
+    const load = hook.slice(hook.indexOf('const load = useCallback'), hook.indexOf('// eslint-disable-next-line react-hooks/exhaustive-deps\n  }, []);', hook.indexOf('const load = useCallback')));
+    assert.ok(load.indexOf('if (!outcome.ok) {') < load.indexOf('const j = outcome.payload;'), 'a failure returns before any row is applied');
+    assert.match(load, /if \(silent\) setRefreshError\(message\);/, 'a failed refresh keeps the cached copy, read-only');
+    assert.match(load, /outcome\.aborted \? 'The read was cancelled\. Try again\.' : outcome\.error/, 'a cancelled read under a sheet on screen is a failure, never a skeleton forever');
+  });
+
+  test('"Laying out" is shown before the rows are applied, and "done" only after the grid has them', () => {
+    const load = hook.slice(hook.indexOf('const load = useCallback'));
+    const layout = load.indexOf("advanceNpdLoad(key, loadId, { kind: 'layout' });");
+    const paint = load.indexOf('await afterPaint();');
+    const apply = load.indexOf('setRowsState(padded);');
+    const ready = load.indexOf("setLoadState('ready');");
+    const done = load.indexOf("advanceNpdLoad(key, loadId, { kind: 'done' });");
+    assert.ok(layout > 0 && layout < paint && paint < apply && apply < ready && ready < done);
+  });
+
+  test('an open JOINS the read in flight for its tab × week; recovering reads are always fresh', () => {
+    assert.match(hook, /const outcome = await loadNpdSheet\(s\.sheet, s\.week, \{ fresh \}\);/);
+    const seed = hook.slice(hook.indexOf('const cached = parseNpdSheetPayload(sheet, getTabCache(cacheKey));'));
+    assert.match(seed, /void load\(s\);/, 'the open: joins');
+    assert.equal(hook.split('void load(s, true);').length - 1, 3, 'Try again, Load their version, after an unlock');
+    assert.match(loader, /if \(running && !opts\.fresh\) return running\.promise;\n\s+running\?\.controller\.abort\(\);/);
+    assert.match(hook, /const current = \(\) => live\(s\) && seq === s\.loadSeq;/, 'only the newest load of a session is applied');
+  });
+
+  test('the other tab is read ahead for the week on screen; other weeks’ reads are cancelled', () => {
+    const effect = dash.slice(dash.indexOf('// The OTHER tab, read ahead'), dash.indexOf('}, [sheet, week]);'));
+    assert.ok(effect.length > 0);
+    assert.ok(effect.indexOf('retainNpdSheetLoads([npdLoadKey(sheet, week), npdLoadKey(other, week)]);') < effect.indexOf('loadNpdSheet(other, week)'));
+    assert.match(effect, /if \(!parseNpdSheetPayload\(other, getTabCache\(TAB_CACHE_KEYS\.npdSheet\(other, week\)\)\)\) void loadNpdSheet\(other, week\);/, 'only when nothing usable is cached');
+    assert.ok(dash.indexOf('const ctl = useNpdSheet(sheet, week, canEdit);') < dash.indexOf('// The OTHER tab, read ahead'), 'after the hook, so the sheet on screen is read first');
+  });
+
+  test('each tab × week has its own card, over the skeleton, never blocking or moving the page', () => {
+    const area = dash.slice(dash.indexOf('data-testid="npd-sheet-area"'), dash.indexOf('</motion.div>', dash.indexOf('data-testid="npd-sheet-area"')));
+    assert.match(area, /<NpdLoadProgress sheet=\{sheet\} week=\{week\} loadState=\{ctl\.loadState\} \/>/);
+    assert.match(dash, /className="relative flex min-h-0 flex-1 flex-col"/);
+    assert.match(card, /const key = week \? npdLoadKey\(sheet, week\) : null;\n\s+const p = useNpdLoadProgress\(key\);/);
+    assert.match(card, /className="pointer-events-none absolute inset-x-0/);
+    assert.doesNotMatch(card, /aria-modal|<Dialog/, 'not a blocking dialog: the tabs stay usable');
+  });
+
+  test('the card only says "Loaded" for a read it showed loading, and its bar resumes, never restarts', () => {
+    assert.match(card, /!loading && loadState === 'ready' && !!p && p\.loadId === seenLoadId && \(p\.step === 'layout' \|\| p\.step === 'done'\)/);
+    assert.match(card, /a\.currentTime = Math\.max\(0, elapsed\);/);
+    // Motion that works under the global `*` transition rule: Web Animations + an inline fade.
+    assert.match(card, /style=\{\{ opacity: leaving \? 0 : 1, transitionProperty: 'opacity'/);
+    assert.doesNotMatch(card, /className="[^"]*\btransition-(opacity|all|transform)\b/);
   });
 });
 

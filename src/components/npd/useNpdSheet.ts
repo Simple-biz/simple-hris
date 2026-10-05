@@ -15,8 +15,9 @@ import {
   type NpdFormulaContext,
 } from '@/lib/npd/formulas';
 import { ensureSpareRows, trimTrailingBlankRows, type NpdRow } from '@/lib/npd/sheet';
-import { TAB_CACHE_KEYS, clearTabCache, getTabCache, readTabCacheStamp, setTabCache } from '@/lib/accounting/tab-cache';
-import { parseNpdSheetPayload, touchNpdSheetIndex, type NpdSheetPayload } from '@/lib/npd/npd-cache';
+import { TAB_CACHE_KEYS, getTabCache, readTabCacheStamp } from '@/lib/accounting/tab-cache';
+import { parseNpdSheetPayload } from '@/lib/npd/npd-cache';
+import { advanceNpdLoad, getNpdLoadProgress, loadNpdSheet, npdLoadKey, writeNpdSheetCache } from './npd-sheet-loader';
 
 /**
  * One NPD sheet (tab × pay week) on the client: load, local edits, undo/redo and
@@ -56,8 +57,14 @@ import { parseNpdSheetPayload, touchNpdSheetIndex, type NpdSheetPayload } from '
  *    read lands, so nothing can be typed, saved, locked or synced onto a copy that may
  *    be stale (`refreshing`). The live read ALWAYS runs. If it fails, the cached copy
  *    stays on screen, read-only, with the error (`refreshError`), never an empty grid.
- *    The cache is written from server truth only (`writeSheetCache`: a load, a
- *    confirmed save, a confirmed lock), never from edits that have not been saved.
+ *    The cache is written from server truth only (`writeNpdSheetCache`: a finished
+ *    read, in npd-sheet-loader.ts; a confirmed save and a confirmed lock, here through
+ *    `writeSheetCache`), never from edits that have not been saved.
+ *  - LOADING (Kane, 2026-10-05: "a loading bar modal … separate from All department and
+ *    HSL … Make sure to make it accurate"): the read itself lives in npd-sheet-loader.ts,
+ *    one per tab × week, so switching tabs never throws one away and coming back JOINS it.
+ *    Its progress (load-progress.ts) is the server's real steps; this hook adds the last
+ *    two, "laying out" (before the rows are applied) and "done" (once they are).
  *  - GOOGLE SHEET SYNC (`importSheet`): the rows a sync fetched REPLACE the target
  *    tab × week — rows, rate, and the column formulas reset to the Google Sheet's —
  *    as one undo step, saved at once through the normal save (so the removed-rows
@@ -123,6 +130,8 @@ type Session = {
   syncTag: SyncTag | null;
   /** Painted from the cache and the live read has not landed: read-only, and the load is silent. */
   cachedPaint: boolean;
+  /** Bumped by every load; only the newest one's answer is applied. */
+  loadSeq: number;
   undo: Snapshot[];
   redo: Snapshot[];
 };
@@ -130,14 +139,13 @@ type Session = {
 const keyOf = (sheet: NpdSheetKind, week: string) => `${sheet}:${week}`;
 
 /**
- * Mirror what the SERVER confirmed for this sheet into the tab cache: called only
- * after a load, a save or a lock succeeded, when `meta`, `saved` and `savedSettings`
- * are all server truth. Keeps the most recently used sheets only.
+ * Mirror what the SERVER confirmed for this sheet into the tab cache: called only after
+ * a save or a lock succeeded, when `meta`, `saved` and `savedSettings` are all server
+ * truth. (A finished read is written by the loader itself, npd-sheet-loader.ts.)
  */
 function writeSheetCache(s: Session) {
   if (!s.meta || !s.saved || !s.savedSettings) return;
-  const key = TAB_CACHE_KEYS.npdSheet(s.sheet, s.week);
-  const payload: NpdSheetPayload = {
+  writeNpdSheetCache(s.sheet, s.week, {
     version: s.meta.version,
     rowCount: s.meta.rowCount,
     updatedAt: s.meta.updatedAt,
@@ -145,13 +153,27 @@ function writeSheetCache(s: Session) {
     lockedAt: s.meta.lockedAt,
     lockedBy: s.meta.lockedBy,
     usdPerPhp: s.savedSettings.rateText.trim() === '' ? null : s.savedSettings.rateText.trim(),
-    columnFormulas: { ...s.savedSettings.columnFormulas },
-    rows: trimTrailingBlankRows(s.saved).map((r) => ({ id: r.id, values: [...r.values], overrides: [...r.overrides], formulas: { ...r.formulas } })),
-  };
-  setTabCache(key, payload);
-  const { keep, evict } = touchNpdSheetIndex(getTabCache(TAB_CACHE_KEYS.npdSheetIndex), key);
-  for (const k of evict) clearTabCache(k);
-  setTabCache(TAB_CACHE_KEYS.npdSheetIndex, keep);
+    columnFormulas: s.savedSettings.columnFormulas,
+    rows: trimTrailingBlankRows(s.saved),
+  });
+}
+
+/**
+ * Resolves after the browser has painted, so "Laying out" is on screen before the grid is
+ * built. A hidden browser tab paints no frames, so a timer resolves it there instead: a
+ * sheet that lands while you are in another tab is still applied.
+ */
+function afterPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    requestAnimationFrame(() => window.setTimeout(finish, 0));
+    window.setTimeout(finish, 120);
+  });
 }
 type PendingImport = { key: string; payload: NpdImportPayload; resolve: (r: LockResult) => void };
 
@@ -340,78 +362,70 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
   }, [saveNow]);
 
   // ── Load ────────────────────────────────────────────────────────────────
-  const load = useCallback(async (s: Session) => {
+  /**
+   * Read the sheet live and make it the session's. `fresh` = a new read, never joining
+   * one already in flight (Try again, Load their version, after an unlock).
+   */
+  const load = useCallback(async (s: Session, fresh = false) => {
     if (!live(s)) return;
     // Over a cached copy the read is silent: the copy stays painted (read-only) meanwhile.
     const silent = s.cachedPaint;
+    const seq = ++s.loadSeq;
     if (!silent) {
       setLoadState('loading');
       setLoadError(null);
     }
-    try {
-      const res = await fetch(
-        `/api/accounting/npd?sheet=${encodeURIComponent(s.sheet)}&week=${encodeURIComponent(s.week)}`,
-        { cache: 'no-store' },
-      );
-      const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      if (!live(s)) return;
-      if (!res.ok) {
-        const message = typeof j.error === 'string' ? j.error : `Could not load the sheet (${res.status})`;
-        if (silent) setRefreshError(message);
-        else {
-          setLoadError(message);
-          setLoadState(j.missing === true ? 'missing' : 'error');
-        }
-        settlePendingImport(s, { ok: false, message: 'The sheet could not be loaded, so nothing from the Google Sheet was put on it.' });
-        return;
-      }
-      const loaded = ((Array.isArray(j.rows) ? j.rows : []) as Partial<NpdRow>[]).map((r) => ({
-        id: String(r.id),
-        values: (r.values ?? []) as string[],
-        overrides: Array.isArray(r.overrides) ? r.overrides : [],
-        formulas: r.formulas && typeof r.formulas === 'object' ? r.formulas : {},
-      }));
-      const padded = ensureSpareRows(loaded, NPD_COLUMNS[s.sheet].length, newRowId);
-      s.meta = metaFrom(j);
-      s.rows = padded;
-      s.saved = padded;
-      s.settings = {
-        rateText: j.usdPerPhp === null || j.usdPerPhp === undefined ? '' : String(j.usdPerPhp),
-        columnFormulas:
-          j.columnFormulas && typeof j.columnFormulas === 'object' ? (j.columnFormulas as Record<string, string>) : {},
-      };
-      s.savedSettings = s.settings;
-      setSettingsState(s.settings);
-      s.undo = [];
-      s.redo = [];
-      s.blocked = false;
-      s.syncTag = null;
-      setMeta(s.meta);
-      setRowsState(padded);
-      syncHistory(s);
-      setConflict(null);
-      setSaveError(null);
-      setSaveState('idle');
-      setLoadState('ready');
-      s.cachedPaint = false;
-      setRefreshing(false);
-      setRefreshError(null);
-      setCachedAt(null);
-      writeSheetCache(s);
-      const pending = pendingImportRef.current;
-      if (pending && pending.key === keyOf(s.sheet, s.week)) {
-        pendingImportRef.current = null;
-        pending.resolve(applyImport(s, pending.payload));
-      }
-    } catch (e) {
-      if (!live(s)) return;
-      const message = e instanceof Error ? e.message : 'Could not load the sheet';
+    const key = npdLoadKey(s.sheet, s.week);
+    const outcome = await loadNpdSheet(s.sheet, s.week, { fresh });
+    const current = () => live(s) && seq === s.loadSeq;
+    if (!current()) return;
+    if (!outcome.ok) {
+      // A read cancelled under a sheet still on screen is still a failed read: never a skeleton forever.
+      const message = outcome.aborted ? 'The read was cancelled. Try again.' : outcome.error;
       if (silent) setRefreshError(message);
       else {
         setLoadError(message);
-        setLoadState('error');
+        setLoadState(outcome.missing ? 'missing' : 'error');
       }
       settlePendingImport(s, { ok: false, message: 'The sheet could not be loaded, so nothing from the Google Sheet was put on it.' });
+      return;
+    }
+    // The progress this read published, so "laying out" and "done" land on the same bar.
+    const loadId = getNpdLoadProgress(key)?.loadId ?? null;
+    if (!silent && loadId !== null) {
+      advanceNpdLoad(key, loadId, { kind: 'layout' });
+      await afterPaint();
+      if (!current()) return;
+    }
+    const j = outcome.payload;
+    const loaded: NpdRow[] = j.rows.map((r) => ({ id: r.id, values: [...r.values], overrides: [...r.overrides], formulas: { ...r.formulas } }));
+    const padded = ensureSpareRows(loaded, NPD_COLUMNS[s.sheet].length, newRowId);
+    s.meta = metaFrom(j as unknown as Record<string, unknown>);
+    s.rows = padded;
+    s.saved = padded;
+    s.settings = { rateText: j.usdPerPhp ?? '', columnFormulas: { ...j.columnFormulas } };
+    s.savedSettings = s.settings;
+    setSettingsState(s.settings);
+    s.undo = [];
+    s.redo = [];
+    s.blocked = false;
+    s.syncTag = null;
+    setMeta(s.meta);
+    setRowsState(padded);
+    syncHistory(s);
+    setConflict(null);
+    setSaveError(null);
+    setSaveState('idle');
+    setLoadState('ready');
+    s.cachedPaint = false;
+    setRefreshing(false);
+    setRefreshError(null);
+    setCachedAt(null);
+    if (!silent && loadId !== null) advanceNpdLoad(key, loadId, { kind: 'done' });
+    const pending = pendingImportRef.current;
+    if (pending && pending.key === keyOf(s.sheet, s.week)) {
+      pendingImportRef.current = null;
+      pending.resolve(applyImport(s, pending.payload));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -432,6 +446,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
       blocked: false,
       syncTag: null,
       cachedPaint: false,
+      loadSeq: 0,
       undo: [],
       redo: [],
     };
@@ -721,7 +736,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
 
   const reload = useCallback(() => {
     const s = sessionRef.current;
-    if (s) void load(s);
+    if (s) void load(s, true);
   }, [load]);
 
   /** Conflict → drop local edits and show what the server has. */
@@ -730,7 +745,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     if (!s) return;
     clearTimer(s);
     s.blocked = false;
-    void load(s);
+    void load(s, true);
   }, [load]);
 
   /** Conflict → save local rows over theirs, at their version. */
@@ -790,7 +805,7 @@ export function useNpdSheet(sheet: NpdSheetKind, week: string | null, canEdit: b
     const { status, ok, j } = await patchLock({ action: 'unlock', sheet: s.sheet, week: s.week, reason });
     if (ok || status === 409) {
       s.blocked = false;
-      void load(s);
+      void load(s, true);
       return ok ? { ok: true } : { ok: true, message: 'It was already unlocked.' };
     }
     return { ok: false, message: typeof j.error === 'string' ? j.error : `Unlock failed (${status})` };

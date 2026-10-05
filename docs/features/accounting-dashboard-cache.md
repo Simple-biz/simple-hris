@@ -290,9 +290,13 @@ stale paint invites typing over an old copy. Kane overturned the choice; the rea
   `useNpdSheet` paints it but leaves the session's version and saved rows unset, so nothing can be
   typed, saved, locked or synced onto it until the live read lands. A failed live read keeps the copy
   on screen, still read-only, under an amber *Not refreshed* pill, never green and never empty.
-- Written from **server truth only**: a load, a confirmed save, a confirmed lock (`writeSheetCache`,
-  test-pinned at three calls). Re-validated on read in `src/lib/npd/npd-cache.ts`, because the
-  envelope does not guarantee shape.
+- Written from **server truth only**, by ONE function (`writeNpdSheetCache`, `src/components/npd/npd-sheet-loader.ts`):
+  a finished read, a confirmed save, a confirmed lock. Since 2026-10-05 the finished read is written by
+  the loader itself, so a read of a tab nobody is looking at (the read-ahead of the other tab, or a
+  visit switched away from) is kept too, and only for the viewer it was started for. Test-pinned: one
+  call in the loader, two in the hook, and nothing else in NPD writes a sheet. Re-validated on read in
+  `src/lib/npd/npd-cache.ts`, because the envelope does not guarantee shape. Every open still reads
+  live; an open may JOIN a read in flight, never adopt a finished one.
 - **`npdWeeks`** (the week menu) and **`npdSyncWeek`** (the wizard's week and each tab's *Last
   synced*): paint, then always re-read.
 - **`npdView`**: the week NPD was left on. A UI selection like `documentsView`, re-checked as a real

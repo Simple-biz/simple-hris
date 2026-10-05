@@ -3201,10 +3201,17 @@ Route: [app/api/accounting/npd/route.ts](../../app/api/accounting/npd/route.ts).
 
 ### `GET /api/accounting/npd?sheet=all_departments|hsl&week=<Sunday>`
 
-Gate `requireFeatureAccess('accounting', 'npd', 'view')`. **200** `{ sheet, week, version, rowCount, updatedAt,
-updatedBy, lockedAt, lockedBy, usdPerPhp, columnFormulas, rows: [{ id, values: string[], overrides: string[], formulas: { key: formula } }] }`, `values` in `columns.ts` order (30 / 32 cells, `''` = empty).
-A week nobody saved is `version: 0, rows: []`. `400` bad sheet or a week that is not a Sunday. **`503 { missing: true }`
-until the migration is applied; `500` on a failed read. Neither is ever an empty sheet.** Rows are paged.
+Gate `requireFeatureAccess('accounting', 'npd', 'view')`. **Since 2026-10-05 the 200 is a STREAM**
+(`application/x-ndjson`, one JSON object per line; [load-stream.ts](../../src/lib/npd/load-stream.ts)), so NPD's loading
+card can show the read's real steps: `{type:'header', attempt, version, rowCount}` (per attempt) →
+`{type:'read', attempt, rows}` → `{type:'retry', attempt}` when a save landed mid-read → `{type:'sheet', sheet, week, version,
+rowCount, updatedAt, updatedBy, lockedAt, lockedBy, usdPerPhp, columnFormulas, rows: <count to follow>}` → `{type:'rows', rows:
+[{ id, values: string[], overrides: string[], formulas: { key: formula } }]}` (50 a line) → `{type:'end', rows}`. A failure after
+the stream started is `{type:'error', error, missing}`. `values` in `columns.ts` order (30 / 32 cells, `''` = empty). A week
+nobody saved is `version: 0` and no `rows` lines. **The header is read before the stream starts**, so `400` (bad sheet or a
+week that is not a Sunday), **`503 { missing: true }` until the migration is applied and `500` on a failed header read keep
+their statuses. None is ever an empty sheet.** The browser refuses any partial stream (wrong count, no `end`, another
+tab/week). Rows are paged.
 
 ### `GET /api/accounting/npd?list=weeks`
 

@@ -11,7 +11,8 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 1–7, no NEEDS); session log item 309. Plan: `docs/superpowers/plans/2026-10-01-npd-dashboard.md`.
 **Lock in** added the same day (item 310), **formulas** the same day (item 313). **Google Sheet sync**
 (All Dept Payroll CSV · Hogan Payroll Sync) added 2026-10-02 (item 320); plan
-`docs/superpowers/plans/2026-10-02-npd-google-sheet-sync.md`.
+`docs/superpowers/plans/2026-10-02-npd-google-sheet-sync.md`. **The loading card**, reads that survive a
+tab switch, and the other tab read ahead added 2026-10-05 (item 348, § Loading a sheet).
 
 ## Key files
 
@@ -41,7 +42,11 @@ Payroll Dashboard** on hover, like S-Wall's. Built 2026-10-01 from Kane's brief 
 | Google Sheet sync: route (wizard week + rows) | `app/api/accounting/npd/google-sheet/route.ts` |
 | Google Sheet sync: the button on each tab | `src/components/npd/NpdGoogleSheetSync.tsx` (applied by `useNpdSheet.importSheet`) |
 | Google Sheet sync: the progress bar's phases (pure) | `src/lib/npd/sync-progress.ts` (+ `.test.ts`) |
-| Cache: what is kept and how a cached copy is re-checked (pure) | `src/lib/npd/npd-cache.ts` (+ `.test.ts`); keys in `src/lib/accounting/tab-cache.ts` |
+| Cache: what is kept and how a cached copy is re-checked (pure) | `src/lib/npd/npd-cache.ts` (+ `.test.ts`); keys in `src/lib/accounting/tab-cache.ts`; the ONE writer is `writeNpdSheetCache` in `npd-sheet-loader.ts` |
+| Loading a sheet: one read per tab × week, its progress, the cache writer | `src/components/npd/npd-sheet-loader.ts` |
+| Loading a sheet: the card over the skeleton | `src/components/npd/NpdLoadProgress.tsx` |
+| Loading a sheet: the steps, the bar's motion, the card's lines (pure) | `src/lib/npd/load-progress.ts` (+ `.test.ts`) |
+| Loading a sheet: the streamed GET's lines and the fail-closed assembler (pure) | `src/lib/npd/load-stream.ts` (+ `.test.ts`) |
 | Sync vs the live Google Sheet, every week, every cell (read-only) | `scripts/verify-npd-google-sheet-sync.mts` |
 | Tab registration | `rbac/accounting-tabs.ts` · `rbac/view-tabs.ts` · `rbac/feature-permissions.ts` · `pages/visibility.ts` · `presence/page-label.ts` · `collab/CollabLayer.tsx` · `App.tsx` |
 
@@ -98,7 +103,8 @@ cell Accounting pastes. It is never checked against the sheet's week, and that i
   Green **Saved** means the server confirmed a save. A week nobody saved reads *Nothing saved yet*,
   in grey.
 - A failed **load** is an error, not an empty grid. An empty grid would invite pasting the week
-  again over rows that are really there.
+  again over rows that are really there. **A sheet that arrives only in part is a failed load too**
+  (§ Loading a sheet): 300 of 613 rows on screen, saved, would remove the other 313.
 - Switching tab or week **flushes first**, and refuses to switch if the flush failed. Each
   tab × week is its own client session object (`useNpdSheet`), so leaving a sheet mid-save still
   saves its edits, with its own version, and never into another week's state.
@@ -398,19 +404,34 @@ option (b), plus (a)'s remembered week.
   read (`importSheet`). **Never let a cached copy become editable before the live read**: that is
   how someone types over an old copy, the hazard CHOSEN 7 named.
 - **Every open still reads live.** NPD rows are per-person pay, the store's banned category: no skip
-  flag (`tab-cache.test.ts` lists `npdSheet`, `npdWeeks` and `npdSyncWeek`).
+  flag (`tab-cache.test.ts` lists `npdSheet`, `npdWeeks` and `npdSyncWeek`). Since 2026-10-05 an open
+  **joins** a read of that tab × week that is already in flight (one started moments earlier, by the
+  read-ahead or by a visit you switched away from). **A read that has already finished is never taken
+  as an open's live read**: the open paints it from the cache and reads again.
+- **The live read is a FULL read, never a version check of the header.** Rows can change in the
+  database without the version moving (an edit in the Supabase table editor), and a copy that skipped
+  that edit would then be saved over it. Measured 2026-10-05 from a dev machine: header ~300 ms, read
+  twice, plus rows ~900 ms, so a header-only check would be faster. It is not allowed.
 - **A failed live read over a cached copy keeps the copy, read-only**, with an amber *"This sheet could
   not be refreshed"* banner, the time it was cached, and Try again. The pill says **Not refreshed**,
   never a green Saved, because nothing about that copy was confirmed this time. It is never an
   empty grid (§ Saving).
-- **Written from server truth only** (`writeSheetCache`, exactly three calls): after a load, after a
-  confirmed save, and after a confirmed lock. Edits that have not been saved never reach it, and
-  neither does a save refused by a conflict or a lock.
+- **Written from server truth only, by ONE function** (`writeNpdSheetCache`, `npd-sheet-loader.ts`) at
+  exactly three moments: a **finished read** (written by the loader itself, so a read nobody is
+  watching is kept too, but only for the viewer it was started for), a **confirmed save**, and a
+  **confirmed lock** (those two through the hook's `writeSheetCache`). Edits that have not been saved
+  never reach it, and neither does a save refused by a conflict or a lock. Nothing else in NPD may
+  write a sheet or the sheet index (test-pinned across every NPD file).
 - **Re-checked before it paints** (`parseNpdSheetPayload`): the envelope guarantees viewer, version
   and age, not shape. A wrong cell count, a non-text cell, an unknown column, or a sheet cached for
   the other tab drops the copy, and the page loads as if nothing were cached.
 - **At most 4 sheets** (`NPD_CACHED_SHEETS_MAX`, most recently used, `npdSheetIndex`). One sheet is a
-  few hundred kB and the quota is shared with every Accounting tab.
+  few hundred kB and the quota is shared with every Accounting tab. The read-ahead (§ Loading a
+  sheet) fills both tabs of the week on screen, so the four are the last two weeks seen.
+- **The other tab is read ahead** (Kane, 2026-10-05: *"lets add caching on here as this is a very big
+  volume of data"*). For the week on screen, the tab you are NOT on is read in the background when
+  nothing usable is cached for it, and lands in the cache. Switching to it then paints at once (still
+  read-only until its own live read lands), or shows its own read still going.
 - **NPD reopens where you left it.** The tab was already remembered. The week is now remembered too
   (`npdView`, a UI selection, re-checked as a real Sunday), so returning lands on the sheet the cache
   holds. With nothing remembered it opens on the newest week the cached list knew, then on the live
@@ -418,6 +439,87 @@ option (b), plus (a)'s remembered week.
   under you.
 - **The week menu and the sync bar** (the wizard's week and each tab's *Last synced*) paint from the
   cache the same way and are always re-read.
+
+## Loading a sheet
+
+Kane, 2026-10-05: *"NPD - Table - on top of the Skeleton, lets add a loading bar modal that has multiple
+loading text's that are appropriate to gathering data this should be separate from All department and
+HSL this way when we switch tabs if its still loading it will have its own loading bar. Make sure to
+make it accurate."* Built via `hardening` (no contradictions), item 348.
+
+**The card** (`NpdLoadProgress`) floats over the skeleton while a sheet loads: the tab's name, the
+week, one bar, and a checklist of the read's steps. It is **one per tab × week**: it shows the read of
+the sheet on screen, so switching tabs shows that tab's own read where it got to. It is absolute and
+`pointer-events: none`, so nothing on the page moves and the tabs and week stepper stay usable under
+it. It is **not** a blocking dialog. It ends green, titled *Loaded …*, holds 450 ms and fades. A
+painted cached copy has no skeleton, so it has no card.
+
+**Every line is a real step.** The server reports them as it goes; the page adds the last two.
+
+| Line | What really happened | Reported by |
+| --- | --- | --- |
+| Finding this week's sheet → *Found it: 613 rows saved* | the route checked the `npd` grant and read the sheet's header | the response arriving (the header is read before the stream) |
+| Reading 613 rows from the database | the rows query | `header` line |
+| Checking nobody saved while it was read | the header is read again; a mismatch reads it all again | `read` line |
+| *Someone saved meanwhile · reading it again (try 2 of 3)* | a save landed mid-read | `retry` line |
+| Receiving rows · 250 of 613 | the rows arriving in this browser, **exact** | `sheet` + `rows` lines |
+| Laying out 613 rows | the page putting them on the grid | the page, before it applies them |
+
+Before the week is known (a first open with nothing cached) the first line is *Finding the newest week
+with a sheet*. A week with no saved sheet skips reading, checking and receiving, because the server
+skips them too. **Accurate means:** no line is shown before its step happens; **no percentage is
+printed**, because inside a step the fill is an estimate (one long decelerating glide toward that
+step's ceiling, `NPD_LOAD_CEILING`); the one exact figure, rows received, is printed as N of M and
+moves the bar by fact; the bar **never moves backwards** (a retry included); it is **full and green
+only once the rows are on the grid**; and it says *Loaded* only for a read the card showed loading,
+so a cached copy never flashes it. Red, holding where it stopped, on a failure, which the red banner
+then explains. The same rules as the sync button's bar (§ Google Sheet sync).
+
+**The GET streams** (`load-stream.ts`). `GET /api/accounting/npd?sheet&week` answers NDJSON: `header`
+(per attempt) → `read` → `retry`? → `sheet` (the consistent meta and how many rows follow) → `rows` (50
+a line) → `end` (the count), or an `error` line. **The header is read BEFORE the stream starts**, so a
+missing table is still a 503 and a failed read a 500 (the `payment-catalog/departments` pattern). No
+row is sent until the read is consistent. Measured 2026-10-05: All Departments 527 rows = 189,369
+bytes in 15 lines, HSL 613 rows = 247,340 bytes in 17.
+
+**The browser assembles it FAIL-CLOSED** (`createNpdStreamAssembler`). A stream that stops early, rows
+before the `sheet` line, more or fewer rows than announced, an `end` count that does not match, a line
+it cannot read, or a sheet for another tab or week is a **failed load**, never a shorter grid. The
+assembled sheet is then re-checked with the cache's own validator (`parseNpdSheetPayload`). Proved on
+production's two sheets on 2026-10-05 (read-only): both arrived identical, row for row, with the bytes
+split at arbitrary points.
+
+**A read belongs to its tab × week, not to the screen** (`npd-sheet-loader.ts`).
+- Switching tabs no longer throws a read away. It keeps going, its card keeps moving, and coming back
+  **joins** it: the bar resumes mid-glide from stored numbers (start, length, curve), never from zero.
+- A finished read goes into the cache even if nobody is looking at that tab, only for the viewer it
+  was started for (an `?email=` swap mid-read writes nothing).
+- **Recovering reads are always fresh**: *Try again*, *Load their version* and the reload after an
+  unlock cancel any read in flight and start a new one, so none can return a copy read before what it
+  recovers from. Only the newest load of a session is applied (`loadSeq`).
+- **Reads of a week no longer on screen are cancelled** (both tabs). A read cancelled under a sheet
+  still on screen is a failed load, never a skeleton forever.
+- The other tab is read ahead (§ Caching).
+
+**Motion.** The fill is a Web Animations glide on `transform`, resumed with `currentTime`, so it stays
+smooth while the grid builds; React never writes it mid-glide. The fade is an **inline** transition
+(the global `*` rule in `src/index.css` beats Tailwind's transition classes). The fill's sheen sweeps
+only while it works. Reduced motion: the fill steps, nothing sweeps or fades. A screen reader hears one
+announcement per step (no running counts), and the bar is a `progressbar` whose value text carries the
+current line. If the page is in a hidden browser tab when the rows land, a timer applies them (a
+hidden tab paints no frames).
+
+**Verified 2026-10-05:** 29 pure tests (`load-progress.test.ts`, `load-stream.test.ts`) and 8 wiring
+pins; NPD + tab-cache tests 242/242; full `npm test` 5,820/5,820. A bundled browser fixture (the real
+dashboard, a mocked API that streams like the route, 600 rows a tab), 39/39: the steps in order and
+never back; the fill only forward, under 0.99 before done, green and full at done; *Reading 600 rows*,
+*Receiving rows · N of 600* rising to 600; the card gone and 0 px moved when the grid lands; one read
+per tab (the other read ahead); HSL painting at once from the read-ahead and still reading live; a
+reload never showing the card; HSL's own card already reading when switched to; All Departments' bar
+further along on return with no new read; a stream cut short, an error line and a missing table each
+a failure with no partial grid; the retry line; phone width with a gutter and no sideways scroll;
+reduced motion; leaving the week cancelling both reads; an edit after the load saving at the loaded
+version. **Not clicked through signed in, and not watched streaming through Vercel in production.**
 
 ## The grid
 
@@ -427,7 +529,8 @@ tab's real columns, widths, column letters and headers, real row numbers, and h-
 are placeholders, sized like the data that lands in them, and the last rows fade out. One calm pulse
 covers the body, with none under reduced motion. It is announced as a busy status.
 **Nothing on the page may move when the sheet lands**, and that was measured: 0 px at 1400 and 390 wide
-on 2026-10-02. Everything above the grid therefore keeps its loaded size while loading:
+on 2026-10-02, and again with the loading card over it on 2026-10-05 (the card is absolute; § Loading a
+sheet). Everything above the grid therefore keeps its loaded size while loading:
 - the status pill reads *Loading…* (it used to render nothing, and the pill then wrapped in on a phone);
 - the rate box and Lock in are shown, disabled;
 - *Last saved by* is a placeholder bar;
@@ -535,6 +638,10 @@ the **only** reader besides this page, and it is held to the following, seen fro
   not scroll sideways; each tab's "Last synced … by …" (or *Not synced yet*); the sync's save is tagged and then
   shows the server's time; an Undo's save is not tagged. **Not clicked through signed in**, and the route has not been called against production.
 - No n8n, no cron.
+- **Loading card (2026-10-05): no migration, no env var, no grant.** The sheet `GET` now streams NDJSON,
+  so the page and the route must deploy together (they do: one Vercel deployment). A tab left open
+  across that deploy reads the new stream with the old page and shows *This sheet could not be loaded*
+  (an error, never an empty grid); reloading the page fixes it.
 - Verified 2026-10-01 in a bundled client fixture driven by Playwright with a mocked API (40/40:
   paste with header skip, multi-line cells, edit/undo/redo, copy, delete, insert, 409 → Keep mine,
   failed save → Retry, tab switch flushes, week stepping, view-only, phone width, nav hover). Lock in

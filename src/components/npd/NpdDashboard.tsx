@@ -21,9 +21,11 @@ import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, NPD_SHEETS, NPD_SHEET_LABELS, isNpdSheetKind, type NpdSheetKind } from '@/lib/npd/columns';
 import { defaultNpdWeek, isBlankRow, shiftWeek, weekLabel } from '@/lib/npd/sheet';
 import { TAB_CACHE_KEYS, getTabCache, setTabCache } from '@/lib/accounting/tab-cache';
-import { parseNpdView, parseNpdWeeks } from '@/lib/npd/npd-cache';
+import { parseNpdSheetPayload, parseNpdView, parseNpdWeeks } from '@/lib/npd/npd-cache';
 import NpdGoogleSheetSync, { type NpdSyncData, type NpdSyncTarget } from './NpdGoogleSheetSync';
+import NpdLoadProgress from './NpdLoadProgress';
 import NpdLockDialog from './NpdLockDialog';
+import { loadNpdSheet, npdLoadKey, retainNpdSheetLoads } from './npd-sheet-loader';
 import NpdSheetGrid from './NpdSheetGrid';
 import NpdSheetSkeleton from './NpdSheetSkeleton';
 import { contextOf, useNpdSheet, type LockResult } from './useNpdSheet';
@@ -95,6 +97,18 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
 
   const ctl = useNpdSheet(sheet, week, canEdit);
   const columns = NPD_COLUMNS[sheet];
+
+  // The OTHER tab, read ahead for the week on screen (Kane, 2026-10-05: "lets add caching on
+  // here as this is a very big volume of data"). Its read runs on its own and lands in the
+  // cache, so switching to it paints at once, or shows its own read still going. Reads of
+  // any week no longer on screen are cancelled. Runs after the hook's own effect, so the
+  // sheet on screen is always read first. docs/features/npd-dashboard.md § Loading a sheet.
+  useEffect(() => {
+    if (!week) return;
+    const other = NPD_SHEETS.find((s) => s !== sheet) ?? sheet;
+    retainNpdSheetLoads([npdLoadKey(sheet, week), npdLoadKey(other, week)]);
+    if (!parseNpdSheetPayload(other, getTabCache(TAB_CACHE_KEYS.npdSheet(other, week)))) void loadNpdSheet(other, week);
+  }, [sheet, week]);
   const readOnly = !canEdit;
   // Memoised: the grid re-derives every row's formulas when this changes.
   const ctx = useMemo(() => contextOf(ctl.settings), [ctl.settings]);
@@ -545,7 +559,7 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           The skeleton turning into the grid happens inside one key, so loading never re-animates. */}
       <motion.div
         key={`${sheet}:${week}`}
-        className="flex min-h-0 flex-1 flex-col"
+        className="relative flex min-h-0 flex-1 flex-col"
         initial={reduceMotion || switchDir === 0 ? false : { opacity: 0, x: switchDir * 14 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.24, ease: EASE_TAB }}
@@ -579,6 +593,8 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
       ) : ctl.loadState === 'loading' ? (
         <NpdSheetSkeleton key={sheet} sheet={sheet} columns={columns} />
       ) : null}
+      {/* Over the skeleton: THIS tab × week's own read, step by step (npd-sheet-loader.ts). */}
+      <NpdLoadProgress sheet={sheet} week={week} loadState={ctl.loadState} />
       </motion.div>
     </div>
   );
