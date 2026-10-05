@@ -143,6 +143,15 @@
         ],
         "createdAt": "2026-10-01T21:04:26.964Z",
         "reason": "Claude, verified: the idle drawer item is zinc text on a transparent ground; the hover that adds bg-orange-50 also sets text-orange-900 (same pill anatomy as SlidingPill, ui-standards 11.1)"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/employee/EmployeeApp.tsx"
+        ],
+        "createdAt": "2026-10-05T10:43:08.717Z",
+        "reason": "Claude, 2026-10-05: false positive — the shell root is text-zinc-900 on bg-white (dark: zinc-100 on #0d1117); the only colored values are the selection:* highlight tint, not a background behind gray text"
       }
     ]
   }
