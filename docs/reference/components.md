@@ -2262,7 +2262,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/manager/kpi-status-chip.tsx` | component | [hsl-kpi-calculator-2026-07](../features/hsl-kpi-calculator-2026-07.md) |
 | `src/components/manager/leaderboard-ui.tsx` | component | *this file* · [manager-rankings-history](../features/manager-rankings-history.md) |
 | `src/components/manager/transfer-charts.tsx` | component | [department-transfers](../features/department-transfers.md) |
-| `src/components/mesa/bulk-selection.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) |
+| `src/components/mesa/bulk-selection.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) · [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) (bulk Ignore) |
 | `src/components/notifications/NotificationToast.tsx` | component | [notification-alerts](../features/notification-alerts.md) |
 | `src/components/notifications/NotificationsPanel.tsx` | component | *this file* · [kpi-scored-notification](../features/kpi-scored-notification.md) |
 | `src/components/npd/NpdDashboard.tsx` | component | [npd-dashboard](../features/npd-dashboard.md) |
@@ -2335,7 +2335,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/payroll/OrphanageOmsReturnDialog.tsx` | component | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
 | `src/components/payroll/use-oms-return.ts` | hook | *this file* · [orphanage-oms-pull](../features/orphanage-oms-pull.md) |
 | `src/components/payroll/OrphanageVisits.tsx` | component | *this file* |
-| `src/components/payroll/PabDecisionConfirmDialog.tsx` | component | [orphanage-pay-step](../features/orphanage-pay-step.md) |
+| `src/components/payroll/PabDecisionConfirmDialog.tsx` | component | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
 | `src/components/payroll/PabDisputeQueue.tsx` | component | *this file* · [bank-preferred-routing](../features/bank-preferred-routing.md) · [delete-authorization](../features/delete-authorization.md) |
 | `src/components/payroll/PabDoneTable.tsx` | component | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |
 | `src/components/payroll/PabIneligibleTable.tsx` | component | [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |

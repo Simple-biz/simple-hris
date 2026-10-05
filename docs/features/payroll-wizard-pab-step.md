@@ -13,7 +13,8 @@ Since **2026-09-01** the step is the payroll's **last call** on PAB and its tab 
 rail **only during the payout week** — see [the tab only exists on the payout
 week](#the-tab-only-exists-on-the-payout-week).
 
-Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**. Source:
+Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**; bulk Ignore (checkboxes) +
+the route's CAS write **2026-10-05**. Source:
 `src/lib/payroll/pab-ineligibility.ts`, `src/lib/payroll/pab-payout-week.ts`,
 `app/api/payroll-wizard/pab-forgive-month/route.ts`,
 `src/components/payroll/PabIneligibleTable.tsx`, `src/components/PayrollWizard.tsx` (step 4).
@@ -26,8 +27,9 @@ Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**. Source:
 | The identity alarm | `src/lib/payroll/pab-ineligibility.test.ts` |
 | Payout-week tab gate — pure, tested | `src/lib/payroll/pab-payout-week.ts` (+ `.test.ts`) |
 | Forgive-the-month batch write | `app/api/payroll-wizard/pab-forgive-month/route.ts` |
-| Ignore-the-month write (exclusion) | `app/api/pab-exclusions/route.ts` — pre-existing, see `pab-exclusions.md` |
-| The table | `src/components/payroll/PabIneligibleTable.tsx` |
+| Ignore-the-month write (exclusion), single or bulk | `app/api/pab-exclusions/route.ts`, see `pab-exclusions.md` |
+| The table (+ bulk-Ignore checkboxes) | `src/components/payroll/PabIneligibleTable.tsx` |
+| Forgive / Ignore / bulk-Ignore confirmation | `src/components/payroll/PabDecisionConfirmDialog.tsx` |
 | The Done tab (receipts) | `src/components/payroll/PabDoneTable.tsx` |
 | Row builder + step body | `src/components/PayrollWizard.tsx` (`pabIneligibleRows`, `case 4`) |
 | The verdict this step explains | `src/lib/payroll/dispatch-bonuses.ts` (`computePabEligibleEmails`) |
@@ -127,6 +129,50 @@ Ignore), outline Cancel. Display-only: the write stays in the wizard's handlers,
 triggers them, cannot be dismissed mid-write, and closes when the write settles (the toasts
 carry the outcome).
 
+## Bulk Ignore — checkboxes on Needs review
+
+**Kane's ask, 2026-10-05:** *"a feature to bulk ignore those flagged for review … a checkbox
+that let's us ignore several people on the first page."* Measured that day: 346 person-month
+exclusions for 2026-08 and 176 so far for 2026-09, all clicked one row at a time.
+
+The Needs review table has a checkbox column (the shared `SelectCheckbox` / `BulkBar` from
+`src/components/mesa/bulk-selection.tsx`, the MESA precedent). Checking rows raises a bar with
+**Ignore N selected**, which opens the same `PabDecisionConfirmDialog` in its `ignore-bulk` form.
+It is the SAME decision as the row Ignore, the same month key (`pabMonthRange`), the same route
+and the same money effect, made for many people at once. Rules:
+
+- **Selectable = what the row's own Ignore could act on.** Not in a replay, not already excluded.
+  No-hours rows are selectable, as their Ignore button is enabled.
+- **The header checkbox covers THIS PAGE only.** MESA's select-all covers every filtered row
+  across pages. That is deliberately not copied: each row is ₱5,000 and a notification, and one
+  click must never reach people the operator has not seen. Selections made on other pages are
+  kept.
+- **A row a filter hides is never acted on** (the MESA rule). The action takes checked AND
+  visible rows; anything checked but filtered out is named on the bar (*"+N checked but hidden
+  by filters — not included"*), never silently sent or silently dropped.
+- **The dialog names every person**: nickname plus Employee ID, scrollable, never "and 9
+  more". The address appears only on hover for an unknown name (the step's never-render-email
+  rule).
+- **One request, one write, all-or-nothing on the exclusion.** The wizard posts `emails[]`, and
+  the route patches the whole list in ONE compare-and-swap write, so every person is ignored or
+  nobody is. Notifications stay per person and best-effort. Audit is one `pab_exclusion.added`
+  row per person, tagged `details.batch = { id, size }`, with no new action string, so existing
+  readers see a bulk Ignore as N single ones (`pab-exclusions.md`).
+- **A bulk write freezes every decision on the table** (`pabBulkIgnoring`): every Forgive,
+  Ignore and checkbox, because one write is deciding many rows. A single in-flight decision
+  disables the bulk button. Both handlers refuse to start while the other runs.
+- **Decided rows leave the list** on the settings refresh, like a single Ignore. The selection
+  prunes them, so a person whose exclusion is later lifted does not come back pre-checked.
+- **The failure toast tells "refused" from "unknown".** A server refusal (400/409/500 with a
+  reason) reads *"nothing was saved"*. A dropped connection reads *"could not be confirmed —
+  check the Done tab before retrying"*. Retrying is safe because re-ignoring an ignored person
+  is a no-op.
+- **One broadcast for the batch**: `exclusion_changed` with `emails[]`. Receivers only
+  `refresh()`, and N messages would mean N refreshes on every other open wizard.
+
+Not built: bulk **Forgive**. Forgive is per-person and writes per-day disputes through its own
+all-or-nothing route; a bulk form was not asked for.
+
 ## Step 1 Configuration's "Pay this week" also empties this list
 
 A department toggled OFF in Step 1 → Configuration is filtered out of every downstream step
@@ -171,6 +217,7 @@ this PAB section"). One Supabase channel, `payroll-wizard-pab-decisions`, **Broa
 | Forgive day (calendar modal) | `days_forgiven` + the dispute id |
 | Revoke day (calendar modal) | `day_revoked` |
 | Ignore (the PAB step) / exclusion toggle (System Bonus modal) | `exclusion_changed` |
+| Bulk Ignore (the PAB step) | ONE `exclusion_changed` carrying `emails[]` |
 
 Receivers patch the SAME local maps the actor patches (`approvedDisputeDates` /
 `approvedDisputeIds`) so the row leaves B's review list exactly as it left A's;
@@ -183,11 +230,15 @@ correctness — the stores stay the source of truth. The channel subscribes for 
 whole life (the wizard stays mounted across app tabs), so events are not missed while the
 operator sits on another step.
 
-**OPEN — `/api/pab-exclusions` is read-patch-write with no CAS.** Two accountants ignoring two
-different people at the same moment can lose one entry silently (the same last-write-wins
-shape `payroll.wizard.exclusions` still has; MV solved it with `casUpdateAppSetting`).
-Multi-operator use makes this window live now. Flagged 2026-09-01; the fix belongs in the
-route, not the wizard.
+**CLOSED 2026-10-05: `/api/pab-exclusions` writes by compare-and-swap.** It was
+read-patch-upsert, so two accountants ignoring two different people at the same moment could
+lose one entry silently (flagged 2026-09-01). Bulk Ignore would have widened that to a whole
+batch. The route now reads the blob with its `updated_at`, patches it, and writes through
+`casUpdateAppSetting`. On a conflict it re-reads and re-applies onto the other writer's value
+(4 attempts, then a 409 that says nothing was saved). It also **refuses to write over a stored
+value it cannot parse**, because the pay-path reader turns malformed JSON into an empty map and
+a write would then wipe every other month. `payroll.wizard.exclusions` (the wizard's do-not-pay
+list) still has the old last-write-wins shape, and that one is unchanged here.
 
 ## HSL failures display as WHOLE WEEKS
 

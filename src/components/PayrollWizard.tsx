@@ -2813,6 +2813,9 @@ export default function PayrollWizard({
   const [pabForgivingEmail, setPabForgivingEmail] = useState<string | null>(null);
   /** Email mid-ignore (month exclusion write) on step 4 — same one-row-spins rule. */
   const [pabIgnoringEmail, setPabIgnoringEmail] = useState<string | null>(null);
+  /** A bulk Ignore is in flight on step 4. Freezes EVERY decision on the table —
+   *  one write is deciding many rows, and a row decided under it would race it. */
+  const [pabBulkIgnoring, setPabBulkIgnoring] = useState(false);
   /** Step 4's inner tab: the exceptions list, or the receipts ("Done") list. */
   const [pabStepSection, setPabStepSection] = useState<'review' | 'done'>('review');
   /** The Forgive/Ignore confirmation dialog's target; null = closed. Replaced
@@ -19681,7 +19684,7 @@ export default function PayrollWizard({
         // Confirmation lives in PabDecisionConfirmDialog (the in-app dialog that
         // replaced window.confirm) — by the time these run, the user confirmed.
         const forgiveMonth = async (row: PabIneligibleRow) => {
-          if (pabForgivingEmail) return;
+          if (pabForgivingEmail || pabBulkIgnoring) return;
           const dayCount = row.failedDays.length;
           setPabForgivingEmail(row.email);
           try {
@@ -19743,11 +19746,11 @@ export default function PayrollWizard({
          * even if a later time adjustment would have rescued a failed day, and
          * Forgive is disabled on the row until the exclusion is lifted (System
          * Bonus → PAB settings) — that is what "eligibility ignored for the
-         * period" means. The row STAYS listed with the Excluded chip; a decision
-         * that vanishes its row would be the all-clear that hides people.
+         * period" means. The decided row LEAVES the review list for the Done tab
+         * (Kane 2026-09-01 PM); the strip's "ignored" count keeps it disclosed.
          */
         const ignoreMonth = async (row: PabIneligibleRow) => {
-          if (pabIgnoringEmail || pabForgivingEmail) return;
+          if (pabIgnoringEmail || pabForgivingEmail || pabBulkIgnoring) return;
           const norm = normEmail(row.email) ?? row.email.toLowerCase();
           setPabIgnoringEmail(row.email);
           try {
@@ -19782,6 +19785,82 @@ export default function PayrollWizard({
             });
           } finally {
             setPabIgnoringEmail(null);
+          }
+        };
+
+        /**
+         * Bulk Ignore (2026-10-05): the same decision as `ignoreMonth`, for every
+         * checked row, in ONE request — the route patches the whole list in one
+         * compare-and-swap write, so it is all-or-nothing on the exclusion (never
+         * "the first 12 landed"). Same month key, same audited route, one audit
+         * row and one notification per person. The rows leave the review list on
+         * the refresh, exactly as a single Ignore's row does.
+         */
+        const ignoreMonthBulk = async (rows: PabIneligibleRow[]) => {
+          if (rows.length === 0 || pabBulkIgnoring || pabIgnoringEmail || pabForgivingEmail) return;
+          const byNorm = new Map(rows.map((r) => [normEmail(r.email) ?? r.email.toLowerCase(), r]));
+          const emails = [...byNorm.keys()];
+          setPabBulkIgnoring(true);
+          // Set once the server has ANSWERED with a refusal — only then is "nothing
+          // was saved" a fact. A dropped connection leaves the outcome unknown.
+          let refused = false;
+          try {
+            const res = await fetch('/api/pab-exclusions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                emails,
+                // The STEP's evaluated month — the same key the row Ignore writes.
+                monthKey: pabMonthRange
+                  ? `${pabMonthRange.year}-${String(pabMonthRange.month + 1).padStart(2, '0')}`
+                  : '',
+                excluded: true,
+              }),
+            });
+            const json = (await res.json()) as {
+              error: string | null;
+              results?: { email: string; changed: boolean; notified: boolean }[];
+            };
+            if (!res.ok || json.error) {
+              refused = true;
+              throw new Error(json.error || `HTTP ${res.status}`);
+            }
+            if (!Array.isArray(json.results)) throw new Error('The server did not say who was ignored');
+            await pabPeriodSettings.refresh();
+            // One message for the batch: receivers only refresh() on it, and N
+            // messages would be N refreshes on every other open wizard.
+            broadcastPabDecision({ kind: 'exclusion_changed', email: emails[0], emails, monthKey: pabMonthKey, excluded: true });
+
+            const changed = json.results.filter((r) => r.changed);
+            const already = json.results.length - changed.length;
+            const unnotified = changed
+              .filter((r) => !r.notified)
+              .map((r) => byNorm.get(r.email)?.name ?? 'Unknown');
+            const parts = [`₱0 for this period.`];
+            if (unnotified.length > 0) {
+              parts.push(
+                `${unnotified.length} could not be matched to an active roster email — tell them directly: ${unnotified.join(', ')}.`,
+              );
+            } else if (changed.length > 0) {
+              parts.push(changed.length === 1 ? 'The employee has been notified.' : 'Each employee has been notified.');
+            }
+            if (already > 0) parts.push(`${already} ${already === 1 ? 'was' : 'were'} already ignored.`);
+            const headline = `${changed.length} ${changed.length === 1 ? 'person' : 'people'} — PAB ignored for ${monthLabelPab}`;
+            if (unnotified.length > 0) toast.warning(headline, { description: parts.join(' ') });
+            else toast.success(headline, { description: parts.join(' ') });
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            if (refused) {
+              toast.error(`Bulk ignore failed — nothing was saved, nobody's eligibility changed`, { description: reason });
+            } else {
+              // Safe to retry: re-ignoring someone already ignored is a no-op.
+              void pabPeriodSettings.refresh();
+              toast.error('Bulk ignore could not be confirmed', {
+                description: `${reason}. Check the Done tab before retrying — anyone already ignored has left the review list.`,
+              });
+            }
+          } finally {
+            setPabBulkIgnoring(false);
           }
         };
 
@@ -20016,6 +20095,8 @@ export default function PayrollWizard({
                         forgivingEmail={pabForgivingEmail}
                         onIgnoreMonth={(row) => setPabDecisionConfirm({ action: 'ignore', row })}
                         ignoringEmail={pabIgnoringEmail}
+                        onIgnoreSelected={(rows) => setPabDecisionConfirm({ action: 'ignore-bulk', rows })}
+                        bulkIgnoring={pabBulkIgnoring}
                         readOnly={isReplay}
                         // `pabMergeLoaded` is the one signal that the month's hours are
                         // actually in. Without it an empty list renders as "nobody is
@@ -20041,8 +20122,10 @@ export default function PayrollWizard({
               monthLabel={monthLabelPab}
               busy={
                 pabDecisionConfirm !== null &&
-                (pabForgivingEmail === pabDecisionConfirm.row.email ||
-                  pabIgnoringEmail === pabDecisionConfirm.row.email)
+                (pabDecisionConfirm.action === 'ignore-bulk'
+                  ? pabBulkIgnoring
+                  : pabForgivingEmail === pabDecisionConfirm.row.email ||
+                    pabIgnoringEmail === pabDecisionConfirm.row.email)
               }
               onCancel={() => setPabDecisionConfirm(null)}
               onConfirm={() => {
@@ -20050,9 +20133,13 @@ export default function PayrollWizard({
                 if (!t) return;
                 // Close after the write settles either way — success and failure
                 // both already speak through their toasts.
-                void (t.action === 'forgive' ? forgiveMonth(t.row) : ignoreMonth(t.row)).finally(
-                  () => setPabDecisionConfirm(null),
-                );
+                const run =
+                  t.action === 'ignore-bulk'
+                    ? ignoreMonthBulk(t.rows)
+                    : t.action === 'forgive'
+                      ? forgiveMonth(t.row)
+                      : ignoreMonth(t.row);
+                void run.finally(() => setPabDecisionConfirm(null));
               }}
             />
           </div>

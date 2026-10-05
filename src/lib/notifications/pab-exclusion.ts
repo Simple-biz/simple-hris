@@ -1,4 +1,4 @@
-import { parseYearMonthKey, type PabExclusionsMap } from '@/lib/pab-period-settings';
+import { parsePabPeriodExclusions, parseYearMonthKey, type PabExclusionsMap } from '@/lib/pab-period-settings';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -67,18 +67,133 @@ export function applyPabExclusionPatch(
   email: string,
   excluded: boolean,
 ): PabExclusionPatchResult {
-  const norm = email.trim().toLowerCase();
-  const set = new Set(currentExclusions.get(monthKey) ?? []);
-  const wasExcluded = set.has(norm);
-  if (excluded) set.add(norm);
-  else set.delete(norm);
+  const { nextExclusions, outcomes } = applyPabExclusionBatchPatch(currentExclusions, monthKey, [email], excluded);
+  // A blank email yields no outcome — nothing to store, nothing changed.
+  const only = outcomes[0];
+  return { nextExclusions, wasExcluded: only?.wasExcluded ?? false, changed: only?.changed ?? false };
+}
+
+export interface PabExclusionOutcome {
+  /** Normalized (trimmed, lower-cased) — the value the blob stores. */
+  email: string;
+  wasExcluded: boolean;
+  changed: boolean;
+}
+
+/**
+ * The batch form of {@link applyPabExclusionPatch} — the PAB step's bulk Ignore
+ * (2026-10-05). ONE patch over the whole list, so the route makes ONE write: a
+ * bulk decision is all-or-nothing on the blob, never "the first 12 landed".
+ *
+ * Duplicates (after normalization) collapse to one outcome; the first spelling
+ * wins its slot. Each outcome's `wasExcluded` is the state BEFORE the batch, so
+ * a person listed twice never reads as "already excluded" by their own entry.
+ */
+export function applyPabExclusionBatchPatch(
+  currentExclusions: PabExclusionsMap,
+  monthKey: string,
+  emails: readonly string[],
+  excluded: boolean,
+): { nextExclusions: Record<string, string[]>; outcomes: PabExclusionOutcome[] } {
+  const before = currentExclusions.get(monthKey) ?? new Set<string>();
+  const set = new Set(before);
+  const outcomes: PabExclusionOutcome[] = [];
+  const seen = new Set<string>();
+  for (const raw of emails) {
+    const norm = raw.trim().toLowerCase();
+    if (!norm || seen.has(norm)) continue;
+    seen.add(norm);
+    const wasExcluded = before.has(norm);
+    if (excluded) set.add(norm);
+    else set.delete(norm);
+    outcomes.push({ email: norm, wasExcluded, changed: wasExcluded !== excluded });
+  }
 
   const nextExclusions: Record<string, string[]> = {};
-  for (const [key, emails] of currentExclusions.entries()) {
+  for (const [key, monthEmails] of currentExclusions.entries()) {
     if (key === monthKey) continue;
-    if (emails.size > 0) nextExclusions[key] = Array.from(emails);
+    if (monthEmails.size > 0) nextExclusions[key] = Array.from(monthEmails);
   }
   if (set.size > 0) nextExclusions[monthKey] = Array.from(set);
 
-  return { nextExclusions, wasExcluded, changed: wasExcluded !== excluded };
+  return { nextExclusions, outcomes };
+}
+
+/**
+ * Most people one request may decide. The largest month on record is 346
+ * person-month entries (2026-08, measured 2026-10-05) and the review list peaked
+ * at 476 rows (2026-08-28). This is a bound on one request's work — one
+ * notification lookup + insert per person — not a business rule.
+ */
+export const PAB_EXCLUSION_BATCH_MAX = 500;
+
+export type PabExclusionRequest =
+  | { ok: true; monthKey: string; emails: string[]; excluded: boolean; batch: boolean }
+  | { ok: false; error: string };
+
+/**
+ * Validates the route body. Exactly one of `email` (the original single toggle —
+ * System Bonus modal, the PAB step's row Ignore) or `emails` (bulk Ignore). The
+ * batch form refuses rather than trims: an empty list, a non-string entry, a
+ * blank entry or an over-cap list is a 400, never a silently shorter write.
+ */
+export function parsePabExclusionRequest(body: unknown): PabExclusionRequest {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: 'Body must be a JSON object' };
+  }
+  const b = body as { email?: unknown; emails?: unknown; monthKey?: unknown; excluded?: unknown };
+  const monthKey = typeof b.monthKey === 'string' ? b.monthKey.trim() : '';
+  if (!parseYearMonthKey(monthKey)) {
+    return { ok: false, error: 'monthKey must be a valid YYYY-MM month' };
+  }
+  if (typeof b.excluded !== 'boolean') {
+    return { ok: false, error: 'excluded must be a boolean' };
+  }
+  if (b.email !== undefined && b.emails !== undefined) {
+    return { ok: false, error: 'Send either email or emails, not both' };
+  }
+
+  if (b.emails !== undefined) {
+    if (!Array.isArray(b.emails) || b.emails.length === 0) {
+      return { ok: false, error: 'emails must be a non-empty array' };
+    }
+    if (b.emails.length > PAB_EXCLUSION_BATCH_MAX) {
+      return { ok: false, error: `At most ${PAB_EXCLUSION_BATCH_MAX} people per request` };
+    }
+    const emails: string[] = [];
+    const seen = new Set<string>();
+    for (const e of b.emails) {
+      const norm = typeof e === 'string' ? e.trim().toLowerCase() : '';
+      if (!norm) return { ok: false, error: 'Every entry in emails must be a non-empty string' };
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      emails.push(norm);
+    }
+    return { ok: true, monthKey, emails, excluded: b.excluded, batch: true };
+  }
+
+  const norm = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
+  if (!norm) return { ok: false, error: 'Missing email' };
+  return { ok: true, monthKey, emails: [norm], excluded: b.excluded, batch: false };
+}
+
+/**
+ * The stored blob, parsed for a WRITE. `parsePabPeriodExclusions` (the reader
+ * every pay path uses) turns malformed JSON into an empty map, which is right for
+ * a reader and catastrophic for a writer: the read-patch-write would save
+ * `{ <month>: [one person] }` over every other month's entries (629 of them on
+ * 2026-10-05). So a non-empty value that is not a JSON object refuses the write.
+ */
+export function parseStoredPabExclusionsForWrite(
+  raw: string | null,
+): { ok: true; exclusions: PabExclusionsMap } | { ok: false } {
+  if (raw == null || raw.trim() === '') return { ok: true, exclusions: new Map() };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false };
+  return { ok: true, exclusions: parsePabPeriodExclusions(raw) };
 }

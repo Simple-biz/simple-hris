@@ -10,6 +10,7 @@ import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { pabSeverityBand, type PabFailedDay, type PabFailedWeek, type PabSeverityBand } from '@/lib/payroll/pab-ineligibility';
 import { catalogDeptNameFrom } from '@/lib/departments/dept-identity';
+import { BulkBar, SelectCheckbox } from '@/components/mesa/bulk-selection';
 
 /**
  * The Payroll Wizard’s PAB review table (step 4 since 2026-09-01; step 6 before).
@@ -124,6 +125,8 @@ export default function PabIneligibleTable({
   forgivingEmail,
   onIgnoreMonth,
   ignoringEmail,
+  onIgnoreSelected,
+  bulkIgnoring,
   readOnly,
   loading,
   evaluatedCount,
@@ -147,6 +150,15 @@ export default function PabIneligibleTable({
   onIgnoreMonth: (row: PabIneligibleRow) => void;
   /** Email currently mid-ignore, or null. */
   ignoringEmail: string | null;
+  /**
+   * Bulk Ignore (2026-10-05): the checked rows, in table order, handed to the
+   * wizard's confirmation dialog. Only rows a single Ignore could act on, and
+   * only rows the current filters SHOW — a checked row a filter hides is never
+   * sent.
+   */
+  onIgnoreSelected: (rows: PabIneligibleRow[]) => void;
+  /** A bulk Ignore write is in flight — every decision on the table freezes. */
+  bulkIgnoring: boolean;
   /** Replay of a past week — the figures are history, so no writes. */
   readOnly: boolean;
   /** The all-weeks PAB merge is still in flight. */
@@ -238,6 +250,48 @@ export default function PabIneligibleTable({
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
   const paged = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // ── Bulk Ignore selection (2026-10-05) ─────────────────────────────────────
+  // A row is selectable exactly when its own Ignore button could act: not a
+  // replay, not already excluded. Keyed by email, the row's join key.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const selectable = (r: PabIneligibleRow) => !readOnly && !r.excluded;
+  // A decided row leaves `rows`; drop it from the selection too, so a person
+  // whose exclusion is later lifted does not come back pre-checked.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(rows.filter((r) => !readOnly && !r.excluded).map((r) => r.email));
+      const next = new Set([...prev].filter((e) => live.has(e)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [rows, readOnly]);
+  // What a bulk Ignore would act on: checked AND shown by the current filters.
+  // Same rule as the MESA bulk bar — a row a filter hides is never acted on.
+  const selectedVisible = visible.filter((r) => selected.has(r.email) && selectable(r));
+  const hiddenSelectedCount = selected.size - selectedVisible.length;
+  // The header box covers THIS PAGE only — deliberately narrower than MESA's
+  // select-all-filtered: each row is ₱5,000 and a notification, and one click
+  // should never reach people the operator has not seen. Selections made on
+  // other pages are kept.
+  const pageSelectable = paged.filter(selectable);
+  const pageAllSelected = pageSelectable.length > 0 && pageSelectable.every((r) => selected.has(r.email));
+  const pageSomeSelected = pageSelectable.some((r) => selected.has(r.email));
+  const toggleRow = (email: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email);
+      else next.add(email);
+      return next;
+    });
+  const togglePage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (pageSelectable.every((r) => next.has(r.email))) pageSelectable.forEach((r) => next.delete(r.email));
+      else pageSelectable.forEach((r) => next.add(r.email));
+      return next;
+    });
+  const singleInFlight = forgivingEmail !== null || ignoringEmail !== null;
 
   const reviewCount = rows.filter((r) => pabSeverityBand(r.severity, r.hasHours) === 'review').length;
 
@@ -358,10 +412,49 @@ export default function PabIneligibleTable({
       </div>
 
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <table className="w-full min-w-[1040px] text-sm">
+        {(selectedVisible.length > 0 || hiddenSelectedCount > 0) && (
+          <BulkBar count={selectedVisible.length} onClear={() => setSelected(new Set())}>
+            {hiddenSelectedCount > 0 && (
+              // Said out loud: these stay checked but are NOT in the action
+              // until a filter shows them again.
+              <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                +{hiddenSelectedCount} checked but hidden by filters — not included
+              </span>
+            )}
+            {/* Same quiet zinc outline as the row Ignore — the step's default
+                posture is mercy. The amber lives on the dialog's confirm. */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 px-2 text-[11px] text-zinc-700 hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-300 dark:hover:text-zinc-100"
+              disabled={readOnly || bulkIgnoring || singleInFlight || selectedVisible.length === 0}
+              title={
+                singleInFlight
+                  ? 'Wait for the decision in progress to finish'
+                  : `Ignore PAB for ${monthLabel} for everyone checked — ₱0 for this period, each notified`
+              }
+              onClick={() => onIgnoreSelected(selectedVisible)}
+            >
+              {bulkIgnoring ? <Loader2 className="h-3 w-3 animate-spin" /> : <EyeOff className="h-3 w-3" />}
+              Ignore {selectedVisible.length} selected
+            </Button>
+          </BulkBar>
+        )}
+        <table className="w-full min-w-[1080px] text-sm">
           <thead className="bg-zinc-50 text-[11px] uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/60 dark:text-zinc-400">
             <tr>
-              <th className="px-4 py-2.5 text-left font-semibold">Employee ID</th>
+              <th className="w-10 py-2.5 pl-4 pr-0 text-left">
+                <SelectCheckbox
+                  checked={pageAllSelected}
+                  indeterminate={pageSomeSelected}
+                  onChange={togglePage}
+                  ariaLabel="Select everyone on this page"
+                  disabled={readOnly || bulkIgnoring || pageSelectable.length === 0}
+                  title={readOnly ? 'Replaying a past week — decisions are disabled' : 'Select everyone on this page'}
+                />
+              </th>
+              <th className="px-3 py-2.5 text-left font-semibold">Employee ID</th>
               <th className="px-3 py-2.5 text-left font-semibold">Employee</th>
               <th className="px-3 py-2.5 text-left font-semibold">Work Email</th>
               <th className="px-3 py-2.5 text-left font-semibold">Department</th>
@@ -389,11 +482,16 @@ export default function PabIneligibleTable({
               // Either in-flight write freezes BOTH decision buttons on the row:
               // forgive and ignore are opposite verdicts on the same month, and
               // racing them would leave whichever write lands last as the truth.
-              const busy = forgiving || ignoring;
+              // A bulk Ignore freezes every row — it may be deciding this one.
+              const busy = forgiving || ignoring || bulkIgnoring;
+              const checked = selected.has(row.email) && selectable(row);
               return (
                 <motion.tr
                   key={row.email}
-                  className="hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40"
+                  className={cn(
+                    'hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40',
+                    checked && 'bg-teal-50/50 dark:bg-teal-950/20',
+                  )}
                   // Exit only: a decided row slides out to the right and fades —
                   // the visible receipt that the click landed. Entrances stay off
                   // (see AnimatePresence above); instant under reduced motion.
@@ -401,7 +499,22 @@ export default function PabIneligibleTable({
                     ? { opacity: 0, transition: { duration: 0 } }
                     : { opacity: 0, x: 48, transition: { duration: 0.28, ease: 'easeOut' } }}
                 >
-                  <td className="px-4 py-2.5">
+                  <td className="w-10 py-2.5 pl-4 pr-0">
+                    <SelectCheckbox
+                      checked={checked}
+                      onChange={() => toggleRow(row.email)}
+                      ariaLabel={`Select ${row.name ?? 'unknown person'}`}
+                      disabled={!selectable(row) || bulkIgnoring}
+                      title={
+                        readOnly
+                          ? 'Replaying a past week — decisions are disabled'
+                          : row.excluded
+                            ? 'Already ignored — their PAB is excluded for this month'
+                            : undefined
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2.5">
                     {/* Blank when the ACTIVE roster has no row for them. Never
                         synthesised — a made-up id on a payroll screen is worse
                         than an honest dash. */}

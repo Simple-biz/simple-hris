@@ -44,11 +44,17 @@ export function SelectCheckbox({
   indeterminate,
   onChange,
   ariaLabel,
+  disabled,
+  title,
 }: {
   checked: boolean;
   indeterminate?: boolean;
   onChange: () => void;
   ariaLabel: string;
+  /** A row the bulk action cannot apply to (or a write in flight). */
+  disabled?: boolean;
+  /** Why it is disabled, on hover. */
+  title?: string;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -61,8 +67,10 @@ export function SelectCheckbox({
       checked={checked}
       onChange={onChange}
       aria-label={ariaLabel}
+      disabled={disabled}
+      title={title}
       onClick={(e) => e.stopPropagation()}
-      className="h-3.5 w-3.5 cursor-pointer rounded border-zinc-300 accent-teal-600 dark:border-zinc-600"
+      className="h-3.5 w-3.5 cursor-pointer rounded border-zinc-300 accent-teal-600 disabled:cursor-not-allowed disabled:opacity-40 dark:border-zinc-600"
     />
   );
 }
