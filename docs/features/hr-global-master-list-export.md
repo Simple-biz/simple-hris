@@ -55,3 +55,14 @@ management moves HRIS-native. A "Sync anyway" action still runs the existing
 (see [audit-2026-07-17-session-log.md](../audits/audit-2026-07-17-session-log.md)
 — overlapping syncs once collapsed the active roster 1109 → 390), which is
 part of why the direction of travel is away from sheet syncs.
+
+## Roster frame (2026-10-05)
+
+Kane asked for "a modern and formal list". The roster card is a plain frame (1px zinc ring and a soft
+offset shadow, no gradient hero above it since `b46bb9f2`). The table reads as a ledger: a
+**double rule** closes the column header and opens the pagination footer, and hairline column
+rules run between cells. The header rules are slightly stronger than the body rules. Card view
+uses the same double rule between a person's name and their details. Below 640px the global
+table-stacking CSS in `src/index.css` sets `td` borders to 0, so phones keep their card rows
+without column rules. The loading skeleton draws the header band and its double rule, so the
+frame doesn't jump when the data arrives. Table view pages 20 rows; card view pages 15.

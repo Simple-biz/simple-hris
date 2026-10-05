@@ -68,7 +68,7 @@ import {
 import { manilaWeekStart, mondayOf, weekEndFromStart, weekRangeLabel } from '@/lib/payroll/manila-week';
 import DeptFilter from './DeptFilter';
 
-// Cards page in 15s (fills the 3-column grid evenly); the table keeps 10.
+// Cards page in 15s (fills the 3-column grid evenly); the table pages 20.
 const CARD_PAGE_SIZE = 15;
 const TABLE_PAGE_SIZE = 20;
 
@@ -302,7 +302,7 @@ const RosterCard = memo(function RosterCard({
         )}
       </div>
 
-      <dl className="mt-3 space-y-1.5 border-t border-zinc-100 pt-3 dark:border-zinc-800">
+      <dl className="mt-3 space-y-1.5 border-t-[3px] border-double border-zinc-200 pt-3 dark:border-zinc-700">
         <div className="flex items-baseline justify-between gap-3">
           <dt className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-400 dark:text-zinc-500">
             Work
@@ -588,20 +588,23 @@ function RosterPane({
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left">
-            <thead className="border-b border-zinc-100 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
+            {/* Ledger rules: a double rule closes the column header, hairline
+                column rules run through the body (the global <640px stacking
+                CSS zeroes td borders, so phones keep their card rows). */}
+            <thead className="border-b-[3px] border-double border-zinc-300 bg-zinc-50/80 dark:border-zinc-700 dark:bg-zinc-900/60">
               <tr>
                 {['Employee', 'Dept', 'Work email', 'Personal email', 'Start date', 'Tenure', 'Status'].map((h) => (
                   <th
                     key={h}
                     scope="col"
-                    className="whitespace-nowrap px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400"
+                    className="whitespace-nowrap border-l border-zinc-200 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 first:border-l-0 dark:border-zinc-800 dark:text-zinc-400"
                   >
                     {h}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100/80 dark:divide-zinc-800/60">
+            <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70 [&_td+td]:border-l [&_td+td]:border-zinc-100 dark:[&_td+td]:border-zinc-800/60">
               {entries.map((e, i) => (
                 <RosterRow
                   key={rowKey(e.row, i)}
@@ -638,7 +641,9 @@ function FadePane({ children }: { children: ReactNode }) {
 function RosterSkeleton({ view }: { view: ViewMode }) {
   if (view === 'table') {
     return (
-      <div className="divide-y divide-zinc-100/80 dark:divide-zinc-800/60" aria-hidden>
+      <div className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70" aria-hidden>
+        {/* Header band + double rule, so the frame doesn't jump when the table lands. */}
+        <div className="hidden h-[38px] border-b-[3px] border-double border-zinc-300 bg-zinc-50/80 sm:block dark:border-zinc-700 dark:bg-zinc-900/60" />
         {Array.from({ length: TABLE_PAGE_SIZE }, (_, i) => (
           <div key={i} className="flex items-center gap-3 px-4 py-3">
             <div className="h-7 w-7 shrink-0 animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-800" />
@@ -1290,8 +1295,8 @@ export default function HrGlobalMasterList() {
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
       {/* Roster — overflow-visible so the Export dropdown isn't clipped when the
           filtered result set is short (the table keeps its own overflow-x-auto). */}
-      <Card className="overflow-visible border-zinc-100 shadow-sm dark:border-zinc-800">
-        <CardHeader className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
+      <Card className="gap-0 overflow-visible py-0 shadow-[0_1px_2px_rgb(24_24_27/0.05),0_12px_32px_-16px_rgb(24_24_27/0.16)] ring-zinc-200 dark:shadow-[0_1px_2px_rgb(0_0_0/0.4)] dark:ring-zinc-800">
+        <CardHeader className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle className="text-lg font-semibold text-zinc-900 dark:text-white">Global Master List</CardTitle>
@@ -1357,7 +1362,7 @@ export default function HrGlobalMasterList() {
           {!loading && filtered.length > 0 && (
             <div
               data-readonly-allow
-              className="flex items-center justify-between border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800"
+              className="flex items-center justify-between rounded-b-xl border-t-[3px] border-double border-zinc-300 bg-zinc-50/60 px-4 py-2.5 dark:border-zinc-700 dark:bg-zinc-900/40"
             >
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
                 {`${safePage * pageSize + 1}–${Math.min((safePage + 1) * pageSize, filtered.length)}`} of{' '}
