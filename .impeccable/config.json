@@ -152,6 +152,15 @@
         ],
         "createdAt": "2026-10-05T10:43:08.717Z",
         "reason": "Claude, 2026-10-05: false positive — the shell root is text-zinc-900 on bg-white (dark: zinc-100 on #0d1117); the only colored values are the selection:* highlight tint, not a background behind gray text"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/hr/HrGlobalMasterList.tsx"
+        ],
+        "createdAt": "2026-10-05T11:13:32.150Z",
+        "reason": "Claude triage 2026-10-05: zinc-500/600/700 text on white (bg-white) controls; emerald-50 is the hover tint only and text turns emerald on hover, so no gray-on-color state exists"
       }
     ]
   }

@@ -48,7 +48,7 @@ a recent run. Admin-only. See [diagnostics-service-maps.md](./diagnostics-servic
 
 ## Sync deprecation warning
 
-Clicking the hero **Sync** button now opens a warning dialog (AlertTriangle,
+Clicking the **Sync from Google Sheet** button (roster toolbar, beside Export — the hero banner was removed 2026-10-05) now opens a warning dialog (AlertTriangle,
 house convention): the sheet-sync feature will soon be deprecated as data
 management moves HRIS-native. A "Sync anyway" action still runs the existing
 `handleSync`. Context: the master-list sheet sync has a known concurrency race

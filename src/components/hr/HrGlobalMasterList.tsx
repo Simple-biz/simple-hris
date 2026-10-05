@@ -35,7 +35,6 @@ import {
   RefreshCw,
   Search,
   SearchX,
-  Sheet,
   Table2,
   Users,
   X,
@@ -71,7 +70,7 @@ import DeptFilter from './DeptFilter';
 
 // Cards page in 15s (fills the 3-column grid evenly); the table keeps 10.
 const CARD_PAGE_SIZE = 15;
-const TABLE_PAGE_SIZE = 10;
+const TABLE_PAGE_SIZE = 20;
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -1289,38 +1288,6 @@ export default function HrGlobalMasterList() {
 
   return (
     <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-6 lg:px-8 lg:pt-8">
-      {/* Hero */}
-      <header className="relative overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-500 via-teal-600 to-zinc-900 px-5 py-6 text-white shadow-lg shadow-emerald-600/20 dark:border-emerald-900/50 dark:from-emerald-600 dark:via-teal-900 dark:to-black sm:px-7">
-        <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/10 blur-3xl" aria-hidden />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-emerald-100/90">
-              <Sheet className="h-3 w-3 shrink-0" />
-              HR &middot; Global Master List
-            </div>
-            <h1 className="mt-1 text-balance text-2xl font-bold tracking-tight sm:text-3xl">
-              The synced roster, in one place.
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-emerald-100/85">
-              Mirrors the Google Sheet master list. Pull the latest with{' '}
-              <span className="font-semibold">Sync from Google Sheet</span>. New hires are added
-              through the New Hire Checklist and onboarding, not here.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              onClick={() => setSyncConfirmOpen(true)}
-              disabled={syncing}
-              className="gap-2 bg-white/15 text-white backdrop-blur-sm hover:bg-white/25"
-            >
-              {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              {syncing ? 'Syncing…' : 'Sync from Google Sheet'}
-            </Button>
-          </div>
-        </div>
-      </header>
-
       {/* Roster — overflow-visible so the Export dropdown isn't clipped when the
           filtered result set is short (the table keeps its own overflow-x-auto). */}
       <Card className="overflow-visible border-zinc-100 shadow-sm dark:border-zinc-800">
@@ -1354,6 +1321,16 @@ export default function HrGlobalMasterList() {
                 onChange={handleWeekChange}
               />
               <ExportMenu rows={filtered} totalRoster={roster.length} scopeLabel={scopeLabel} />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSyncConfirmOpen(true)}
+                disabled={syncing}
+                className="h-9 gap-1.5 border-zinc-200 bg-white text-zinc-700 hover:bg-emerald-50 hover:text-emerald-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-200"
+              >
+                {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                {syncing ? 'Syncing…' : 'Sync from Google Sheet'}
+              </Button>
               <ViewToggle view={view} onChange={handleViewChange} />
             </div>
           </div>
