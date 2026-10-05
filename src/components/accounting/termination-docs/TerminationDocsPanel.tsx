@@ -1137,13 +1137,6 @@ export default function TerminationDocsPanel({
             <h2 className="mt-0.5 text-2xl font-bold tracking-tight text-zinc-900 dark:text-white">
               Documents — Termination Letters
             </h2>
-            <p className="mt-1 max-w-3xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-              Look someone up by name, work email or personal email — part of any of them is
-              enough — check the facts the system resolved, fill in anything it could not find, and
-              generate a one-page letter signed with your own saved signature. Nothing is emailed —
-              you download it and send it from your own inbox. Every generation is recorded in the
-              permanent log below.
-            </p>
           </div>
         </div>
       </div>
