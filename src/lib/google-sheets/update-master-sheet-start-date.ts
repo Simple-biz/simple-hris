@@ -2,11 +2,12 @@ import { getServiceAccountAccessToken } from './auth';
 import { toSheetDate } from './sheet-date';
 
 /**
- * Updates the "Start Date" cell of an existing master-list Sheet row, matched by
- * work email (falling back to personal email). Used when a manager edits a
- * hire's orientation date after they've already been promoted into the Sheet —
- * the orientation date IS the Start Date, so the Sheet must follow the edit
- * (otherwise the next Sheet -> Supabase sync would overwrite the corrected date).
+ * Updates the "Start Date" cell of the hire's own master-list Sheet row, matched
+ * by work email AND personal email (see `planSheetStartDateRows`). Used when a
+ * manager edits a hire's orientation date after they've already been promoted
+ * into the Sheet — the orientation date IS the Start Date, so the Sheet must
+ * follow the edit (otherwise the next Sheet -> Supabase sync would overwrite the
+ * corrected date).
  *
  * Best-effort by contract: returns { updated: 0, reason } when the env isn't
  * configured, the header/column is missing, or no row matches — callers should
@@ -51,6 +52,56 @@ function colLetter(index: number): string {
   return s;
 }
 
+export type SheetStartDatePlan =
+  | { startCol: number; rows: number[] }
+  | { reason: string };
+
+/**
+ * Which Sheet rows (0-based indexes into `values`) carry THIS hire's Start Date.
+ *
+ * A row matches only when its Work Email AND its Personal Email are the hire's.
+ * Work emails are recycled: a work-email-only match rewrote every row carrying
+ * the address, and on 2026-09-28 that put three recycled-address hires' start
+ * date on the previous holders' Sheet rows (audit item 344) — which the next
+ * Sheet -> Supabase sync would copy back over the repaired database rows. A row
+ * with no Personal Email cannot prove it is the hire's, so it is skipped; the
+ * personal-email-only fallback is gone for the same reason.
+ */
+export function planSheetStartDateRows(
+  values: unknown[][],
+  input: { workEmail: string | null; personalEmail: string | null },
+): SheetStartDatePlan {
+  const headerIdx = findHeaderRowIndex(values);
+  if (headerIdx < 0) return { reason: 'header row not found in sheet' };
+
+  const headers = (values[headerIdx] ?? []).map((c) =>
+    norm(c).replace(/\s+/g, ' '),
+  );
+  const workCol = headers.findIndex((h) => h === 'work email' || h === 'workemail');
+  const personalCol = headers.findIndex((h) => h === 'personal email' || h === 'personalemail');
+  const startCol = headers.findIndex((h) => h === 'start date' || h === 'startdate');
+  if (startCol < 0) return { reason: 'Start Date column not found in sheet' };
+  if (workCol < 0 || personalCol < 0) {
+    return { reason: 'Work Email or Personal Email column not found in sheet' };
+  }
+
+  const targetWork = norm(input.workEmail);
+  const targetPersonal = norm(input.personalEmail);
+  if (!targetWork || !targetPersonal) {
+    return { reason: 'work email and personal email are both required to match a row' };
+  }
+
+  const rows: number[] = [];
+  for (let i = headerIdx + 1; i < values.length; i++) {
+    const row = values[i] ?? [];
+    if (norm(row[workCol]) === targetWork && norm(row[personalCol]) === targetPersonal) {
+      rows.push(i);
+    }
+  }
+  if (rows.length === 0) return { reason: 'not found in sheet' };
+  return { startCol, rows };
+}
+
 export async function updateMasterSheetStartDate(input: {
   workEmail: string | null;
   personalEmail: string | null;
@@ -79,30 +130,9 @@ export async function updateMasterSheetStartDate(input: {
   }
 
   const values = Array.isArray(getJson.values) ? getJson.values : [];
-  const headerIdx = findHeaderRowIndex(values);
-  if (headerIdx < 0) return { updated: 0, reason: 'header row not found in sheet' };
-
-  const headers = (values[headerIdx] ?? []).map((c) =>
-    norm(c).replace(/\s+/g, ' '),
-  );
-  const workCol = headers.findIndex((h) => h === 'work email' || h === 'workemail');
-  const personalCol = headers.findIndex((h) => h === 'personal email' || h === 'personalemail');
-  const startCol = headers.findIndex((h) => h === 'start date' || h === 'startdate');
-  if (startCol < 0) return { updated: 0, reason: 'Start Date column not found in sheet' };
-
-  const targetWork = norm(input.workEmail);
-  const targetPersonal = norm(input.personalEmail);
-
-  // Match by work email first (the canonical key); fall back to personal email.
-  const matched: number[] = [];
-  for (let i = headerIdx + 1; i < values.length; i++) {
-    const row = values[i] ?? [];
-    const rowWork = workCol >= 0 ? norm(row[workCol]) : '';
-    const rowPersonal = personalCol >= 0 ? norm(row[personalCol]) : '';
-    if (targetWork && rowWork === targetWork) matched.push(i);
-    else if (!targetWork && targetPersonal && rowPersonal === targetPersonal) matched.push(i);
-  }
-  if (matched.length === 0) return { updated: 0, reason: 'not found in sheet' };
+  const plan = planSheetStartDateRows(values, input);
+  if ('reason' in plan) return { updated: 0, reason: plan.reason };
+  const { startCol, rows: matched } = plan;
 
   // Write the Start Date cell on each matched row (usually exactly one).
   const letter = colLetter(startCol);

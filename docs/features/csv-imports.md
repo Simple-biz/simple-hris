@@ -218,6 +218,49 @@ and people with hours in the live timesheet.
 > manual sheet sync running the old build would re-activate them again. The script is idempotent
 > (`.is('off_boarded_at', null)`), so re-running it repairs any recurrence.
 
+### An orientation mark re-dates only the hire's OWN row *(2026-10-05, audit item 344)*
+
+The orientation date **is** the hire's Start Date, so marking or editing it
+(`markPendingHireOrientation` → `syncStartDateToMaster`) pushes it to the hire's master row and
+their Sheet row. **"The hire's row" means the row promote linked them to
+(`promoted_to_master_id`) AND that carries their Personal Email**, decided by
+`decideStartDateSyncTarget` (`src/lib/hr/start-date-sync.ts`). It is **never** the
+`(Work Email, Department)` pair. Work emails are recycled, and for a hire who isn't promoted yet that
+pair is the **previous holder's** off-boarded row. On 2026-09-28, marking orientation for the five
+recycled-address Lead Gen hires (`johnt@`, `justinem@`, `maryt@`, `marial@`, `marief@`) wrote
+2026-09-28 onto all five previous holders' rows. None of the five hires is promoted.
+
+The link alone is not proof, because before 2026-09-24 promote re-stamped whatever off-boarded row
+held the pair, so some promoted hires are still linked to someone else's row (`johnt@` #1072 →
+Torculas's row). A missing Personal Email on either side is **refused**, which is the same rule
+`decideMasterRowReuse` applies.
+
+The Sheet write follows the same rule. `planSheetStartDateRows`
+(`update-master-sheet-start-date.ts`) matches a row only when its Work Email **and** Personal Email
+are the hire's. The old work-email-only match rewrote **every** Sheet row carrying the address,
+which hit three of the five. A Sheet row left wrong is worse than a database row left wrong,
+because the next Sheet → Supabase sync copies it back over the repaired database. A row with no
+Personal Email is skipped, and the personal-email-only fallback is gone. A skipped write only logs
+a `console.warn`: the orientation mark itself never fails on this sync. Pinned by
+`src/lib/hr/start-date-sync.test.ts`.
+
+**Repair: `scripts/restore-recycled-holder-start-dates.mts`. PENDING: Kane runs `--apply`.** It is
+read-only without the flag and writes a backup to `docs/audits/backups/` first. It restores each
+row to its **owner's** own date. That date is derived from the owner's own pending row (linked and
+carrying the same Personal Email) and must equal the value measured on 2026-10-05:
+- `johnt@` 07-27 (Torculas, not Tamala's 08-31, which the row held before 09-28)
+- `justinem@` 09-08
+- `maryt@` 08-10
+- `marial@` 07-06
+- `marief@` 07-06
+
+Both the database UPDATE and the Sheet cell write are CAS'd on the value still being 2026-09-28 /
+`09/28/26`, so a row touched since is skipped. The plan was verified on 2026-10-05: 5 database
+rows, plus 3 Sheet cells (rows 1263, 1399, 1003). The `--apply` run was blocked by the session's
+auto-mode permission check, so **nothing has been written**. Deploy the code fix first, because the
+old build re-clobbers if one of the five hires' orientation is re-marked. Re-running the script
+repairs that.
+
 ## 4. Ingest pipeline behavior & guarantees
 
 ### Master list (`replaceGlobalMasterListFromCsvText`)

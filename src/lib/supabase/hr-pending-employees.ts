@@ -9,6 +9,7 @@ import { normalizeDeptToKey } from "../payroll/normalize-dept-key";
 import { masterListDisplayName, nameLastFirstQuoted } from "../name/display-name";
 import { selectAllPaged } from "./select-all-paged";
 import { decideMasterRowReuse } from "../hr/rehire-master-reuse";
+import { decideStartDateSyncTarget } from "../hr/start-date-sync";
 
 /**
  * Maps an onboarding submission's payment details onto the `employee_ids`
@@ -1335,31 +1336,47 @@ export async function markPendingHireOrientation(
 }
 
 /**
- * Pushes a hire's Start Date (their orientation date) to the master DB row and
+ * Pushes a hire's Start Date (their orientation date) to THEIR master DB row and
  * the master Google Sheet, but only when a master row already exists for them
  * (i.e. they've been promoted). No-op + swallow-on-error by design — this is a
  * convenience sync, never a gate.
+ *
+ * "Their" row is the one promote linked (`promoted_to_master_id`) AND that
+ * carries their Personal Email — `decideStartDateSyncTarget`. Never the
+ * (Work Email, Department) pair: work emails are recycled, and for a hire not
+ * yet promoted that pair is the PREVIOUS holder's off-boarded row (audit item
+ * 344: five previous holders re-dated to 2026-09-28).
  */
 async function syncStartDateToMaster(
   sb: ReturnType<typeof client>,
   row: HrPendingEmployeeRow,
   startDate: string | null,
 ): Promise<void> {
-  if (!row.work_email || !startDate) return;
+  if (!row.work_email || !startDate || !row.promoted_to_master_id) return;
   try {
     const { data: master } = await sb
       .from(MASTER_TABLE)
-      .select("id")
-      .ilike("Work Email", row.work_email)
-      .ilike("Department", row.department)
-      .limit(1)
+      .select('id, "Personal Email"')
+      .eq("id", row.promoted_to_master_id)
       .maybeSingle();
-    if (!master) return; // not promoted yet — nothing in the master list/sheet
+    const masterRow = master as { id: string; "Personal Email": string | null } | null;
+    const masterId = decideStartDateSyncTarget(
+      { promotedToMasterId: row.promoted_to_master_id, personalEmail: row.personal_email },
+      masterRow ? { id: masterRow.id, personalEmail: masterRow["Personal Email"] } : null,
+    );
+    if (!masterId) {
+      if (masterRow) {
+        console.warn(
+          `[syncStartDateToMaster] skipped: master row ${masterRow.id} does not carry pending #${row.id}'s personal email`,
+        );
+      }
+      return;
+    }
 
     await sb
       .from(MASTER_TABLE)
       .update({ "Start Date": startDate })
-      .eq("id", (master as { id: string }).id);
+      .eq("id", masterId);
 
     const { updateMasterSheetStartDate } = await import(
       "../google-sheets/update-master-sheet-start-date"
