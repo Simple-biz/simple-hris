@@ -97,23 +97,36 @@ click. Each row shows its verify result inline ("Verified in Workspace" /
 `X confirmed, Y not found`.
 
 ### Verify-aware email suggestion / reclaim
-A prior failed attempt can leave an address claimed in the roster
-(`hr_pending_employees`, etc.) with **no real Workspace account** behind it — so
-the suggester would skip that ideal address forever. The single **Set/Retry work
-email** dialog now passes `verify: true` to `/api/hr/work-email/suggest`, which:
-- walks the preferred candidates and, for one that's only roster-taken, asks the
+A prior failed attempt can leave an address claimed by an **in-flight hire**
+(`hr_pending_employees` in `pending_work_email` / `ready` / `failed_to_promote`)
+with **no real Workspace account** behind it — so the suggester would skip that
+ideal address forever. The single **Set/Retry work email** dialog passes
+`verify: true` to `/api/hr/work-email/suggest`, which:
+- walks the preferred candidates and, for one that's only claimed, asks the
   verify webhook — if the account is **missing**, it reclaims that address
   instead of bumping to a variant (capped at `MAX_VERIFY_LOOKUPS` lookups);
-- on the availability check, flips a roster-taken address back to **available**
+- on the availability check, flips a claimed address back to **available**
   when verify says missing (shown as "Available — was claimed before but has no
   Workspace account").
 
-The `set-work-email` route applies the same rule at save time: a taken address
-that differs from the row's current one is only blocked (409) when verify finds a
-**real account** — a definite "missing" is allowed through. Anything other than a
-clear "missing" (real account, or a webhook error/outage) keeps the address
-locked, so this never frees a genuinely-in-use address. The bulk suggest path
-does **not** verify (kept fast).
+**Only a pure in-flight claim is reclaimable** (Kane, 2026-10-05, audit item 344).
+An address on anyone's **record** is never reclaimed, whatever Workspace says.
+"On record" means any master row (active or off-boarded), `employee_ids`,
+`employee_roles`, the `offboarded_sheet` ledger, or the rates history
+(`mayReclaimWhenWorkspaceMissing`, `src/lib/hr/work-email-reservations.ts`).
+Off-boarding deletes the Google account, so "missing" is the normal state of a
+leaver's address. Until 2026-10-05 this path let a leaver's address through, and
+the off-boarded-recycling rule had already freed it from the taken set.
+
+The `set-work-email` route and `PATCH /api/hr/pending-employees/[id]` apply the
+same rule at save time through one gate, `workEmailIssueDenial`. The PATCH route
+had no check at all before 2026-10-05. A taken address
+that differs from the row's current one returns 409 with *"…has belonged to
+someone before and is never re-issued"* when it is on record. When it is only
+claimed, it is blocked (409) unless verify finds the account **missing**.
+Anything other than a clear "missing" (real account, or a webhook error/outage)
+keeps a claimed address locked, so this never frees a genuinely-in-use address.
+The bulk suggest path does **not** verify (kept fast).
 
 ### Manual override — "Mark as verified"
 The `missing` and `error` modals also offer **Mark as verified**, for when HR has

@@ -3063,6 +3063,17 @@ Both already 400'd on a bare HSL; both now pass the data-team map to
 `isPlaceableDeptLabel`, so a data team is accepted and the bare label of any
 department that has sub-teams is refused.
 
+**`set-work-email` returns 409 for an address on anyone's record (2026-10-05, item 344).** The
+message is *"<address> has belonged to someone before and is never re-issued."* "On record" means
+any master row (active or off-boarded), `employee_ids`, `employee_roles`, `offboarded_sheet` or the
+rates history. The "Workspace account missing → reclaim" pass-through now applies only to a pure
+in-flight claim. `POST /api/hr/work-email/suggest` follows the same rule for its `suggestion` and
+`candidate.available`. **`PATCH /api/hr/pending-employees/[id]` runs the same gate**
+(`workEmailIssueDenial`) whenever the body carries a `work_email`. Before 2026-10-05 it wrote any
+address unchecked. It also returns 409 for a work-email change on a hire already linked to a master
+row (`promoted_to_master_id`). See [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) and
+[workspace-account-verify](../features/workspace-account-verify.md).
+
 ### `POST /api/payment-catalog/pay-structures`
 
 The Hogan pay-plan mirror now keys on `normalizeDeptToKey(key) === 'hogan_smith_law'`

@@ -123,32 +123,78 @@ chosen value is recorded in the audit log (`gmail_surname` in the
 
 ---
 
-## Roster recycling fix (`loadTakenWorkEmails`)
+## An address that has belonged to someone is never re-issued (`loadWorkEmailReservations`)
 
-[`src/lib/hr/work-email-server.ts`](../../src/lib/hr/work-email-server.ts) builds
-the taken-address set from four sources: `global_master_list` (active rows,
-including both Alternate Work Email columns), `employee_ids`, `employee_roles`
-(non-revoked), and in-flight `hr_pending_employees` (`pending_work_email` /
-`ready`). Off-boarded master rows are **recyclable** (per HR) and are not
-reserved. **OPEN: same-department recycling cannot promote** (Sep 25 log item 242,
-Kane's call).
+**Kane, 2026-10-05 (audit item 344): an address that has ever been on someone's
+record is never minted again.** This **replaces** HR's earlier rule that an
+off-boarded master row frees its address for recycling (in force from 2026-07 to
+2026-10-05). Payroll keys a person by work email in `employee_ids` (bank and
+wallet), the rates history (rate and paystub address) and Hubstaff. None of those
+tables knows about stints, and `global_master_list` enforces
+`(Work Email, Department)` unique. So a recycled address is either refused at
+promote or merged into the previous holder's identity.
 
-The three whole-table sources (`global_master_list`, `employee_ids`,
-`employee_roles`) are read through `selectAllPaged` on a total order, and **every
-read throws on an error** (2026-09-25, item 227). `employee_ids` had been one capped
-read (1,000 of 2,072 addresses), which left **3** addresses held only there
-mintable again, and a failed read used to be skipped, which shrank the set with no
-signal. All three callers (Suggest, Set work email, the Gmail-surname step) turn
-the throw into a 500. The in-flight `hr_pending_employees` read is status-filtered
-and throws the same way.
+On 2026-09-26, five Lead Gen hires were minted a recycled same-department
+address (`johnt@`, `justinem@`, `maryt@`, `marial@`, `marief@`). All five are
+`failed_to_promote` and invisible on every surface. Their first pay would have
+gone to the previous holder's Hurupay wallet.
 
-The fix makes recycling **consistent across tables**: it tracks
-`activeEmails` vs `offboardedEmails` from the master list, computes
-`freed = offboarded − active`, and **drops freed addresses from the
-`employee_ids` and `employee_roles` passes** too. Without this, an off-boarded
-person's address would linger forever in those flag-less tables and stay
-reserved — so a recycled address could not be re-minted (and the Gmail-surname
-slice would needlessly lengthen around a ghost).
+[`src/lib/hr/work-email-server.ts`](../../src/lib/hr/work-email-server.ts) reads six
+sources and hands them to the pure
+[`buildWorkEmailReservations`](../../src/lib/hr/work-email-reservations.ts):
+
+| Source | Class |
+|---|---|
+| `global_master_list`: **every** row, active or off-boarded, all three email columns | on record |
+| `employee_ids` | on record |
+| `employee_roles` (non-revoked) | on record |
+| `offboarded_sheet` (the leaver ledger, which keeps addresses whose master row was deleted) | on record |
+| `employee_hourly_rates_current` (one row per work email ever rated) | on record |
+| `hr_pending_employees` in `pending_work_email` / `ready` / `failed_to_promote` | claimed |
+
+`taken` = on record ∪ claimed. **Only a pure claim is reclaimable** when the
+verify webhook reports its Workspace account missing
+(`mayReclaimWhenWorkspaceMissing`; see `workspace-account-verify.md`).
+Off-boarding deletes the Google account, so "missing" proves nothing about a
+leaver's address.
+
+`failed_to_promote` was missing from the in-flight statuses until 2026-10-05, so a
+hire whose promote failed did not hold their own address.
+
+**Every route that writes a work email runs one gate:** `workEmailIssueDenial`
+(`work-email-server.ts`). The routes are `set-work-email` and
+`PATCH /api/hr/pending-employees/[id]`. Before 2026-10-05 the PATCH route wrote
+any address unchecked. Keeping the hire's current address always passes. The
+PATCH also refuses a change on a hire already linked to a master row
+(`promoted_to_master_id`), because that would leave the master row, the Sheet and
+payroll on the old address.
+
+**The way out for a hire stuck on a recycled address** is HR → Onboarding →
+**Failed**. A `failed_to_promote` row with no master row now shows **Edit**. Saving a
+fresh address there creates a new Workspace account and Hubstaff invite for it
+(the PATCH route's combined webhook), and then **Retry** promotes onto a fresh
+master row. Their onboarding submissions are archived, so `set-work-email` cannot
+be used for them.
+
+**Measured 2026-10-05:** the taken set went from **1,425** to **5,243** addresses,
+which newly reserves **3,389** @simple.biz addresses that used to be offered.
+Expect longer suggestions and longer Gmail-surname slices for common names; this
+is the accepted cost. For the five above, the suggester now offers
+`johnmarkt@`, `justinerajahm@`, `maryangeliet@`, `mariarhonal@` and
+`mariestephanief@`.
+
+Every source is read through `selectAllPaged` on a total order, and **every read
+throws on an error** (2026-09-25, item 227). `employee_ids` had been one capped read
+(1,000 of 2,072 addresses), which left **3** addresses held only there mintable
+again. A failed read used to be skipped, which shrank the set with no signal. All
+three callers (Suggest, Set work email, the Gmail-surname step) turn the throw
+into a 500. Pinned by `src/lib/hr/work-email-reservations.test.ts`.
+
+> **Superseded 2026-10-05.** The recycling rule computed
+> `freed = off-boarded − active` from the master list and dropped those addresses
+> from the `employee_ids` and `employee_roles` passes too, so an off-boarded
+> person's address was offered again. That `freed` set is what let `maryt@` reach
+> a third holder.
 
 ---
 
@@ -169,7 +215,8 @@ slice would needlessly lengthen around a ghost).
 | [`app/api/onboarding/[token]/gmail-surname/route.ts`](../../app/api/onboarding/[token]/gmail-surname/route.ts) | Derives the collision-aware slice; token-row / preview-session auth |
 | [`app/onboarding/[token]/page.tsx`](../../app/onboarding/[token]/page.tsx) | Read-only field, debounced effect, loading spinner, always-generate rule |
 | [`src/lib/hr/work-email.ts`](../../src/lib/hr/work-email.ts) | `workEmailCandidates` / `normalizeNamePart` — the minting rule |
-| [`src/lib/hr/work-email-server.ts`](../../src/lib/hr/work-email-server.ts) | `loadTakenWorkEmails` (off-boarded recycling fix) |
+| [`src/lib/hr/work-email-server.ts`](../../src/lib/hr/work-email-server.ts) | `loadWorkEmailReservations` / `loadTakenWorkEmails` (six sources, read in full) |
+| [`src/lib/hr/work-email-reservations.ts`](../../src/lib/hr/work-email-reservations.ts) | `buildWorkEmailReservations` + `mayReclaimWhenWorkspaceMissing`: never re-issue an address on record (2026-10-05) |
 | [`app/api/hr/onboarding-submissions/[id]/set-work-email/route.ts`](../../app/api/hr/onboarding-submissions/[id]/set-work-email/route.ts) | Sends Gmail Surname as `lastName` to the workspace webhook |
 | [`app/api/onboarding/[token]/route.ts`](../../app/api/onboarding/[token]/route.ts) | Persists `gmail_surname` on submit; returns it in `priorData` |
 | [`src/lib/supabase/hr-onboarding-submissions.ts`](../../src/lib/supabase/hr-onboarding-submissions.ts) | Row type + `gmail_surname` write |

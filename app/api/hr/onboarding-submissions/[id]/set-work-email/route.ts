@@ -11,7 +11,7 @@ import {
   createHrPendingEmployee,
   updateHrPendingEmployee,
 } from "@/lib/supabase/hr-pending-employees";
-import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
+import { workEmailIssueDenial } from "@/lib/hr/work-email-server";
 import { ensureCallToolsFieldsForSubmission } from "@/lib/hr/calltools-username-server";
 import { WORK_EMAIL_DOMAIN, derivationNameParts, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
@@ -127,29 +127,11 @@ export async function POST(
 
   // Race-safe availability check. Allow the hire's current work_email to pass
   // through unchanged (re-setting the same address is fine).
-  const currentWorkEmail = row.work_email?.trim().toLowerCase() ?? "";
-  let taken: Set<string>;
-  try {
-    taken = await loadTakenWorkEmails();
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Failed to read roster" },
-      { status: 500 },
-    );
-  }
-  if (taken.has(workEmail) && workEmail !== currentWorkEmail) {
-    // The roster says it's taken — but a prior failed attempt can leave an
-    // address claimed with no real Google Workspace account behind it. Ask the
-    // verify webhook: only block when an account actually exists (or we can't
-    // tell). A definite "missing" means the claim is stale, so allow reclaiming.
-    const v = await verifyWorkspaceAccount(workEmail);
-    if (v.state !== "missing") {
-      return NextResponse.json(
-        { error: `${workEmail} is already in use. Pick another address.` },
-        { status: 409 },
-      );
-    }
-  }
+  // An address on anyone's record (active, off-boarded, the leaver ledger, the
+  // rates history) is never re-issued (Kane, 2026-10-05, item 344). Only a stale
+  // in-flight claim with no Workspace account behind it may be reclaimed.
+  const denial = await workEmailIssueDenial(workEmail, row.work_email);
+  if (denial) return NextResponse.json({ error: denial.error }, { status: denial.status });
 
   const toRateStr = (v: string | number | null | undefined): string | null => {
     if (v == null) return null;

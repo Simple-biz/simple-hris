@@ -1046,13 +1046,23 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
                                   {row.status === 'failed_to_promote' ? 'Retry' : 'Promote'}
                                 </Button>
                               )}
-                              {row.status === 'pending_work_email' && (
+                              {(row.status === 'pending_work_email' ||
+                                // A failed promote with no master row can be given a
+                                // fresh address — the way out for a hire minted a
+                                // recycled one (audit item 344). The route refuses
+                                // any address that has belonged to someone.
+                                (row.status === 'failed_to_promote' && !row.promoted_to_master_id)) && (
                                 <Button
                                   size="sm"
                                   variant="outline"
                                   className="h-7 px-2 text-xs"
                                   onClick={() => setSetEmailFor(row)}
                                   disabled={isBusy}
+                                  title={
+                                    row.status === 'failed_to_promote'
+                                      ? 'Re-issue a fresh work email, then Retry. A new Workspace account and Hubstaff invite are created for it.'
+                                      : undefined
+                                  }
                                 >
                                   <Pencil className="mr-1 h-3 w-3" /> Edit
                                 </Button>

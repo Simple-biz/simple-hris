@@ -10,7 +10,8 @@ import {
   WORK_EMAIL_DOMAIN,
   type WorkEmailSuggestion,
 } from "@/lib/hr/work-email";
-import { loadTakenWorkEmails } from "@/lib/hr/work-email-server";
+import { loadWorkEmailReservations } from "@/lib/hr/work-email-server";
+import { mayReclaimWhenWorkspaceMissing } from "@/lib/hr/work-email-reservations";
 import { verifyWorkspaceAccount } from "@/lib/hr/workspace-account";
 
 // Cap on how many roster-taken candidates we'll verify against Google Workspace
@@ -53,10 +54,13 @@ export async function POST(req: Request) {
     last?: string;
     candidate?: string;
     also_taken?: string[];
-    // When true, an address that's "taken" only by the roster is double-checked
-    // against Google Workspace (verify webhook); if no real account exists, it's
-    // treated as available again. Used by the single Set/Retry dialog so a stale
-    // prior claim doesn't permanently burn an otherwise-free address.
+    // When true, an address that's "taken" only by an in-flight hire's claim is
+    // double-checked against Google Workspace (verify webhook); if no real
+    // account exists, it's treated as available again. Used by the single
+    // Set/Retry dialog so a stale prior claim doesn't permanently burn an
+    // otherwise-free address. An address on anyone's RECORD is never reclaimed
+    // this way — a leaver's account is deleted, so "missing" proves nothing
+    // (Kane, 2026-10-05, item 344).
     verify?: boolean;
   };
   try {
@@ -65,9 +69,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  let reservations: Awaited<ReturnType<typeof loadWorkEmailReservations>>;
   let taken: Set<string>;
   try {
-    taken = await loadTakenWorkEmails();
+    reservations = await loadWorkEmailReservations();
+    taken = reservations.taken;
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to read roster" },
@@ -110,6 +116,7 @@ export async function POST(req: Request) {
           suggestion = cand;
           break;
         }
+        if (!mayReclaimWhenWorkspaceMissing(cand.email, reservations)) continue;
         if (lookups >= MAX_VERIFY_LOOKUPS) continue;
         lookups += 1;
         const v = await verifyWorkspaceAccount(cand.email);
@@ -135,7 +142,12 @@ export async function POST(req: Request) {
     // Roster says taken — but if it's a stale claim with no real Workspace
     // account, free it up. Only flips on a definite "missing" (never on a
     // webhook error), so a real account or an outage keeps it locked.
-    if (!available && verifyEnabled && email.endsWith(`@${WORK_EMAIL_DOMAIN}`)) {
+    if (
+      !available &&
+      verifyEnabled &&
+      email.endsWith(`@${WORK_EMAIL_DOMAIN}`) &&
+      mayReclaimWhenWorkspaceMissing(email, reservations)
+    ) {
       const v = await verifyWorkspaceAccount(email);
       if (v.state === "missing") {
         available = true;

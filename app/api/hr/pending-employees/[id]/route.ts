@@ -13,6 +13,7 @@ import { hasRateVisibility } from "@/lib/auth/elevated-roles";
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { splitFullName, gmailSurnameFromWorkEmail } from "@/lib/hr/work-email";
 import { createWorkspaceAccount } from "@/lib/hr/workspace-account";
+import { workEmailIssueDenial } from "@/lib/hr/work-email-server";
 import { ensureCallToolsFieldsForPendingHire } from "@/lib/hr/calltools-username-server";
 import {
   OFFBOARD_DELETE_SLUG,
@@ -53,6 +54,28 @@ export async function PATCH(
     body = (await req.json()) as UpdateHrPendingInput;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // The same issue gate as set-work-email: an address on anyone's record is
+  // never re-issued (Kane, 2026-10-05, item 344). This route used to write any
+  // address unchecked, and it is the path HR uses to give a hire a fresh one.
+  if (typeof body.work_email === "string" && body.work_email.trim()) {
+    const { row: current, error: currentErr } = await getHrPendingEmployeeById(id);
+    if (currentErr) return NextResponse.json({ error: currentErr }, { status: 500 });
+    if (!current) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // A hire already linked to a master row keeps that row's address; changing
+    // it here would leave the master row, the Sheet and payroll on the old one.
+    if (
+      current.promoted_to_master_id &&
+      body.work_email.trim().toLowerCase() !== (current.work_email ?? "").trim().toLowerCase()
+    ) {
+      return NextResponse.json(
+        { error: "This hire already has a master-list row. Change the work email there, not on the staged hire." },
+        { status: 409 },
+      );
+    }
+    const denial = await workEmailIssueDenial(body.work_email, current.work_email);
+    if (denial) return NextResponse.json({ error: denial.error }, { status: denial.status });
   }
 
   const { row, error } = await updateHrPendingEmployee(id, body);
