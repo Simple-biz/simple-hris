@@ -27,6 +27,8 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import type {
   DepartmentTransferRequestRow,
   TransferRequestStatus,
@@ -123,25 +125,44 @@ export default function HrTransfers() {
   const [viewing, setViewing] = useState<DepartmentTransferRequestRow | null>(null);
   const reduceMotion = useReducedMotion();
 
-  const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
+  // `tracker` comes only from the Refresh click: the table stays on screen (no
+  // "Loading transfers..." swap) and the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). It is still a foreground load, so
+  // a failure raises the banner exactly as before; an earlier banner stays up
+  // until the click's answer lands, since nothing changes before then.
+  const fetchAll = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    if (!opts?.silent && !opts?.tracker) setLoading(true);
+    if (!opts?.tracker) setError(null);
     try {
       // scope=all = the full company-wide trail. The unscoped default is the
       // caller's own outbox, which for HR is empty — see list-scope.test.ts.
-      const res = await fetch('/api/department-transfers?scope=all', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: DepartmentTransferRequestRow[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await trackRead(
+        opts?.tracker,
+        'transfers',
+        async () => {
+          const res = await fetch('/api/department-transfers?scope=all', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: DepartmentTransferRequestRow[]; error?: string };
+          if (!res.ok || body.error) throw new Error(body.error || `Request failed (${res.status})`);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'transfer request')}`,
+      );
       setRows(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.transfers, json.rows ?? []);
+      if (opts?.tracker) setError(null);
     } catch (e) {
       // A background revalidate that blips must not replace a good table with
       // an error card — only a foreground load reports.
       if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load transfer requests');
     } finally {
-      if (!opts?.silent) setLoading(false);
+      if (!opts?.silent && !opts?.tracker) setLoading(false);
     }
   }, []);
+
+  const refresh = useTableRefresh({
+    subject: 'department transfers',
+    steps: [{ id: 'transfers', label: 'Reading every transfer request, company-wide' }],
+  });
 
   useEffect(() => {
     // A tab revisit repaints from the cache, but the skip only holds while the
@@ -259,12 +280,14 @@ export default function HrTransfers() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void fetchAll()}
+            onClick={() => refresh.run((t) => fetchAll({ tracker: t }))}
+            disabled={loading || refresh.running}
             className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
       </div>
 

@@ -171,6 +171,11 @@ took a `{ silent }` option, and on the silent path it:
 - does **not** blank rows or show an error card when the request blips — only a foreground
   load reports and clears.
 
+A manual **Refresh** is a foreground load. Since 2026-10-05 it reports through the refresh
+modal ([table-refresh-progress.md](./table-refresh-progress.md)) instead of re-raising the
+skeleton: the click passes a `tracker`, raises no loading flag, and keeps its failure handling
+(it still clears where it cleared). The silent path above never passes one.
+
 The pattern per call site is:
 
 ```ts

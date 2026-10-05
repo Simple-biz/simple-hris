@@ -32,6 +32,8 @@ import { PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId, type QueueRow } from
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 export interface UrgentPaymentRow {
   id: string;
@@ -243,56 +245,110 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
   const [undoTarget, setUndoTarget] = useState<PaymentDispatchRow | null>(null);
   const [undoing, setUndoing] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
+  // `tracker` comes only from the Refresh click: each read is a line in the refresh
+  // modal (docs/features/table-refresh-progress.md), which then says a failure itself.
+  const load = useCallback(async (silent = false, tracker?: RefreshTracker) => {
     if (!silent) setLoading(true); else setRefreshing(true);
     try {
-      const [mesaRes, orphRes, dispatchedRes] = await Promise.all([
-        fetch('/api/urgent-payments', { cache: 'no-store' }),
-        fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' }),
-        fetch('/api/urgent-payments/dispatches', { cache: 'no-store' }),
-      ]);
-      if (!mesaRes.ok) throw new Error(`HTTP ${mesaRes.status}`);
-      const mesaJson = (await mesaRes.json()) as { rows?: UrgentPaymentRow[]; error?: string };
-      if (mesaJson.error) throw new Error(mesaJson.error);
-      const mesa = mesaJson.rows ?? [];
-      setRows(mesa);
-
-      // Orphanage budget requests — best-effort: a failure here must not break
-      // the MESA queue. Gift purchases are NOT urgent, so we filter to budgets.
-      let budget: OrphanagePendingItem[] = [];
-      try {
-        const orphJson = (await orphRes.json()) as { items?: OrphanagePendingItem[]; error?: string };
-        if (orphRes.ok && !orphJson.error) {
-          budget = (orphJson.items ?? []).filter((i) => i.sourceType === 'budget_request');
-        }
-      } catch {
-        /* ignore — budget section silently omitted */
-      }
-      setBudgetItems(budget);
-      onCountChange?.(mesa.length + budget.length);
+      // The three reads go out side by side, as before. A request that gets no
+      // answer at all fails the whole load; only the two best-effort reads below
+      // tolerate a refused or unreadable answer.
+      const mesaRead = trackRead(
+        tracker,
+        'mesa',
+        async () => {
+          const res = await fetch('/api/urgent-payments', { cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = (await res.json()) as { rows?: UrgentPaymentRow[]; error?: string };
+          if (json.error) throw new Error(json.error);
+          return json.rows ?? [];
+        },
+        (mesa) => `Read ${countOf(mesa.length, 'approved MESA disbursement')}`,
+      );
 
       // This week's dispatch log — best-effort: a failure here must not break
       // the pending queue. On failure we keep the previous rows rather than
       // blanking the Paid/Not paid views. One-off rows (`is_one_off`) belong to
       // the processor buckets now (OneOffPaymentsSection) and are filtered out
       // so a dispatched one-off never shows in two places.
-      try {
-        const dispatchedJson = (await dispatchedRes.json()) as {
-          rows?: (PaymentDispatchRow & { is_one_off?: boolean })[];
-          week?: { start: string; end: string } | null;
-          error?: string;
-        };
-        if (dispatchedRes.ok && !dispatchedJson.error) {
-          const dispatched = (dispatchedJson.rows ?? []).filter((r) => r.is_one_off !== true);
-          setDispatchedRows(dispatched);
-          setWeekRange(dispatchedJson.week ?? null);
-          onDispatchedCountChange?.(dispatched.length);
-        }
-      } catch {
-        /* ignore — dispatch-log views silently keep their last data */
+      // A refused or unreadable log keeps the last copy on screen, as before; on the
+      // click its line FAILS (a kept copy is not a read). It waits only for the MESA
+      // read, never for the budget read (which waits for this one).
+      type DispatchLog = { dispatched: (PaymentDispatchRow & { is_one_off?: boolean })[]; week: { start: string; end: string } | null };
+      let logLineFailed = false;
+      const logRead = trackRead(
+        tracker,
+        'log',
+        async (): Promise<DispatchLog | null> => {
+          const res = await fetch('/api/urgent-payments/dispatches', { cache: 'no-store' });
+          let reason = `HTTP ${res.status}`;
+          try {
+            const json = (await res.json()) as {
+              rows?: (PaymentDispatchRow & { is_one_off?: boolean })[];
+              week?: { start: string; end: string } | null;
+              error?: string;
+            };
+            if (res.ok && !json.error) {
+              return { dispatched: (json.rows ?? []).filter((r) => r.is_one_off !== true), week: json.week ?? null };
+            }
+            if (json.error) reason = json.error;
+          } catch {
+            /* ignore — dispatch-log views silently keep their last data */
+          }
+          if (!tracker) return null;
+          await mesaRead.catch(() => undefined);
+          logLineFailed = true;
+          throw new Error(`Couldn't read this week's dispatch log (${reason}). The Paid and Not paid views still show the last copy.`);
+        },
+        (log) => `Read ${countOf((log?.dispatched ?? []).length, 'payout')} dispatched this week`,
+      ).catch((e: unknown) => {
+        if (logLineFailed) return null;
+        throw e;
+      });
+
+      // Orphanage budget requests — best-effort: a failure here must not break
+      // the MESA queue. Gift purchases are NOT urgent, so we filter to budgets.
+      // A failed read EMPTIES the section, which then reads as "nothing to pay",
+      // so the Refresh click's modal must not call that refreshed: on the click
+      // this line fails, and the load still carries on exactly as the silent
+      // paths do. It fails once the other two reads have answered, so their
+      // lines still say what they brought (the load applies them either way).
+      let budgetLineFailed = false;
+      const budgetRead = trackRead(
+        tracker,
+        'budget',
+        async () => {
+          const res = await fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' });
+          let reason = `HTTP ${res.status}`;
+          try {
+            const json = (await res.json()) as { items?: OrphanagePendingItem[]; error?: string };
+            if (res.ok && !json.error) return (json.items ?? []).filter((i) => i.sourceType === 'budget_request');
+            if (json.error) reason = json.error;
+          } catch {
+            /* ignore — budget section silently omitted */
+          }
+          if (!tracker) return [];
+          await Promise.allSettled([mesaRead, logRead]);
+          budgetLineFailed = true;
+          throw new Error(`Couldn't read the orphanage budget requests (${reason}). None are listed, which does not mean there are none.`);
+        },
+        (budget) => `Read ${countOf(budget.length, 'orphanage budget request')}`,
+      ).catch((e: unknown) => {
+        if (budgetLineFailed) return [];
+        throw e;
+      });
+
+      const [mesa, budget, log] = await Promise.all([mesaRead, budgetRead, logRead]);
+      setRows(mesa);
+      setBudgetItems(budget);
+      onCountChange?.(mesa.length + budget.length);
+      if (log) {
+        setDispatchedRows(log.dispatched);
+        setWeekRange(log.week);
+        onDispatchedCountChange?.(log.dispatched.length);
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load urgent payments');
+      if (!tracker) toast.error(e instanceof Error ? e.message : 'Failed to load urgent payments');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -337,10 +393,19 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
     [rows, filter, processorFor],
   );
 
-  const handleRefresh = async () => {
-    await load(true);
-    toast.success('Refreshed urgent payments');
-  };
+  // The modal says "Refreshed" only when it was; a failure keeps it open with
+  // the reason (it replaced a success toast that fired even after a failure).
+  const refresh = useTableRefresh({
+    subject: 'urgent payments',
+    steps: [
+      { id: 'mesa', label: 'Reading approved MESA disbursements' },
+      { id: 'budget', label: 'Reading orphanage budget requests' },
+      { id: 'log', label: "Reading this week's dispatch log" },
+    ],
+    applyLabel: 'Updating the queue',
+    appliedLabel: 'Queue updated',
+  });
+  const handleRefresh = () => refresh.run((t) => load(true, t));
 
   const handleConfirm = async (payload: MarkPaidPayload) => {
     const target = rows.find((r) => r.id === payload.rowId);
@@ -565,12 +630,13 @@ export default function UrgentPaymentsQueue({ onCountChange, onDispatchedCountCh
             variant="outline"
             size="sm"
             onClick={handleRefresh}
-            disabled={refreshing || loading}
+            disabled={refreshing || loading || refresh.running}
             className="shrink-0 gap-1.5"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
 
         {/* View rail — live pending queue vs this week's dispatch-log views.

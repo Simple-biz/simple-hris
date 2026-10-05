@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
@@ -22,6 +22,7 @@ import { scopeRowsToDept } from '@/lib/manager/team-dept-rail';
 import { buildOrientationWeeks } from '@/lib/manager/orientation-weekly';
 import type { DeptRailGroup } from '@/lib/payment-catalog/dept-rail';
 import { useOrientationHistory } from '@/hooks/useOrientationHistory';
+import { useTableRefresh } from '@/components/common/RefreshProgressDialog';
 import { downloadOrientationPdf } from '@/lib/manager/orientation-pdf';
 import { pageWindow, type PageWindow } from '@/lib/manager/page-window';
 import {
@@ -252,6 +253,18 @@ export default function OrientationAttendancePanel({
     live,
     refresh,
   } = useOrientationHistory();
+  const tableRefresh = useTableRefresh({
+    subject: 'orientation attendance',
+    steps: [{ id: 'history', label: 'Reading every hire and their orientation weeks' }],
+  });
+  // The modal sits first in every branch below, in the same place, so a failed refresh
+  // (which clears the panel to its error card, then re-reads) never unmounts it mid-report.
+  const withRefreshModal = (panel: React.ReactNode) => (
+    <>
+      {tableRefresh.dialog}
+      {panel}
+    </>
+  );
   const reduceMotion = useReducedMotion() ?? false;
   const [pdfBusy, setPdfBusy] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -341,7 +354,7 @@ export default function OrientationAttendancePanel({
       };
 
   if (loading) {
-    return (
+    return withRefreshModal(
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
         <CardContent className="flex items-center justify-center gap-2 py-12 text-sm text-zinc-500 dark:text-zinc-400">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -354,7 +367,7 @@ export default function OrientationAttendancePanel({
   // No silent degradation: the week key comes from HR's checklist, and falling
   // back to the hire's own dates is the 46%-wrong grouping this replaced.
   if (error) {
-    return (
+    return withRefreshModal(
       <Card className="border-rose-200/80 bg-gradient-to-br from-white to-rose-50/40 ring-1 ring-rose-500/10 dark:border-rose-900/50 dark:from-zinc-950">
         <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
           <AlertTriangle className="h-6 w-6 text-rose-600 dark:text-rose-400" />
@@ -371,7 +384,7 @@ export default function OrientationAttendancePanel({
   }
 
   if (allWeeks.length === 0) {
-    return (
+    return withRefreshModal(
       <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15">
         <CardContent className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
@@ -392,7 +405,7 @@ export default function OrientationAttendancePanel({
   // Display only: the tiles above and the PDF read `summary`, never this page.
   const weekWin = pageWindow(allWeeks, weekPage, ORIENTATION_PAGE_SIZE);
 
-  return (
+  return withRefreshModal(
     <motion.div className="flex flex-col gap-3" {...rise}>
       {outsideDepartments.length > 0 && (
         <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
@@ -468,15 +481,15 @@ export default function OrientationAttendancePanel({
           Show everyone in an opened week
         </label>
         <div className="ml-auto flex items-center gap-1.5">
-          {/* Refreshing no longer swaps the panel for a spinner card — the
-              numbers stay put and the icon spins in place. */}
+          {/* Refreshing never swaps the panel for a spinner card — the numbers
+              stay put behind the refresh modal (table-refresh-progress.md). */}
           <Button
             type="button"
             variant="outline"
             size="sm"
             className="h-9 gap-1.5 text-xs"
-            onClick={() => void refresh()}
-            disabled={refreshing}
+            onClick={() => tableRefresh.run((t) => refresh(t))}
+            disabled={refreshing || tableRefresh.running}
             title="Reload orientation attendance"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} /> Refresh

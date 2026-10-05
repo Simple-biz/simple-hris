@@ -75,6 +75,8 @@ import type { PabDayDisputeRow, PabDisputeStatus } from '@/lib/supabase/pab-day-
 import { usePublishPresenceTab } from '@/components/presence/PresenceProvider';
 import { humanizeTabId } from '@/lib/presence/page-label';
 import { useTabDocumentTitle } from '@/hooks/useTabDocumentTitle';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 function isPlausibleEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
@@ -310,30 +312,49 @@ export default function OrphanageApp() {
     }
   }, [emailFromQuery]);
 
-  const fetchRows = useCallback(async () => {
-    setLoading(true);
+  // `tracker` comes only from the Receipt log's Refresh click: the log stays on
+  // screen (no blank swap) until the answer lands, and the read is a line in the
+  // refresh modal, which then says any failure itself
+  // (docs/features/table-refresh-progress.md).
+  const fetchRows = useCallback(async (tracker?: RefreshTracker) => {
+    if (!tracker) setLoading(true);
     try {
-      const res = await fetch('/api/orphanage-disputes', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        pending?: PabDayDisputeRow[];
-        verified?: PabDayDisputeRow[];
-        error?: string;
-      };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load queue');
+      const json = await trackRead(
+        tracker,
+        'issues',
+        async () => {
+          const res = await fetch('/api/orphanage-disputes', { cache: 'no-store' });
+          const body = (await res.json()) as {
+            pending?: PabDayDisputeRow[];
+            verified?: PabDayDisputeRow[];
+            error?: string;
+          };
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Failed to load queue');
+          return body;
+        },
+        (body) =>
+          `Read ${countOf((body.pending ?? []).length, 'issue')} awaiting review and ${countOf((body.verified ?? []).length, 'issue')} in the receipt log`,
+      );
       setRows(json.pending ?? []);
       setVerifiedRows(json.verified ?? []);
     } catch (e) {
       setRows([]);
       setVerifiedRows([]);
-      toast.error(e instanceof Error ? e.message : 'Could not load orphanage queue');
+      if (!tracker) toast.error(e instanceof Error ? e.message : 'Could not load orphanage queue');
     } finally {
-      setLoading(false);
+      // A tracked read never raised the flag, so it never lowers one a foreground load owns.
+      if (!tracker) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void fetchRows();
   }, [fetchRows]);
+
+  const receiptLogRefresh = useTableRefresh({
+    subject: 'the receipt log',
+    steps: [{ id: 'issues', label: 'Reading the review queue and the receipt log' }],
+  });
 
   const filteredVerified = useMemo(() => {
     const q = verifiedSearch.trim().toLowerCase();
@@ -837,12 +858,13 @@ export default function OrphanageApp() {
                       variant="outline"
                       size="sm"
                       className="border-rose-200 text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:text-rose-400 dark:hover:bg-rose-950/30"
-                      onClick={() => void fetchRows()}
-                      disabled={loading}
+                      onClick={() => receiptLogRefresh.run((t) => fetchRows(t))}
+                      disabled={loading || receiptLogRefresh.running}
                     >
-                      <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+                      <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', (loading || receiptLogRefresh.running) && 'animate-spin')} />
                       Refresh
                     </Button>
+                    {receiptLogRefresh.dialog}
                   </div>
                 </div>
                 {loading ? null : filteredVerified.length === 0 ? (

@@ -25,6 +25,8 @@ import type {
   OrphanageBudgetRequestVisitType,
 } from '@/lib/supabase/orphanage-budget-requests';
 import type { GiftPaymentRow, GiftPaymentStatus } from '@/lib/supabase/gift-payments';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 interface AuditTrailEntry {
   id: string;
@@ -159,11 +161,18 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  /**
+   * `tracker` comes only from the Refresh click: the list (or its error) stays on
+   * screen until the answer replaces it, and the read is a line in the refresh
+   * modal (docs/features/table-refresh-progress.md). This tab shows a server
+   * `error` in place of the list without throwing; on the click that read's line
+   * fails with the same sentence.
+   */
   const fetchRows = useMemo(() => {
-    return async (showSpinner: boolean) => {
+    return async (showSpinner: boolean, tracker?: RefreshTracker) => {
       if (showSpinner) setLoading(true);
       else setRefreshing(true);
-      setError(null);
+      if (!tracker) setError(null);
       try {
         if (source === 'budgets') {
           const params = new URLSearchParams();
@@ -171,20 +180,40 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
             params.set('email', viewerEmail);
           }
           params.set('with_audit', '1');
-          const res = await fetch(`/api/orphanage-budget-requests?${params.toString()}`, {
-            cache: 'no-store',
-          });
-          const json = (await res.json()) as { rows?: RowWithAudit[]; error?: string | null };
+          const json = await trackRead(
+            tracker,
+            'history',
+            async () => {
+              const res = await fetch(`/api/orphanage-budget-requests?${params.toString()}`, {
+                cache: 'no-store',
+              });
+              const body = (await res.json()) as { rows?: RowWithAudit[]; error?: string | null };
+              if (body.error) tracker?.fail(body.error);
+              return body;
+            },
+            (body) => `Read ${countOf((body.rows ?? []).length, 'budget request')}`,
+          );
           if (json.error) setError(json.error);
+          else if (tracker) setError(null);
           setRows(json.rows ?? []);
         } else {
           const params = new URLSearchParams();
           if (scope === 'mine' && viewerEmail) {
             params.set('email', viewerEmail);
           }
-          const res = await fetch(`/api/gift-payments?${params.toString()}`, { cache: 'no-store' });
-          const json = (await res.json()) as { rows?: GiftPaymentRow[]; error?: string | null };
+          const json = await trackRead(
+            tracker,
+            'history',
+            async () => {
+              const res = await fetch(`/api/gift-payments?${params.toString()}`, { cache: 'no-store' });
+              const body = (await res.json()) as { rows?: GiftPaymentRow[]; error?: string | null };
+              if (body.error) tracker?.fail(body.error);
+              return body;
+            },
+            (body) => `Read ${countOf((body.rows ?? []).length, 'gift payment')}`,
+          );
           if (json.error) setError(json.error);
+          else if (tracker) setError(null);
           setGiftRows(json.rows ?? []);
         }
       } catch (e) {
@@ -199,6 +228,28 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
   useEffect(() => {
     void fetchRows(true);
   }, [fetchRows]);
+
+  // Names the read the click really sends: this Source, and the viewer's own
+  // rows only when the email filter is applied (the same test fetchRows uses).
+  const own = scope === 'mine' && !!viewerEmail;
+  const refresh = useTableRefresh({
+    subject: source === 'budgets' ? 'budget requests' : 'gift payments',
+    steps: [
+      {
+        id: 'history',
+        label:
+          source === 'budgets'
+            ? own
+              ? 'Reading your budget requests'
+              : 'Reading every budget request'
+            : own
+              ? 'Reading your gift payments'
+              : 'Reading every gift payment',
+      },
+    ],
+    applyLabel: 'Updating the list',
+    appliedLabel: 'List updated',
+  });
 
   const filteredRows = useMemo(() => {
     return rows.filter((r) => statusFilter === 'all' || r.status === statusFilter);
@@ -297,12 +348,13 @@ export default function OrphanageBudgetHistory({ viewerEmail }: OrphanageBudgetH
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs"
-            onClick={() => void fetchRows(false)}
-            disabled={loading || refreshing}
+            onClick={() => refresh.run((t) => fetchRows(false, t))}
+            disabled={loading || refreshing || refresh.running}
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
       </div>
 

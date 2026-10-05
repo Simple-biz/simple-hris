@@ -28,6 +28,8 @@ import {
 import { Label } from '@/components/ui/label';
 import { formatInternPHP, type InternInboxWeek, type InternPayStatus, type InternShareMode } from '@/lib/interns/intern-types';
 import { INTERN_PAB_MIN_WEEKLY_HOURS } from '@/lib/interns/intern-pab';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * Payroll Wizard → Interns (the Simple | Interns toggle in App.tsx).
@@ -61,6 +63,12 @@ const STATUS_CHIP: Record<InternPayStatus, string> = {
   rejected: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
 };
 
+/**
+ * The share-mode read answered without a config. The page tolerates it (the chip keeps the
+ * share mode on screen and the weeks still update), but the Refresh modal must not call it read.
+ */
+class ShareModeNotRead extends Error {}
+
 export default function InternsPayrollView({ canEdit }: { sessionEmail: string | null; canEdit: boolean }) {
   const [weeks, setWeeks] = useState<InternInboxWeek[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,19 +80,54 @@ export default function InternsPayrollView({ canEdit }: { sessionEmail: string |
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
+  // `tracker` comes only from the Refresh click: the week list (or its error card) stays on
+  // screen instead of the spinner, and each read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). The two reads still run side by side.
+  const load = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    const tracker = opts?.tracker;
+    if (!opts?.silent && !tracker) setLoading(true);
+    if (!tracker) setError(null);
     try {
-      const [wRes, cRes] = await Promise.all([
-        fetch(`/api/orphanage-interns/pay-weeks/inbox?_=${Date.now()}`, { cache: 'no-store' }),
-        fetch(`/api/orphanage-interns/pay-weeks/config?_=${Date.now()}`, { cache: 'no-store' }),
-      ]);
-      const wJson = (await wRes.json()) as { weeks?: InternInboxWeek[]; error?: string | null };
-      const cJson = (await cRes.json()) as { config?: { shareMode: InternShareMode | null }; error?: string | null };
-      if (!wRes.ok || wJson.error) throw new Error(wJson.error ?? 'Could not load intern weeks');
+      const weeksRead = trackRead(
+        tracker,
+        'weeks',
+        async () => {
+          const wRes = await fetch(`/api/orphanage-interns/pay-weeks/inbox?_=${Date.now()}`, { cache: 'no-store' });
+          const wJson = (await wRes.json()) as { weeks?: InternInboxWeek[]; error?: string | null };
+          if (!wRes.ok || wJson.error) throw new Error(wJson.error ?? 'Could not load intern weeks');
+          return wJson;
+        },
+        (j) => {
+          const list = j.weeks ?? [];
+          const awaiting = list.filter((w) => w.status === 'submitted').length;
+          return `Read ${countOf(list.length, 'locked week')}, ${awaiting.toLocaleString('en-US')} awaiting you`;
+        },
+      );
+      const configRead = trackRead(
+        tracker,
+        'config',
+        async () => {
+          const cRes = await fetch(`/api/orphanage-interns/pay-weeks/config?_=${Date.now()}`, { cache: 'no-store' });
+          const cJson = (await cRes.json()) as { config?: { shareMode: InternShareMode | null }; error?: string | null };
+          if (!(cRes.ok && cJson.config)) {
+            // Fail this line only once the weeks line has settled: a failure ends the
+            // modal's run, and a weeks read still in flight would be marked failed with it.
+            await weeksRead.catch(() => undefined);
+            throw new ShareModeNotRead(cJson.error || `Could not read the share mode (${cRes.status})`);
+          }
+          return cJson.config;
+        },
+        (c) =>
+          `Read the share mode: ${c.shareMode === 'system_split' ? 'split to two payees' : c.shareMode === 'intern_remits' ? 'intern remits' : 'not set'}`,
+      ).catch((e: unknown) => {
+        // Tolerated, as before: the weeks still land and the chip keeps its share mode.
+        if (e instanceof ShareModeNotRead) return null;
+        throw e;
+      });
+      const [wJson, nextConfig] = await Promise.all([weeksRead, configRead]);
       setWeeks(wJson.weeks ?? []);
-      if (cRes.ok && cJson.config) setConfig(cJson.config);
+      if (tracker) setError(null);
+      if (nextConfig) setConfig(nextConfig);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Could not load intern weeks';
       if (opts?.silent) toast.error(msg);
@@ -97,6 +140,16 @@ export default function InternsPayrollView({ canEdit }: { sessionEmail: string |
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: 'the Interns inbox',
+    steps: [
+      { id: 'weeks', label: 'Reading the locked intern weeks' },
+      { id: 'config', label: 'Reading the share mode' },
+    ],
+    applyLabel: 'Updating the list',
+    appliedLabel: 'List updated',
+  });
 
   const visible = useMemo(() => (filter === 'all' ? weeks : weeks.filter((w) => w.status === filter)), [weeks, filter]);
   const counts = useMemo(
@@ -179,9 +232,16 @@ export default function InternsPayrollView({ canEdit }: { sessionEmail: string |
           <Button size="sm" variant="outline" onClick={() => setSetupOpen(true)} className="h-8 gap-1.5 text-xs">
             <Settings2 className="h-3.5 w-3.5" /> Setup
           </Button>
-          <Button size="sm" variant="outline" onClick={() => load()} className="h-8 gap-1.5 text-xs">
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /> Refresh
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => refresh.run((t) => load({ tracker: t }))}
+            disabled={refresh.running}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} /> Refresh
           </Button>
+          {refresh.dialog}
         </div>
       </div>
 

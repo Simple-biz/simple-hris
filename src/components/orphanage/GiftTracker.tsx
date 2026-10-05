@@ -79,6 +79,8 @@ import {
   isOrphanageTabCacheFresh,
   setOrphanageTabCache,
 } from '@/lib/orphanage/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 /* ── Export menu (PDF · XLSX · CSV) ─────────────────────────────────────────
  * Lifted from HrGlobalMasterList's inline ExportMenu — the repo has no dropdown
  * primitive. Themed emerald for the Gift Tracker.
@@ -501,21 +503,95 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
    *
    * `force` is the manual Refresh: it drops the cached copies FIRST so a failed
    * fetch cannot leave a pre-refresh value sitting in the store looking fresh.
+   *
+   * `tracker` comes only from the Refresh click: each read is a line in the
+   * refresh modal (docs/features/table-refresh-progress.md), which then says any
+   * failure itself, so the click raises no toast.
    */
-  const load = useCallback(async (opts: { silent?: boolean; force?: boolean } = {}) => {
+  const load = useCallback(async (opts: { silent?: boolean; force?: boolean; tracker?: RefreshTracker } = {}) => {
+    const { tracker } = opts;
     if (opts.force) clearOrphanageTabCachePrefix(GK.giftPrefix);
     if (!opts.silent) setRefreshing(true);
     try {
-      const [empRes, notesRes, shipRes, receiptRes] = await Promise.all([
-        fetch('/api/employees', { cache: 'no-store' }),
-        fetch('/api/gift-tracker-notes', { cache: 'no-store' }),
-        fetch('/api/employee-gift-shipping', { cache: 'no-store' }),
-        fetch('/api/employee-gift-receipts', { cache: 'no-store' }),
-      ]);
-      const empJson = (await empRes.json()) as { employees?: EmployeeRow[]; error?: string };
-      const notesJson = (await notesRes.json()) as { notes?: GiftTrackerNote[]; error?: string };
-      const shipJson = (await shipRes.json()) as { rows?: EmployeeGiftShippingRow[]; error?: string };
-      if (empJson.error) throw new Error(empJson.error);
+      // Receipts, notes and shipping are reads this tab carries on past when they
+      // fail: the receipts body is awaited only once the rest is applied, and a
+      // failed notes or shipping read has always been applied as an empty list.
+      // On the click such a line fails only once the other lines have settled — a
+      // failure ends the modal's run, and a read still in flight would be marked
+      // failed with it. Two lines failing together never wait on each other.
+      const lines = new Map<string, Promise<unknown>>();
+      const failing = new Set<string>();
+      const othersSettled = async (id: string) => {
+        failing.add(id);
+        await Promise.allSettled([...lines].filter(([other]) => other !== id && !failing.has(other)).map(([, line]) => line));
+      };
+      // The four requests still go out together. Any of them failing outright
+      // stops the whole load, as do a roster error and an unreadable roster,
+      // notes or shipping body.
+      const roster = trackRead(
+        tracker,
+        'roster',
+        async () => {
+          const res = await fetch('/api/employees', { cache: 'no-store' });
+          const body = (await res.json()) as { employees?: EmployeeRow[]; error?: string };
+          if (body.error) throw new Error(body.error);
+          return body;
+        },
+        (body) => `Read ${countOf((body.employees ?? []).length, 'person', 'people')} on the master list`,
+      );
+      const receiptRes = fetch('/api/employee-gift-receipts', { cache: 'no-store' });
+      const receipts = trackRead(
+        tracker,
+        'receipts',
+        async () => {
+          try {
+            const body = (await (await receiptRes).json()) as {
+              rows?: EmployeeGiftReceiptRow[];
+              error?: string;
+            };
+            if (body.error) throw new Error(body.error);
+            return body;
+          } catch (e) {
+            if (tracker) await othersSettled('receipts');
+            throw e;
+          }
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'fulfilment record')}`,
+      );
+      // Awaited below, after the roster is applied. Until then this only keeps an
+      // early failure from being reported as unhandled.
+      receipts.catch(() => undefined);
+      const shipping = trackRead(
+        tracker,
+        'shipping',
+        async () => {
+          const res = await fetch('/api/employee-gift-shipping', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: EmployeeGiftShippingRow[]; error?: string };
+          if (tracker && (!res.ok || body.error)) {
+            await othersSettled('shipping');
+            tracker.fail(body.error || `Could not read shipping submissions (HTTP ${res.status})`, 'shipping');
+          }
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'shipping submission')}`,
+      );
+      const notes = trackRead(
+        tracker,
+        'notes',
+        async () => {
+          const res = await fetch('/api/gift-tracker-notes', { cache: 'no-store' });
+          const body = (await res.json()) as { notes?: GiftTrackerNote[]; error?: string };
+          if (tracker && (!res.ok || body.error)) {
+            await othersSettled('notes');
+            tracker.fail(body.error || `Could not read gift notes (HTTP ${res.status})`, 'notes');
+          }
+          return body;
+        },
+        (body) => `Read ${countOf((body.notes ?? []).length, 'gift note')}`,
+      );
+      // Set before any read can answer: each one awaits its request first.
+      lines.set('roster', roster).set('receipts', receipts).set('shipping', shipping).set('notes', notes);
+      const [empJson, notesJson, shipJson] = await Promise.all([roster, notes, shipping, receiptRes]);
       const employeeRows = empJson.employees ?? [];
       setEmployees(employeeRows);
       setOrphanageTabCache(GK.giftEmployees, employeeRows);
@@ -537,11 +613,7 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
       setShippingByEmail(shipMap);
       setOrphanageTabCache(GK.giftShipping, shipJson.rows ?? []);
 
-      const receiptJson = (await receiptRes.json()) as {
-        rows?: EmployeeGiftReceiptRow[];
-        error?: string;
-      };
-      if (receiptJson.error) throw new Error(receiptJson.error);
+      const receiptJson = await receipts;
       const receiptMap = new Map<string, Map<number, boolean>>();
       for (const r of receiptJson.rows ?? []) {
         const key = r.work_email.toLowerCase();
@@ -554,10 +626,12 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
     } catch (e) {
       // A SILENT revalidate never reports over data already on screen — an error
       // card thrown across a populated table is worse than showing rows that are
-      // a minute old. The foreground path still reports.
-      if (!opts.silent) {
+      // a minute old. The foreground path still reports; on the Refresh click the
+      // modal does (a failure outside the reads included).
+      if (!opts.silent && !tracker) {
         toast.error(e instanceof Error ? e.message : 'Could not load Gift Tracker');
       }
+      tracker?.fail(e);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -628,11 +702,30 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
    * while the tab is closed. The open tab hands every fresh read back up
    * (`onState`), so after a lock or reopen the badge moves with the list.
    * `null` = unknown (failed read or migration not applied) ⇒ NO badge, never 0.
+   *
+   * `tracker` comes only from the Refresh click, with `settleFirst` = the
+   * tracker's own load beside it: a failed badge read fails its line only once
+   * that load has settled, so the roster's lines are not marked failed with it.
    */
   const [ordersState, setOrdersState] = useState<OrdersClientState | null>(null);
-  const loadOrdersState = useCallback(async () => {
+  const loadOrdersState = useCallback(async (tracker?: RefreshTracker, settleFirst?: Promise<unknown>) => {
     try {
-      const st = await fetchOrdersState();
+      const st = await trackRead(
+        tracker,
+        'orders',
+        async () => {
+          try {
+            return await fetchOrdersState();
+          } catch (e) {
+            if (settleFirst) await settleFirst;
+            throw e;
+          }
+        },
+        (s) =>
+          s.migrated
+            ? `Read ${countOf(s.orders.length, 'locked order')} and ${countOf(s.catalog.length, 'catalog item')}`
+            : 'Orders are not set up yet',
+      );
       setOrdersState(st.migrated ? st : null);
     } catch {
       setOrdersState(null);
@@ -641,6 +734,29 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
   useEffect(() => {
     void loadOrdersState();
   }, [loadOrdersState]);
+
+  // The Refresh click: the tracker's four reads and the Orders badge's read, side
+  // by side as before, each a line in the refresh modal. The rows stay on screen
+  // until the new ones land (docs/features/table-refresh-progress.md).
+  const refresh = useTableRefresh({
+    subject: 'the Gift Tracker',
+    steps: [
+      { id: 'roster', label: 'Reading the master list' },
+      { id: 'notes', label: 'Reading gift notes' },
+      { id: 'shipping', label: 'Reading shipping submissions' },
+      { id: 'receipts', label: 'Reading gift fulfilment' },
+      { id: 'orders', label: 'Reading gift orders for the Orders badge' },
+    ],
+    applyLabel: 'Updating the tracker',
+    appliedLabel: 'Tracker updated',
+  });
+  const refreshAll = useCallback(
+    (t: RefreshTracker) => {
+      const tracked = load({ force: true, tracker: t });
+      return Promise.all([tracked, loadOrdersState(t, tracked)]);
+    },
+    [load, loadOrdersState],
+  );
 
   const rows: Row[] = useMemo(() => {
     const out: Row[] = [];
@@ -1279,17 +1395,15 @@ export default function GiftTracker({ viewerEmail }: { viewerEmail: string | nul
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              void load({ force: true });
-              void loadOrdersState();
-            }}
-            disabled={refreshing}
+            onClick={() => refresh.run(refreshAll)}
+            disabled={refreshing || refresh.running}
           >
             <RefreshCw
-              className={refreshing ? 'mr-1.5 h-3.5 w-3.5 animate-spin' : 'mr-1.5 h-3.5 w-3.5'}
+              className={refreshing || refresh.running ? 'mr-1.5 h-3.5 w-3.5 animate-spin' : 'mr-1.5 h-3.5 w-3.5'}
             />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
 
         {/* The panel area reserves the outgoing panel's height for the length of

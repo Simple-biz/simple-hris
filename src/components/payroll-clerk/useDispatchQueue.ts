@@ -25,6 +25,8 @@ import {
   type WizardSnapshotEntry,
 } from '@/lib/payroll/wizard-dispatch-values';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import type { RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { DISPATCH_SYNC_QUEUE_CHANGED, DISPATCH_SYNC_TOPIC } from '@/lib/payroll/dispatch-paid-toast';
@@ -169,7 +171,24 @@ interface DispatchQueueState {
   valuesWarning: string | null;
   /** Re-pulls dispatches + queue. Call after Mark paid succeeds. */
   refresh: () => Promise<void>;
+  /**
+   * The Refresh button's version of {@link refresh}: the same silent reload and
+   * broadcast, reported to the refresh modal (docs/features/table-refresh-progress.md)
+   * as one line that is done only when THIS load put its rows on screen. A load
+   * that failed, kept the cached queue, or was overtaken by a newer load fails the
+   * line with that reason instead of claiming the queue was refreshed.
+   */
+  refreshWithProgress: (tracker: RefreshTracker) => Promise<void>;
 }
+
+/** What one {@link useDispatchQueue} load did with the screen. */
+type DispatchLoadOutcome =
+  /** It wrote the queue. `error` is the load's own error (the queue shows ErrorState). */
+  | { readonly kind: 'applied'; readonly rows: number; readonly error: string | null }
+  /** A silent load failed over a cached queue, which stays on screen. */
+  | { readonly kind: 'kept'; readonly error: string }
+  /** Aborted, or a newer load owns the screen: this one wrote nothing. */
+  | { readonly kind: 'superseded' };
 
 const EMPTY_PERIOD: PayrollPeriod = {
   cycleId: null,
@@ -195,7 +214,7 @@ const DISPATCH_POLL_INTERVAL_MS = 15_000;
 
 /** Build the visible state for a cache key — the last-known queue for that week
  *  (instant paint) or a blank loading shell when the week hasn't been seen. */
-function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh'> {
+function seedState(cacheKey: string): Omit<DispatchQueueState, 'refresh' | 'refreshWithProgress'> {
   const cached = getTabCache<CachedQueue>(cacheKey);
   return {
     rows: cached?.rows ?? [],
@@ -1079,7 +1098,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
 
   // Seed from the in-session cache so switching back to the dispatch tab paints
   // the last-known queue instantly instead of a skeleton; we still revalidate.
-  const [state, setState] = useState<Omit<DispatchQueueState, 'refresh'>>(() => seedState(cacheKey));
+  const [state, setState] = useState<Omit<DispatchQueueState, 'refresh' | 'refreshWithProgress'>>(() => seedState(cacheKey));
 
   // Stale-load fence. Loads start from many triggers (Mark Paid's refresh, the
   // signature poll, a remote broadcast, tab focus) and each takes seconds. A load
@@ -1089,7 +1108,8 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
   // Only the newest load may write state; anything older is dropped on arrival.
   const fenceRef = useRef(createLoadFence());
 
-  const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }) => {
+  // Every caller but the Refresh modal ignores the returned outcome.
+  const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }): Promise<DispatchLoadOutcome> => {
     const ticket = fenceRef.current.start();
     // Silent refreshes (post-action reconciliation, or a cache-backed remount)
     // skip the loading flag so the table isn't torn down to a skeleton and
@@ -1097,8 +1117,8 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     if (!opts?.silent) setState((s) => ({ ...s, loading: true }));
     try {
       const result = await loadAll(signal, sel);
-      if (signal?.aborted) return;
-      if (!fenceRef.current.isCurrent(ticket)) return; // a newer load owns the screen
+      if (signal?.aborted) return { kind: 'superseded' };
+      if (!fenceRef.current.isCurrent(ticket)) return { kind: 'superseded' }; // a newer load owns the screen
       // Only cache clean loads — an errored result shouldn't overwrite good data.
       if (!result.error) {
         setTabCache<CachedQueue>(cacheKey, {
@@ -1127,15 +1147,17 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         contractorAdvisory: result.contractorAdvisory,
         valuesWarning: result.valuesWarning,
       });
+      return { kind: 'applied', rows: result.rows.length, error: result.error };
     } catch (e) {
-      if (signal?.aborted) return;
-      if (e instanceof DOMException && e.name === 'AbortError') return;
-      if (!fenceRef.current.isCurrent(ticket)) return; // stale failure — a newer load decides
+      if (signal?.aborted) return { kind: 'superseded' };
+      if (e instanceof DOMException && e.name === 'AbortError') return { kind: 'superseded' };
+      if (!fenceRef.current.isCurrent(ticket)) return { kind: 'superseded' }; // stale failure — a newer load decides
+      const message = e instanceof Error ? e.message : 'Failed to load dispatch queue';
       // A background revalidation that fails should keep the last good data on
       // screen rather than blanking the queue.
       if (opts?.silent && hasTabCache(cacheKey)) {
         setState((s) => ({ ...s, loading: false }));
-        return;
+        return { kind: 'kept', error: message };
       }
       setState({
         rows: [],
@@ -1146,12 +1168,13 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         fxRate: 0,
         wizardReady: true,
         loading: false,
-        error: e instanceof Error ? e.message : 'Failed to load dispatch queue',
+        error: message,
         freshAt: null,
         contractorError: null,
         contractorAdvisory: null,
         valuesWarning: null,
       });
+      return { kind: 'applied', rows: 0, error: message };
     }
   }, [sel, cacheKey]);
 
@@ -1294,5 +1317,24 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     await load(undefined, { silent: true });
   }, [load]);
 
-  return { ...state, refresh };
+  // The Refresh button: exactly `refresh`, plus an honest line in the modal.
+  const refreshWithProgress = useCallback(async (tracker: RefreshTracker) => {
+    signatureRef.current = null;
+    broadcastRef.current?.(stateSourceFileRef.current);
+    await tracker.step(
+      'queue',
+      async () => {
+        const outcome = await load(undefined, { silent: true });
+        if (outcome.kind === 'superseded') {
+          throw new Error('A newer read of the queue started while this one ran, so this one was not applied. The queue updates when that one lands.');
+        }
+        if (outcome.kind === 'kept') throw new Error(`${outcome.error} The queue on screen was kept.`);
+        if (outcome.error) throw new Error(outcome.error);
+        return outcome;
+      },
+      (outcome) => (outcome.kind === 'applied' ? `Read the queue: ${countOf(outcome.rows, 'payee')} still to pay` : null),
+    );
+  }, [load]);
+
+  return { ...state, refresh, refreshWithProgress };
 }

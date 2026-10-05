@@ -258,7 +258,8 @@ Kane: *"make this beautiful … simple like Google Console … add cache practic
 doesn't go away after switching tabs or reload."* The Integrations panel is one title row with
 the single primary action, an **endpoints strip** (REST · MCP · Auth, each with copy), a filter
 toolbar (All / Live / Revoked / Expired counts, a text filter, an "Updated … ago" stamp and
-Refresh), and **one flat table** on a hairline surface. Status is a dot and a word, never a
+Refresh, which since 2026-10-05 opens the refresh modal over the table:
+[table-refresh-progress.md](./table-refresh-progress.md)), and **one flat table** on a hairline surface. Status is a dot and a word, never a
 filled pill; the only accent is the app's orange on the primary action; row actions are ghost
 icon buttons that come to full strength on hover or focus. The dialogs (Edit, hand-off, Calls) keep the same vocabulary — hairline borders, zinc, one primary;
 the hand-off is one column with a segmented preview (see *The key is never stored*).

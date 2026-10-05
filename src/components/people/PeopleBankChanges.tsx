@@ -17,6 +17,8 @@ import { RailMixBand } from './rail-mix-band';
 import { NO_DEPARTMENT, type RailMix } from '@/lib/people/rail-mix';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { bankTypeKey, bankTypeLabel, bankTypeOptions } from '@/lib/people/bank-change-type';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -95,12 +97,22 @@ export default function PeopleBankChanges({
   const freshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const refetch = useCallback(async (mode: 'initial' | 'quiet') => {
+  // `tracker` comes only from the Refresh button: the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). The poll, the pulse and focus pass none.
+  const refetch = useCallback(async (mode: 'initial' | 'quiet', tracker?: RefreshTracker) => {
     if (mode === 'quiet') setRefreshing(true);
     try {
-      const res = await fetch('/api/people/bank-changes?limit=80', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: BankChange[]; error?: string };
-      if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await trackRead(
+        tracker,
+        'changes',
+        async () => {
+          const res = await fetch('/api/people/bank-changes?limit=80', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: BankChange[]; error?: string };
+          if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'bank change')}`,
+      );
       const next = json.rows ?? [];
 
       // Flash rows we haven't seen before — but never on the very first load.
@@ -141,6 +153,14 @@ export default function PeopleBankChanges({
   useEffect(() => {
     void refetch('initial');
   }, [refetch]);
+
+  // The Refresh button. The feed is the newest 80 changes, so the line never says "every".
+  const refresh = useTableRefresh({
+    subject: 'bank changes',
+    steps: [{ id: 'changes', label: 'Reading the latest bank changes' }],
+    applyLabel: 'Updating the feed',
+    appliedLabel: 'Feed updated',
+  });
 
   // Realtime — subscribe ONLY to the app_settings pulse key (a timestamp, no
   // PII). The save route bumps it on every change, and app_settings reliably
@@ -325,14 +345,15 @@ export default function PeopleBankChanges({
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 px-2.5 text-[12px]"
-            onClick={() => void refetch('quiet')}
-            disabled={refreshing || (loading && rows.length === 0)}
+            onClick={() => refresh.run((t) => refetch('quiet', t))}
+            disabled={refreshing || (loading && rows.length === 0) || refresh.running}
             aria-label="Refresh bank changes"
             title="Pull the latest bank changes now"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} />
             <span className="hidden sm:inline">Refresh</span>
           </Button>
+          {refresh.dialog}
         </div>
       </div>
 

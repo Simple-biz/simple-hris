@@ -20,6 +20,8 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { PRIORITY_STYLES, relativeTime } from './TicketCard';
@@ -333,39 +335,62 @@ export default function SupportTicketsTab({ canEdit }: Props) {
 
   /* ── reads ── */
 
-  const loadBoard = useCallback(async () => {
+  // `tracker` comes only from the Refresh click: each read is a line in its
+  // modal (docs/features/table-refresh-progress.md). The poll, wake, live
+  // signal and after-write reloads pass nothing and behave as before.
+  const loadBoard = useCallback(async (tracker?: RefreshTracker) => {
+    let notMigrated = false;
     try {
-      const res = await fetch(`/api/support/tickets${closedWantedRef.current ? '?closed=1' : ''}`, { cache: 'no-store' });
-      const json = (await res.json()) as Partial<BoardWire> & { error?: string | null };
-      if (!res.ok || json.error) {
-        // A failed read keeps the last-known board — the last-known state stays
-        // under an honest line, same rule the chat tab follows.
-        setBoardError(cleanErrorMessage(json.error, 'We could not read the board just now.'));
-        if (json.migrated === false) setBoard((prev) => (prev ? { ...prev, migrated: false } : null));
-        return;
-      }
-      setBoard(json as BoardWire);
+      const json = await trackRead(
+        tracker,
+        'board',
+        async () => {
+          const res = await fetch(`/api/support/tickets${closedWantedRef.current ? '?closed=1' : ''}`, { cache: 'no-store' });
+          const body = (await res.json()) as Partial<BoardWire> & { error?: string | null };
+          if (!res.ok || body.error) {
+            notMigrated = body.migrated === false;
+            throw new Error(cleanErrorMessage(body.error, 'We could not read the board just now.'));
+          }
+          return body as BoardWire;
+        },
+        // Not migrated: empty because the feature is off, so no count is said.
+        (b) =>
+          b.migrated === false
+            ? null
+            : `Read ${countOf((b.line ?? []).length, 'ticket')} in line, ${(b.board ?? []).length} on the board, ${(b.answered ?? []).length} answered${b.closed ? `, ${b.closed.length} recently closed` : ''}`,
+      );
+      setBoard(json);
       setBoardKnown(true);
       setBoardError(null);
     } catch (e) {
+      // A failed read keeps the last-known board — the last-known state stays
+      // under an honest line, same rule the chat tab follows.
       setBoardError(cleanErrorMessage(e, 'We could not read the board just now.'));
+      if (notMigrated) setBoard((prev) => (prev ? { ...prev, migrated: false } : null));
     }
   }, []);
 
-  const loadThread = useCallback(async (id: string) => {
-    setThreadLoading(true);
+  const loadThread = useCallback(async (id: string, tracker?: RefreshTracker) => {
+    // The click leaves the loading flag alone: it would swap a "no longer here"
+    // note for a skeleton mid-read. The modal shows the read instead.
+    if (!tracker) setThreadLoading(true);
     try {
-      const res = await fetch(`/api/support/tickets/${encodeURIComponent(id)}/reply`, { cache: 'no-store' });
-      const json = (await res.json()) as ThreadWire;
-      if (!res.ok) {
-        toast.error(cleanErrorMessage(json.error, 'We could not open that ticket.'));
-        return;
-      }
+      const json = await trackRead(
+        tracker,
+        'thread',
+        async () => {
+          const res = await fetch(`/api/support/tickets/${encodeURIComponent(id)}/reply`, { cache: 'no-store' });
+          const body = (await res.json()) as ThreadWire;
+          if (!res.ok) throw new Error(cleanErrorMessage(body.error, 'We could not open that ticket.'));
+          return body;
+        },
+        (t) => (t.ticket ? `Read ${countOf((t.messages ?? []).length, 'message')} on ${t.ticket.label}` : null),
+      );
       setThread(json);
     } catch (e) {
-      toast.error(cleanErrorMessage(e, 'We could not open that ticket.'));
+      if (!tracker) toast.error(cleanErrorMessage(e, 'We could not open that ticket.'));
     } finally {
-      setThreadLoading(false);
+      if (!tracker) setThreadLoading(false);
     }
   }, []);
 
@@ -374,11 +399,29 @@ export default function SupportTicketsTab({ canEdit }: Props) {
   const threadLoadRef = useRef(loadThread);
   threadLoadRef.current = loadThread;
 
-  const refreshAll = useCallback((withThread: boolean) => {
-    void boardRef.current();
+  // Returns both reads so the Refresh click can await them (neither rejects);
+  // the poll, wake and live callers ignore it, as before.
+  const refreshAll = useCallback((withThread: boolean, tracker?: RefreshTracker) => {
+    const board = boardRef.current(tracker);
     const id = selectedRef.current;
-    if (withThread && id) void threadLoadRef.current(id);
+    return Promise.all([board, withThread && id ? threadLoadRef.current(id, tracker) : null]);
   }, []);
+
+  // The Refresh click: the board and, when a ticket is open, its thread. The
+  // modal portals out of the /tickets console, so it carries the theme itself
+  // (ui-standards.md § 1.4).
+  const boardRefresh = useTableRefresh(
+    {
+      subject: 'support tickets',
+      steps: [
+        { id: 'board', label: 'Reading the support board', doneLabel: 'Read the support board' },
+        { id: 'thread', label: 'Reading the open ticket', doneLabel: 'Read the open ticket' },
+      ],
+      applyLabel: 'Updating the board',
+      appliedLabel: 'Board updated',
+    },
+    { contentClassName: 'tickets-theme dark' },
+  );
 
   /* ── first load, and reload when the Closed toggle changes ── */
 
@@ -643,10 +686,18 @@ export default function SupportTicketsTab({ canEdit }: Props) {
           )}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="ghost" size="icon-sm" aria-label="Refresh" title="Refresh" onClick={() => refreshAll(true)}>
-            <RefreshCw aria-hidden />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Refresh"
+            title="Refresh"
+            disabled={boardRefresh.running}
+            onClick={() => boardRefresh.run((t) => refreshAll(true, t))}
+          >
+            <RefreshCw className={cn(boardRefresh.running && 'animate-spin')} aria-hidden />
           </Button>
           <LivePill status={live} />
+          {boardRefresh.dialog}
         </div>
       </div>
 

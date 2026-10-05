@@ -155,7 +155,14 @@ week.
 Shipped in the same commit: Manager → My Team → Orientation now eases its week expand /
 collapse, staggers its KPI tiles and week cards in, and **refreshes in place** — the hook
 now separates first-load `loading` from `refreshing`, so Refresh spins the icon instead of
-swapping the whole panel for a spinner card and back.
+swapping the whole panel for a spinner card and back. **Since 2026-10-05 both panels' Refresh
+click also opens the refresh modal** ([table-refresh-progress.md](./table-refresh-progress.md)).
+It shows one line for the one read while the numbers stay put. `refresh(tracker?)` takes the
+modal's tracker. The read, the once-per-session skip and the failure handling (clear, then the
+automatic foreground re-read) are unchanged. The modal is mounted in every branch of the
+panel, so a failure that flips the panel to its error card still reports in the modal. A
+tracked click leaves an error card up until its own answer lands. The error card's **Retry**
+stays silent.
 
 `useOrientationHistory` gaining `refreshing` changes nothing for its other consumer
 ([NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx)), which never read

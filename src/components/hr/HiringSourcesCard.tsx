@@ -5,6 +5,8 @@ import { PieChart, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel } from '@/lib/hr/hiring-week';
 import { getHrTabCache, hasHrTabCache, hrHiringSourcesKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * HR Overview card: a donut + table of how many hires came from each `source`
@@ -67,19 +69,29 @@ export default function HiringSourcesCard({ periodStart }: { periodStart?: strin
   const keyRef = useRef(cacheKey);
   keyRef.current = cacheKey;
 
-  const load = useCallback((opts?: { silent?: boolean }) => {
+  // `tracker` comes only from the Refresh click: the donut and table stay on screen
+  // and the refresh modal shows the read (docs/features/table-refresh-progress.md).
+  const load = useCallback((opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
     const key = cacheKey;
-    if (!opts?.silent) {
+    if (!opts?.silent && !opts?.tracker) {
       setLoading(true);
       setError(null);
     }
     const url = periodStart
       ? `/api/hr/new-hire-checklist/sources?period=${encodeURIComponent(periodStart)}`
       : '/api/hr/new-hire-checklist/sources';
-    fetch(url, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { sources?: SourceCount[]; total?: number; error?: string }) => {
+    type Answer = { sources?: SourceCount[]; total?: number; error?: string };
+    return trackRead(
+      opts?.tracker,
+      'sources',
+      async () => {
+        const j = (await (await fetch(url, { cache: 'no-store' })).json()) as Answer;
         if (j.error) throw new Error(j.error);
+        return j;
+      },
+      (j) => `Counted ${countOf(j.total ?? 0, 'hire')} across ${countOf((j.sources ?? []).length, 'source')}`,
+    )
+      .then((j) => {
         const payload: HiringSourcesPayload = { sources: j.sources ?? [], total: j.total ?? 0 };
         setHrTabCache(key, payload);
         if (keyRef.current !== key) return;
@@ -93,7 +105,8 @@ export default function HiringSourcesCard({ periodStart }: { periodStart?: strin
         setError(e instanceof Error ? e.message : 'Failed to load hiring sources');
       })
       .finally(() => {
-        if (!opts?.silent && keyRef.current === key) setLoading(false);
+        // A tracked read never raised the flag, so it never lowers one a cold load still owns.
+        if (!opts?.silent && !opts?.tracker && keyRef.current === key) setLoading(false);
       });
   }, [cacheKey, periodStart]);
 
@@ -109,6 +122,11 @@ export default function HiringSourcesCard({ periodStart }: { periodStart?: strin
     if (isHrTabCacheFresh(cacheKey)) return;
     load({ silent: hit !== undefined });
   }, [cacheKey, load]);
+
+  const refresh = useTableRefresh({
+    subject: 'hiring sources',
+    steps: [{ id: 'sources', label: periodStart ? `Counting hires by source for ${formatWeekLabel(periodStart)}` : 'Counting every hire by source' }],
+  });
 
   const sources = useMemo(() => data?.sources ?? [], [data]);
   const total = data?.total ?? 0;
@@ -158,13 +176,14 @@ export default function HiringSourcesCard({ periodStart }: { periodStart?: strin
         </div>
         <button
           type="button"
-          onClick={() => load()}
-          disabled={loading}
+          onClick={() => refresh.run((t) => load({ tracker: t }))}
+          disabled={loading || refresh.running}
           aria-label="Refresh hiring sources"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+          <RefreshCw className={cn('h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} />
         </button>
+        {refresh.dialog}
       </div>
 
       {loading ? (

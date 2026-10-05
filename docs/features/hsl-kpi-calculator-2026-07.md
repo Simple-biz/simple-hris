@@ -394,7 +394,13 @@ a spinner is to stop showing it, never to stop asking the database. What changed
   first-load-only and needed no equivalent.)
 - The `animate-spin` `RefreshCw` next to the top bar's "as of HH:MM" cache chip
   is gone on **both** calculators — the timestamp was always the whole message.
-- **The Refresh button still spins.** That one is answering a click.
+- **The Refresh button still spins.** That one is answering a click. Since 2026-10-05 the
+  click also opens the refresh modal on both calculators
+  ([table-refresh-progress.md](./table-refresh-progress.md)). Departments shows a catalog line and
+  a departments line; HSL shows one branches line. The rows stay on screen. The departments or
+  branches line FAILS when any one of them could not be read, so the modal never says *Read* over
+  a failure. A department or branch with unsaved work is still skipped, and the line says how many
+  were skipped. The live re-pulls (realtime, 30 s poll, focus, `kpi-bonus-sync`) never open it.
 
 `loadingDepts` itself is unchanged and still feeds the Payroll Readiness report's
 `loaded` flag, which is a correctness signal rather than an indicator.
@@ -1392,7 +1398,12 @@ open by default**:
   autosave uses, and **refuses the reload if that write fails**. A `seeded`
   department (pre-applied, untouched) is not local work and simply reloads; QC
   officer mode keeps its manual Save, so there the click asks you to save first.
-  Disabled, never hidden, until the week resolves and the table has loaded.
+  Disabled, never hidden, until the week resolves and the table has loaded. **Since
+  2026-10-05 the click opens the refresh modal titled with the department**
+  ([table-refresh-progress.md](./table-refresh-progress.md)). The pending-edit write is its own
+  line, *Saving your pending edits first*, and a failed write fails that line, so the reload is
+  still refused. The two refusals (a save already in flight; QC with unsaved scores) still
+  answer in a toast and never open the modal, because nothing is read.
 - **Offboarded · last pay · N** — the `OffboardedStrip` (leavers whose final pay
   cycle is the week in view, one click to add). It used to sit open above the table;
   Kane, 2026-09-10: *"hide this first into a drop down as well"*. The chip shows

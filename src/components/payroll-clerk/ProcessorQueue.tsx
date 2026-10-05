@@ -18,6 +18,7 @@ import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import PaidRecordsPanel from './PaidRecordsPanel';
 import { SettlementChip } from '@/components/payroll/SettlementChip';
+import { useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
 
 /**
  * The sub-views the queue table can show. 'pending' is the live payable queue;
@@ -150,6 +151,13 @@ interface ProcessorQueueProps {
   periodEnd?: string | null;
   /** Silent re-pull of the queue (e.g. to surface a row sent back from Done). */
   onRefresh?: () => void | Promise<void>;
+  /**
+   * The Refresh button's re-pull, reported to the refresh modal
+   * (docs/features/table-refresh-progress.md). When given, the button opens the
+   * modal over the queue instead of only spinning; `onRefresh` still decides
+   * whether the button exists and serves every other re-pull.
+   */
+  onRefreshWithProgress?: (tracker: RefreshTracker) => Promise<void>;
   /**
    * Overrides the heading + subheading shown in the "All" view (processor ===
    * null). The USD tab uses this so it reads "USD payments" instead of the
@@ -438,7 +446,7 @@ function initials(name: string) {
   return (parts[0]?.[0] || '?').toUpperCase();
 }
 
-function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail, renderExtras, viewRequest }: ProcessorQueueProps) {
+function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStart, periodEnd, onRefresh, onRefreshWithProgress, allLabel, nativeCurrency, paidRecords, txnRecords, deptByEmail, renderExtras, viewRequest }: ProcessorQueueProps) {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 250);
   // '' = all departments; NO_DEPT = rows without a department; else exact name.
@@ -473,7 +481,19 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
     [txnRecords, paidRecords],
   );
 
+  // The rows stay on screen; the modal reports the re-pull (one honest line, done
+  // only when this load put its rows on the queue).
+  const tableRefresh = useTableRefresh({
+    subject: 'the dispatch queue',
+    steps: [{ id: 'queue', label: "Reading the week's pay, rates and payments" }],
+    applyLabel: 'Updating the queue',
+    appliedLabel: 'Queue updated',
+  });
   const handleRefresh = useCallback(async () => {
+    if (onRefreshWithProgress) {
+      tableRefresh.run((t) => onRefreshWithProgress(t));
+      return;
+    }
     if (!onRefresh || refreshing) return;
     setRefreshing(true);
     try {
@@ -481,7 +501,7 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
     } finally {
       setRefreshing(false);
     }
-  }, [onRefresh, refreshing]);
+  }, [onRefresh, onRefreshWithProgress, refreshing, tableRefresh.run]);
 
   // Stable toggle so memoized rows aren't invalidated on every parent render.
   const handleToggleExpand = useCallback((id: string) => {
@@ -663,14 +683,15 @@ function ProcessorQueue({ processor, rows, onMarkPaid, onViewPaystub, periodStar
               <button
                 type="button"
                 onClick={handleRefresh}
-                disabled={refreshing}
+                disabled={refreshing || tableRefresh.running}
                 className="inline-flex h-7 items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-zinc-600 shadow-sm transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-800"
                 title="Refresh this queue — surfaces rows sent back from Done"
               >
-                <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+                <RefreshCw className={cn('h-3 w-3', (refreshing || tableRefresh.running) && 'animate-spin')} />
                 Refresh
               </button>
             )}
+            {tableRefresh.dialog}
             <button
               type="button"
               onClick={() => {

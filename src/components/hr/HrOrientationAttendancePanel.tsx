@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { formatWeekLabel } from '@/lib/hr/hiring-week';
 import { useHrOrientationAttendance } from '@/hooks/useHrOrientationAttendance';
+import { useTableRefresh } from '@/components/common/RefreshProgressDialog';
 import {
   buildHrOrientationWeekStats,
   previousMeasuredWeek,
@@ -247,6 +248,14 @@ export default function HrOrientationAttendancePanel({
   const reduceMotion = useReducedMotion() ?? false;
   const { summary, stagedWeekByEmail, loading, error, refreshing, refresh } =
     useHrOrientationAttendance();
+  // The Refresh click's modal (docs/features/table-refresh-progress.md). Its one
+  // line is the hook's one read, `attendance`.
+  const tableRefresh = useTableRefresh({
+    subject: 'orientation attendance',
+    steps: [{ id: 'attendance', label: 'Reading every staged hire and their checklist weeks' }],
+    applyLabel: 'Updating the attendance numbers',
+    appliedLabel: 'Attendance numbers updated',
+  });
   const [showAll, setShowAll] = useState(false);
 
   const week = useMemo(
@@ -280,9 +289,15 @@ export default function HrOrientationAttendancePanel({
         transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const },
       };
 
+  // The refresh modal is the FIRST child of all three roots (loading, error,
+  // panel). A failed refresh clears the hook's state and flips this panel to its
+  // error card and then to the hook's own re-read; at the same position React
+  // keeps the modal mounted through that, so it can still say what failed. It
+  // renders nothing in place (the popup is portaled).
   if (loading) {
     return (
       <div className="flex flex-col gap-2">
+        {tableRefresh.dialog}
         <div className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Loading orientation attendance…
@@ -305,6 +320,7 @@ export default function HrOrientationAttendancePanel({
   if (error) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border border-rose-200 bg-rose-50/60 px-4 py-10 text-center dark:border-rose-900/50 dark:bg-rose-950/20">
+        {tableRefresh.dialog}
         <AlertTriangle className="h-6 w-6 text-rose-600 dark:text-rose-400" />
         <p className="text-sm font-medium text-rose-700 dark:text-rose-300">
           Orientation attendance couldn&apos;t load
@@ -319,6 +335,7 @@ export default function HrOrientationAttendancePanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2.5 overflow-y-auto pb-2">
+      {tableRefresh.dialog}
       {/* What this week is, and where the numbers come from. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-white">
@@ -334,12 +351,12 @@ export default function HrOrientationAttendancePanel({
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => void refresh()}
-          disabled={refreshing}
+          onClick={() => tableRefresh.run((t) => refresh(t))}
+          disabled={refreshing || tableRefresh.running}
           className="h-8 shrink-0 gap-1.5 border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
           title="Reload orientation attendance"
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+          <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || tableRefresh.running) && 'animate-spin')} />
           <span className="hidden sm:inline">Refresh</span>
         </Button>
       </div>

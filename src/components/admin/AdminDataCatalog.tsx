@@ -25,6 +25,8 @@ import { clientAccess, describeAccess, type AccessClient, type AccessRow, type A
 import { describeExpiry } from '@/lib/external-api/expiry';
 import { useAdminCachedState } from '@/hooks/useAdminCachedState';
 import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * Admin → Webhooks & Integrations → Data catalog.
@@ -109,16 +111,31 @@ export default function AdminDataCatalog({ onOpenIntegrations }: { onOpenIntegra
   const [status, setStatus] = useState<StatusFilter>('all');
   const [needle, setNeedle] = useState('');
 
+  // `tracker` comes only from the Refresh click: the catalog stays on screen and the
+  // refresh modal shows the read and says any failure (docs/features/table-refresh-progress.md).
   const load = useCallback(
-    async (opts?: { manual?: boolean }) => {
+    async (opts?: { manual?: boolean; tracker?: RefreshTracker }) => {
       if (opts?.manual) setRefreshing(true);
       try {
-        const r = await fetch('/api/admin/external-api-clients', { cache: 'no-store' });
-        const body = await readJson<ListResponse>(r);
-        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+        const body = await trackRead(
+          opts?.tracker,
+          'clients',
+          async () => {
+            const r = await fetch('/api/admin/external-api-clients', { cache: 'no-store' });
+            const json = await readJson<ListResponse>(r);
+            if (!r.ok) throw new Error(json.error ?? `HTTP ${r.status}`);
+            return json;
+          },
+          (json) =>
+            json.migration_applied === false
+              ? 'The clients table has not been applied yet'
+              : `Read ${countOf((json.clients ?? []).length, 'client')} and the datasets each one holds`,
+        );
         setData(body);
       } catch (e) {
-        toast.error(e instanceof Error ? `Could not load who holds each dataset: ${e.message}` : 'Could not load who holds each dataset');
+        if (!opts?.tracker) {
+          toast.error(e instanceof Error ? `Could not load who holds each dataset: ${e.message}` : 'Could not load who holds each dataset');
+        }
       } finally {
         setSettled(true);
         setRefreshing(false);
@@ -130,6 +147,15 @@ export default function AdminDataCatalog({ onOpenIntegrations }: { onOpenIntegra
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The datasets are fixed in code (datasets.ts); the only thing a refresh can
+  // change is the access column, read from the Integrations client list.
+  const refresh = useTableRefresh({
+    subject: 'who holds each dataset',
+    steps: [{ id: 'clients', label: 'Reading which clients hold each dataset' }],
+    applyLabel: 'Updating the access column',
+    appliedLabel: 'Access column updated',
+  });
 
   // null = not read. A table that is not applied yet genuinely has no clients.
   const clients: AccessClient[] | null = data ? (data.migration_applied ? data.clients ?? [] : []) : null;
@@ -183,13 +209,14 @@ export default function AdminDataCatalog({ onOpenIntegrations }: { onOpenIntegra
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => void load({ manual: true })}
-          disabled={refreshing}
+          onClick={() => refresh.run((t) => load({ manual: true, tracker: t }))}
+          disabled={refreshing || refresh.running}
           className="shrink-0 gap-1.5"
           aria-label="Refresh who holds each dataset"
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} /> Refresh
+          <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} /> Refresh
         </Button>
+        {refresh.dialog}
       </div>
 
       {settled && !data && (

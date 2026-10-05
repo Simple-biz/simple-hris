@@ -45,6 +45,8 @@ import type {
   HrPendingEmployeeRow,
   HrPendingStatus,
 } from '@/lib/supabase/hr-pending-employees';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 type TabFilter = 'pending' | 'ready' | 'promoted' | 'failed' | 'cancelled' | 'no_show' | 'all';
@@ -171,28 +173,47 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
     firstErr?: string;
   } | null>(null);
 
-  const fetchPending = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setPendingLoading(true);
+  // `tracker` comes only from the Refresh click: the table stays on screen (no
+  // skeleton rows) and the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). It is still a foreground load,
+  // so a failure clears exactly as before; the modal says why instead of a toast.
+  const fetchPending = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    if (!opts?.silent && !opts?.tracker) setPendingLoading(true);
     try {
-      const res = await fetch('/api/hr/pending-employees', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        rows?: HrPendingEmployeeRow[];
-        error?: string;
-      };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
+      const json = await trackRead(
+        opts?.tracker,
+        'pending',
+        async () => {
+          const res = await fetch('/api/hr/pending-employees', { cache: 'no-store' });
+          const body = (await res.json()) as {
+            rows?: HrPendingEmployeeRow[];
+            error?: string;
+          };
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Failed to load');
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'staged hire')}`,
+      );
       setPending(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.pendingEmployees, json.rows ?? []);
     } catch (e) {
       // A background revalidate that blips must not blank rows already on
       // screen, nor raise a toast the operator did not ask for.
       if (!opts?.silent) {
-        toast.error(e instanceof Error ? e.message : 'Failed to load pending hires');
+        if (!opts?.tracker) toast.error(e instanceof Error ? e.message : 'Failed to load pending hires');
         setPending([]);
       }
     } finally {
-      if (!opts?.silent) setPendingLoading(false);
+      if (!opts?.silent && !opts?.tracker) setPendingLoading(false);
     }
   }, []);
+
+  // Every status comes back in the one read (the All pill counts them), so the
+  // line counts every staged hire, not just the ones awaiting a work email.
+  const pendingRefresh = useTableRefresh({
+    subject: 'pending hires',
+    steps: [{ id: 'pending', label: 'Reading every staged hire' }],
+  });
 
   useEffect(() => {
     // Seeded from the in-session cache on remount, so a tab switch repaints
@@ -700,13 +721,14 @@ export default function HrOnboarding({ deepLink }: { deepLink?: OnboardingDeepLi
                 variant="outline"
                 size="sm"
                 className="shrink-0 gap-1.5 border-emerald-200/70 text-emerald-800 hover:bg-emerald-50 dark:border-emerald-900/50 dark:text-emerald-200 dark:hover:bg-emerald-950/30"
-                onClick={() => void fetchPending()}
-                disabled={pendingLoading}
+                onClick={() => pendingRefresh.run((t) => fetchPending({ tracker: t }))}
+                disabled={pendingLoading || pendingRefresh.running}
                 title="Refresh the pending hires table (it also updates live automatically)"
               >
-                <RefreshCw className={cn('h-3.5 w-3.5', pendingLoading && 'animate-spin')} />
+                <RefreshCw className={cn('h-3.5 w-3.5', (pendingLoading || pendingRefresh.running) && 'animate-spin')} />
                 <span className="hidden sm:inline">Refresh</span>
               </Button>
+              {pendingRefresh.dialog}
             </div>
           </div>
 

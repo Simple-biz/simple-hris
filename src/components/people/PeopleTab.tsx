@@ -20,6 +20,8 @@ import PeopleOffboarded, { ActiveHolderWarning, type OffboardedPayPerson } from 
 import type { RailMix } from '@/lib/people/rail-mix';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
 import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
 import { isHslFamilyLabel, formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import {
@@ -379,6 +381,25 @@ function labelForSourceFile(file: string): string {
   return file.replace(/\.csv$/i, '');
 }
 
+/** What /api/people answers. It is a 200 even when the roster read failed: `error`, no rows. */
+type PeopleRosterAnswer = {
+  rows?: RosterRow[]; sourceFile?: string; summary?: Summary;
+  range?: { weeks: number; start: string | null; end: string | null } | null; error?: string;
+};
+
+/**
+ * The roster read failed inside a 200 answer (`error` with no rows). The tab shows that
+ * answer as it always has; only a tracked Refresh throws this, so the refresh modal's line
+ * fails instead of saying "Read 0 people" (docs/features/table-refresh-progress.md).
+ */
+class RosterNotRead extends Error {
+  readonly answer: PeopleRosterAnswer;
+  constructor(message: string, answer: PeopleRosterAnswer) {
+    super(message);
+    this.answer = answer;
+  }
+}
+
 export interface Accent {
   ring: string;
   chipBg: string;
@@ -476,7 +497,9 @@ export default function PeopleTab({
   // Fetch the roster for the CURRENT scope — a custom date range if one is set
   // (aggregated across weeks), otherwise the selected single week (`periodRef`;
   // '' = current week). Reads refs so refresh/realtime callers stay scope-aware.
-  const load = useCallback(async (quiet: boolean) => {
+  // `tracker` comes only from the Refresh button: the read is a line in the refresh
+  // modal (docs/features/table-refresh-progress.md); every other caller passes none.
+  const load = useCallback(async (quiet: boolean, tracker?: RefreshTracker) => {
     if (!quiet) setLoading(true);
     try {
       const rng = rangeRef.current;
@@ -486,12 +509,23 @@ export default function PeopleTab({
         : src
           ? `/api/people?source_file=${encodeURIComponent(src)}`
           : '/api/people';
-      const res = await fetch(url, { cache: 'no-store' });
-      const json = (await res.json()) as {
-        rows?: RosterRow[]; sourceFile?: string; summary?: Summary;
-        range?: { weeks: number; start: string | null; end: string | null } | null; error?: string;
-      };
-      if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await trackRead(
+        tracker,
+        'roster',
+        async () => {
+          const res = await fetch(url, { cache: 'no-store' });
+          const body = (await res.json()) as PeopleRosterAnswer;
+          if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
+          if (tracker && body.error && (body.rows ?? []).length === 0) throw new RosterNotRead(body.error, body);
+          return body;
+        },
+        // With rows, `error` is a warning beside them (bank change history unavailable).
+        (body) => `Read ${countOf((body.rows ?? []).length, 'person', 'people')}${body.error ? ', with a server warning' : ''}`,
+      ).catch((e: unknown) => {
+        // As before, that answer still becomes the roster (no rows, the red banner).
+        if (e instanceof RosterNotRead) return e.answer;
+        throw e;
+      });
       const next = json.rows ?? [];
       setRows(next);
       setSummary(json.summary ?? null);
@@ -584,10 +618,10 @@ export default function PeopleTab({
 
   // Manual refresh — re-pull the SELECTED week in place (no skeleton flash) so a
   // change made in the Payroll Wizard shows up here without a full reload.
-  const refresh = async () => {
+  const refresh = async (tracker?: RefreshTracker) => {
     setRefreshing(true);
     try {
-      await load(true);
+      await load(true, tracker);
     } finally {
       setRefreshing(false);
     }
@@ -691,6 +725,18 @@ export default function PeopleTab({
     return periods.find((p) => p.file === period)?.label ?? (period ? labelForSourceFile(period) : 'Current week');
   }, [range, rangeMeta, periods, period]);
 
+  // The header's Refresh. It shows in every mode but re-reads only the roster for the
+  // scope on screen, so that is what the modal names.
+  const rosterRefresh = useTableRefresh({
+    subject: 'the roster',
+    steps: [
+      {
+        id: 'roster',
+        label: `Reading the roster for ${periodLabel === 'Current week' ? 'the current week' : periodLabel}`,
+      },
+    ],
+  });
+
   // One-line description of the active in-view filter — carried into exports so a
   // downloaded roster says exactly what slice it captured.
   const filterLabel = useMemo(() => {
@@ -775,14 +821,15 @@ export default function PeopleTab({
               size="sm"
               variant="outline"
               className="h-8 gap-1.5 px-2.5 text-[12px]"
-              onClick={refresh}
-              disabled={refreshing || (loading && rows.length === 0)}
+              onClick={() => rosterRefresh.run((t) => refresh(t))}
+              disabled={refreshing || (loading && rows.length === 0) || rosterRefresh.running}
               aria-label="Refresh roster"
               title="Pull the latest hours, rates, and payroll changes"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || rosterRefresh.running) && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
+            {rosterRefresh.dialog}
           </div>
         </div>
         {/* Top-level tabs: bank Search Bar (first, Kane 2026-09-25) · Roster · Statistics · live Bank-changes feed · Offboarded search.

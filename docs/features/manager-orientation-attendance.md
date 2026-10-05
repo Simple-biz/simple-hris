@@ -247,6 +247,11 @@ Added 2026-08-26 alongside the HR twin
 - `useOrientationHistory` separates **first-load `loading`** from **`refreshing`**. Refresh
   spins the button icon in place; it no longer swaps the whole panel for a spinner card and
   back. `NewlyHiredPanel` never read `loading`, so nothing changed for it.
+- **Since 2026-10-05 the Refresh click also opens the refresh modal**
+  ([table-refresh-progress.md](./table-refresh-progress.md)) with one line, *Reading every hire and
+  their orientation weeks*, while the numbers stay put behind it. `refresh(tracker?)` takes the
+  modal's tracker. The read, and its failure handling (clear, cache to `null`, the automatic second
+  read), are unchanged. The error card's **Retry** stays silent.
 - Week expand / collapse animates height and opacity; KPI tiles and week cards stagger in.
 
 > **Nothing about the tally may depend on the animation.** Animated wrappers render their

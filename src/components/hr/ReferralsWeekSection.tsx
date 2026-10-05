@@ -19,6 +19,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { addWeeks, formatWeekLabel, sundayIso } from '@/lib/hr/hiring-week';
 import { getHrTabCache, hasHrTabCache, hrReferralsKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * HR Overview → "Referrals": one row per hire who came in through a referral,
@@ -64,19 +66,29 @@ export default function ReferralsWeekSection() {
     return null;
   }, [week, currentSunday]);
 
-  const load = useCallback((opts?: { silent?: boolean }) => {
+  // `tracker` comes only from the Refresh click: the list stays on screen and the
+  // refresh modal shows the read (docs/features/table-refresh-progress.md).
+  const load = useCallback((opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
     const key = cacheKey;
-    if (!opts?.silent) {
+    if (!opts?.silent && !opts?.tracker) {
       setLoading(true);
       setError(null);
     }
     const url = week
       ? `/api/hr/new-hire-checklist/referrals?period=${encodeURIComponent(week)}`
       : '/api/hr/new-hire-checklist/referrals';
-    fetch(url, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { referrals?: Referral[]; error?: string }) => {
+    type Answer = { referrals?: Referral[]; error?: string };
+    return trackRead(
+      opts?.tracker,
+      'referrals',
+      async () => {
+        const j = (await (await fetch(url, { cache: 'no-store' })).json()) as Answer;
         if (j.error) throw new Error(j.error);
+        return j;
+      },
+      (j) => `Read ${countOf((j.referrals ?? []).length, 'referral')}`,
+    )
+      .then((j) => {
         const rows = j.referrals ?? [];
         setHrTabCache(key, rows);
         if (keyRef.current !== key) return;
@@ -89,7 +101,8 @@ export default function ReferralsWeekSection() {
         setError(e instanceof Error ? e.message : 'Failed to load referrals');
       })
       .finally(() => {
-        if (!opts?.silent && keyRef.current === key) setLoading(false);
+        // A tracked read never raised the flag, so it never lowers one a cold load still owns.
+        if (!opts?.silent && !opts?.tracker && keyRef.current === key) setLoading(false);
       });
   }, [cacheKey, week]);
 
@@ -105,6 +118,11 @@ export default function ReferralsWeekSection() {
     if (isHrTabCacheFresh(cacheKey)) return;
     load({ silent: hit !== undefined });
   }, [cacheKey, load]);
+
+  const refresh = useTableRefresh({
+    subject: 'referrals',
+    steps: [{ id: 'referrals', label: week ? `Reading referrals for ${formatWeekLabel(week)}` : 'Reading every referral' }],
+  });
 
   // Filter by new-hire, referrer name, OR referrer email (case-insensitive substring).
   const q = query.trim().toLowerCase();
@@ -182,13 +200,14 @@ export default function ReferralsWeekSection() {
           </button>
           <button
             type="button"
-            onClick={() => load()}
-            disabled={loading}
+            onClick={() => refresh.run((t) => load({ tracker: t }))}
+            disabled={loading || refresh.running}
             aria-label="Refresh referrals"
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} />
           </button>
+          {refresh.dialog}
 
           {/* All time / By week toggle */}
           <div className="flex items-center overflow-hidden rounded-lg border border-emerald-200 dark:border-emerald-800">

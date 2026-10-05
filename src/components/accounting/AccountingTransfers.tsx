@@ -25,6 +25,8 @@ import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import type { AccountingTransferRow, TransferRateChange } from '@/lib/transfers/accounting-transfers';
 import type { TransferRequestStatus } from '@/lib/supabase/department-transfer-requests';
 import { CURRENCY_SYMBOL, type PayCurrency } from '@/lib/payment-catalog/pay-structure';
@@ -342,15 +344,28 @@ export default function AccountingTransfers() {
   // `silent` refetches (live Realtime events, the poll backstop, tab refocus)
   // must NOT flash the full-page spinner or wipe the visible table on a blip —
   // they swap rows in place and keep the last-good view on error, so an
-  // auditing session never goes blank or (worse) silently stale.
-  const fetchAll = useCallback(async (opts?: { silent?: boolean }) => {
+  // auditing session never goes blank or (worse) silently stale. `tracker` comes
+  // only from the Refresh click: the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md), and whatever is on screen -- the
+  // table or an error card -- stays until the answer replaces it.
+  const fetchAll = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    const tracker = opts?.tracker;
     if (!opts?.silent) setRefreshing(true);
-    setError(null);
+    if (!tracker) setError(null);
     try {
-      const res = await fetch('/api/accounting/transfers', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: AccountingTransferRow[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await trackRead(
+        tracker,
+        'transfers',
+        async () => {
+          const res = await fetch('/api/accounting/transfers', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: AccountingTransferRow[]; error?: string };
+          if (!res.ok || body.error) throw new Error(body.error || `Request failed (${res.status})`);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'transfer request')}`,
+      );
       setRows(json.rows ?? []);
+      if (tracker) setError(null);
       setTabCache(TAB_CACHE_KEYS.transfers, json.rows ?? []);
     } catch (e) {
       if (!opts?.silent) setError(e instanceof Error ? e.message : 'Failed to load transfers');
@@ -386,6 +401,12 @@ export default function AccountingTransfers() {
     onRefresh: () => void fetchAll({ silent: true }),
     channel: 'accounting-transfers',
     pollMs: 60_000,
+  });
+
+  // The Refresh click. A failure keeps today's error card behind the modal.
+  const refresh = useTableRefresh({
+    subject: 'transfers',
+    steps: [{ id: 'transfers', label: 'Reading every transfer request' }],
   });
 
   const retrySheet = async (id: string) => {
@@ -522,12 +543,14 @@ export default function AccountingTransfers() {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => void fetchAll()}
+              onClick={() => refresh.run((t) => fetchAll({ tracker: t }))}
+              disabled={refresh.running}
               className="h-8 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
+            {refresh.dialog}
           </div>
         </div>
       </div>

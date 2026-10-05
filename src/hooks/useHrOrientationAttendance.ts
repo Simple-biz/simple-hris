@@ -8,6 +8,8 @@ import {
 } from '@/lib/manager/orientation-weekly';
 import { buildStagedWeekIndex } from '@/lib/hr/orientation-week-stats';
 import { getHrTabCache, hasHrTabCache, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { trackRead, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * The orientation attendance read behind HR → New Hire Checklist →
@@ -44,7 +46,10 @@ export interface HrOrientationAttendanceState {
   error: string | null;
   /** True while a manual Refresh is in flight over already-loaded data. */
   refreshing: boolean;
-  refresh: () => Promise<void>;
+  /** The panel's Refresh (and its error card's Retry). A `tracker` — the refresh
+   *  modal, table-refresh-progress.md — makes the read line `attendance` in that
+   *  modal; the read and its failure handling are the same either way. */
+  refresh: (tracker?: RefreshTracker) => Promise<void>;
 }
 
 export function useHrOrientationAttendance(enabled = true): HrOrientationAttendanceState {
@@ -60,23 +65,35 @@ export function useHrOrientationAttendance(enabled = true): HrOrientationAttenda
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (isRefresh: boolean) => {
+  const load = useCallback(async (isRefresh: boolean, tracker?: RefreshTracker) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
-    setError(null);
+    // A tracked refresh changes nothing on screen until its answer lands, so an
+    // error card already up (the modal's Try again) stays until it succeeds —
+    // never swapped for numbers built from the cleared state below.
+    if (!tracker) setError(null);
     try {
-      const res = await fetch('/api/hr/orientation-attendance', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        rows?: OrientationHire[];
-        checklistWeeks?: Record<string, string[]>;
-        error?: string | null;
-      };
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      const json = await trackRead(
+        tracker,
+        'attendance',
+        async () => {
+          const res = await fetch('/api/hr/orientation-attendance', { cache: 'no-store' });
+          const body = (await res.json()) as {
+            rows?: OrientationHire[];
+            checklistWeeks?: Record<string, string[]>;
+            error?: string | null;
+          };
+          if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'staged hire')} and their checklist weeks`,
+      );
       const rows = json.rows ?? [];
       const weeks = Object.entries(json.checklistWeeks ?? {});
       setHires(rows);
       setChecklistWeeks(new Map(weeks));
       setLoaded(true);
+      if (tracker) setError(null);
       // Write back through the same path that seeds it, so a Refresh warms the
       // cache for the next visit instead of leaving a stale copy behind it.
       setHrTabCache<CacheVal>(HR_TAB_CACHE_KEYS.orientationAttendance, {
@@ -102,7 +119,7 @@ export function useHrOrientationAttendance(enabled = true): HrOrientationAttenda
     void load(false);
   }, [enabled, loaded, load]);
 
-  const refresh = useCallback(() => load(true), [load]);
+  const refresh = useCallback((tracker?: RefreshTracker) => load(true, tracker), [load]);
 
   const summary = useMemo(
     () => buildOrientationWeeks({ hires, checklistWeeksByEmail: checklistWeeks }),

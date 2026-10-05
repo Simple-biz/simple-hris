@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Building2,
@@ -47,6 +47,8 @@ import {
 } from '@/components/presence/PresenceProvider';
 import { useAdminPingSender } from '@/components/presence/GlobalPingListener';
 import { useWatchScreen } from '@/components/presence/CobrowseProvider';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const PAGE_SIZE = 10;
@@ -165,9 +167,9 @@ export default function AdminGlobalMasterList() {
   // addresses to disk to save one round trip on a detail pane.
   const [addressByKey, setAddressByKey] = useState<Record<string, string>>({});
   const [syncing, setSyncing] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  // Bumped on manual Refresh + the auto-telemetry tick. Drives the last-seen
-  // refetch and re-renders so "Last seen Xm ago" relative times stay current.
+  // Bumped by the auto-telemetry tick. Drives the heartbeat + last-seen refetches
+  // and re-renders so "Last seen Xm ago" relative times stay current. The manual
+  // Refresh calls the same two reads directly, so its modal can follow them.
   const [statusTick, setStatusTick] = useState(0);
   const [search, setSearch] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState<DepartmentFilter>('__all__');
@@ -252,15 +254,6 @@ export default function AdminGlobalMasterList() {
     }
   }, [fetchRoster]);
 
-  // Manual "Refresh": force-pull the live presence roster and re-fetch the
-  // DB-backed "last seen" stamps for what's on screen, updating relative times.
-  const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    refreshPresence();
-    setStatusTick((t) => t + 1);
-    window.setTimeout(() => setRefreshing(false), 500);
-  }, [refreshPresence]);
-
   // Realtime telemetry: presence (who's online / which page) already streams in
   // live over the `hris-presence` channel. This lightweight tick keeps the
   // offline "last seen" stamps and their relative times fresh too, so the admin
@@ -282,22 +275,43 @@ export default function AdminGlobalMasterList() {
   }, []);
 
   // Pull the reliable heartbeat-based "who's active right now" set. Re-runs on
-  // mount and on every telemetry tick / manual Refresh (statusTick). This is
-  // what makes online detection resilient to Realtime WebSocket gaps.
+  // mount and on every telemetry tick (statusTick); the manual Refresh calls the
+  // same read with its tracker. This is what makes online detection resilient to
+  // Realtime WebSocket gaps.
+  //
+  // Each read takes a number, and a newer read or the effect's cleanup moves it
+  // on: only the newest read nothing has cancelled may apply. That is the old
+  // per-effect `cancelled` flag, now shared with the Refresh click.
+  const activeReadRef = useRef(0);
+  const readRecentActive = useCallback(async (tracker?: RefreshTracker) => {
+    const read = ++activeReadRef.current;
+    const json = await trackRead(
+      tracker,
+      'active',
+      async () => {
+        const res = await fetch('/api/presence/active?withinSeconds=120', { cache: 'no-store' });
+        const body = (await res.json()) as {
+          active?: Record<string, { last_seen_at: string; name: string | null }>;
+          error?: string;
+        };
+        // Only the click's modal treats an error status as a failure; the silent
+        // tick applies whatever came back, as it always has.
+        if (tracker && !res.ok) throw new Error(body.error || `Could not read who is active (HTTP ${res.status})`);
+        return body;
+      },
+      (body) => `Found ${countOf(Object.keys(body.active ?? {}).length, 'person', 'people')} active in the last 2 minutes`,
+    );
+    if (read === activeReadRef.current) setRecentActive(json.active ?? {});
+  }, []);
+
   useEffect(() => {
-    let cancelled = false;
-    fetch('/api/presence/active?withinSeconds=120', { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((json: { active?: Record<string, { last_seen_at: string; name: string | null }> }) => {
-        if (!cancelled) setRecentActive(json.active ?? {});
-      })
-      .catch(() => {
-        /* non-fatal — falls back to Realtime-only presence */
-      });
+    readRecentActive().catch(() => {
+      /* non-fatal — falls back to Realtime-only presence */
+    });
     return () => {
-      cancelled = true;
+      activeReadRef.current += 1;
     };
-  }, [statusTick]);
+  }, [statusTick, readRecentActive]);
 
   const emailKeyFor = useCallback(
     (row: EmployeeRow): string => normEmail(employeeIdentityEmail(row)) ?? '',
@@ -451,21 +465,55 @@ export default function AdminGlobalMasterList() {
     ).join(',');
   }, [pageRows, selected]);
 
+  // Numbered the same way as the heartbeat read above.
+  const lastSeenReadRef = useRef(0);
+  const readLastSeen = useCallback(async (emails: string, tracker?: RefreshTracker) => {
+    const read = ++lastSeenReadRef.current;
+    const json = await trackRead(
+      tracker,
+      'lastSeen',
+      async () => {
+        const res = await fetch(`/api/presence/last-seen?emails=${encodeURIComponent(emails)}`, { cache: 'no-store' });
+        const body = (await res.json()) as { lastSeen?: Record<string, string>; error?: string };
+        if (tracker && !res.ok) throw new Error(body.error || `Could not read last-seen times (HTTP ${res.status})`);
+        return body;
+      },
+      (body) => `Read ${countOf(Object.keys(body.lastSeen ?? {}).length, 'last-seen time')}`,
+    );
+    if (read === lastSeenReadRef.current) setLastSeen(json.lastSeen ?? {});
+  }, []);
+
   useEffect(() => {
     if (!lastSeenEmailKey) return;
-    let cancelled = false;
-    fetch(`/api/presence/last-seen?emails=${encodeURIComponent(lastSeenEmailKey)}`, { cache: 'no-store' })
-      .then((res) => res.json())
-      .then((json: { lastSeen?: Record<string, string> }) => {
-        if (!cancelled) setLastSeen(json.lastSeen ?? {});
-      })
-      .catch(() => {
-        /* non-fatal — status falls back to "Offline" */
-      });
+    readLastSeen(lastSeenEmailKey).catch(() => {
+      /* non-fatal — status falls back to "Offline" */
+    });
     return () => {
-      cancelled = true;
+      lastSeenReadRef.current += 1;
     };
-  }, [lastSeenEmailKey, statusTick]);
+  }, [lastSeenEmailKey, statusTick, readLastSeen]);
+
+  // Manual "Refresh": recompute the Realtime presence roster from the live
+  // channel (local, no request), then re-read the heartbeat set and the
+  // DB-backed "last seen" stamps for what's on screen. The modal follows those
+  // two reads (docs/features/table-refresh-progress.md); the roster itself is
+  // not re-read here (that is Sync, plus the live `global_master_list` feed).
+  const refresh = useTableRefresh({
+    subject: 'live status',
+    steps: [
+      { id: 'active', label: 'Reading who has been active in the last 2 minutes' },
+      { id: 'lastSeen', label: 'Reading last-seen times for the people on screen' },
+    ],
+    applyLabel: 'Updating who is online',
+    appliedLabel: 'Live status updated',
+  });
+  const handleRefresh = useCallback(() => {
+    refresh.run((t) => {
+      refreshPresence();
+      // An empty page sends no last-seen read, and the modal drops that line.
+      return Promise.all([readRecentActive(t), lastSeenEmailKey ? readLastSeen(lastSeenEmailKey, t) : null]);
+    });
+  }, [refresh.run, refreshPresence, readRecentActive, readLastSeen, lastSeenEmailKey]);
 
   const selectedLive = selected ? liveFor(selected) : { state: 'offline' as LiveState, detail: null };
   const selectedDetail = selectedLive.detail;
@@ -646,13 +694,14 @@ export default function AdminGlobalMasterList() {
                   variant="outline"
                   size="sm"
                   onClick={handleRefresh}
-                  disabled={refreshing}
+                  disabled={refresh.running}
                   title="Refresh live status — who's online and where they are right now"
                   className="h-8 gap-1.5 border-emerald-200 text-xs text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800/50 dark:text-emerald-300 dark:hover:bg-emerald-950/30"
                 >
-                  <RotateCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+                  <RotateCw className={cn('h-3.5 w-3.5', refresh.running && 'animate-spin')} />
                   Refresh
                 </Button>
+                {refresh.dialog}
                 <Button
                   type="button"
                   variant="outline"

@@ -24,6 +24,8 @@ import { Input } from '@/components/ui/input';
 import InternDialog from './InternDialog';
 import InternRateDialog from './InternRateDialog';
 import { formatInternPHP, type OrphanageInternListItem } from '@/lib/interns/intern-types';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -49,14 +51,31 @@ export default function InternsProfilesPanel({ viewerEmail, canEdit }: { viewerE
   const [rateTarget, setRateTarget] = useState<OrphanageInternListItem | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
+  // `tracker` comes only from the Refresh click: the cards (or the error) stay on
+  // screen until the answer replaces them, and the read is a line in the refresh
+  // modal (docs/features/table-refresh-progress.md).
+  const load = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    const tracker = opts?.tracker;
+    if (!opts?.silent && !tracker) setLoading(true);
+    if (!tracker) setError(null);
     try {
-      const res = await fetch(`/api/orphanage-interns?includeEnded=1&_=${Date.now()}`, { cache: 'no-store' });
-      const json = (await res.json()) as { items?: OrphanageInternListItem[]; error?: string | null };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load interns');
+      const json = await trackRead(
+        tracker,
+        'interns',
+        async () => {
+          const res = await fetch(`/api/orphanage-interns?includeEnded=1&_=${Date.now()}`, { cache: 'no-store' });
+          const body = (await res.json()) as { items?: OrphanageInternListItem[]; error?: string | null };
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Failed to load interns');
+          return body;
+        },
+        (body) => {
+          const list = body.items ?? [];
+          const ended = list.filter((i) => i.status !== 'active').length;
+          return `Read ${countOf(list.length, 'intern profile')}${ended > 0 ? `, ${ended.toLocaleString('en-US')} ended` : ''}`;
+        },
+      );
       setItems(json.items ?? []);
+      if (tracker) setError(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Could not load interns';
       if (opts?.silent) toast.error(msg);
@@ -69,6 +88,13 @@ export default function InternsProfilesPanel({ viewerEmail, canEdit }: { viewerE
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: 'intern profiles',
+    steps: [{ id: 'interns', label: 'Reading every intern profile, ended ones included' }],
+    applyLabel: 'Updating the cards',
+    appliedLabel: 'Cards updated',
+  });
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -129,9 +155,16 @@ export default function InternsProfilesPanel({ viewerEmail, canEdit }: { viewerE
           {activeCount} active{items.length !== activeCount ? ` · ${items.length - activeCount} ended` : ''}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => load()} className="h-8 gap-1.5 text-xs">
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /> Refresh
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => refresh.run((t) => load({ tracker: t }))}
+            disabled={refresh.running}
+            className="h-8 gap-1.5 text-xs"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} /> Refresh
           </Button>
+          {refresh.dialog}
           {canEdit && (
             <Button size="sm" onClick={() => { setEditingId(null); setDialogOpen(true); }} className="h-8 gap-1.5 bg-pink-600 text-xs text-white hover:bg-pink-700">
               <Plus className="h-3.5 w-3.5" /> Add intern

@@ -34,6 +34,8 @@ import HrOffboardQueueProcessor from './HrOffboardQueueProcessor';
 import OffboardingWeeklyPulse from './OffboardingWeeklyPulse';
 import DeptFilter from './DeptFilter';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 type HistoryRow = {
   id: string;
@@ -195,43 +197,81 @@ export default function HrOffboarding() {
   // The queue row being permanently deleted (HR cleanup, any status).
   const [deleteTarget, setDeleteTarget] = useState<OffboardingQueueRow | null>(null);
 
-  const fetchHistory = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setHistoryLoading(true);
+  // `tracker` comes only from a Refresh click: the table stays on screen (no
+  // "Loading…" swap) and the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). It is still a foreground load,
+  // so a failure clears exactly as before; the modal says why instead of a toast.
+  const fetchHistory = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    if (!opts?.silent && !opts?.tracker) setHistoryLoading(true);
     try {
-      const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: HistoryRow[]; error?: string };
-      if (json.error) throw new Error(json.error);
+      const json = await trackRead(
+        opts?.tracker,
+        'history',
+        async () => {
+          const res = await fetch('/api/hr/offboard-history', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: HistoryRow[]; error?: string };
+          if (body.error) throw new Error(body.error);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'off-boarded record')}`,
+      );
       setHistory(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.offboardHistory, json.rows ?? []);
     } catch (e) {
       // A background revalidate that blips keeps the visible rows and stays
       // quiet; only a foreground load reports and clears.
       if (!opts?.silent) {
-        toast.error(e instanceof Error ? e.message : 'Failed to load offboard history');
+        if (!opts?.tracker) toast.error(e instanceof Error ? e.message : 'Failed to load offboard history');
         setHistory([]);
       }
     } finally {
-      if (!opts?.silent) setHistoryLoading(false);
+      if (!opts?.silent && !opts?.tracker) setHistoryLoading(false);
     }
   }, []);
 
-  const fetchQueue = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setQueueLoading(true);
+  const fetchQueue = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    if (!opts?.silent && !opts?.tracker) setQueueLoading(true);
     try {
-      const res = await fetch('/api/offboarding-queue', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: OffboardingQueueRow[]; error?: string };
-      if (json.error) throw new Error(json.error);
+      const json = await trackRead(
+        opts?.tracker,
+        'queue',
+        async () => {
+          const res = await fetch('/api/offboarding-queue', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: OffboardingQueueRow[]; error?: string };
+          if (body.error) throw new Error(body.error);
+          return body;
+        },
+        // "Open" is the Queue tab's own word: every request not yet completed.
+        (body) => {
+          const all = body.rows ?? [];
+          const open = all.filter((r) => r.status !== 'completed').length;
+          return `Read ${countOf(open, 'open request')} and ${(all.length - open).toLocaleString('en-US')} completed`;
+        },
+      );
       setQueue(json.rows ?? []);
       setHrTabCache(HR_TAB_CACHE_KEYS.offboardQueue, json.rows ?? []);
     } catch (e) {
       if (!opts?.silent) {
-        toast.error(e instanceof Error ? e.message : 'Failed to load offboarding queue');
+        if (!opts?.tracker) toast.error(e instanceof Error ? e.message : 'Failed to load offboarding queue');
         setQueue([]);
       }
     } finally {
-      if (!opts?.silent) setQueueLoading(false);
+      if (!opts?.silent && !opts?.tracker) setQueueLoading(false);
     }
   }, []);
+
+  // One modal per Refresh button: each lists only the reads its click sends.
+  const queueRefresh = useTableRefresh({
+    subject: 'the offboarding queue',
+    steps: [{ id: 'queue', label: 'Reading the offboarding requests from managers' }],
+  });
+  const offboardedRefresh = useTableRefresh({
+    subject: 'the off-boarded list',
+    steps: [
+      { id: 'history', label: 'Reading everyone who has been off-boarded' },
+      { id: 'queue', label: 'Reading the offboarding requests behind them' },
+    ],
+  });
 
   const handleRestore = useCallback(async (row: HistoryRow) => {
     const email = row['Work Email'];
@@ -615,9 +655,18 @@ export default function HrOffboarding() {
                         Process pending ({pendingCount})
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => void fetchQueue()} disabled={queueLoading} className="shrink-0">
-                      <RefreshCw className={cn('h-3.5 w-3.5', queueLoading && 'animate-spin')} />
+                    {/* Disabled while either modal runs: both clicks read the queue. */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => queueRefresh.run((t) => fetchQueue({ tracker: t }))}
+                      disabled={queueLoading || queueRefresh.running || offboardedRefresh.running}
+                      className="shrink-0"
+                      aria-label="Refresh the offboarding queue"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', (queueLoading || queueRefresh.running || offboardedRefresh.running) && 'animate-spin')} />
                     </Button>
+                    {queueRefresh.dialog}
                   </>
                 ) : (
                   <>
@@ -632,12 +681,14 @@ export default function HrOffboarding() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => { void fetchHistory(); void fetchQueue(); }}
-                      disabled={historyLoading || queueLoading}
+                      onClick={() => offboardedRefresh.run((t) => Promise.all([fetchHistory({ tracker: t }), fetchQueue({ tracker: t })]))}
+                      disabled={historyLoading || queueLoading || offboardedRefresh.running || queueRefresh.running}
                       className="shrink-0"
+                      aria-label="Refresh the off-boarded list"
                     >
-                      <RefreshCw className={cn('h-3.5 w-3.5', (historyLoading || queueLoading) && 'animate-spin')} />
+                      <RefreshCw className={cn('h-3.5 w-3.5', (historyLoading || queueLoading || offboardedRefresh.running || queueRefresh.running) && 'animate-spin')} />
                     </Button>
+                    {offboardedRefresh.dialog}
                   </>
                 )}
               </motion.div>

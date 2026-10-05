@@ -28,6 +28,8 @@ import {
   setOrphanageTabCache,
 } from '@/lib/orphanage/tab-cache';
 import { useGiftShippingLive } from '@/hooks/useGiftShippingLive';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * Gift Tracker → "Recently filled / updated".
@@ -108,13 +110,30 @@ export default function GiftRecentSubmissions() {
   const [search, setSearch] = useState('');
   const [linkOnly, setLinkOnly] = useState(false);
 
-  const load = useCallback(async () => {
+  // `tracker` comes only from the Refresh click: the read is a line in the
+  // refresh modal (docs/features/table-refresh-progress.md). The live channel,
+  // the poll and the mount stay silent, as before.
+  const load = useCallback(async (tracker?: RefreshTracker) => {
     try {
-      const res = await fetch('/api/gift-tracker/recent-submissions?limit=100', {
-        cache: 'no-store',
-      });
-      const json = (await res.json()) as FeedResponse;
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Could not load submissions.');
+      const json = await trackRead(
+        tracker,
+        'feed',
+        async () => {
+          const res = await fetch('/api/gift-tracker/recent-submissions?limit=100', {
+            cache: 'no-store',
+          });
+          const body = (await res.json()) as FeedResponse;
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Could not load submissions.');
+          return body;
+        },
+        (body) => {
+          const shown = (body.rows ?? []).length;
+          const of = body.totalSubmissions;
+          return typeof of === 'number' && of > shown
+            ? `Read the newest ${shown.toLocaleString('en-US')} of ${countOf(of, 'submission')}`
+            : `Read ${countOf(shown, 'submission')}`;
+        },
+      );
       const feed: CachedFeed = {
         rows: json.rows ?? [],
         summary: json.summary ?? null,
@@ -161,6 +180,13 @@ export default function GiftRecentSubmissions() {
 
   const liveStatus = useGiftShippingLive({ onChange: () => void load() });
 
+  const refresh = useTableRefresh({
+    subject: 'recent gift submissions',
+    steps: [{ id: 'feed', label: 'Reading the latest gift address submissions' }],
+    applyLabel: 'Updating the list',
+    appliedLabel: 'List updated',
+  });
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     let out = rows;
@@ -204,12 +230,14 @@ export default function GiftRecentSubmissions() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void load()}
+            onClick={() => refresh.run((t) => load(t))}
+            disabled={refresh.running}
             className="h-8 gap-1.5 text-xs"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw className={cn('h-3.5 w-3.5', refresh.running && 'animate-spin')} />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">
           Who has given us a delivery address lately, and which door they came through.

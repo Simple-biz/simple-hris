@@ -23,6 +23,8 @@ import {
   type TicketRow,
 } from '@/lib/tickets/types';
 import { PRIORITY_STYLES, STATUS_STYLES, initialsFor } from '@/components/tickets/TicketCard';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 /**
@@ -418,20 +420,37 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
   // admins can view the board here but the pickers stay read-only.
   const isOwner = viewer === TICKET_BOARD_OWNER;
 
-  const load = React.useCallback(async () => {
+  // `tracker` comes only from the Refresh click: the lists stay on screen and each
+  // read is a line in the refresh modal (docs/features/table-refresh-progress.md).
+  const load = React.useCallback(async (tracker?: RefreshTracker) => {
     setRefreshing(true);
     try {
-      const [mRes, tRes] = await Promise.all([
-        fetch('/api/tickets/members', { cache: 'no-store' }),
-        fetch('/api/tickets', { cache: 'no-store' }),
-      ]);
-      if (!mRes.ok || !tRes.ok) {
-        const bad = !mRes.ok ? mRes : tRes;
+      const failed = async (bad: Response) => {
         const j = (await bad.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(j?.error ?? `Request failed (${bad.status})`);
-      }
-      const mJson = (await mRes.json()) as { members?: TicketMember[] };
-      const tJson = (await tRes.json()) as { tickets?: TicketRow[]; viewer?: string };
+        return new Error(j?.error ?? `Request failed (${bad.status})`);
+      };
+      const [mJson, tJson] = await Promise.all([
+        trackRead(
+          tracker,
+          'members',
+          async () => {
+            const mRes = await fetch('/api/tickets/members', { cache: 'no-store' });
+            if (!mRes.ok) throw await failed(mRes);
+            return (await mRes.json()) as { members?: TicketMember[] };
+          },
+          (j) => `Found ${countOf((j.members ?? []).filter(isAssignableDeveloper).length, 'developer')} in the pool`,
+        ),
+        trackRead(
+          tracker,
+          'tickets',
+          async () => {
+            const tRes = await fetch('/api/tickets', { cache: 'no-store' });
+            if (!tRes.ok) throw await failed(tRes);
+            return (await tRes.json()) as { tickets?: TicketRow[]; viewer?: string };
+          },
+          (j) => `Read ${countOf((j.tickets ?? []).length, 'ticket')} on the board`,
+        ),
+      ]);
       setMembers(mJson.members ?? []);
       setTickets(tJson.tickets ?? []);
       setViewer((tJson.viewer ?? '').trim().toLowerCase());
@@ -446,6 +465,16 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: 'Ticket Developers',
+    steps: [
+      { id: 'members', label: 'Reading the developer pool from Roles & Permissions' },
+      { id: 'tickets', label: 'Reading the tickets on the board' },
+    ],
+    applyLabel: 'Updating the pool and the ticket list',
+    appliedLabel: 'Pool and ticket list updated',
+  });
 
   const developers = React.useMemo(
     () => (members ?? []).filter(isAssignableDeveloper),
@@ -530,13 +559,14 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
         </div>
         <button
           type="button"
-          onClick={() => void load()}
-          disabled={refreshing}
+          onClick={() => refresh.run((t) => load(t))}
+          disabled={refreshing || refresh.running}
           className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} aria-hidden />
+          <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} aria-hidden />
           Refresh
         </button>
+        {refresh.dialog}
       </header>
 
       {/* Where the pool comes from */}

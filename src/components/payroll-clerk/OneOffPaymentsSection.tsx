@@ -52,6 +52,8 @@ import MarkPaidDialog, { type MarkPaidPayload } from './MarkPaidDialog';
 import { PROCESSORS, DISPATCH_PROCESSORS, type ProcessorId, type QueueRow } from './mock-queue';
 import type { PaymentDispatchRow, PaymentDispatchStatus } from '@/lib/supabase/payment-dispatches';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /** A one-off payment filed from the People tab "Pay" action. */
 export interface UrgentOneOffRow {
@@ -329,26 +331,55 @@ export default function OneOffPaymentsSection({
   const [undoTarget, setUndoTarget] = useState<OneOffDispatchRow | null>(null);
   const [undoing, setUndoing] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
+  // `tracker` comes only from the Refresh click: each read is a line in the refresh
+  // modal (docs/features/table-refresh-progress.md), which then says a failure itself.
+  const load = useCallback(async (silent = false, tracker?: RefreshTracker) => {
     if (!silent) setLoading(true); else setRefreshing(true);
     try {
-      const [pendingRes, dispatchedRes] = await Promise.all([
-        fetch('/api/urgent-payments/requests', { cache: 'no-store' }),
-        fetch('/api/urgent-payments/dispatches', { cache: 'no-store' }),
-      ]);
-      const pendingJson = (await pendingRes.json()) as { rows?: UrgentOneOffRow[]; error?: string };
-      if (!pendingRes.ok || pendingJson.error) throw new Error(pendingJson.error || `HTTP ${pendingRes.status}`);
+      // A refused or unreadable strip keeps the last copy on screen, as before; on the
+      // click its line FAILS (a kept copy is not a read). It waits for the pending read
+      // first, so that line still says what it brought.
+      let stripLineFailed = false;
+      const pendingRead = trackRead(
+        tracker,
+        'pending',
+        async () => {
+          const res = await fetch('/api/urgent-payments/requests', { cache: 'no-store' });
+          const json = (await res.json()) as { rows?: UrgentOneOffRow[]; error?: string };
+          if (!res.ok || json.error) throw new Error(json.error || `HTTP ${res.status}`);
+          return json;
+        },
+        (json) => `Read ${countOf((json.rows ?? []).length, 'pending one-off payment')}`,
+      );
+      const sentRead = trackRead(
+        tracker,
+        'dispatched',
+        async (): Promise<OneOffDispatchRow[] | null> => {
+          const res = await fetch('/api/urgent-payments/dispatches', { cache: 'no-store' });
+          // Dispatch log is best-effort: a failure keeps the last strip rather than
+          // blanking it — the pending cards are the part that must not lie. (A refused
+          // or unreadable answer only; no answer at all fails the load, as before.)
+          let reason = `HTTP ${res.status}`;
+          try {
+            const json = (await res.json()) as { rows?: OneOffDispatchRow[]; error?: string };
+            if (res.ok && !json.error) return (json.rows ?? []).filter((r) => r.is_one_off === true);
+            if (json.error) reason = json.error;
+          } catch { /* keep last */ }
+          if (!tracker) return null;
+          await pendingRead.catch(() => undefined);
+          stripLineFailed = true;
+          throw new Error(`Couldn't read this week's sent one-offs (${reason}). The strip still shows the last copy.`);
+        },
+        (sent) => `Read ${countOf((sent ?? []).length, 'one-off')} sent this week`,
+      ).catch((e: unknown) => {
+        if (stripLineFailed) return null;
+        throw e;
+      });
+      const [pendingJson, sentOneOffs] = await Promise.all([pendingRead, sentRead]);
       setRows(pendingJson.rows ?? []);
-      // Dispatch log is best-effort: a failure keeps the last strip rather than
-      // blanking it — the pending cards are the part that must not lie.
-      try {
-        const dispatchedJson = (await dispatchedRes.json()) as { rows?: OneOffDispatchRow[]; error?: string };
-        if (dispatchedRes.ok && !dispatchedJson.error) {
-          setDispatched((dispatchedJson.rows ?? []).filter((r) => r.is_one_off === true));
-        }
-      } catch { /* keep last */ }
+      if (sentOneOffs) setDispatched(sentOneOffs);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load one-off payments');
+      if (!tracker) toast.error(e instanceof Error ? e.message : 'Failed to load one-off payments');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -356,6 +387,16 @@ export default function OneOffPaymentsSection({
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: 'one-off payments',
+    steps: [
+      { id: 'pending', label: 'Reading pending one-off payments' },
+      { id: 'dispatched', label: "Reading this week's sent one-offs" },
+    ],
+    applyLabel: 'Updating the cards',
+    appliedLabel: 'Cards updated',
+  });
 
   const processorFor = useCallback(
     (r: UrgentOneOffRow): ProcessorId | null => processorByRow[r.id] ?? r.processor ?? null,
@@ -475,9 +516,11 @@ export default function OneOffPaymentsSection({
   }, [markRow, processorFor]);
 
   const visible = view === 'pending' ? pendingVisible.length : dispatchedVisible.length;
-  if (!loading && visible === 0) return null;
+  // The refresh modal sits first in both returns, so a refresh that empties this
+  // bucket (the section hides) keeps the same modal up to say it finished.
+  if (!loading && visible === 0) return <>{refresh.dialog}</>;
 
-  return (
+  const section = (
     <section className="space-y-3 px-4 pt-4 sm:px-6">
       <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
         <Wallet className="h-3.5 w-3.5 text-violet-500" />
@@ -487,12 +530,13 @@ export default function OneOffPaymentsSection({
         </span>
         <button
           type="button"
-          onClick={() => void load(true)}
+          onClick={() => refresh.run((t) => load(true, t))}
+          disabled={refresh.running}
           title="Refresh one-off payments"
           aria-label="Refresh one-off payments"
           className="ml-1 rounded p-0.5 text-zinc-400 transition-colors hover:text-violet-600 dark:hover:text-violet-300"
         >
-          <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} />
+          <RefreshCw className={cn('h-3 w-3', (refreshing || refresh.running) && 'animate-spin')} />
         </button>
       </h3>
 
@@ -609,5 +653,12 @@ export default function OneOffPaymentsSection({
         </DialogContent>
       </Dialog>
     </section>
+  );
+
+  return (
+    <>
+      {refresh.dialog}
+      {section}
+    </>
   );
 }

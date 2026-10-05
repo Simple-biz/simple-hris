@@ -27,6 +27,8 @@ import { EXPIRY_LABELS, EXPIRY_OPTIONS, describeExpiry, isExpired, type ExpiryOp
 import { RATE_LIMIT_CEILING, RATE_LIMIT_DEFAULT, RATE_LIMIT_FLOOR, parseRateLimit } from '@/lib/external-api/rate-limit';
 import { useAdminCachedState } from '@/hooks/useAdminCachedState';
 import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * Admin → Webhooks & Integrations → Integrations.
@@ -186,17 +188,32 @@ export default function AdminExternalApiClients() {
   const [callsFor, setCallsFor] = useState<ClientView | null>(null);
   const [confirmRotate, setConfirmRotate] = useState<ClientView | null>(null);
 
+  // `tracker` comes only from the Refresh click: the rows stay on screen and the
+  // refresh modal shows the read and says any failure (docs/features/table-refresh-progress.md).
   const load = useCallback(
-    async (opts?: { manual?: boolean }) => {
+    async (opts?: { manual?: boolean; tracker?: RefreshTracker }) => {
       if (opts?.manual) setRefreshing(true);
       try {
-        const r = await fetch('/api/admin/external-api-clients', { cache: 'no-store' });
-        const body = await readJson<ListResponse>(r);
-        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+        const body = await trackRead(
+          opts?.tracker,
+          'clients',
+          async () => {
+            const r = await fetch('/api/admin/external-api-clients', { cache: 'no-store' });
+            const json = await readJson<ListResponse>(r);
+            if (!r.ok) throw new Error(json.error ?? `HTTP ${r.status}`);
+            return json;
+          },
+          (json) =>
+            json.migration_applied === false
+              ? 'The clients table has not been applied yet'
+              : `Read ${countOf((json.clients ?? []).length, 'client')} with their 7-day calls`,
+        );
         setData(body);
         setUpdatedAt(Date.now());
       } catch (e) {
-        toast.error(e instanceof Error ? `Could not refresh external clients: ${e.message}` : 'Could not refresh external clients');
+        if (!opts?.tracker) {
+          toast.error(e instanceof Error ? `Could not refresh external clients: ${e.message}` : 'Could not refresh external clients');
+        }
       } finally {
         setSettled(true);
         setRefreshing(false);
@@ -208,6 +225,11 @@ export default function AdminExternalApiClients() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: 'the external client list',
+    steps: [{ id: 'clients', label: 'Reading every client and its 7-day calls' }],
+  });
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const restUrl = `${origin}${data?.rest_path ?? REST_PATH_FALLBACK}`;
@@ -272,13 +294,14 @@ export default function AdminExternalApiClients() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void load({ manual: true })}
-            disabled={refreshing}
+            onClick={() => refresh.run((t) => load({ manual: true, tracker: t }))}
+            disabled={refreshing || refresh.running}
             className="gap-1.5"
             aria-label="Refresh the client list"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} /> Refresh
+            <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} /> Refresh
           </Button>
+          {refresh.dialog}
           <Button
             type="button"
             size="sm"

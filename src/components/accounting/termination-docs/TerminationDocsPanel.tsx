@@ -86,6 +86,8 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import {
   formatDocumentDateTime,
   formatFileSize,
@@ -673,16 +675,34 @@ export default function TerminationDocsPanel({
     setDraft((d) => ({ ...d, [field]: value }));
   }, []);
 
-  const fetchLog = useCallback(async (opts?: { q?: string; silent?: boolean }) => {
-    if (opts?.silent) setLogBusy(true);
+  // `tracker` comes only from the log's Refresh button: the table, its title and the
+  // four stats stay on screen (no pulse bars, no "Loading…"), the button spins as on a
+  // silent reload, and the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). An error card stays until the answer.
+  const fetchLog = useCallback(async (opts?: { q?: string; silent?: boolean; tracker?: RefreshTracker }) => {
+    const tracker = opts?.tracker;
+    if (opts?.silent || tracker) setLogBusy(true);
     else setLogLoading(true);
-    setLogError(null);
+    if (!tracker) setLogError(null);
     try {
-      const res = await fetch(logUrl(opts?.q), { cache: 'no-store' });
-      const json = (await res.json()) as TerminationLogResponse;
-      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const term = (opts?.q ?? '').trim();
+      const json = await trackRead(
+        tracker,
+        'log',
+        async () => {
+          const res = await fetch(logUrl(opts?.q), { cache: 'no-store' });
+          const body = (await res.json()) as TerminationLogResponse;
+          if (!res.ok || body.error) throw new Error(body.error || `Request failed (${res.status})`);
+          return body;
+        },
+        (body) =>
+          `Read ${body.truncated ? 'the newest ' : ''}${countOf((body.rows ?? []).length, term ? 'letter' : 'termination letter')}${
+            term ? ` matching “${spokenTerm(term)}”` : ''
+          }`,
+      );
       setLog(json.rows ?? []);
       setLogTruncated(!!json.truncated);
+      if (tracker) setLogError(null);
     } catch (e) {
       setLogError(e instanceof Error ? e.message : 'Failed to load the termination log');
     } finally {
@@ -710,6 +730,19 @@ export default function TerminationDocsPanel({
     onRefresh: () => void fetchLog({ q: logQuery, silent: true }),
     channel: 'accounting-termination-docs',
     pollMs: 60_000,
+  });
+
+  // The log's Refresh button. The error card's "Try again" stays the plain reload.
+  const logRefresh = useTableRefresh({
+    subject: 'the termination letter log',
+    steps: [
+      {
+        id: 'log',
+        label: logQuery.trim()
+          ? `Reading the letters matching “${spokenTerm(logQuery)}”`
+          : 'Reading the termination letter log',
+      },
+    ],
   });
 
   const runSearch = useCallback(async (raw: string) => {
@@ -2270,15 +2303,16 @@ export default function TerminationDocsPanel({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => void fetchLog({ q: logQuery })}
-                disabled={logLoading || logBusy}
+                onClick={() => logRefresh.run((t) => fetchLog({ q: logQuery, tracker: t }))}
+                disabled={logLoading || logBusy || logRefresh.running}
                 className="h-9 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
               >
                 <RefreshCw
-                  className={cn('h-3.5 w-3.5', (logLoading || logBusy) && 'animate-spin')}
+                  className={cn('h-3.5 w-3.5', (logLoading || logBusy || logRefresh.running) && 'animate-spin')}
                 />
                 Refresh
               </Button>
+              {logRefresh.dialog}
             </div>
           </div>
           <p className="text-[11.5px] leading-relaxed text-orange-900/70 dark:text-orange-200/70">

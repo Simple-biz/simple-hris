@@ -35,6 +35,8 @@ import type { LeaveRequestRow } from '@/lib/supabase/leave-requests';
 import { LEAVE_DELETE_ROLES } from '@/lib/supabase/leave-requests';
 import { SESSION_EMAIL_KEY } from '@/lib/rbac/views';
 import type { PaintCacheProp } from '@/lib/dashboard-cache/paint-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 const PAGE_SIZE = 15;
@@ -140,21 +142,30 @@ export default function LeaveRequestsPanel({ paintCache }: LeaveRequestsPanelPro
    * `refresh` — the Refresh button and post-action reloads: spinner on the button.
    * `background` — a tab return over painted rows: no flag at all, and a blip
    *   keeps the rows on screen and says nothing.
+   * `tracker` — only the Refresh click passes one: the read becomes a line in the
+   *   refresh modal (table-refresh-progress.md), which then says any failure itself.
    */
-  const load = useCallback(async (mode: 'foreground' | 'refresh' | 'background' = 'foreground') => {
+  const load = useCallback(async (mode: 'foreground' | 'refresh' | 'background' = 'foreground', tracker?: RefreshTracker) => {
     if (mode === 'foreground') setLoading(true);
     else if (mode === 'refresh') setRefreshing(true);
     try {
-      const res = await fetch('/api/leave-requests?scope=all', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: LeaveRequestRow[]; error?: string | null };
-      if (!res.ok) throw new Error(json.error || 'Failed to load');
-      const next = json.rows ?? [];
+      const next = await trackRead(
+        tracker,
+        'leaves',
+        async () => {
+          const res = await fetch('/api/leave-requests?scope=all', { cache: 'no-store' });
+          const json = (await res.json()) as { rows?: LeaveRequestRow[]; error?: string | null };
+          if (!res.ok) throw new Error(json.error || 'Failed to load');
+          return json.rows ?? [];
+        },
+        (list) => `Read ${countOf(list.length, 'leave request')}`,
+      );
       const cache = cacheRef.current;
       if (cache) cache.store.set(cache.key, next);
       setRows(next);
     } catch (e) {
       if (mode !== 'background') {
-        toast.error(e instanceof Error ? e.message : 'Load failed');
+        if (!tracker) toast.error(e instanceof Error ? e.message : 'Load failed');
         setRows([]);
       }
     } finally {
@@ -202,10 +213,11 @@ export default function LeaveRequestsPanel({ paintCache }: LeaveRequestsPanelPro
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
-  const handleRefresh = async () => {
-    await load('refresh');
-    toast.success('Refreshed leave requests');
-  };
+  const refresh = useTableRefresh({
+    subject: 'leave requests',
+    steps: [{ id: 'leaves', label: 'Reading every leave request' }],
+  });
+  const handleRefresh = () => refresh.run((t) => load('refresh', t));
 
   function openDialog(row: LeaveRequestRow, a: 'approve' | 'reject') {
     setSelected(row);
@@ -337,12 +349,13 @@ export default function LeaveRequestsPanel({ paintCache }: LeaveRequestsPanelPro
             variant="outline"
             size="sm"
             onClick={handleRefresh}
-            disabled={refreshing || loading}
+            disabled={refreshing || loading || refresh.running}
             className="gap-1.5"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
 
         {/* Table */}

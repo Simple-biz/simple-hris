@@ -53,6 +53,8 @@ import NewHireQuickAddDialog, { type QuickAddValues } from './NewHireQuickAddDia
 import HrOrientationAttendancePanel from './HrOrientationAttendancePanel';
 import type { HrChecklistListedRow } from '@/lib/hr/orientation-week-stats';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -376,17 +378,28 @@ export default function HrNewHireChecklist({
   const selfEmail = session?.user?.email ?? null;
   const selfName = session?.user?.name ?? null;
 
-  const fetchPeriod = useCallback(async (p: string, opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+  // `tracker` comes only from the Refresh click: the grid stays on screen (no
+  // "Loading week…" swap) and the refresh modal shows the read
+  // (docs/features/table-refresh-progress.md).
+  const fetchPeriod = useCallback(async (p: string, opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    if (!opts?.silent && !opts?.tracker) setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/hr/new-hire-checklist?period=${encodeURIComponent(p)}`, { cache: 'no-store' });
-      const json = (await res.json()) as {
-        rows?: HrNewHireChecklistRow[];
-        period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
-        error?: string;
-      };
-      if (!res.ok || json.error) throw new Error(json.error || `Request failed (${res.status})`);
+      const json = await trackRead(
+        opts?.tracker,
+        'week',
+        async () => {
+          const res = await fetch(`/api/hr/new-hire-checklist?period=${encodeURIComponent(p)}`, { cache: 'no-store' });
+          const body = (await res.json()) as {
+            rows?: HrNewHireChecklistRow[];
+            period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
+            error?: string;
+          };
+          if (!res.ok || body.error) throw new Error(body.error || `Request failed (${res.status})`);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'hire')} for ${formatWeekLabel(p)}`,
+      );
       const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
       setRows(fresh);
@@ -404,7 +417,8 @@ export default function HrNewHireChecklist({
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load the checklist');
     } finally {
-      if (!opts?.silent) setLoading(false);
+      // A tracked read never raised the flag, so it never lowers one a week switch still owns.
+      if (!opts?.silent && !opts?.tracker) setLoading(false);
     }
   }, []);
 
@@ -961,10 +975,18 @@ export default function HrNewHireChecklist({
     setLoaded(false);
   }, [period]);
 
+  // The Refresh click. The week list beside it refreshes too, quietly as before:
+  // it is the selector's metadata, not the grid, so it is not a line in the modal.
+  const tableRefresh = useTableRefresh({
+    subject: 'the New Hire Checklist',
+    steps: [{ id: 'week', label: `Reading the hires for ${formatWeekLabel(period)}` }],
+    applyLabel: 'Updating the grid',
+    appliedLabel: 'Grid updated',
+  });
   const refresh = useCallback(() => {
-    void fetchPeriod(period);
+    tableRefresh.run((t) => fetchPeriod(period, { tracker: t }));
     void loadPeriods();
-  }, [period, fetchPeriod, loadPeriods]);
+  }, [period, fetchPeriod, loadPeriods, tableRefresh.run]);
 
   // Download a multi-sheet .xlsx workbook (one sheet per week).
   const exportWorkbook = useCallback(async (scope: 'week' | 'all') => {
@@ -1256,12 +1278,13 @@ export default function HrNewHireChecklist({
               variant="outline"
               size="sm"
               onClick={refresh}
-              disabled={loading || busy}
+              disabled={loading || busy || tableRefresh.running}
               className="h-8 gap-1.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', (loading || tableRefresh.running) && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
+            {tableRefresh.dialog}
 
             {/* Export to Excel — one .xlsx sheet per week (this week / all weeks) */}
             <div className="relative" ref={exportMenuRef}>

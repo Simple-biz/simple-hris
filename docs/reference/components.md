@@ -1842,6 +1842,10 @@ These mount across multiple dashboards. (Auth/RBAC libs + `ViewSwitcher` are doc
 
 The **SP Rankings** pane shared by Employee → My Team and Manager → My Team → (AI/API Team) → Rankings — extracted from `EmployeeTeam.tsx` rather than copied, so the **no-pesos rule holds identically on both surfaces**. Reads `/api/team-rankings` (the projection has NO `amount`; a test pins the projection string), derives `#1..#n` by sorting SP descending (`vars.Ranking` is a TIER FLAG 1/25/50/0, never a stored rank) and crowns the leader. Who may read it is decided in the route, never here. On the employee surface it is `canViewTeamRankings` alone, a one-name allow-list (kaner@) above the elevated bypass (Kane 2026-08-29). On the manager surface (`view=manager`) the department's own granted managers may also read it via `managerMayReadRankings`. Kane reversed his 2026-09-14 "no" on 2026-09-26, and no role is consulted. A denied viewer sees the same empty week list as an unscored team, so the pane has **no gate of its own and must not grow one**. Props *(corrected 2026-09-29, `RankingsPane.tsx:91-122`)*: `weeks`, `loading`, `error`, `selfNorm` (highlights the viewer on the employee surface; null on the manager's), `index` / `dir` / `onNavigate` (the week shown, owned by the parent so it survives a sub-tab hop), and opt-in `showPodium` (2026-09-27, a top-3 podium) and `searchable` + `workEmailsFor` (2026-09-27, `RankingsSearch` over names and WORK emails; it never re-ranks). Since 2026-09-26 only `isSpRankingRow` rows (SP **and** Ranking) reach it. Docs: `manager-my-team.md` § *Rankings*, `employee-team-directory.md`.
 
+### `src/components/common/RefreshProgressDialog.tsx` *(added 2026-10-05)*
+
+The **refresh modal** every table's Refresh button opens (Kane: *"not reload the table as skeleton but rather a modal with a progress bar on it"*). Exports `useTableRefresh(plan, { contentClassName? })` → `{ run, running, dialog }`, `trackRead(tracker, id, work, describe?)` (a plain call when there is no tracker, so a load shared with polls and mount stays silent) and the `RefreshTracker` type (`step(id, work, describe)`, `fail(error)`). `plan` = `{ subject, steps: [{ id, label, doneLabel? }], applyLabel?, appliedLabel? }`; `run(work, plan?)` takes a per-run plan for a button whose subject is decided at click time. One checklist line per real read, done only when it answered and saying what came back; no percentage; the bar never goes backwards and is green only two frames after the new rows commit; a run that read nothing fails rather than claiming success; a failure keeps the dialog open with the server's sentence and Try again; ✕ / Escape hide it (a later failure then toasts). Only the Refresh click opens it. Pure model: `src/lib/refresh-progress/refresh-progress.ts` (tested). Wired on 48 buttons; doc [table-refresh-progress](../features/table-refresh-progress.md).
+
 ### `src/components/presence/PresenceProvider.tsx`
 
 Broadcasts app-wide online presence for every authenticated client. Mounted once at the app root inside `NextAuthProvider`; powers the live "online" badges on the Manager "My Team" and Employee "My Team" tabs. Exports default `PresenceProvider` + the hook `useOnlineEmails(): ReadonlySet<string>`. Opens a single Supabase Realtime **presence** channel `hris-presence` keyed by the user's normalized email; on subscribe it `channel.track({ email, name, online_at })`; `sync`/`join`/`leave` events recompute the live `Set<string>`. Realtime presence only -- no REST, no DB table.
@@ -2064,6 +2068,9 @@ added `accounting-scoreboard/ArchivePanel.tsx`, for 342 rows.
 **2026-10-02:** `accounting/rolling-payout.tsx` was added when the payout reels moved out of `Overview.tsx` (Sep 29 log
 item 328). The table was not re-counted or re-diffed against the tree on this date.
 
+**2026-10-05:** `common/RefreshProgressDialog.tsx` was added with the table refresh modal (Sep 29 log item 354). No other
+`.tsx` or hook was added or deleted by that change. The table was not re-counted or re-diffed against the tree on this date.
+
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
 not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
 2026-09-29, a count of cells — the matches were not re-run).
@@ -2160,6 +2167,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/common/ConstructionMark.tsx` | component | — **no doc** |
 | `src/components/common/DashboardSwitchLoader.tsx` | component | [employee-login-loader](../features/employee-login-loader.md) |
 | `src/components/common/DispatchPaidToastsGlobal.tsx` | component | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
+| `src/components/common/RefreshProgressDialog.tsx` | component + hook (`useTableRefresh`) | *this file* · [table-refresh-progress](../features/table-refresh-progress.md) |
 | `src/components/common/SidebarBrandMark.tsx` | component | [employee-penny-ai](../features/employee-penny-ai.md) |
 | `src/components/common/SidebarCollapseToggle.tsx` | component | *this file* |
 | `src/components/common/SidebarCollapsedDot.tsx` | component | *this file* |

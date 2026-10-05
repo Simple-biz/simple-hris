@@ -34,6 +34,8 @@ import {
   type OrphanageVendorInvoiceRow,
   type OrphanageVendorRow,
 } from '@/lib/orphanage/vendor';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 type SubTab = 'vendors' | 'invoices';
 
@@ -64,20 +66,47 @@ export default function ThirdPartyVendorsPanel({ viewerEmail }: { viewerEmail: s
   const [markPaidInvoice, setMarkPaidInvoice] = useState<OrphanageVendorInvoiceRow | null>(null);
   const [previewInvoice, setPreviewInvoice] = useState<OrphanageVendorInvoiceRow | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // `tracker` comes only from the header's Refresh click: the sub-tab body (or the
+  // error) stays on screen until the answer replaces it, with no "Loading…" swap,
+  // and each read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). Retry stays a plain reload.
+  const load = useCallback(async (tracker?: RefreshTracker) => {
+    if (!tracker) {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      const [vRes, iRes] = await Promise.all([
-        fetch('/api/orphanage-vendors', { cache: 'no-store' }),
-        fetch('/api/orphanage-vendor-invoices', { cache: 'no-store' }),
+      const [vJson, iJson] = await Promise.all([
+        trackRead(
+          tracker,
+          'vendors',
+          async () => {
+            const vRes = await fetch('/api/orphanage-vendors', { cache: 'no-store' });
+            const body = (await vRes.json()) as { rows?: OrphanageVendorRow[]; error?: string };
+            if (!vRes.ok || body.error) throw new Error(body.error ?? 'Failed to load vendors');
+            return body;
+          },
+          (body) => `Read ${countOf((body.rows ?? []).length, 'vendor')}`,
+        ),
+        trackRead(
+          tracker,
+          'invoices',
+          async () => {
+            const iRes = await fetch('/api/orphanage-vendor-invoices', { cache: 'no-store' });
+            const body = (await iRes.json()) as { rows?: OrphanageVendorInvoiceRow[]; error?: string };
+            if (!iRes.ok || body.error) throw new Error(body.error ?? 'Failed to load invoices');
+            return body;
+          },
+          (body) => {
+            const list = body.rows ?? [];
+            const pending = list.filter((i) => i.status === 'pending').length;
+            return `Read ${countOf(list.length, 'invoice')}, ${pending.toLocaleString('en-US')} pending`;
+          },
+        ),
       ]);
-      const vJson = (await vRes.json()) as { rows?: OrphanageVendorRow[]; error?: string };
-      const iJson = (await iRes.json()) as { rows?: OrphanageVendorInvoiceRow[]; error?: string };
-      if (!vRes.ok || vJson.error) throw new Error(vJson.error ?? 'Failed to load vendors');
-      if (!iRes.ok || iJson.error) throw new Error(iJson.error ?? 'Failed to load invoices');
       setVendors(vJson.rows ?? []);
       setInvoices(iJson.rows ?? []);
+      if (tracker) setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load 3rd party vendors');
     } finally {
@@ -88,6 +117,16 @@ export default function ThirdPartyVendorsPanel({ viewerEmail }: { viewerEmail: s
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: '3rd party vendors',
+    steps: [
+      { id: 'vendors', label: 'Reading the vendor directory' },
+      { id: 'invoices', label: 'Reading vendor invoices' },
+    ],
+    applyLabel: 'Updating invoices and vendors',
+    appliedLabel: 'Invoices and vendors updated',
+  });
 
   // ── Vendor handlers ──────────────────────────────────────────────────────────
   const handleVendorSaved = (row: OrphanageVendorRow) => {
@@ -200,12 +239,13 @@ export default function ThirdPartyVendorsPanel({ viewerEmail }: { viewerEmail: s
               variant="outline"
               size="sm"
               className="border-white/35 bg-white/10 text-white backdrop-blur-sm hover:bg-white/20 hover:text-white"
-              onClick={() => void load()}
-              disabled={loading}
+              onClick={() => refresh.run((t) => load(t))}
+              disabled={loading || refresh.running}
             >
-              <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+              <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} />
               Refresh
             </Button>
+            {refresh.dialog}
           </div>
         </div>
       </header>

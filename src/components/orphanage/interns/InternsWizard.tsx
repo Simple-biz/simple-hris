@@ -26,6 +26,8 @@ import { Input } from '@/components/ui/input';
 import InternLockConfirmDialog from './InternLockConfirmDialog';
 import { formatInternPHP, type InternHoursByDayEntry, type OrphanageInternHoursUploadRow, type OrphanageInternPayRow } from '@/lib/interns/intern-types';
 import type { InternWeekPreview, InternWeekPricedRow } from '@/lib/interns/intern-week-server';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * The Interns mini Payroll Wizard — Orphanage dashboard → Interns → Pay week.
@@ -181,19 +183,32 @@ export default function InternsWizard({
   const [withdrawing, setWithdrawing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const loadUploads = useCallback(async (): Promise<OrphanageInternHoursUploadRow[]> => {
-    setUploadsLoading(true);
+  // `tracker` comes only from the "Uploaded weeks" Refresh click: the list (or its
+  // empty line) stays as it is, with no "Loading…" swap, and the read is a line in
+  // the refresh modal, which then says any failure itself
+  // (docs/features/table-refresh-progress.md).
+  const loadUploads = useCallback(async (tracker?: RefreshTracker): Promise<OrphanageInternHoursUploadRow[]> => {
+    if (!tracker) setUploadsLoading(true);
     try {
-      const res = await fetch(`/api/orphanage-interns/hours?_=${Date.now()}`, { cache: 'no-store' });
-      const json = (await res.json()) as { uploads?: OrphanageInternHoursUploadRow[]; error?: string | null };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Could not load uploads');
+      const json = await trackRead(
+        tracker,
+        'uploads',
+        async () => {
+          const res = await fetch(`/api/orphanage-interns/hours?_=${Date.now()}`, { cache: 'no-store' });
+          const body = (await res.json()) as { uploads?: OrphanageInternHoursUploadRow[]; error?: string | null };
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Could not load uploads');
+          return body;
+        },
+        (body) => `Read ${countOf((body.uploads ?? []).length, 'uploaded week')}`,
+      );
       setUploads(json.uploads ?? []);
       return json.uploads ?? [];
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not load uploads');
+      if (!tracker) toast.error(e instanceof Error ? e.message : 'Could not load uploads');
       return [];
     } finally {
-      setUploadsLoading(false);
+      // A tracked read never raised the flag, so it never lowers one a foreground load owns.
+      if (!tracker) setUploadsLoading(false);
     }
   }, []);
 
@@ -220,6 +235,13 @@ export default function InternsWizard({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadUploads]);
+
+  const uploadsRefresh = useTableRefresh({
+    subject: 'uploaded weeks',
+    steps: [{ id: 'uploads', label: "Reading the interns' uploaded Hubstaff weeks" }],
+    applyLabel: 'Updating the list',
+    appliedLabel: 'List updated',
+  });
 
   useEffect(() => {
     if (sourceFile) void loadPreview(sourceFile);
@@ -473,9 +495,17 @@ export default function InternsWizard({
                   <div className="rounded-2xl border border-zinc-200 p-4 dark:border-zinc-800">
                     <div className="flex items-center justify-between">
                       <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Uploaded weeks</div>
-                      <button type="button" onClick={() => loadUploads()} className="text-zinc-400 hover:text-pink-600" title="Refresh">
-                        <RefreshCw className={cn('h-3.5 w-3.5', uploadsLoading && 'animate-spin')} />
+                      <button
+                        type="button"
+                        onClick={() => uploadsRefresh.run((t) => loadUploads(t))}
+                        disabled={uploadsRefresh.running}
+                        className="text-zinc-400 hover:text-pink-600"
+                        title="Refresh"
+                        aria-label="Refresh uploaded weeks"
+                      >
+                        <RefreshCw className={cn('h-3.5 w-3.5', (uploadsLoading || uploadsRefresh.running) && 'animate-spin')} />
                       </button>
+                      {uploadsRefresh.dialog}
                     </div>
                     {uploadsLoading && uploads.length === 0 ? (
                       <div className="flex items-center gap-2 py-6 text-xs text-zinc-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>

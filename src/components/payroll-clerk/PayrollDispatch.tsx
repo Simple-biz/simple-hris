@@ -276,6 +276,7 @@ export default function PayrollDispatch() {
     contractorAdvisory,
     valuesWarning,
     refresh,
+    refreshWithProgress,
   } = useDispatchQueue(selectedSourceFile);
   const viewingPastWeek = selectedSourceFile != null;
   // Manual validations for this cycle, so Mark Paid can show who vouched for the
@@ -1316,6 +1317,7 @@ export default function PayrollDispatch() {
           periodStart={period.start}
           periodEnd={period.end}
           onRefresh={refresh}
+          onRefreshWithProgress={refreshWithProgress}
           nativeCurrency="COP"
           txnRecords={paid}
           deptByEmail={deptByEmail}
@@ -1335,6 +1337,7 @@ export default function PayrollDispatch() {
         periodStart={period.start}
         periodEnd={period.end}
         onRefresh={refresh}
+        onRefreshWithProgress={refreshWithProgress}
         // "All pending" gets the full dispatch log so its in-table tabs (Paid /
         // Not paid / Threshold / Problem) span every processor; each processor
         // tab stays scoped to its own dispatches.

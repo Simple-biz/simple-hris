@@ -47,6 +47,8 @@ import { derivationNameParts } from '@/lib/hr/work-email';
 import { toTitleCaseNameOrNull } from '@/lib/text/sanitize-name';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -1059,12 +1061,24 @@ export default function HrOnboardingForm({
     () => getHrTabCache<WorkspaceLicenseInfo>(HR_TAB_CACHE_KEYS.workspaceLicenseInfo) ?? null,
   );
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+  // `tracker` comes only from the Refresh click: the table stays on screen (no
+  // skeleton rows) and the read is a line in the refresh modal
+  // (docs/features/table-refresh-progress.md). It is still a foreground load,
+  // so a failure clears exactly as before; the modal says why instead of a toast.
+  const load = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    if (!opts?.silent && !opts?.tracker) setLoading(true);
     try {
-      const res = await fetch('/api/hr/onboarding-submissions', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: SubmissionRow[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
+      const json = await trackRead(
+        opts?.tracker,
+        'submissions',
+        async () => {
+          const res = await fetch('/api/hr/onboarding-submissions', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: SubmissionRow[]; error?: string };
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Failed to load');
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'onboarding submission')}`,
+      );
       const normalized = withTitleCasedNames(json.rows ?? []);
       setRows(normalized);
       setHrTabCache(HR_TAB_CACHE_KEYS.onboardingSubmissions, normalized);
@@ -1072,13 +1086,18 @@ export default function HrOnboardingForm({
       // A background revalidate that blips keeps the visible rows and stays
       // quiet; only a foreground load reports and clears.
       if (!opts?.silent) {
-        toast.error(e instanceof Error ? e.message : 'Failed to load submissions');
+        if (!opts?.tracker) toast.error(e instanceof Error ? e.message : 'Failed to load submissions');
         setRows([]);
       }
     } finally {
-      if (!opts?.silent) setLoading(false);
+      if (!opts?.silent && !opts?.tracker) setLoading(false);
     }
   }, []);
+
+  const submissionsRefresh = useTableRefresh({
+    subject: 'onboarding submissions',
+    steps: [{ id: 'submissions', label: 'Reading every onboarding submission' }],
+  });
 
   useEffect(() => {
     // A tab revisit repaints from the cache instead of re-querying, but the skip
@@ -1529,12 +1548,13 @@ export default function HrOnboardingForm({
             <Button
               variant="outline"
               className="border-emerald-200 text-emerald-800"
-              onClick={() => void load()}
-              disabled={loading}
+              onClick={() => submissionsRefresh.run((t) => load({ tracker: t }))}
+              disabled={loading || submissionsRefresh.running}
             >
-              <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+              <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', (loading || submissionsRefresh.running) && 'animate-spin')} />
               Refresh
             </Button>
+            {submissionsRefresh.dialog}
           </div>
         </div>
 
@@ -5270,20 +5290,38 @@ function PayPlansDialog({ open, onClose }: { open: boolean; onClose: () => void 
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const loadPlans = useCallback(async () => {
-    setLoading(true);
+  // `tracker` comes only from the list's Refresh click: the list stays as it is
+  // and the read is a line in the refresh modal, which opens over this one
+  // (docs/features/table-refresh-progress.md). A failure still clears the list.
+  const loadPlans = useCallback(async (opts?: { tracker?: RefreshTracker }) => {
+    if (!opts?.tracker) setLoading(true);
     try {
-      const res = await fetch('/api/hr/pay-plans', { cache: 'no-store' });
-      const json = (await res.json()) as { rows?: PayPlanApi[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load pay plans');
+      const json = await trackRead(
+        opts?.tracker,
+        'plans',
+        async () => {
+          const res = await fetch('/api/hr/pay-plans', { cache: 'no-store' });
+          const body = (await res.json()) as { rows?: PayPlanApi[]; error?: string };
+          if (!res.ok || body.error) throw new Error(body.error ?? 'Failed to load pay plans');
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'pay plan')}`,
+      );
       setPlans(json.rows ?? []);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load pay plans');
+      if (!opts?.tracker) toast.error(e instanceof Error ? e.message : 'Failed to load pay plans');
       setPlans([]);
     } finally {
-      setLoading(false);
+      if (!opts?.tracker) setLoading(false);
     }
   }, []);
+
+  const plansRefresh = useTableRefresh({
+    subject: 'pay plans',
+    steps: [{ id: 'plans', label: 'Reading every configured pay plan' }],
+    applyLabel: 'Updating the list',
+    appliedLabel: 'List updated',
+  });
 
   // Load plans + departments whenever the modal opens.
   useEffect(() => {
@@ -5490,13 +5528,14 @@ function PayPlansDialog({ open, onClose }: { open: boolean; onClose: () => void 
           <div className="-mt-1 mb-1 flex justify-end">
             <button
               type="button"
-              onClick={() => void loadPlans()}
-              disabled={loading}
+              onClick={() => plansRefresh.run((t) => loadPlans({ tracker: t }))}
+              disabled={loading || plansRefresh.running}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-60 dark:text-emerald-400"
             >
-              <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
+              <RefreshCw className={cn('h-3 w-3', (loading || plansRefresh.running) && 'animate-spin')} />
               Refresh
             </button>
+            {plansRefresh.dialog}
           </div>
 
           {loading && plans.length === 0 ? (

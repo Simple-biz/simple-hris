@@ -468,7 +468,11 @@ would show the right people with the wrong gift state.
 **Every write invalidates the surface** (`clearOrphanageTabCachePrefix`), because
 recording a gift as received and then seeing it repaint as owed is worse than a
 slow tab. Manual Refresh drops the cache *first*, so a failed fetch cannot leave a
-pre-refresh value sitting there looking fresh.
+pre-refresh value sitting there looking fresh. Since 2026-10-05 that click also opens the
+refresh modal ([table-refresh-progress.md](./table-refresh-progress.md)). It shows one line
+each for the master list, gift notes, shipping submissions, gift fulfilment and the Orders
+badge's read. The rows stay on screen. A notes or shipping read that answers with an error is
+still applied as an empty list (unchanged), but its line fails instead of saying it was read.
 
 **In-memory only, and that is load-bearing.** No `sessionStorage`, no
 `localStorage`, therefore no identity stamp — which is safe *solely* because the

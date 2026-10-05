@@ -6,6 +6,8 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel } from '@/lib/hr/hiring-week';
 import { getHrTabCache, hasHrTabCache, hrHiringRecruitersKey, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * HR Overview card: a leaderboard of who hired how many people (from the New
@@ -42,19 +44,29 @@ export default function HiringByRecruiterCard({ periodStart }: { periodStart?: s
   const keyRef = useRef(cacheKey);
   keyRef.current = cacheKey;
 
-  const load = useCallback((opts?: { silent?: boolean }) => {
+  // `tracker` comes only from the Refresh click: the table stays on screen and the
+  // refresh modal shows the read (docs/features/table-refresh-progress.md).
+  const load = useCallback((opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
     const key = cacheKey;
-    if (!opts?.silent) {
+    if (!opts?.silent && !opts?.tracker) {
       setLoading(true);
       setError(null);
     }
     const url = periodStart
       ? `/api/hr/new-hire-checklist/recruiters?period=${encodeURIComponent(periodStart)}`
       : '/api/hr/new-hire-checklist/recruiters';
-    fetch(url, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: { recruiters?: Recruiter[]; totalHires?: number; totalInterviewed?: number; error?: string }) => {
+    type Answer = { recruiters?: Recruiter[]; totalHires?: number; totalInterviewed?: number; error?: string };
+    return trackRead(
+      opts?.tracker,
+      'recruiters',
+      async () => {
+        const j = (await (await fetch(url, { cache: 'no-store' })).json()) as Answer;
         if (j.error) throw new Error(j.error);
+        return j;
+      },
+      (j) => `Counted ${countOf(j.totalHires ?? 0, 'hire')} across ${countOf((j.recruiters ?? []).length, 'recruiter')}`,
+    )
+      .then((j) => {
         const payload: RecruitersPayload = {
           recruiters: j.recruiters ?? [],
           totalHires: j.totalHires ?? 0,
@@ -71,7 +83,8 @@ export default function HiringByRecruiterCard({ periodStart }: { periodStart?: s
         setError(e instanceof Error ? e.message : 'Failed to load hiring by recruiter');
       })
       .finally(() => {
-        if (!opts?.silent && keyRef.current === key) setLoading(false);
+        // A tracked read never raised the flag, so it never lowers one a cold load still owns.
+        if (!opts?.silent && !opts?.tracker && keyRef.current === key) setLoading(false);
       });
   }, [cacheKey, periodStart]);
 
@@ -87,6 +100,11 @@ export default function HiringByRecruiterCard({ periodStart }: { periodStart?: s
     if (isHrTabCacheFresh(cacheKey)) return;
     load({ silent: hit !== undefined });
   }, [cacheKey, load]);
+
+  const refresh = useTableRefresh({
+    subject: 'hiring by recruiter',
+    steps: [{ id: 'recruiters', label: periodStart ? `Counting hires per recruiter for ${formatWeekLabel(periodStart)}` : 'Counting every hire per recruiter' }],
+  });
 
   const recruiters = useMemo(() => data?.recruiters ?? [], [data]);
   const totalHires = data?.totalHires ?? 0;
@@ -148,13 +166,14 @@ export default function HiringByRecruiterCard({ periodStart }: { periodStart?: s
           </button>
           <button
             type="button"
-            onClick={() => load()}
-            disabled={loading}
+            onClick={() => refresh.run((t) => load({ tracker: t }))}
+            disabled={loading || refresh.running}
             aria-label="Refresh hiring by recruiter"
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refresh.running) && 'animate-spin')} />
           </button>
+          {refresh.dialog}
         </div>
       </div>
 

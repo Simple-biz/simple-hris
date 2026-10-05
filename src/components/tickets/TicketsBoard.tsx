@@ -75,6 +75,8 @@ import {
   useTicketsCacheIdentity,
   useTicketsCachedState,
 } from '@/lib/tickets/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 const byPosition = (a: TicketRow, b: TicketRow) =>
   a.position - b.position || a.created_at.localeCompare(b.created_at);
@@ -203,18 +205,40 @@ export default function TicketsBoard() {
   const [saving, setSaving] = useState(false);
 
   // ── Data ────────────────────────────────────────────────────────────────────
-  const fetchBoard = useCallback(async () => {
+  // `tracker` comes only from the header Refresh click: each read below is a
+  // line in its modal (docs/features/table-refresh-progress.md). Every other
+  // caller (mount, live refresh, after a write) passes nothing, as before.
+  const fetchBoard = useCallback(async (opts?: { tracker?: RefreshTracker }) => {
+    const tracker = opts?.tracker;
     // Never clobber an in-flight drag with a refetch — the poll retries in 30s
     // and our own PATCH triggers a realtime refresh right after the drop anyway.
-    if (draggingRef.current) return;
+    if (draggingRef.current) {
+      tracker?.fail('A card is being moved, so the board was not re-read. Drop it, then refresh again.', 'board');
+      return;
+    }
     setRefreshing(true);
+    let setAside = false;
     try {
-      const res = await fetch('/api/tickets', { cache: 'no-store' });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(j?.error ?? `Request failed (${res.status})`);
-      }
-      const j = (await res.json()) as BoardData;
+      const j = await trackRead(
+        tracker,
+        'board',
+        async () => {
+          const res = await fetch('/api/tickets', { cache: 'no-store' });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(body?.error ?? `Request failed (${res.status})`);
+          }
+          const body = (await res.json()) as BoardData;
+          // A drag began while the click's read was out: its answer is set
+          // aside below, so its line must not say the board was read.
+          if (tracker && draggingRef.current) {
+            setAside = true;
+            throw new Error('A card was picked up while the board was loading, so the new copy was set aside. Drop it, then refresh again.');
+          }
+          return body;
+        },
+        (body) => `Read ${countOf((body.tickets ?? []).length, 'ticket')}`,
+      );
       if (draggingRef.current) return;
       setTickets(j.tickets ?? []);
       setAccess(j.access ?? 'view');
@@ -222,6 +246,8 @@ export default function TicketsBoard() {
       setIsAdmin(Boolean(j.isAdmin));
       setLoadError(null);
     } catch (e) {
+      // Set aside mid-drag: dropped quietly, exactly like the silent paths.
+      if (setAside) return;
       setLoadError(e instanceof Error ? e.message : 'Could not load the board');
     } finally {
       setLoaded(true);
@@ -237,14 +263,21 @@ export default function TicketsBoard() {
     null,
   );
   const [membersError, setMembersError] = useState<string | null>(null);
-  const fetchMembers = useCallback(async () => {
+  const fetchMembers = useCallback(async (opts?: { tracker?: RefreshTracker }) => {
     try {
-      const res = await fetch('/api/tickets/members', { cache: 'no-store' });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(j?.error ?? `Request failed (${res.status})`);
-      }
-      const j = (await res.json()) as { members?: TicketMember[] };
+      const j = await trackRead(
+        opts?.tracker,
+        'members',
+        async () => {
+          const res = await fetch('/api/tickets/members', { cache: 'no-store' });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(body?.error ?? `Request failed (${res.status})`);
+          }
+          return (await res.json()) as { members?: TicketMember[] };
+        },
+        (body) => `Read ${countOf((body.members ?? []).length, 'board member')}`,
+      );
       setMembers(j.members ?? []);
       setMembersError(null);
     } catch (e) {
@@ -260,11 +293,24 @@ export default function TicketsBoard() {
     NO_TICKETS,
   );
   const [archivedLoaded, setArchivedLoaded] = useState(false);
-  const fetchArchived = useCallback(async () => {
+  const fetchArchived = useCallback(async (opts?: { tracker?: RefreshTracker }) => {
     try {
-      const res = await fetch('/api/tickets?archived=1', { cache: 'no-store' });
-      if (!res.ok) return;
-      const j = (await res.json()) as { tickets?: TicketRow[] };
+      const j = await trackRead(
+        opts?.tracker,
+        'archived',
+        async () => {
+          const res = await fetch('/api/tickets?archived=1', { cache: 'no-store' });
+          // A refused read leaves the list as it was (the catch below is
+          // silent, as before). Thrown so the Refresh click's line fails: the
+          // click sends it only with the archive on screen.
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(body?.error ?? `Request failed (${res.status})`);
+          }
+          return (await res.json()) as { tickets?: TicketRow[] };
+        },
+        (body) => `Read ${countOf((body.tickets ?? []).length, 'archived ticket')}`,
+      );
       setArchivedTickets(j.tickets ?? []);
       setArchivedLoaded(true);
     } catch {
@@ -299,6 +345,32 @@ export default function TicketsBoard() {
     enabled: loaded,
     onStatusChange: setLiveStatus,
   });
+
+  // The header Refresh click: the board, its members and (on the Archived view)
+  // the archive, side by side as before, now awaited so the modal can follow
+  // each one. The modal portals out of this console, so it carries the theme
+  // itself (ui-standards.md § 1.4).
+  const boardRefresh = useTableRefresh(
+    {
+      subject: 'the board',
+      steps: [
+        { id: 'board', label: 'Reading the tickets on the board' },
+        { id: 'members', label: 'Reading the board members' },
+        { id: 'archived', label: 'Reading the archived tickets' },
+      ],
+      applyLabel: 'Updating the board',
+      appliedLabel: 'Board updated',
+    },
+    { contentClassName: 'tickets-theme dark' },
+  );
+  const refreshBoard = () =>
+    boardRefresh.run((t) =>
+      Promise.all([
+        fetchBoard({ tracker: t }),
+        fetchMembers({ tracker: t }),
+        activeView === 'archived' ? fetchArchived({ tracker: t }) : null,
+      ]),
+    );
 
   // Deep link: /tickets?ticket=<id> (from a "View & reply" notification)
   // auto-opens that ticket's details + Updates thread once the board loads.
@@ -716,16 +788,13 @@ export default function TicketsBoard() {
               size="icon"
               aria-label="Refresh board"
               title="Refresh board"
-              disabled={!loaded}
-              onClick={() => {
-                void fetchBoard();
-                void fetchMembers();
-                if (activeView === 'archived') void fetchArchived();
-              }}
+              disabled={!loaded || boardRefresh.running}
+              onClick={refreshBoard}
             >
-              <RefreshCw className={cn(refreshing && 'animate-spin')} />
+              <RefreshCw className={cn((refreshing || boardRefresh.running) && 'animate-spin')} />
             </Button>
           )}
+          {boardRefresh.dialog}
           {onBoardSurface && loaded && !canEdit && (
             <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium text-muted-foreground">
               <Eye className="size-3.5" />

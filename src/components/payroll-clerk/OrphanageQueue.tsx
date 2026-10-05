@@ -30,6 +30,8 @@ import OrphanageMarkPaidDialog, { type OrphanageMarkPaidPayload } from './Orphan
 import OrphanageWorkerPaymentDialog from './OrphanageWorkerPaymentDialog';
 import type { OrphanagePendingItem } from '@/lib/supabase/orphanage-dispatches';
 import { workerTypeLabel } from '@/lib/orphanage/worker-payment';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 function formatPHP(v: number | null | undefined) {
   if (v == null) return '—';
@@ -292,16 +294,29 @@ export default function OrphanageQueue() {
   const [workerDialogOpen, setWorkerDialogOpen] = useState(false);
   const [editingWorker, setEditingWorker] = useState<OrphanagePendingItem | null>(null);
 
-  const fetchItems = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchItems = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
     // Silent refetches (after add/edit) skip the full-screen spinner so the tab
-    // doesn't blank out — the list just updates in place.
-    if (!opts?.silent) setLoading(true);
-    setError(null);
+    // doesn't blank out — the list just updates in place. The Refresh click
+    // (`tracker`, docs/features/table-refresh-progress.md) keeps the list too:
+    // its modal shows the read, and nothing on screen changes until the answer
+    // (a failure still becomes the error card below, as before).
+    const tracker = opts?.tracker;
+    if (!opts?.silent && !tracker) setLoading(true);
+    if (!tracker) setError(null);
     try {
-      const res = await fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' });
-      const json = (await res.json()) as { items?: OrphanagePendingItem[]; error?: string };
-      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
-      setItems(json.items ?? []);
+      const pending = await trackRead(
+        tracker,
+        'items',
+        async () => {
+          const res = await fetch('/api/orphanage-dispatches?pending=1', { cache: 'no-store' });
+          const json = (await res.json()) as { items?: OrphanagePendingItem[]; error?: string };
+          if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load');
+          return json.items ?? [];
+        },
+        (list) => `Read ${countOf(list.length, 'pending orphanage payment')}`,
+      );
+      if (tracker) setError(null);
+      setItems(pending);
     } catch (e) {
       if (!opts?.silent) {
         setError(e instanceof Error ? e.message : 'Could not load orphanage queue');
@@ -318,6 +333,13 @@ export default function OrphanageQueue() {
   }, []);
 
   useEffect(() => { void fetchItems(); }, [fetchItems]);
+
+  const refresh = useTableRefresh({
+    subject: 'orphanage payments',
+    steps: [{ id: 'items', label: 'Reading pending orphanage payments' }],
+    applyLabel: 'Updating the list',
+    appliedLabel: 'List updated',
+  });
 
   const budgetItems = useMemo(() => items.filter((i) => i.sourceType === 'budget_request'), [items]);
   const giftItems = useMemo(() => items.filter((i) => i.sourceType === 'gift_shipping'), [items]);
@@ -423,30 +445,39 @@ export default function OrphanageQueue() {
     setItems((prev) => prev.filter((i) => i.sourceId !== item.sourceId));
   };
 
+  // The refresh modal is rendered second in every branch below, so a failed
+  // refresh that swaps the list for the error card keeps the same modal up
+  // (the reason and Try again) instead of unmounting it.
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-teal-500" />
-      </div>
+      <>
+        <div className="flex h-full items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-teal-500" />
+        </div>
+        {refresh.dialog}
+      </>
     );
   }
 
   if (error) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-lg shadow-rose-500/30">
-          <AlertTriangle className="h-6 w-6" />
+      <>
+        <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-lg shadow-rose-500/30">
+            <AlertTriangle className="h-6 w-6" />
+          </div>
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Couldn&apos;t load orphanage queue</h2>
+          <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
+          <Button size="sm" variant="outline" onClick={() => fetchItems()}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry
+          </Button>
         </div>
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-white">Couldn&apos;t load orphanage queue</h2>
-        <p className="max-w-sm text-xs text-zinc-500 dark:text-zinc-400">{error}</p>
-        <Button size="sm" variant="outline" onClick={() => fetchItems()}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry
-        </Button>
-      </div>
+        {refresh.dialog}
+      </>
     );
   }
 
-  return (
+  const pane = (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
       <div className="shrink-0 border-b border-[#ececec] bg-white px-4 py-3 sm:px-6 sm:py-5 dark:border-zinc-800 dark:bg-zinc-950">
@@ -475,11 +506,13 @@ export default function OrphanageQueue() {
             </Button>
             <button
               type="button"
-              onClick={() => fetchItems()}
+              onClick={() => refresh.run((t) => fetchItems({ tracker: t }))}
+              disabled={refresh.running}
               className="flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900"
               title="Refresh"
+              aria-label="Refresh orphanage payments"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className={cn('h-3.5 w-3.5', refresh.running && 'animate-spin')} />
             </button>
           </div>
         </div>
@@ -648,5 +681,12 @@ export default function OrphanageQueue() {
         onSaved={() => { void fetchItems({ silent: true }); }}
       />
     </div>
+  );
+
+  return (
+    <>
+      {pane}
+      {refresh.dialog}
+    </>
   );
 }

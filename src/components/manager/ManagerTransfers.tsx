@@ -45,6 +45,8 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import ManagerTransferDialog from '@/components/manager/ManagerTransferDialog';
 import { TransferExportMenu, TransferKpiCard } from '@/components/transfers/TransferToolbar';
 import { MANAGER_PDF_THEME, type TransferExportSource } from '@/lib/transfers/transfers-export';
@@ -483,18 +485,30 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
   // `silent` refreshes (live Realtime events, the poll backstop, tab refocus)
   // update the three lists in place without flashing the full-page spinner, so
   // a co-manager's or admin's action shows up live and stale cards can't linger.
-  const load = useCallback((opts?: { silent?: boolean }) => {
+  // `tracker` comes only from the Refresh click: each scope is a line in the
+  // refresh modal (docs/features/table-refresh-progress.md). A scope that fails
+  // still lands as an empty list, exactly as before, but its line fails rather
+  // than claiming it was read.
+  const load = useCallback((opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
     if (!opts?.silent) setRefreshing(true);
-    Promise.all([
-      fetch('/api/department-transfers?scope=incoming', { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : { rows: [] }))
-        .catch(() => ({ rows: [] })),
-      fetch('/api/department-transfers?scope=outgoing', { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : { rows: [] }))
-        .catch(() => ({ rows: [] })),
-      fetch('/api/department-transfers?scope=done', { cache: 'no-store' })
-        .then((r) => (r.ok ? r.json() : { rows: [] }))
-        .catch(() => ({ rows: [] })),
+    const readScope = (scope: 'incoming' | 'outgoing' | 'done', noun: string, nouns = `${noun}s`) =>
+      trackRead(
+        opts?.tracker,
+        scope,
+        async () => {
+          const r = await fetch(`/api/department-transfers?scope=${scope}`, { cache: 'no-store' });
+          if (!r.ok) {
+            const body = (await r.json().catch(() => ({}))) as { error?: string };
+            throw new Error(body.error || `Could not read the ${nouns} (HTTP ${r.status})`);
+          }
+          return (await r.json()) as { rows?: DepartmentTransferRequestRow[] };
+        },
+        (j) => `Read ${countOf((j.rows ?? []).length, noun, nouns)}`,
+      ).catch(() => ({ rows: [] as DepartmentTransferRequestRow[] }));
+    return Promise.all([
+      readScope('incoming', 'release request'),
+      readScope('outgoing', 'request you sent', 'requests you sent'),
+      readScope('done', 'finished transfer'),
     ])
       .then(
         ([inc, out, dn]: [
@@ -516,6 +530,15 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
     // `setScopes` is a stable useCallback from the cached-state hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const refresh = useTableRefresh({
+    subject: 'transfers',
+    steps: [
+      { id: 'incoming', label: 'Reading release requests from other managers' },
+      { id: 'outgoing', label: 'Reading the requests you sent' },
+      { id: 'done', label: 'Reading finished transfers' },
+    ],
+  });
 
   // The full-page spinner is for having nothing to show, not for having a
   // request in flight — a cached paint (or a previous settle) skips it.
@@ -1248,12 +1271,14 @@ export default function ManagerTransfers({ myDepartments, canInitiate }: Props) 
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => load()}
+              onClick={() => refresh.run((t) => load({ tracker: t }))}
+              disabled={refresh.running}
               className="h-8 gap-1.5 border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
+            {refresh.dialog}
             {canRequest && (
               <Button
                 type="button"

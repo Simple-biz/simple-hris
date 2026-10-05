@@ -179,10 +179,18 @@ different person, so a stale popup never lingers on someone's screen.
 
 - **Refresh button** (`RotateCw`, beside the Sync button). `handleRefresh` calls
   `refreshPresence()` (the `usePresenceRefresh` `resync`, which force-recomputes the
-  online roster from the current `hris-presence` channel state) **and** bumps
-  `statusTick` to re-fetch the DB-backed **last-seen** stamps
-  (`/api/presence/last-seen?emails=…`) for the on-screen rows, refreshing relative
-  times.
+  online roster from the current `hris-presence` channel state). It then re-reads the
+  heartbeat set (`/api/presence/active?withinSeconds=120`) and the DB-backed
+  **last-seen** stamps (`/api/presence/last-seen?emails=…`) for the on-screen rows,
+  which refreshes the relative times. **Since 2026-10-05** the click no longer bumps
+  `statusTick` and no longer stops its spinner on a fixed 500 ms timer. It calls the
+  same two reads the tick's effects call (`readRecentActive` / `readLastSeen`) and shows
+  them in the refresh modal ([table-refresh-progress.md](./table-refresh-progress.md)),
+  one line each, done when each answered. A read that answers with an error status
+  fails its line; the silent tick still applies whatever came back. Each read is
+  numbered, and only the newest one nothing cancelled may paint. **Known edge:** a 15 s
+  tick that starts during the click's read wins, so the modal completes on the click's
+  answer a moment before the tick's newer answer paints.
 - **15s auto-telemetry tick.** A `window.setInterval` (`REFRESH_MS = 15_000`, paused
   while the tab is hidden, and it re-ticks on `visibilitychange` → visible) bumps
   `statusTick` so the offline "last seen" times stay fresh **without** pressing

@@ -72,8 +72,23 @@ import {
 } from '@/lib/accounting/time-adjustment-deciders';
 import { IssueMotionRow, IssueStatusSwap } from '@/components/payroll/issue-row-motion';
 import { noteIssueStatuses, type IssueFlashTone } from '@/lib/accounting/issue-row-flash';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf, type RefreshStepSpec } from '@/lib/refresh-progress/refresh-progress';
 
 const PAGE_SIZE = 15;
+
+/**
+ * The short-day issue list answered with an error. The queue still does what it always did
+ * with that answer (its rows, normally none, become the list); only a tracked Refresh throws
+ * this, so its line fails instead of claiming the issues were read.
+ */
+class IssueListNotRead extends Error {
+  readonly rows: PabDayDisputeRow[];
+  constructor(message: string, rows: PabDayDisputeRow[]) {
+    super(message);
+    this.rows = rows;
+  }
+}
 
 function formatHours(hours: number | null | undefined): string | null {
   if (hours == null || hours <= 0) return null;
@@ -258,20 +273,53 @@ export default function PabDisputeQueue() {
     setEditMins(totalMins > 0 ? String(totalMins % 60) : '');
   }, []);
 
-  const fetchDisputes = useCallback(async () => {
+  // `tracker` comes only from the Refresh click: the table and the cards stay exactly as
+  // they are (no cache repaint, no "Loading issues..." swap) and each read is a line in the
+  // refresh modal (docs/features/table-refresh-progress.md). The filter effect and every
+  // reload after a decision call this with nothing, as before.
+  const fetchDisputes = useCallback(async (tracker?: RefreshTracker) => {
     const cacheKey = TAB_CACHE_KEYS.pabDisputes(statusFilter);
-    const cached = getTabCache<PabDayDisputeRow[]>(cacheKey);
-    if (cached) {
-      // Paint the cached rows for this filter immediately (covers switching
-      // filters too) and revalidate quietly without a spinner.
-      setDisputes(cached);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
     const taCacheKey = TAB_CACHE_KEYS.timeAdjustmentIssues(statusFilter);
-    const cachedTa = getTabCache<TimeAdjustmentRow[]>(taCacheKey);
-    if (cachedTa) setTimeAdjustments(cachedTa);
+    if (!tracker) {
+      const cached = getTabCache<PabDayDisputeRow[]>(cacheKey);
+      if (cached) {
+        // Paint the cached rows for this filter immediately (covers switching
+        // filters too) and revalidate quietly without a spinner.
+        setDisputes(cached);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+      const cachedTa = getTabCache<TimeAdjustmentRow[]>(taCacheKey);
+      if (cachedTa) setTimeAdjustments(cachedTa);
+    }
+
+    // Tracked only. Each chain below tolerates a failed read (as before), so the other
+    // chain's rows still land; but a failure ends the modal's run and marks every read
+    // still in flight as failed. So a failed read reports only once the OTHER chain has
+    // read all it will read: a chain counts as settled at its own failure or when it ends.
+    let settleTa: () => void = () => {};
+    let settleDisputes: () => void = () => {};
+    const taSettled = new Promise<void>((resolve) => {
+      settleTa = () => resolve();
+    });
+    const disputesSettled = new Promise<void>((resolve) => {
+      settleDisputes = () => resolve();
+    });
+    function failAfter<T>(read: Promise<T>, settleOwn: () => void, other: Promise<void>): Promise<T> {
+      if (!tracker) return read;
+      return read.catch(async (e: unknown) => {
+        settleOwn();
+        await other;
+        throw e;
+      });
+    }
+    // The queue's own handling of an error answer, unchanged: its rows become the list.
+    const keepAnsweredRows = (e: unknown): PabDayDisputeRow[] => {
+      if (e instanceof IssueListNotRead) return e.rows;
+      throw e;
+    };
+    const which = statusFilter === 'all' ? '' : `${statusFilter} `;
 
     const loadDisputeRows = async (filter: typeof statusFilter): Promise<PabDayDisputeRow[]> => {
       const params = new URLSearchParams();
@@ -288,7 +336,13 @@ export default function PabDisputeQueue() {
       }
       const res = await fetch(`/api/pab-disputes?${params}`, { cache: 'no-store' });
       const json = await res.json();
-      return (json.rows ?? []) as PabDayDisputeRow[];
+      const rows = (json.rows ?? []) as PabDayDisputeRow[];
+      // No ok/error check on this read, as before: an error answer becomes its (empty) row
+      // list. A tracked Refresh must still not call it read, so its line fails.
+      if (tracker && (!res.ok || json.error)) {
+        throw new IssueListNotRead(json.error || `Request failed (${res.status})`, rows);
+      }
+      return rows;
     };
 
     // Time adjustments load alongside the disputes; a failure on one never blanks
@@ -309,7 +363,12 @@ export default function PabDisputeQueue() {
     };
     const taPromise = (async () => {
       try {
-        const { rows, signedUrls } = await loadTimeAdjustments(statusFilter);
+        const { rows, signedUrls } = await trackRead(
+          tracker,
+          'tas',
+          () => failAfter(loadTimeAdjustments(statusFilter), settleTa, disputesSettled),
+          (answer) => `Read ${countOf(answer.rows.length, `${which}time adjustment`)}`,
+        );
         setTabCache(taCacheKey, rows);
         setTimeAdjustments(rows);
         setTaSignedUrls((prev) => ({ ...prev, ...signedUrls }));
@@ -317,7 +376,12 @@ export default function PabDisputeQueue() {
         if (statusFilter === 'all') {
           setAllTimeAdjustments(rows);
         } else {
-          const all = await loadTimeAdjustments('all');
+          const all = await trackRead(
+            tracker,
+            'tasAll',
+            () => failAfter(loadTimeAdjustments('all'), settleTa, disputesSettled),
+            (answer) => `Read ${countOf(answer.rows.length, 'time adjustment')} for the cards`,
+          );
           setTabCache(TAB_CACHE_KEYS.timeAdjustmentIssues('all'), all.rows);
           setAllTimeAdjustments(all.rows);
           setTaSignedUrls((prev) => ({ ...prev, ...all.signedUrls }));
@@ -325,17 +389,29 @@ export default function PabDisputeQueue() {
       } catch (e) {
         if (!hasTabCache(taCacheKey)) setTimeAdjustments([]);
         setTaError(e instanceof Error ? e.message : 'Failed to load time adjustments');
+      } finally {
+        settleTa();
       }
     })();
 
     try {
-      const rows = await loadDisputeRows(statusFilter);
+      const rows = await trackRead(
+        tracker,
+        'disputes',
+        () => failAfter(loadDisputeRows(statusFilter), settleDisputes, taSettled),
+        (list) => `Read ${countOf(list.length, `${which}short-day issue`)}`,
+      ).catch(keepAnsweredRows);
       setTabCache(cacheKey, rows);
       setDisputes(rows);
       if (statusFilter === 'all') {
         setAllDisputes(rows);
       } else {
-        const allRows = await loadDisputeRows('all');
+        const allRows = await trackRead(
+          tracker,
+          'disputesAll',
+          () => failAfter(loadDisputeRows('all'), settleDisputes, taSettled),
+          (list) => `Read ${countOf(list.length, 'short-day issue')} for the cards`,
+        ).catch(keepAnsweredRows);
         setTabCache(TAB_CACHE_KEYS.pabDisputes('all'), allRows);
         setAllDisputes(allRows);
       }
@@ -343,10 +419,28 @@ export default function PabDisputeQueue() {
       // Keep the cached rows on a background-refresh failure.
       if (!hasTabCache(cacheKey)) setDisputes([]);
     } finally {
+      settleDisputes();
       await taPromise;
       setLoading(false);
     }
   }, [statusFilter]);
+
+  // The Refresh click. The two "for the cards" reads happen only on a filtered view: the
+  // KPI cards read every status whatever the table shows. Each read is capped at 500 rows
+  // by the queue's own request, so no line claims "every".
+  const issueSteps: RefreshStepSpec[] =
+    statusFilter === 'all'
+      ? [
+          { id: 'disputes', label: 'Reading short-day issues' },
+          { id: 'tas', label: 'Reading time adjustments' },
+        ]
+      : [
+          { id: 'disputes', label: `Reading ${statusFilter} short-day issues` },
+          { id: 'disputesAll', label: 'Reading short-day issues for the cards' },
+          { id: 'tas', label: `Reading ${statusFilter} time adjustments` },
+          { id: 'tasAll', label: 'Reading time adjustments for the cards' },
+        ];
+  const issueRefresh = useTableRefresh({ subject: 'issues', steps: issueSteps });
 
   useEffect(() => { fetchDisputes(); }, [fetchDisputes]);
 
@@ -710,10 +804,17 @@ export default function PabDisputeQueue() {
             </p>
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={fetchDisputes} disabled={loading} className="shrink-0">
-          <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', loading && 'animate-spin')} />
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => issueRefresh.run((t) => fetchDisputes(t))}
+          disabled={loading || issueRefresh.running}
+          className="shrink-0"
+        >
+          <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', (loading || issueRefresh.running) && 'animate-spin')} />
           Refresh
         </Button>
+        {issueRefresh.dialog}
       </div>
 
       {/* Approver identity banner */}

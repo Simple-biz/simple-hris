@@ -46,6 +46,8 @@ import { useDispatchLock } from '@/hooks/useDispatchLock';
 import type { PayrollDispatchLockState } from '@/lib/supabase/payroll-dispatch-lock';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useKpiLive } from '@/hooks/useKpiLive';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { slugifyDeptKey } from '@/lib/departments/registry';
 import {
   OffboardedStrip,
@@ -1111,13 +1113,14 @@ function HslBonusCalculatorForWeek({
 
   // ── Load entries from DB and merge with roster auto-population ─────────────
 
-  const loadDept = useCallback(async (key: HslDeptKey) => {
+  /** True when the branch's reads answered (the refresh modal's line); false when they failed. */
+  const loadDept = useCallback(async (key: HslDeptKey): Promise<boolean> => {
     const dept = cfgOf(key);
     // A branch's period key is the Hubstaff upload's week — reading before that
     // resolves queries a key nothing was ever saved under, which is what made
     // one manager's scores look empty on another account. Applies to monthly
     // branches too now (see `periodStart`).
-    if (!weekResolved) return;
+    if (!weekResolved) return false;
     const start = periodStart(dept);
     setLoadingDepts((prev) => new Set([...prev, key]));
     try {
@@ -1163,8 +1166,10 @@ function HslBonusCalculatorForWeek({
           },
         };
       });
+      return true;
     } catch {
       // silent — table may be empty on first use
+      return false;
     } finally {
       setLoadingDepts((prev) => {
         const next = new Set(prev);
@@ -1237,24 +1242,41 @@ function HslBonusCalculatorForWeek({
   // or an in-flight save so another scorer's change can't clobber work in
   // progress. Used by both the manual Refresh button and the live subscription.
   const [refreshing, setRefreshing] = useState(false);
-  const refreshAll = useCallback(async () => {
-    await Promise.all(
-      visibleDepts.map((k) => {
-        const d = deptState[k];
-        if (d?.dirty || d?.saving) return Promise.resolve();
-        return loadDept(k);
-      }),
+  // `tracker` comes only from the toolbar Refresh (docs/features/table-refresh-progress.md):
+  // the branches are one line in the refresh modal, failed when any could not be read.
+  const refreshAll = useCallback(async (tracker?: RefreshTracker) => {
+    const keys = visibleDepts.filter((k) => {
+      const d = deptState[k];
+      return !(d?.dirty || d?.saving);
+    });
+    const held = visibleDepts.length - keys.length;
+    await trackRead(
+      tracker,
+      'branches',
+      async () => {
+        if (tracker && !weekResolved) throw new Error('The payroll week is not confirmed yet, so no scores were read.');
+        const loaded = await Promise.all(keys.map((k) => loadDept(k)));
+        const failed = keys.filter((_, i) => !loaded[i]);
+        if (tracker && failed.length > 0) throw new Error(`Couldn't read the scores for ${failed.map((k) => cfgOf(k).name).join(', ')}.`);
+        return keys.length;
+      },
+      (n) => `Read this week's scores for ${countOf(n, 'branch', 'branches')}${held > 0 ? ` · ${countOf(held, 'branch', 'branches')} with unsaved work left as it is` : ''}`,
     );
-  }, [visibleDepts, deptState, loadDept]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleDepts, deptState, loadDept, weekResolved]);
 
-  const manualRefresh = useCallback(async () => {
+  const manualRefresh = useCallback(async (tracker?: RefreshTracker) => {
     setRefreshing(true);
     try {
-      await refreshAll();
+      await refreshAll(tracker);
     } finally {
       setRefreshing(false);
     }
   }, [refreshAll]);
+  const toolbarRefresh = useTableRefresh({
+    subject: 'HSL scores',
+    steps: [{ id: 'branches', label: `Reading this week's scores for ${countOf(visibleDepts.length, 'branch', 'branches')}` }],
+  });
 
   // See teammates' scoring as it lands: watch the entry + status tables and
   // re-pull (debounced). Falls back to a 30s poll + tab-focus refresh when
@@ -1948,13 +1970,14 @@ function HslBonusCalculatorForWeek({
               size="sm"
               variant="outline"
               className="h-8 gap-1.5 text-xs"
-              onClick={() => void manualRefresh()}
-              disabled={refreshing}
+              onClick={() => toolbarRefresh.run((t) => manualRefresh(t))}
+              disabled={refreshing || toolbarRefresh.running}
               title="Reload scores (also updates live as teammates edit)"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </Button>
+            {toolbarRefresh.dialog}
             {isElevated && (
               <Button
                 size="sm"

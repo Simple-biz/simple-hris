@@ -35,6 +35,8 @@ import { downloadOrderInvoicePdf, invoiceNumber } from '@/lib/gift-tracker/order
 import { fetchOrdersState, type OrdersClientState } from '@/lib/gift-tracker/orders-client';
 import type { GiftOrderRow } from '@/lib/supabase/gift-orders';
 import InvoiceProgress, { type InvoicePhase } from '@/components/orphanage/InvoiceProgress';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * Gift Tracker → Orders (Kane, 2026-09-23).
@@ -116,10 +118,22 @@ export default function GiftOrders({
   const [deleteTarget, setDeleteTarget] = useState<GiftOrderRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const load = useCallback(async () => {
+  // `tracker` comes only from the Refresh click: the lists stay on screen and the
+  // read is a line in the refresh modal (docs/features/table-refresh-progress.md).
+  const load = useCallback(async (tracker?: RefreshTracker) => {
     setRefreshing(true);
     try {
-      const st = await fetchOrdersState();
+      // One read in orders-client.ts sends both requests (orders + Gift items),
+      // so the modal shows it as one line.
+      const st = await trackRead(
+        tracker,
+        'orders',
+        () => fetchOrdersState(),
+        (s) =>
+          s.migrated
+            ? `Read ${countOf(s.orders.length, 'locked order')} and ${countOf(s.catalog.length, 'catalog item')}`
+            : 'Orders are not set up yet',
+      );
       setMigrated(st.migrated);
       setOrders(st.orders);
       setLiveKeys(new Set(st.liveKeys));
@@ -141,6 +155,13 @@ export default function GiftOrders({
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refresh = useTableRefresh({
+    subject: 'gift orders',
+    steps: [{ id: 'orders', label: 'Reading locked orders and the gift catalog' }],
+    applyLabel: 'Updating the orders',
+    appliedLabel: 'Orders updated',
+  });
 
   const lines = useMemo(
     () => resolveOrderLines({ submissions, catalog, tiers, lockedKeys: liveKeys, variantChoices }),
@@ -352,41 +373,51 @@ export default function GiftOrders({
     );
   }
 
+  // The refresh modal is the FIRST child of every view below: a failed refresh
+  // swaps this view for the error card, and the same position keeps the modal
+  // mounted (with its reason and Try again) instead of remounting it mid-run.
   if (!migrated) {
     return (
-      <Card className="border-amber-300 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/30">
-        <CardContent className="flex items-start gap-3 py-6 text-sm text-amber-900 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-semibold">Orders are not set up yet.</p>
-            <p className="mt-1 text-xs">
-              The Gift Orders database tables have not been created. Run{' '}
-              <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">scripts/Apply Gift Orders migration.cmd</code>,
-              then refresh.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <div>
+        {refresh.dialog}
+        <Card className="border-amber-300 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/30">
+          <CardContent className="flex items-start gap-3 py-6 text-sm text-amber-900 dark:text-amber-200">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">Orders are not set up yet.</p>
+              <p className="mt-1 text-xs">
+                The Gift Orders database tables have not been created. Run{' '}
+                <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/50">scripts/Apply Gift Orders migration.cmd</code>,
+                then refresh.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   if (loadError) {
     return (
-      <Card className="border-rose-300 bg-rose-50/70 dark:border-rose-900/60 dark:bg-rose-950/30">
-        <CardContent className="flex items-center justify-between gap-3 py-6 text-sm text-rose-900 dark:text-rose-200">
-          <span className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" /> {loadError}
-          </span>
-          <Button size="sm" variant="outline" onClick={() => void load()} disabled={refreshing}>
-            Try again
-          </Button>
-        </CardContent>
-      </Card>
+      <div>
+        {refresh.dialog}
+        <Card className="border-rose-300 bg-rose-50/70 dark:border-rose-900/60 dark:bg-rose-950/30">
+          <CardContent className="flex items-center justify-between gap-3 py-6 text-sm text-rose-900 dark:text-rose-200">
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" /> {loadError}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => void load()} disabled={refreshing}>
+              Try again
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-6">
+      {refresh.dialog}
       <InvoiceProgress phase={lockPhase} invoiceNo={lockedInvoiceNo} giftCount={lockGiftCount} />
       {/* ── Open orders ─────────────────────────────────────────────────── */}
       <Card className="overflow-hidden ring-1 ring-emerald-200/60 dark:ring-emerald-900/40">
@@ -424,8 +455,14 @@ export default function GiftOrders({
                   Clear
                 </Button>
               )}
-              <Button size="sm" variant="outline" className="h-8" onClick={() => void load()} disabled={refreshing}>
-                <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8"
+                onClick={() => refresh.run((t) => load(t))}
+                disabled={refreshing || refresh.running}
+              >
+                <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', (refreshing || refresh.running) && 'animate-spin')} />
                 Refresh
               </Button>
             </div>

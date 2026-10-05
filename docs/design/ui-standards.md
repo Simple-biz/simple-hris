@@ -659,7 +659,8 @@ Three distinct states, never merged:
 
 See `ProcessorQueue.tsx` (`EmptyQueueState`, `NoMatchesState`,
 `QueueSkeleton`) for the canonical refs. Board-shaped skeletons and the refetch rule:
-§ 12.3.
+§ 12.3. A table's **Refresh** never re-shows its loading state; it opens the refresh modal
+(§ 12.3, 2026-10-05).
 
 ### 5.6 Pagination (display only, 2026-09-29)
 
@@ -1165,6 +1166,15 @@ Second user of the steps-not-time rule: `InvoiceProgress.tsx` (Gift Orders lock,
 are real phases of the lock, never a timer, and the LOCKED stamp lands only once both
 finished (`InvoiceProgress.tsx:7-24, 88-104`).
 
+Third and fourth users (2026-10-05) are reads, not writes. The first is NPD's loading card
+(`NpdLoadProgress.tsx`, `npd-dashboard.md` § Loading a sheet). The second is the table refresh modal
+(`RefreshProgressDialog.tsx`, [table-refresh-progress](../features/table-refresh-progress.md)). Both
+show one line per real step, each done only when its read answered. Inside a step the fill is one
+decelerating glide toward a ceiling it never passes, so **no percentage is printed**. The bar never
+moves backwards and is green only once the rows are on screen. The pure models are
+`src/lib/npd/load-progress.ts` and `src/lib/refresh-progress/refresh-progress.ts`; the second reuses
+the first one's curve maths.
+
 ### 10.2 Full-screen viewer (2026-09-26, used by `ProofLightbox`)
 
 `ProofLightbox` (`TimeAdjustmentIssueRows.tsx:248-473`, 2aebfde3), the Accounting → Issues
@@ -1441,6 +1451,15 @@ Three flavors:
   Payroll Notes card keeps what is on screen through a background failure
   (`PayrollNotesSetupCard.tsx:37-42`), and Diagnostics' background refresh "covers nothing"
   (`performance-ui.tsx:36-38`). A skeleton is for the first paint.
+- **A table's Refresh click opens the refresh modal** (2026-10-05, Kane: *"not reload the table as
+  skeleton but rather a modal with a progress bar on it"*). It is `useTableRefresh` in
+  `src/components/common/RefreshProgressDialog.tsx`, on every table and list with a Refresh button. The
+  rows stay where they are. The modal is the house Dialog: one checklist line per read the table really
+  sends, then *Updating the table*. The bar is driven by those steps (§ 10.1), prints no percentage,
+  and is green only once the new rows are painted. A failure keeps the dialog open with the server's
+  sentence and Try again. **Only the click reports**: first loads, polls, realtime, focus and
+  after-save reloads stay exactly as silent as they were. Doc:
+  [table-refresh-progress](../features/table-refresh-progress.md).
 - **Spinner** for non-tabular ("Loading payment history…", profile detail).
   `<Loader2 className="h-4 w-4 animate-spin text-orange-500" />` + a tiny-caps
   caption.

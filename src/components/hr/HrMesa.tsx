@@ -17,9 +17,10 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { formatDateOnly } from '@/lib/date-only';
 import { getHrTabCache, hasHrTabCache, HR_TAB_CACHE_KEYS, isHrTabCacheFresh, setHrTabCache } from '@/lib/hr/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
 import HrFpuEnrollments from './HrFpuEnrollments';
 import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates';
 import type { EmployeeRow } from '@/lib/supabase/employees';
@@ -181,9 +182,10 @@ function MesaEligibleList() {
   /**
    * `silent` is the revalidate path: no spinner, and on failure it leaves the
    * painted rows and the previous error state alone. A background refresh must
-   * never undo the thing the cache is for.
+   * never undo the thing the cache is for. `tracker` comes only from the Refresh
+   * click: each read is a line in the refresh modal (table-refresh-progress.md).
    */
-  const load = async (showSpinner = true, silent = false) => {
+  const load = async (showSpinner = true, silent = false, tracker?: RefreshTracker) => {
     if (!silent) {
       if (showSpinner) setLoading(true);
       else setRefreshing(true);
@@ -193,14 +195,28 @@ function MesaEligibleList() {
       // No ledger call. This tab answers WHO is in MESA and WHEN they joined, and
       // both come off the rates row; the money lives on Accounting -> MESA ->
       // Active Members, which is the surface that owns balances.
-      const [ratesRes, employeesRes] = await Promise.all([
-        fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-        fetch('/api/employees', { cache: 'no-store' }),
+      const [ratesJson, employeesJson] = await Promise.all([
+        trackRead(
+          tracker,
+          'members',
+          async () => {
+            const ratesRes = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+            if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
+            return (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
+          },
+          (j) => `Read ${countOf((j.rows ?? []).filter((r) => r.mesa_member).length, 'MESA membership')}`,
+        ),
+        trackRead(
+          tracker,
+          'roster',
+          async () => {
+            const employeesRes = await fetch('/api/employees', { cache: 'no-store' });
+            if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
+            return (await employeesRes.json()) as { employees?: EmployeeRow[] };
+          },
+          (j) => `Read ${countOf((j.employees ?? []).length, 'person', 'people')} on the master list`,
+        ),
       ]);
-      if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
-      if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
-      const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
-      const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[] };
 
       // Build a lookup of MESA-eligible rates rows, keyed by both work_email
       // and personal_email. Only rows with mesa_member=true are indexed —
@@ -280,11 +296,16 @@ function MesaEligibleList() {
   const safePage = Math.min(page, totalPages - 1);
   const pageRows = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
-  const handleRefresh = async () => {
-    // A re-write restamps the entry, which re-opens the freshness window.
-    await load(false);
-    toast.success('Refreshed MESA-eligible list');
-  };
+  // A re-write restamps the entry, which re-opens the freshness window. The modal
+  // says "Refreshed" only when it was; a failure keeps it open with the reason.
+  const refresh = useTableRefresh({
+    subject: 'the MESA-eligible list',
+    steps: [
+      { id: 'members', label: 'Reading MESA memberships from the pay rates' },
+      { id: 'roster', label: 'Reading the master list' },
+    ],
+  });
+  const handleRefresh = () => refresh.run((t) => load(false, false, t));
 
   const deptCount = useMemo(
     () => new Set(rows.map((r) => (r.department ?? '').trim().toLowerCase()).filter(Boolean)).size,
@@ -321,12 +342,13 @@ function MesaEligibleList() {
           variant="outline"
           size="sm"
           onClick={handleRefresh}
-          disabled={refreshing || loading}
+          disabled={refreshing || loading || refresh.running}
           className="gap-1.5"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
+        {refresh.dialog}
       </div>
 
       {/* List */}

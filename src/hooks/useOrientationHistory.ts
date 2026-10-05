@@ -9,6 +9,8 @@ import {
 import { useManagerCachedState } from '@/hooks/useManagerCachedState';
 import { MANAGER_CACHE_KEYS } from '@/lib/manager/tab-cache';
 import { toCachedHireRows } from '@/lib/manager/hire-row-cache';
+import { trackRead, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 /**
  * The orientation history behind Manager → My Team.
@@ -55,7 +57,9 @@ export interface OrientationHistoryState {
   /** True once THIS mount's read has answered. Until then `hires` may be a
    *  cache-painted copy (at most 12h old). */
   live: boolean;
-  refresh: () => Promise<void>;
+  /** The panel's Refresh. A `tracker` (the refresh modal, table-refresh-progress.md)
+   *  makes the read a line in that modal; the read and its failure handling are the same. */
+  refresh: (tracker?: RefreshTracker) => Promise<void>;
 }
 
 /** The raw route payload, as cached: rows projected, the week map a plain record. */
@@ -78,17 +82,25 @@ export function useOrientationHistory(enabled = true): OrientationHistoryState {
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (isRefresh: boolean) => {
+  const load = useCallback(async (isRefresh: boolean, tracker?: RefreshTracker) => {
     if (isRefresh) setRefreshing(true);
     setError(null);
     try {
-      const res = await fetch('/api/manager/orientation-history', { cache: 'no-store' });
-      const json = (await res.json()) as {
-        rows?: OrientationHire[];
-        checklistWeeks?: Record<string, string[]>;
-        error?: string | null;
-      };
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      const json = await trackRead(
+        tracker,
+        'history',
+        async () => {
+          const res = await fetch('/api/manager/orientation-history', { cache: 'no-store' });
+          const body = (await res.json()) as {
+            rows?: OrientationHire[];
+            checklistWeeks?: Record<string, string[]>;
+            error?: string | null;
+          };
+          if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+          return body;
+        },
+        (body) => `Read ${countOf((body.rows ?? []).length, 'hire')}`,
+      );
       setPayload({
         rows: toCachedHireRows(json.rows ?? []),
         checklistWeeks: json.checklistWeeks ?? {},
@@ -110,7 +122,7 @@ export function useOrientationHistory(enabled = true): OrientationHistoryState {
     }
   }, [setPayload]);
 
-  const refresh = useCallback(() => load(true), [load]);
+  const refresh = useCallback((tracker?: RefreshTracker) => load(true, tracker), [load]);
 
   useEffect(() => {
     if (!enabled || loadedOnce) return;

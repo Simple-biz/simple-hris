@@ -59,6 +59,8 @@ import TerminationDocsPanel from '@/components/accounting/termination-docs/Termi
 import GenerateCoeDialog from '@/components/accounting/GenerateCoeDialog';
 import { readJsonResponse } from '@/lib/documents/read-json-response';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 type Filter = DocumentRequestStatus | 'all';
 
@@ -177,14 +179,30 @@ export default function AccountingDocuments({
   const [actingId, setActingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
 
-  const fetchRows = useCallback(async (opts?: { silent?: boolean }) => {
+  // `tracker` comes only from the Refresh click: the read is a line in the refresh
+  // modal (docs/features/table-refresh-progress.md), and whatever is on screen --
+  // rows or an error card -- stays until the answer replaces it.
+  const fetchRows = useCallback(async (opts?: { silent?: boolean; tracker?: RefreshTracker }) => {
+    const tracker = opts?.tracker;
     if (!opts?.silent) setRefreshing(true);
-    setError(null);
+    if (!tracker) setError(null);
     try {
-      const res = await fetch('/api/accounting/documents', { cache: 'no-store' });
-      const json = await readJsonResponse<{ rows?: DocumentRequestRow[]; error?: string }>(res, 'Loading the signing queue');
+      const json = await trackRead(
+        tracker,
+        'queue',
+        async () => {
+          const res = await fetch('/api/accounting/documents', { cache: 'no-store' });
+          return readJsonResponse<{ rows?: DocumentRequestRow[]; error?: string }>(res, 'Loading the signing queue');
+        },
+        (j) => {
+          const list = j.rows ?? [];
+          const waiting = list.filter((r) => r.status === 'pending').length;
+          return `Read ${countOf(list.length, 'document request')}, ${waiting.toLocaleString('en-US')} awaiting signature`;
+        },
+      );
       const next = json.rows ?? [];
       setRows(next);
+      if (tracker) setError(null);
       // The RAW payload, per the store's rule -- the mirror is JSON, so every
       // render shape is derived from this with `useMemo` below and the seeded
       // and fetched paths cannot diverge.
@@ -194,8 +212,9 @@ export default function AccountingDocuments({
         const message = e instanceof Error ? e.message : 'Failed to load requests';
         setError(message);
         // With rows already on screen the error card is suppressed (below), so
-        // the failure has to say so somewhere the rep will see it.
-        if (rowsRef.current.length > 0) toast.error(message);
+        // the failure has to say so somewhere the rep will see it. A tracked
+        // Refresh says it in its modal instead.
+        if (rowsRef.current.length > 0 && !tracker) toast.error(message);
       }
     } finally {
       // "Answered" either way -- a failed cold load must not leave the skeleton
@@ -243,6 +262,13 @@ export default function AccountingDocuments({
     onRefresh: () => void fetchRows({ silent: true }),
     channel: 'accounting-documents',
     pollMs: 60_000,
+  });
+
+  // The Refresh click. The queue read is the newest 200 requests (listDocumentRequests'
+  // default), so the line never claims "every".
+  const queueRefresh = useTableRefresh({
+    subject: 'the signing queue',
+    steps: [{ id: 'queue', label: 'Reading the latest document requests' }],
   });
 
   // "Carla would be prompted for her signature" — first visit with edit access
@@ -719,13 +745,14 @@ export default function AccountingDocuments({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void fetchRows()}
-            disabled={loading || refreshing}
+            onClick={() => queueRefresh.run((t) => fetchRows({ tracker: t }))}
+            disabled={loading || refreshing || queueRefresh.running}
             className="h-9 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refreshing) && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (loading || refreshing || queueRefresh.running) && 'animate-spin')} />
             Refresh
           </Button>
+          {queueRefresh.dialog}
           {canEdit && (
             <Button
               type="button"

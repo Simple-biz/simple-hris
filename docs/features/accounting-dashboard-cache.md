@@ -171,7 +171,9 @@ Its spinner is now derived rather than stored — `!settled && rows.length === 0
 `settled` never seeded and never reset — because a spinner that re-asserts on every mount
 repaints the skeleton over rows already on screen. An explicit **Refresh** keeps its own
 `refreshing` flag. Same recipe as `manager-dashboard-cache.md` § *Loading flags are part
-of the rule*.
+of the rule*. Since 2026-10-05 the Refresh click also opens the refresh modal over the rows
+([table-refresh-progress.md](./table-refresh-progress.md)). It does not clear the error card
+before its answer lands, and the poll and realtime reloads stay silent.
 
 ### Documents joined, with a UI selection (2026-09-16)
 
@@ -203,9 +205,12 @@ It takes three keys, and they are three different categories:
 Two render rules came with it, the same recipe as Transfers: the spinner is derived
 (`!settled && rows.length === 0`, `settled` never seeded and never reset) and the
 **Refresh** button keeps its own `refreshing` flag; and the full-height error card now
-only renders when there is nothing to paint (`error && rows.length === 0`) — a failed
-manual Refresh over a populated table raises a toast instead, because blanking the
-queue on a network blip is worse than the blip.
+only renders when there is nothing to paint (`error && rows.length === 0`). Before
+2026-10-05 a failed manual Refresh over a populated table raised a toast instead, because
+blanking the queue on a network blip is worse than the blip. Since 2026-10-05 the Refresh
+click reports that failure in the refresh modal, which stays open with the reason and Try
+again ([table-refresh-progress.md](./table-refresh-progress.md)), so the click raises no
+toast. A silent poll that fails still sets the same error state.
 
 This is a client paint only. No route changed, every fetch is still `cache: 'no-store'`,
 and no gate moved — `requireFeatureAccess` / `requireFeatureEdit` decide as before.

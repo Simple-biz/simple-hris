@@ -26,7 +26,10 @@ which overwrites it. There is **no skip-fetch flag** — an integration key can 
 throttled by another admin in another tab, so a skipped fetch would show a dead key as live.
 A `no-skip-flag` test greps the module's own exports so the flag cannot return by copy-paste.
 The skeleton is for having nothing to paint (`!settled && !data`), never for a request being
-in flight; a manual **Refresh** keeps its own spinner and an "Updated … ago" stamp.
+in flight; a manual **Refresh** keeps its own spinner and an "Updated … ago" stamp, and since
+2026-10-05 the click also opens the refresh modal over the rows
+([table-refresh-progress.md](./table-refresh-progress.md)). It says any failure there instead of
+in a toast. The mount fetch stays silent.
 
 ## What is cached, and what deliberately is not
 

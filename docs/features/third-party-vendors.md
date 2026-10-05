@@ -118,7 +118,9 @@ Money is rendered via `formatVendorPHP` (₱, always 2 decimals).
 ## The tab (`ThirdPartyVendorsPanel`)
 
 Two sub-tabs, **Invoices** (default) and **Vendors**, loaded together on mount and via a manual
-**Refresh** button. Invoices are split into **Pending** and **Paid** sections; stat tiles show pending
+**Refresh** button. Since 2026-10-05 that click keeps the tab on screen, with no "Loading…" swap. It
+opens the refresh modal with one line for each of the two reads
+([table-refresh-progress.md](./table-refresh-progress.md)). Invoices are split into **Pending** and **Paid** sections; stat tiles show pending
 count, pending total, and paid count. `VendorInvoiceBuilderDialog` lets the manager pick a saved vendor
 (which snapshots its contact + banking into the form via `applyVendor`, all fields still editable) or
 free-type a vendor name; it suggests an invoice number (`suggestInvoiceNumber`, e.g.

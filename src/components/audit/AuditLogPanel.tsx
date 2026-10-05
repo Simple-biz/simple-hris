@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDown,
@@ -47,6 +47,8 @@ import {
   familyForAction,
   type AuditSurface,
 } from '@/lib/audit/registry';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 type SortKey = 'created_at' | 'action' | 'user_name';
 type SortDir = 'asc' | 'desc';
@@ -1059,22 +1061,51 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
     }
   };
 
-  /** Load the newest page for the current dashboard + search filters. */
+  /** Bumped by every load, so the Refresh click's answer never lands over a newer load's. */
+  const loadSeqRef = useRef(0);
+
+  /**
+   * Load the newest page for the current dashboard + search filters.
+   *
+   * `tracker` comes only from the Refresh click: the rows (or the error) stay on
+   * screen until the answer lands, with no "Loading audit log…" swap, and the
+   * refresh modal shows the read (docs/features/table-refresh-progress.md).
+   */
   const refreshAuditLog = useCallback(
-    async (surface: SurfaceFilterId, search: string) => {
-      setAuditLoading(true);
-      setAuditError(null);
+    async (surface: SurfaceFilterId, search: string, tracker?: RefreshTracker) => {
+      const seq = ++loadSeqRef.current;
+      if (!tracker) {
+        setAuditLoading(true);
+        setAuditError(null);
+      }
       try {
-        const page = await loadAuditLog({ surface, search });
+        const page = await trackRead(
+          tracker,
+          'events',
+          () => loadAuditLog({ surface, search }),
+          (p) =>
+            search.trim()
+              ? `Found ${countOf(p.rows.length, 'matching event')}${p.searchWindow ? ` in the latest ${countOf(p.searchWindow.events_scanned, 'event')}` : ''}`
+              : `Read ${countOf(p.rows.length, 'audit event')}`,
+        );
+        // The click's modal was hidden and a filter, search or purge loaded again
+        // meanwhile: that newer load owns the table, so this answer is not painted.
+        if (tracker && seq !== loadSeqRef.current) {
+          tracker.fail('A newer read of the audit log started while this one was out, so the table shows that one.');
+          return;
+        }
         setAuditLogs(page.rows);
         setCursor(page.nextCursor);
         setHasMore(page.hasMore);
         setSearchWindow(page.searchWindow);
         setAppliedSearch(search.trim());
+        if (tracker) setAuditError(null);
       } catch (e) {
+        // Superseded: the modal says it failed; the newer load owns the panel.
+        if (tracker && seq !== loadSeqRef.current) return;
         setAuditError(e instanceof Error ? e.message : 'Failed to load audit log.');
       } finally {
-        setAuditLoading(false);
+        if (!tracker) setAuditLoading(false);
       }
     },
     [],
@@ -1116,6 +1147,21 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
   const applySearch = useCallback(() => {
     void refreshAuditLog(categoryId, searchTerm);
   }, [refreshAuditLog, categoryId, searchTerm]);
+
+  // The Refresh click re-reads exactly what the filters on screen asked for. A
+  // search scans the newest events server-side, so it is a search, not a page read.
+  const auditScope = categoryId === 'all' ? '' : ` from ${auditSurfaceDef(categoryId).label}`;
+  const refresh = useTableRefresh({
+    subject: 'the audit log',
+    steps: [
+      {
+        id: 'events',
+        label: appliedSearch
+          ? `Searching the latest audit events${auditScope} for “${appliedSearch}”`
+          : `Reading the latest 200 audit events${auditScope}`,
+      },
+    ],
+  });
 
   /** Count what a purge would remove, without removing it. */
   const previewPurge = useCallback(async (days: number) => {
@@ -1188,13 +1234,14 @@ export default function AuditLogPanel({ onNavigateToOtSettings, className }: Aud
           )}
           <button
             type="button"
-            onClick={() => void refreshAuditLog(categoryId, appliedSearch)}
-            disabled={auditLoading || purging}
+            onClick={() => refresh.run((t) => refreshAuditLog(categoryId, appliedSearch, t))}
+            disabled={auditLoading || purging || refresh.running}
             className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-[10px] font-medium text-indigo-600 transition-colors hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800/50 dark:bg-indigo-950/20 dark:text-indigo-400"
           >
-            <RefreshCw className={cn('h-3 w-3', auditLoading && 'animate-spin')} />
+            <RefreshCw className={cn('h-3 w-3', (auditLoading || refresh.running) && 'animate-spin')} />
             Refresh
           </button>
+          {refresh.dialog}
           {/* Retention purge — never a wholesale clear. The old "Clear Log"
               truncated the table and left no trace of having done so. */}
           {!purgeOpen ? (

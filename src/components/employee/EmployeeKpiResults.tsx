@@ -29,6 +29,8 @@ import { EMPLOYEE_CACHE_KEYS } from '@/lib/employee/tab-cache';
 import { KPI_SCORED_NOTIFICATION, subscribeNotificationTypes } from '@/lib/notifications/notification-arrived';
 import { useKpiLive } from '@/hooks/useKpiLive';
 import { KPI_LIVE_EMPLOYEE_SPREAD_MS } from '@/lib/kpi-live';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 
 interface KpiResultItem {
   label: string;
@@ -209,31 +211,42 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
   const seqRef = useRef(0);
   const loading = !settled && periods.length === 0;
 
+  // `tracker` comes only from the Refresh click: the read is a line in its modal
+  // (docs/features/table-refresh-progress.md). Resolves true when this read was
+  // the one that reached the page (its periods, or its error), false when a
+  // newer read replaced it or it was cancelled, so the click can tell.
   const fetchResults = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, tracker?: RefreshTracker): Promise<boolean> => {
       const seq = ++seqRef.current;
       if (loadedOnce.current) setRefreshing(true);
       try {
-        const res = await fetch(
-          `/api/kpi-results?email=${encodeURIComponent(employeeEmail)}`,
-          { cache: 'no-store', signal },
+        const json = await trackRead(
+          tracker,
+          'results',
+          async () => {
+            const res = await fetch(
+              `/api/kpi-results?email=${encodeURIComponent(employeeEmail)}`,
+              { cache: 'no-store', signal },
+            );
+            const body = (await res.json()) as { periods?: KpiResultPeriod[]; error?: string | null };
+            if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+            // The route answers 200 + `error` + `periods: []` on a failed read.
+            // Keep what is painted; the header strip reports the failure.
+            if (body.error) throw new Error(body.error);
+            return body;
+          },
+          (body) => `Read ${countOf((body.periods ?? []).length, 'KPI result')}`,
         );
-        const json = (await res.json()) as { periods?: KpiResultPeriod[]; error?: string | null };
-        if (signal?.aborted || seq !== seqRef.current) return;
-        if (!res.ok) {
-          setError(json.error ?? `Request failed (${res.status})`);
-        } else if (json.error) {
-          // The route answers 200 + `error` + `periods: []` on a failed read.
-          // Keep what is painted; the header strip reports the failure.
-          setError(json.error);
-        } else {
-          setError(null);
-          setPeriods(json.periods ?? []);
-        }
+        if (signal?.aborted || seq !== seqRef.current) return false;
+        setError(null);
+        setPeriods(json.periods ?? []);
+        return true;
       } catch (e) {
         if (!signal?.aborted && seq === seqRef.current) {
           setError(e instanceof Error ? e.message : 'Failed to load KPI results');
+          return true;
         }
+        return false;
       } finally {
         if (!signal?.aborted && seq === seqRef.current) {
           setSettled(true);
@@ -297,6 +310,22 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
     };
   }, [fetchResults, employeeEmail]);
 
+  // The Refresh click. Focus, the poll or a live signal can start a newer read
+  // while the click's is out; the click's answer is then dropped (seqRef), so
+  // the modal says that instead of calling rows it never applied "updated".
+  const refresh = useTableRefresh({
+    subject: 'your KPI results',
+    steps: [{ id: 'results', label: 'Reading your published KPI results' }],
+    applyLabel: 'Updating your results',
+    appliedLabel: 'Results updated',
+  });
+  const handleRefresh = () =>
+    refresh.run(async (t) => {
+      if (!(await fetchResults(undefined, t))) {
+        t.fail("A newer read of your KPI results started before this one landed, so this one's answer was set aside.");
+      }
+    });
+
   const [latest, ...history] = periods;
   const totalEarned = useMemo(() => periods.reduce((s, p) => s + p.total, 0), [periods]);
 
@@ -318,13 +347,14 @@ export default function EmployeeKpiResults({ employeeEmail }: { employeeEmail: s
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => void fetchResults()}
-            disabled={refreshing}
+            onClick={handleRefresh}
+            disabled={refreshing || refresh.running}
             className="shrink-0 gap-2"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 ${refreshing || refresh.running ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
+          {refresh.dialog}
         </div>
         {periods.length > 0 && (
           <div className="mt-3 flex flex-wrap items-center gap-2">

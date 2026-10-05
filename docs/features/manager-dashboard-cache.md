@@ -102,7 +102,10 @@ const loading = !settled && <nothing to paint>;
 `settled` means "the fetch has answered at least once in this page load", and it is
 never reset. **The skeleton is for having nothing to show, not for having a request in
 flight.** An in-flight *refresh* keeps its own separate flag where one existed
-(`ManagerTransfers.refreshing`, which spins the Refresh button and nothing else).
+(`ManagerTransfers.refreshing`, which spins the Refresh button and nothing else). Since
+2026-10-05 the Refresh **click** also opens the refresh modal over the rows, one line per
+scope read ([table-refresh-progress.md](./table-refresh-progress.md)). A silent reload
+still shows nothing.
 
 ## Identity is part of every entry
 

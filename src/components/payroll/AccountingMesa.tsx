@@ -84,6 +84,8 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { BulkBar, reportBulk, runBulk, SelectCheckbox, useRowSelection } from '@/components/mesa/bulk-selection';
 import { isMesaRequestArchived, mesaRequestCompletion } from '@/lib/mesa/request-archive';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf, type RefreshStepSpec } from '@/lib/refresh-progress/refresh-progress';
 type MesaView = 'requests' | 'non-members' | 'active-members';
 
 /** Peso, two decimals — follows the app-wide money convention. */
@@ -348,19 +350,33 @@ export default function AccountingMesa() {
   const [deleteTarget, setDeleteTarget] = useState<MesaRequest | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const load = async (showSpinner = true) => {
+  // `tracker` comes only from the Refresh click: each read is a line in the refresh
+  // modal (docs/features/table-refresh-progress.md), which says a failure itself.
+  const load = async (showSpinner = true, tracker?: RefreshTracker) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
       // Accounting only handles money-related requests.
       // Opt-in requests are routed to HR.
       const params = new URLSearchParams();
       ['opt_out', 'disbursement', 'return'].forEach((t) => params.append('request_type', t));
-      const [res, statusMap] = await Promise.all([
-        fetch(`/api/mesa-requests?${params}`, { cache: 'no-store' }),
-        fetchRosterStatusMap(),
+      const [json, statusMap] = await Promise.all([
+        trackRead(
+          tracker,
+          'requests',
+          async () => {
+            const res = await fetch(`/api/mesa-requests?${params}`, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return (await res.json()) as { rows?: MesaRequest[] };
+          },
+          (j) => `Read ${countOf((j.rows ?? []).length, 'request')}`,
+        ),
+        trackRead(
+          tracker,
+          'roster',
+          () => fetchRosterStatusMap(),
+          (statuses) => `Read ${countOf(statuses.size, 'Global Master List email')}`,
+        ),
       ]);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = (await res.json()) as { rows?: MesaRequest[] };
       // The Global Master List is the source of truth for who's active, but a
       // request from someone no longer on the roster still needs Accounting's
       // eyes — e.g. an approved-but-unpaid disbursement, or a sync race
@@ -386,7 +402,7 @@ export default function AccountingMesa() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load MESA requests';
       setLoadError(msg);
-      toast.error(msg);
+      if (!tracker) toast.error(msg);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -515,11 +531,21 @@ export default function AccountingMesa() {
     };
   }, [filtered, filterStatus, filterType, filterDepartment, query, showArchived]);
 
-  const handleRefresh = async () => {
-    clearTabCache(TAB_CACHE_KEYS.mesaRequests);
-    await load(false);
-    toast.success('Refreshed MESA requests');
-  };
+  // The modal says "Refreshed" only when it was (the old toast fired even after a
+  // failure); a failure keeps it open with the reason. The read is the newest 200
+  // requests (the route's default limit), so the line never claims "every".
+  const requestsRefresh = useTableRefresh({
+    subject: 'MESA requests',
+    steps: [
+      { id: 'requests', label: 'Reading the latest MESA requests' },
+      { id: 'roster', label: 'Reading who is on the Global Master List' },
+    ],
+  });
+  const handleRefresh = () =>
+    requestsRefresh.run((t) => {
+      clearTabCache(TAB_CACHE_KEYS.mesaRequests);
+      return load(false, t);
+    });
 
   const openReview = (r: MesaRequest) => {
     setReviewTarget(r);
@@ -949,12 +975,13 @@ export default function AccountingMesa() {
             variant="outline"
             size="sm"
             onClick={handleRefresh}
-            disabled={refreshing || loading}
+            disabled={refreshing || loading || requestsRefresh.running}
             className="gap-1.5"
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || requestsRefresh.running) && 'animate-spin')} />
             Refresh
           </Button>
+          {requestsRefresh.dialog}
           <MesaExportMenu spec={exportSpec} />
         </div>
 
@@ -2422,29 +2449,82 @@ interface MesaRosterFetch {
   ledgerRead: MesaLedgerRead;
 }
 
-async function fetchMesaRoster(): Promise<MesaRosterFetch> {
-  const [employeesRes, ratesRes, ledgerRes] = await Promise.all([
-    fetch('/api/employees', { cache: 'no-store' }),
-    fetch('/api/employee-hourly-rates', { cache: 'no-store' }),
-    fetch('/api/mesa-ledger', { cache: 'no-store' }),
-  ]);
-  if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
-  if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
-  const employeesJson = (await employeesRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
-  const ratesJson = (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
-  // /api/employees reports DB failures as 200 + { employees: [], error }, and
-  // a real roster is never empty — fail loudly instead of rendering (and
-  // caching) an empty MESA roster. Mirrors fetchRosterEmailSet.
-  if ((employeesJson.employees ?? []).length === 0) {
-    throw new Error(employeesJson.error ?? 'Employee roster unavailable');
-  }
+/**
+ * The Refresh modal's lines for `fetchMesaRoster`'s three reads, shared by the Non
+ * Members and Active Members tabs (docs/features/table-refresh-progress.md).
+ */
+const MESA_ROSTER_REFRESH_STEPS: readonly RefreshStepSpec[] = [
+  { id: 'roster', label: 'Reading the employee roster' },
+  { id: 'rates', label: 'Reading MESA memberships from the pay rates' },
+  { id: 'ledger', label: 'Reading the MESA ledger' },
+];
+
+/**
+ * The best-effort ledger read did not answer OK. The roster still loads, recorded as
+ * `ledgerRead: 'failed'` exactly as before; only the Refresh modal sees this, so its
+ * ledger line fails instead of claiming the ledger was read.
+ */
+class MesaLedgerNotRead extends Error {}
+
+/** `tracker` comes only from a Refresh click; without one this behaves exactly as before. */
+async function fetchMesaRoster(tracker?: RefreshTracker): Promise<MesaRosterFetch> {
+  const employeesAnswer = trackRead(
+    tracker,
+    'roster',
+    async () => {
+      const employeesRes = await fetch('/api/employees', { cache: 'no-store' });
+      if (!employeesRes.ok) throw new Error(`employees HTTP ${employeesRes.status}`);
+      const json = (await employeesRes.json()) as { employees?: EmployeeRow[]; error?: string | null };
+      // /api/employees reports DB failures as 200 + { employees: [], error }, and
+      // a real roster is never empty — fail loudly instead of rendering (and
+      // caching) an empty MESA roster. Mirrors fetchRosterEmailSet.
+      if ((json.employees ?? []).length === 0) {
+        throw new Error(json.error ?? 'Employee roster unavailable');
+      }
+      return json;
+    },
+    (j) => `Read ${countOf((j.employees ?? []).length, 'person', 'people')} on the employee roster`,
+  );
+  const ratesAnswer = trackRead(
+    tracker,
+    'rates',
+    async () => {
+      const ratesRes = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+      if (!ratesRes.ok) throw new Error(`rates HTTP ${ratesRes.status}`);
+      return (await ratesRes.json()) as { rows?: EmployeeHourlyRateRow[] };
+    },
+    (j) => `Read ${countOf((j.rows ?? []).filter((r) => r.mesa_member).length, 'MESA membership')}`,
+  );
   // Ledger is best-effort — a failure here shouldn't blank out the roster —
   // but it IS recorded, because a missing ledger silently disables the
   // membership-drift check below.
-  const ledgerJson = ledgerRes.ok
-    ? ((await ledgerRes.json()) as { members?: MesaMemberSummary[] })
-    : { members: [] };
-  const ledgerRead: MesaLedgerRead = ledgerRes.ok ? 'ok' : 'failed';
+  const ledgerAnswer = trackRead(
+    tracker,
+    'ledger',
+    async () => {
+      const ledgerRes = await fetch('/api/mesa-ledger', { cache: 'no-store' });
+      if (!ledgerRes.ok) {
+        const body = (await ledgerRes.json().catch(() => null)) as { error?: string } | null;
+        // Fail the line only once the other two have settled: a failure ends the
+        // modal's run, and a read still in flight would be marked failed with it.
+        await Promise.all([employeesAnswer.catch(() => undefined), ratesAnswer.catch(() => undefined)]);
+        throw new MesaLedgerNotRead(
+          body?.error ? `Couldn't read the MESA ledger: ${body.error}` : `Couldn't read the MESA ledger (HTTP ${ledgerRes.status})`,
+        );
+      }
+      return (await ledgerRes.json()) as { members?: MesaMemberSummary[] };
+    },
+    (j) => `Read MESA ledger totals for ${countOf((j.members ?? []).length, 'member')}`,
+  ).then(
+    (json) => ({ json, read: 'ok' as const }),
+    (e: unknown) => {
+      if (e instanceof MesaLedgerNotRead) return { json: { members: [] as MesaMemberSummary[] }, read: 'failed' as const };
+      throw e;
+    },
+  );
+  const [employeesJson, ratesJson, ledger] = await Promise.all([employeesAnswer, ratesAnswer, ledgerAnswer]);
+  const ledgerJson = ledger.json;
+  const ledgerRead: MesaLedgerRead = ledger.read;
 
   const ledgerByEmail = new Map<string, MesaMemberSummary>();
   for (const m of ledgerJson.members ?? []) {
@@ -2584,16 +2664,17 @@ function MesaNonMembers() {
   const [optInSince, setOptInSince] = useState('');
   const [toggling, setToggling] = useState(false);
 
-  const load = async (showSpinner = true) => {
+  // `tracker` comes only from the Refresh click (docs/features/table-refresh-progress.md).
+  const load = async (showSpinner = true, tracker?: RefreshTracker) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
       // The FULL roster is cached here, not just the non-members: this tab's
       // stat cards count the enrolled off the same rows.
-      const { rows: data } = await fetchMesaRoster();
+      const { rows: data } = await fetchMesaRoster(tracker);
       setTabCache(TAB_CACHE_KEYS.mesaNonMembers, data);
       setRows(data);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load employee roster');
+      if (!tracker) toast.error(e instanceof Error ? e.message : 'Failed to load employee roster');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -2686,11 +2767,13 @@ function MesaNonMembers() {
 
   const sel = useRowSelection(filtered, (r) => r.key);
 
-  const handleRefresh = async () => {
-    clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
-    await load(false);
-    toast.success('Refreshed employee roster');
-  };
+  // The modal says "Refreshed" only when it was (the old toast fired even after a failure).
+  const rosterRefresh = useTableRefresh({ subject: 'MESA non-members', steps: MESA_ROSTER_REFRESH_STEPS });
+  const handleRefresh = () =>
+    rosterRefresh.run((t) => {
+      clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
+      return load(false, t);
+    });
 
   // Open the Opt In dialog for one or many rows, defaulting the effective date
   // to today (Manila) at that moment.
@@ -2761,10 +2844,18 @@ function MesaNonMembers() {
             ]}
           />
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || loading} className="gap-1.5">
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={refreshing || loading || rosterRefresh.running}
+          className="gap-1.5"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || rosterRefresh.running) && 'animate-spin')} />
           Refresh
         </Button>
+        {rosterRefresh.dialog}
         <MesaExportMenu spec={exportSpec} />
       </div>
 
@@ -3007,16 +3098,17 @@ function MesaActiveMembers() {
   // renders as silence rather than as an all-clear.
   const [ledgerRead, setLedgerRead] = useState<MesaLedgerRead>('unknown');
 
-  const load = async (showSpinner = true) => {
+  // `tracker` comes only from the Refresh click (docs/features/table-refresh-progress.md).
+  const load = async (showSpinner = true, tracker?: RefreshTracker) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const { rows: all, ledgerRead: read } = await fetchMesaRoster();
+      const { rows: all, ledgerRead: read } = await fetchMesaRoster(tracker);
       const data = all.filter(isActiveMember);
       setTabCache(TAB_CACHE_KEYS.mesaActiveMembers, data);
       setRows(data);
       setLedgerRead(read);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to load MESA balances');
+      if (!tracker) toast.error(e instanceof Error ? e.message : 'Failed to load MESA balances');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -3069,11 +3161,13 @@ function MesaActiveMembers() {
 
   const sel = useRowSelection(filtered, (r) => r.key);
 
-  const handleRefresh = async () => {
-    clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
-    await load(false);
-    toast.success('Refreshed MESA balances');
-  };
+  // The modal says "Refreshed" only when it was (the old toast fired even after a failure).
+  const balancesRefresh = useTableRefresh({ subject: 'MESA balances', steps: MESA_ROSTER_REFRESH_STEPS });
+  const handleRefresh = () =>
+    balancesRefresh.run((t) => {
+      clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
+      return load(false, t);
+    });
 
   // Opt one or many enrolled members out of MESA. Direct enrollment flip —
   // bypasses the mesa_requests review queue (temporary bridge).
@@ -3239,10 +3333,18 @@ function MesaActiveMembers() {
             ]}
           />
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || loading} className="gap-1.5">
-          <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleRefresh}
+          disabled={refreshing || loading || balancesRefresh.running}
+          className="gap-1.5"
+        >
+          <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || balancesRefresh.running) && 'animate-spin')} />
           Refresh
         </Button>
+        {balancesRefresh.dialog}
         <MesaExportMenu spec={exportSpec} />
       </div>
 

@@ -116,6 +116,8 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useKpiLive } from '@/hooks/useKpiLive';
+import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
+import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import KpiCalculatorLoading from './KpiCalculatorLoading';
 import KpiInsightCards from './KpiInsightCards';
 import { isSundayIso } from '@/lib/manager/kpi-insights';
@@ -1261,10 +1263,30 @@ export default function DeptBonusCalculator({
     return m;
   }, [bonuses]);
 
-  const fetchCatalog = useCallback(async () => {
+  // `tracker` comes only from the toolbar Refresh (docs/features/table-refresh-progress.md).
+  // The page handles every answer exactly as before; the modal's line alone fails on
+  // an error body, which this read otherwise applies as an empty catalog.
+  const fetchCatalog = useCallback(async (tracker?: RefreshTracker) => {
     try {
-      const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
-      const json = (await res.json()) as { bonuses?: BonusDef[]; assignments?: BonusAssignment[] };
+      type CatalogAnswer = { bonuses?: BonusDef[]; assignments?: BonusAssignment[]; error?: string };
+      let json: CatalogAnswer;
+      try {
+        json = await trackRead(
+          tracker,
+          'catalog',
+          async () => {
+            const res = await fetch('/api/bonus-catalog', { cache: 'no-store' });
+            const body = (await res.json()) as CatalogAnswer;
+            if (tracker && !res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { answer: body });
+            return body;
+          },
+          (body) => `Read ${countOf((body.bonuses ?? []).length, 'bonus', 'bonuses')} in the catalog`,
+        );
+      } catch (e) {
+        const answer = (e as { answer?: CatalogAnswer }).answer;
+        if (!answer) throw e;
+        json = answer;
+      }
       const payload: CatalogPayload = {
         bonuses: json.bonuses ?? [],
         assignments: json.assignments ?? [],
@@ -2053,13 +2075,14 @@ export default function DeptBonusCalculator({
     [isQc, qcRosterByDept, rosterByDept],
   );
 
+  /** True when the department's read answered and was applied (the refresh modal's line). */
   const loadDept = useCallback(
-    async (key: string) => {
+    async (key: string): Promise<boolean> => {
       // Hold off until the week is a real payroll week: reading with the
       // local-clock seed queries a dept-week nothing was saved under, which is
       // what made another manager's applied bonuses look absent. Re-runs on its
       // own when `weekResolved` flips (it's in this callback's deps).
-      if (!weekResolved) return;
+      if (!weekResolved) return false;
       try {
         const payload = await fetchDeptPayload(key);
         // Cache the RAW payload against this dept AND this resolved week, so the
@@ -2067,8 +2090,10 @@ export default function DeptBonusCalculator({
         // update so a dept whose local edits block the paint is still cached.
         setKpiCache(KPI_CACHE_KEYS.deptApplied(deptSurface(variant), key, weekStart), payload);
         applyDeptPayload(key, payload);
+        return true;
       } catch {
         applyDeptLoadFailure(key);
+        return false;
       }
     },
     [weekResolved, weekStart, variant, fetchDeptPayload, applyDeptPayload, applyDeptLoadFailure],
@@ -2138,25 +2163,48 @@ export default function DeptBonusCalculator({
   // or an in-flight save so another scorer's change can't clobber work in
   // progress. Used by both the manual Refresh button and the live subscription.
   const [refreshing, setRefreshing] = useState(false);
-  const refreshAll = useCallback(async () => {
-    await Promise.all(
-      visibleDeptKeys.map((k) => {
-        const d = state[k];
-        if (d?.dirty || d?.saving) return Promise.resolve();
-        return loadDept(k);
-      }),
+  const deptNameOf = (k: string) => DEPARTMENTS.find((d) => d.key === k)?.name ?? deptLabelByKey[k] ?? humanizeDeptKey(k);
+  // `tracker` comes only from the toolbar Refresh: the departments are one line in
+  // the refresh modal, failed when any of them could not be read.
+  const refreshAll = useCallback(async (tracker?: RefreshTracker) => {
+    const keys = visibleDeptKeys.filter((k) => {
+      const d = state[k];
+      return !(d?.dirty || d?.saving);
+    });
+    const held = visibleDeptKeys.length - keys.length;
+    await trackRead(
+      tracker,
+      'departments',
+      async () => {
+        if (tracker && !weekResolved) throw new Error('The payroll week is not confirmed yet, so no scores were read.');
+        const loaded = await Promise.all(keys.map((k) => loadDept(k)));
+        const failed = keys.filter((_, i) => !loaded[i]);
+        if (tracker && failed.length > 0) throw new Error(`Couldn't read the scores for ${failed.map(deptNameOf).join(', ')}.`);
+        return keys.length;
+      },
+      (n) => `Read this week's scores for ${countOf(n, 'department')}${held > 0 ? ` · ${countOf(held, 'department')} with unsaved work left as it is` : ''}`,
     );
-  }, [visibleDeptKeys, state, loadDept]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleDeptKeys, state, loadDept, weekResolved, deptLabelByKey]);
 
-  const manualRefresh = useCallback(async () => {
+  const manualRefresh = useCallback(async (tracker?: RefreshTracker) => {
     setRefreshing(true);
     try {
       // Pull fresh catalog defs too, in case a bonus was added/retired elsewhere.
-      await Promise.all([fetchCatalog(), refreshAll()]);
+      await Promise.all([fetchCatalog(tracker), refreshAll(tracker)]);
     } finally {
       setRefreshing(false);
     }
   }, [fetchCatalog, refreshAll]);
+  const toolbarRefresh = useTableRefresh({
+    subject: 'KPI bonuses',
+    steps: [
+      { id: 'catalog', label: 'Reading the bonus catalog' },
+      { id: 'departments', label: `Reading this week's scores for ${countOf(visibleDeptKeys.length, 'department')}` },
+    ],
+  });
+  // One modal for every department's own Refresh; each run names its department.
+  const deptRefresh = useTableRefresh({ subject: 'the department', steps: [{ id: 'scores', label: 'Reading the scores' }] });
 
   // See other scorers' applied bonuses as they land: watch the applied + status
   // tables and re-pull (debounced). Falls back to a 30s poll + tab-focus refresh
@@ -3158,7 +3206,7 @@ export default function DeptBonusCalculator({
    * department (pre-applied, untouched) is not local work and simply reloads.
    * QC officer mode keeps its manual Save, so there the click refuses instead.
    */
-  async function refreshDept(key: string): Promise<void> {
+  async function refreshDept(key: string, tracker?: RefreshTracker): Promise<void> {
     if (!weekResolved) return;
     setDeptRefreshing((p) => ({ ...p, [key]: true }));
     try {
@@ -3178,18 +3226,69 @@ export default function DeptBonusCalculator({
           delete autosaveTimers.current[key];
           delete autosaveArmedRef.current[key];
         }
-        const ok = await saveDept(key, { silent: true });
+        // In the modal the save is its own line, and its failure is said there.
+        let ok: boolean;
+        try {
+          ok = await trackRead(
+            tracker,
+            'save',
+            async () => {
+              const saved = await saveDept(key, { silent: true });
+              if (tracker && !saved) throw new Error('Your pending edits could not be saved, so the table was left exactly as it is.');
+              return saved;
+            },
+            () => 'Saved your pending edits',
+          );
+        } catch {
+          ok = false;
+        }
         if (!ok) {
-          toast.error('Not refreshed', {
-            description: 'Your pending edits could not be saved, so the table was left exactly as it is.',
-          });
+          if (!tracker) {
+            toast.error('Not refreshed', {
+              description: 'Your pending edits could not be saved, so the table was left exactly as it is.',
+            });
+          }
           return;
         }
       }
-      await loadDept(key);
+      await trackRead(
+        tracker,
+        'scores',
+        async () => {
+          const loaded = await loadDept(key);
+          if (tracker && !loaded) throw new Error(`Couldn't read the scores for ${deptNameOf(key)}.`);
+          return loaded;
+        },
+        () => `Read ${deptNameOf(key)}'s scores for this week`,
+      ).catch(() => false);
     } finally {
       setDeptRefreshing((p) => ({ ...p, [key]: false }));
     }
+  }
+
+  /**
+   * A department's own Refresh. The two refusals answer in a toast and never open
+   * the refresh modal (nothing is read); otherwise the modal names the department.
+   */
+  function onDeptRefreshClick(key: string): void {
+    if (!weekResolved) return;
+    const d = stateRef.current[key];
+    if (d?.saving) {
+      toast.info('Saving your edits — try Refresh again in a moment.');
+      return;
+    }
+    if (d && isUnsavedLocalWork(d) && isQc) {
+      toast.info('Save your scores first, then Refresh.');
+      return;
+    }
+    const name = deptNameOf(key);
+    deptRefresh.run((t) => refreshDept(key, t), {
+      subject: `${name} scores`,
+      steps: [
+        { id: 'save', label: 'Saving your pending edits first' },
+        { id: 'scores', label: `Reading ${name}'s scores for this week` },
+      ],
+    });
   }
 
   async function saveDept(key: string, opts?: { silent?: boolean }): Promise<boolean> {
@@ -3848,8 +3947,8 @@ export default function DeptBonusCalculator({
                   hidden, until the week resolves and the table has loaded. */}
               <button
                 type="button"
-                onClick={() => void refreshDept(key)}
-                disabled={!!deptRefreshing[key] || !weekResolved || !d?.loaded}
+                onClick={() => onDeptRefreshClick(key)}
+                disabled={!!deptRefreshing[key] || !weekResolved || !d?.loaded || deptRefresh.running}
                 title={
                   !weekResolved
                     ? 'Waiting for the payroll week to resolve'
@@ -3868,6 +3967,7 @@ export default function DeptBonusCalculator({
                 <RefreshCw className={cn('h-2.5 w-2.5', deptRefreshing[key] && 'animate-spin')} aria-hidden />
                 {deptRefreshing[key] ? 'Refreshing…' : 'Refresh'}
               </button>
+              {deptRefresh.dialog}
               {cmpToggleShown && (
                 <span className="relative inline-flex">
                   {/* The running emerald rim — Kane: "an outline border color running color green". */}
@@ -5404,13 +5504,14 @@ export default function DeptBonusCalculator({
               size="sm"
               variant="outline"
               className="h-8 gap-1.5 text-xs"
-              onClick={() => void manualRefresh()}
-              disabled={refreshing}
+              onClick={() => toolbarRefresh.run((t) => manualRefresh(t))}
+              disabled={refreshing || toolbarRefresh.running}
               title="Reload bonuses (also updates live as other scorers edit)"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               {refreshing ? 'Refreshing…' : 'Refresh'}
             </Button>
+            {toolbarRefresh.dialog}
           </div>
         </div>
 
