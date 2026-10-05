@@ -341,6 +341,13 @@ effect here. When the pending row has **no** `work_email` yet, nothing is torn d
 flipped to `no_show`. Every no-show stamps `deletion_processed_at` immediately; the 14-day
 `scheduled_deletion_at` timer is no longer set.
 
+**A no-show does NOT reach the Offboarded list** (OPEN, audit item 343, 2026-10-05). The route
+never inserts `offboarded_sheet`, unlike `/api/hr/offboard` (§2 step 3). So a no-show is visible only in
+HR → Onboarding → No-show, and its trash button hard-deletes that record. In the sheet era HR filed
+them by hand (401 `No Show During Orientation` + 457 `No Show` ledger rows, through 2026-07). Measured
+2026-10-05: 42 of 59 no-shows are absent from the ledger and 21 re-applied. Writing one is a write to
+off-board evidence source #2. Read the recycled-email rule below before building it.
+
 The warning copy is now explicit that this is a real offboard:
 [NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx) both the button tooltip, the panel
 intro, and the confirm dialog spell out "same offboarding webhook HR uses — Workspace account removed,
