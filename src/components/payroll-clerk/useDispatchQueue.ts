@@ -8,6 +8,7 @@ import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { createLoadFence } from '@/lib/payroll/load-fence';
 import type { PaystubQueueListItem, ArrearsEntry } from '@/lib/supabase/paystub-dispatch-queue';
 import {
+  applyBankOwnerHold,
   applySmallWiresWiseReroute,
   buildQueueFromRates,
   buildStagedOnlyPlacement,
@@ -959,10 +960,23 @@ async function loadAll(
   // the reroute on their `payable` copy so the "Pay now" path and the Excluded
   // tab's bank label follow the same rule. Contractor settlements and USD/COP
   // payees are exempt inside the helper.
-  const routedPending = pendingQueue.map(applySmallWiresWiseReroute);
-  const routedExcluded = withArrears.map((r) =>
+  const reroutedPending = pendingQueue.map(applySmallWiresWiseReroute);
+  const reroutedExcluded = withArrears.map((r) =>
     r.payable ? { ...r, payable: applySmallWiresWiseReroute(r.payable) } : r,
   );
+
+  // ── Never pay someone through another person's bank row ────────────────────
+  // LAST, after every overlay: a row whose payout row (employee_ids, by work
+  // email) belongs to someone else — a recycled address's previous holder — is
+  // held in Excluded with no Pay button. Audit items 344 / 353.
+  const ownerHold = applyBankOwnerHold(
+    reroutedPending,
+    reroutedExcluded,
+    idsByEmail,
+    payJson.payeeIdentityByEmail,
+  );
+  const routedPending = ownerHold.pending;
+  const routedExcluded = ownerHold.excluded;
 
   // ── Say it out loud when the amounts aren't the wizard's ───────────────────
   // Ordered worst-first: an unreadable carrier means the whole week may be priced

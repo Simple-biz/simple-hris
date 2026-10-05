@@ -111,6 +111,7 @@ test("buildRecoveredSnapshot stores everyone with hours, stamped with the batch,
     stashedMesaTotalPHP: 0,
     approvedBudgetRequestsTotalPHP: 0,
     masterEmails: [],
+    payeeIdentityByEmail: {},
   };
   const snap = buildRecoveredSnapshot({
     result,

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertTriangle, Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Hourglass, Layers, Receipt, Search, SearchX, Send, ShieldOff, X } from 'lucide-react';
+import { AlertTriangle, Ban, Banknote, Building2, CheckCircle2, ChevronDown, Clock, DollarSign, Hourglass, Layers, Receipt, Search, SearchX, Send, ShieldAlert, ShieldOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
@@ -166,9 +166,15 @@ const REASON_META: Record<
     tone: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
     activeTone: 'border-emerald-500 bg-emerald-500 text-white shadow-sm shadow-emerald-500/30 dark:border-emerald-400 dark:bg-emerald-500 dark:text-white',
   },
+  bank_owner_mismatch: {
+    label: "Bank record is someone else's",
+    Icon: ShieldAlert,
+    tone: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
+    activeTone: 'border-red-600 bg-red-600 text-white shadow-sm shadow-red-600/30 dark:border-red-500 dark:bg-red-600 dark:text-white',
+  },
 };
 
-const REASON_ORDER: ExclusionReason[] = ['claim_stuck', 'pending_approval', 'no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay', 'usd_paid'];
+const REASON_ORDER: ExclusionReason[] = ['bank_owner_mismatch', 'claim_stuck', 'pending_approval', 'no_bank', 'no_pay', 'no_hours', 'no_rate', 'do_not_pay', 'usd_paid'];
 
 function avatarColors(seed: string) {
   const palettes = [
@@ -220,7 +226,7 @@ export default function ExcludedQueue({ rows, onMarkPaid, onViewPaystub, txnReco
 
   // Aggregate counts per reason for the header summary chips.
   const counts = useMemo(() => {
-    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0, claim_stuck: 0, pending_approval: 0, usd_paid: 0 };
+    const c: Record<ExclusionReason, number> = { no_bank: 0, no_pay: 0, no_hours: 0, do_not_pay: 0, no_rate: 0, claim_stuck: 0, pending_approval: 0, usd_paid: 0, bank_owner_mismatch: 0 };
     for (const r of rows) for (const reason of r.reasons) c[reason] += 1;
     return c;
   }, [rows]);

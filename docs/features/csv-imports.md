@@ -191,6 +191,20 @@ both are one deliberate, audited person at a time (`hr.employee.reonboarded`):
 
 Pinned by `src/lib/supabase/master-sync-never-reactivates.test.ts`.
 
+**Promote never writes a hire's bank details onto someone else's payout row (2026-10-05, item 353).**
+Promote pre-fills the hire's onboarding payout into `employee_ids`. It used to **update** whatever row
+sat on the work email. On a recycled address that was the previous holder's row: on 2026-08-11 Mary
+Rose Tronco's Hurupay landed on Mary Jean Tan's row, so two people's payout identities merged.
+
+The write now goes through `decidePayoutPrefill` (`src/lib/hr/payout-prefill-owner.ts`):
+- no row on the address → **insert** the hire's own;
+- a row carrying the hire's own personal email → **update** it (a rehire, or a retried promote);
+- anything else → **refuse**, logged with `console.warn`, and the row is left untouched.
+
+The promotion itself still succeeds. Payment Dispatch's bank-owner hold (`payment-dispatch.md` §3.7)
+keeps that person's pay off the other row until someone resolves whose it is. Pinned by
+`src/lib/payroll/bank-owner-hold.test.ts`.
+
 > **Three senders, not two (found 2026-09-15).** The Payroll Wizard's Setup step has its own
 > *Sync master list* button (`PayrollWizard.tsx`, `handleMasterSheetSync`), and a day after the
 > option was removed it was still posting `{ clearOffboarded: true }`. Inert — the route reads no

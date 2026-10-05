@@ -4,6 +4,7 @@ import type { CurrentPayEntry } from '@/lib/payroll/current-pay';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import { DEPARTMENTS } from '@/lib/payroll/department-bonus';
 import { normalizeDeptToKey } from '@/lib/payroll/normalize-dept-key';
+import { bankBelongsToSomeoneElse } from '@/lib/payroll/bank-owner-hold';
 // The backup account a clerk sees when a payment bounces. Read through the SAME
 // rule the employee's own Payout deck uses, so the two surfaces cannot disagree
 // about whether someone has a second account on file.
@@ -161,7 +162,16 @@ export type ExclusionReason =
    * for a week that was, as far as this screen is concerned, fully paid. They
    * are now held here instead (2026-08-07).
    */
-  | 'usd_paid';
+  | 'usd_paid'
+  /**
+   * The bank / wallet row this person would be paid into (`employee_ids`, found
+   * by work email) belongs to SOMEONE ELSE — a previous holder of a recycled
+   * address (`bankBelongsToSomeoneElse`, src/lib/payroll/bank-owner-hold.ts).
+   * NEVER payable from this screen (`payable` is dropped): paying would send this
+   * person's money to the other person. Fix the bank record, then reload. Audit
+   * items 344 / 353.
+   */
+  | 'bank_owner_mismatch';
 
 export interface ExcludedRow {
   id: string;
@@ -917,6 +927,76 @@ export function buildStagedOnlyPlacement(params: {
       paystubSentAt: staged.sent_at,
     },
   };
+}
+
+/**
+ * Hold every employee row whose payout row (`employee_ids`, found by work email)
+ * belongs to someone else — `bankBelongsToSomeoneElse`. A held pending row moves
+ * to Excluded with `bank_owner_mismatch`; an Excluded row gains the reason. Both
+ * LOSE `payable`, so neither Pay nor Pay now / Settle can send this person's
+ * money to the other person. The row is labelled with the PAYEE's name, not the
+ * bank row's, so the clerk sees who is owed. Contractor invoices are untouched
+ * (they settle an invoice, not a work-email payout row). An absent identity map
+ * (an older server payload) holds nobody — the queue is never blanked.
+ * Audit items 344 / 353.
+ */
+export function applyBankOwnerHold(
+  pending: QueueRow[],
+  excluded: ExcludedRow[],
+  idsByEmail: Map<string, EmployeeIdRow>,
+  identityByEmail: Record<string, { name: string | null; personalEmail: string | null }> | undefined,
+): { pending: QueueRow[]; excluded: ExcludedRow[]; held: number } {
+  if (!identityByEmail) return { pending, excluded, held: 0 };
+  const mismatched = (id: string, payeeKind: 'employee' | 'contractor' | undefined): boolean => {
+    if (payeeKind === 'contractor') return false;
+    const bank = idsByEmail.get(id);
+    return bankBelongsToSomeoneElse({
+      workEmail: id,
+      payee: identityByEmail[id] ?? null,
+      bank: bank ? { workEmail: bank.work_email, name: bank.name, personalEmail: bank.personal_email } : null,
+    });
+  };
+
+  let held = 0;
+  const outPending: QueueRow[] = [];
+  const moved: ExcludedRow[] = [];
+  for (const r of pending) {
+    if (!mismatched(r.id, r.payeeKind)) {
+      outPending.push(r);
+      continue;
+    }
+    held += 1;
+    moved.push({
+      id: r.id,
+      name: identityByEmail[r.id]?.name?.trim() || r.name,
+      email: r.email,
+      totalHours: r.totalHours,
+      amountUSD: r.amountUSD,
+      amountPHP: r.amountPHP,
+      amountCOP: r.amountCOP,
+      bankPreferredRaw: r.bankPreferredRaw,
+      reasons: ['bank_owner_mismatch'],
+      departmentKey: r.departmentKey,
+      departmentName: r.departmentName,
+      contractorRole: r.contractorRole,
+      payeeKind: r.payeeKind,
+      payable: null,
+    });
+  }
+  const outExcluded = excluded.map((r) => {
+    if (!mismatched(r.id, r.payeeKind)) return r;
+    held += 1;
+    return {
+      ...r,
+      name: identityByEmail[r.id]?.name?.trim() || r.name,
+      reasons: r.reasons.includes('bank_owner_mismatch')
+        ? r.reasons
+        : (['bank_owner_mismatch', ...r.reasons] as ExclusionReason[]),
+      payable: null,
+    };
+  });
+  const allExcluded = [...outExcluded, ...moved].sort((a, b) => a.name.localeCompare(b.name));
+  return { pending: outPending, excluded: allExcluded, held };
 }
 
 const KNOWN_PROCESSOR_IDS: ReadonlySet<string> = new Set([

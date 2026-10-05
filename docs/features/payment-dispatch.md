@@ -520,6 +520,36 @@ constant).
 | `claim_stuck` | "Stuck mid-dispatch" (fuchsia) | contractor invoice claimed by a Mark Paid that never recorded the payment (`dispatch_claimed_at` set, `dispatch_id` null) — investigate before paying out of band |
 | `pending_approval` | "Awaiting approval" (teal) | contractor invoice still `pending` — filed but not yet approved by Accounting; becomes a payable queue row once approved in the wizard's Contractors step |
 | `usd_paid` | "Paid on the US track" (emerald) | `payCurrency === 'USD'` — US-based staff on a USD pay structure, who settle outside the peso payroll. Held here (never `payable`, so no Pay button) so they stay off the Pending counter and the Dispatch Progress denominator. Replaced the retired USD tab — see §3.9 |
+| `bank_owner_mismatch` | "Bank record is someone else's" (red, listed first) | The `employee_ids` row this person would be paid into belongs to someone else (2026-10-05, items 344 / 353). Never `payable`, so there is no Pay / Pay now / Settle. Fix the bank record, then reload. |
+
+**The bank-owner hold (2026-10-05).** Dispatch finds the payout row by **work email**, and work
+emails were recycled, so the row could be a previous holder's. Mary Angelie Tudtud's first week
+would have paid Mary Rose Tronco's Hurupay wallet through Mary Jean Tan's row. `applyBankOwnerHold`
+(`mock-queue.ts`) runs **last** in `useDispatchQueue`, after the Wise reroute, so no overlay can
+re-add `payable`. It moves such a pending row to Excluded and strips `payable` from an Excluded one.
+The row is labelled with the **payee's** name.
+
+The test is `bankBelongsToSomeoneElse` (`src/lib/payroll/bank-owner-hold.ts`). Its anchor is the
+payee's identity, which `computeCurrentPay` now returns as `payeeIdentityByEmail`: the master-list
+name and personal email, or the Hubstaff member name when there is no master row yet. The rates row
+is never the anchor, because a recycled address shares it with the previous holder.
+
+A row is held only when **both** conditions hold:
+- the personal emails don't positively match;
+- **neither** name's surname appears in the other name.
+
+Personal email alone would have held **19** payees on the 2026-10-05 live week, about 16 of them the
+same person with a variant address (`…@gmailcom`, hotmail vs gmail, a dropped dot). The rule as built
+holds **4**: `markp@` (bank row Pardillo), `michaelc@` (Carpio), `chrisc@` (Castulo) and `issa@`
+(Maria Clarissa Ang, possibly a married name).
+
+A name that isn't a person's (an email address in the `name` column, a blank) proves nothing and holds
+nobody. Contractor invoices are untouched. An older server payload with no identity map holds nobody,
+so the queue is never blanked.
+
+**To release a held person:** correct the `employee_ids` row so it is theirs (their own personal
+email), or re-key the previous holder off the address (item 344). Pinned by
+`src/lib/payroll/bank-owner-hold.test.ts`.
 
 `useDispatchQueue.ts` reads `paystub_dispatch_queue` for the current `source_file`; any row flagged `excluded` is moved out of the pending queue into this tab (keyed by lowercased work email), carrying the last paystub `sent_at` for a "Paystub sent" badge.
 

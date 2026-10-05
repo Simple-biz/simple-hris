@@ -219,6 +219,15 @@ export interface CurrentPayResult {
    * so it never shows people who aren't on the master list to begin with.
    */
   masterEmails: string[];
+  /**
+   * Who each lowercased WORK email belongs to: the Global Master List row's name
+   * and personal email, else (hours but no master row yet) the Hubstaff member
+   * name with no personal email. Payment Dispatch compares the payout row it
+   * would pay into against this (`bankBelongsToSomeoneElse`), because the rates
+   * row cannot be the anchor: a recycled address shares it with the previous
+   * holder (audit items 344 / 353).
+   */
+  payeeIdentityByEmail: Record<string, { name: string | null; personalEmail: string | null }>;
 }
 
 function parseRateText(v: string | null | undefined): number | null {
@@ -327,6 +336,9 @@ interface MasterEmployeeMin {
   alternate_work_email_2: string | null;
   start_date: string | null;
   department: string | null;
+  /** Master-list display name — the payee identity Payment Dispatch's
+   *  bank-owner hold compares against the payout row's name. */
+  name: string | null;
 }
 
 async function fetchMasterMin(
@@ -348,7 +360,7 @@ async function fetchMasterMin(
     const { data, error } = await supabase
       .from("active_employees")
       .select(
-        '"Work Email", "Personal Email", "Alternate Work Email", "Alternate Work Email 2", "Start Date", "Department"',
+        '"Work Email", "Personal Email", "Alternate Work Email", "Alternate Work Email 2", "Start Date", "Department", "Name"',
       )
       .range(from, from + PAGE - 1);
     if (error) {
@@ -380,6 +392,7 @@ async function fetchMasterMin(
       typeof r["Start Date"] === "string" ? (r["Start Date"] as string) : null,
     department:
       typeof r["Department"] === "string" ? (r["Department"] as string) : null,
+    name: typeof r["Name"] === "string" ? (r["Name"] as string) : null,
   }));
 }
 
@@ -1022,12 +1035,16 @@ export async function computeCurrentPay(
   // truth for which addresses belong to one human (mirrors the wizard's
   // ratesByEmail alias bridging).
   const aliasesByEmail = new Map<string, string[]>();
+  const payeeIdentityByEmail: Record<string, { name: string | null; personalEmail: string | null }> = {};
   for (const m of masterRows) {
     const we = normEmail(m.work_email);
     const pe = normEmail(m.personal_email);
     const altA = normEmail(m.alternate_work_email);
     const altB = normEmail(m.alternate_work_email_2);
     for (const e of [we, pe, altA, altB]) if (e) masterEmailSet.add(e);
+    if (we && !payeeIdentityByEmail[we]) {
+      payeeIdentityByEmail[we] = { name: m.name?.trim() || null, personalEmail: pe };
+    }
     const rowEmails = [we, pe, altA, altB].filter((x): x is string => !!x);
     for (const e of rowEmails) {
       const existing = aliasesByEmail.get(e);
@@ -1404,6 +1421,17 @@ export async function computeCurrentPay(
     return selectedSourceFile;
   })();
 
+  // Someone with hours but no master row yet (a hire whose promote failed) is
+  // identified by their Hubstaff member name — the case where a recycled
+  // address's previous holder would otherwise be paid (audit item 344).
+  for (const raw of hubstaff.rows) {
+    const mapped = mapHubstaffHoursRow(raw);
+    const em = normEmail(mapped.email);
+    if (em && !payeeIdentityByEmail[em]) {
+      payeeIdentityByEmail[em] = { name: mapped.name?.trim() || null, personalEmail: null };
+    }
+  }
+
   const approvedBudgetRequestsTotalPHP = (budgetRequestsResult.rows ?? []).reduce(
     (sum, r) => sum + (r.final_amount ?? 0),
     0,
@@ -1417,5 +1445,6 @@ export async function computeCurrentPay(
     stashedMesaTotalPHP,
     approvedBudgetRequestsTotalPHP: Math.round(approvedBudgetRequestsTotalPHP * 100) / 100,
     masterEmails: Array.from(masterEmailSet),
+    payeeIdentityByEmail,
   };
 }

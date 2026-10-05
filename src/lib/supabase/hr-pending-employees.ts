@@ -10,6 +10,7 @@ import { masterListDisplayName, nameLastFirstQuoted } from "../name/display-name
 import { selectAllPaged } from "./select-all-paged";
 import { decideMasterRowReuse } from "../hr/rehire-master-reuse";
 import { decideStartDateSyncTarget } from "../hr/start-date-sync";
+import { decidePayoutPrefill } from "../hr/payout-prefill-owner";
 
 /**
  * Maps an onboarding submission's payment details onto the `employee_ids`
@@ -1018,10 +1019,23 @@ export async function promoteHrPendingEmployee(
         if (patch) {
           const { data: existingIds } = await sb
             .from("employee_ids")
-            .select("employee_id")
+            .select("employee_id, personal_email")
             .eq("work_email", row.work_email)
             .limit(1);
-          if (existingIds && existingIds.length > 0) {
+          const existing = (existingIds?.[0] ?? null) as
+            | { employee_id: string | null; personal_email: string | null }
+            | null;
+          // Never write this hire's bank details onto a row that is provably
+          // someone else's — a recycled address's previous holder (audit item 344).
+          const decision = decidePayoutPrefill(
+            existing ? { personalEmail: existing.personal_email } : null,
+            row.personal_email,
+          );
+          if (decision === "refuse") {
+            console.warn(
+              `[promoteHrPendingEmployee] payout pre-fill REFUSED for pending #${row.id}: the employee_ids row on ${row.work_email} carries a different (or no) personal email — not overwritten`,
+            );
+          } else if (decision === "update") {
             const { error: payoutErr } = await sb
               .from("employee_ids")
               .update(patch)
