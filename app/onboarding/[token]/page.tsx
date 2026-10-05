@@ -8,7 +8,6 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CloudUpload,
@@ -24,6 +23,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
@@ -1576,29 +1576,15 @@ function Step1Welcome({
           />
         </Field>
         <Field label="Country" required className="sm:col-span-2">
-          <div className="relative">
-            <select
-              value={form.country ?? ''}
-              onChange={(e) => update('country', e.target.value)}
-              autoComplete="country-name"
-              className={cn(
-                'h-10 w-full cursor-pointer appearance-none rounded-lg border bg-white pl-3 pr-10 text-sm font-medium shadow-sm outline-none transition-all',
-                'border-zinc-300 hover:border-emerald-300 hover:shadow',
-                'focus-visible:border-emerald-500 focus-visible:ring-4 focus-visible:ring-emerald-500/20',
-                form.country ? '!text-zinc-900' : '!text-zinc-400',
-              )}
-            >
-              <option value="" disabled>
-                Select your country…
-              </option>
-              {ONBOARDING_COUNTRIES.map((c) => (
-                <option key={c.name} value={c.name} className="text-zinc-900">
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600" />
-          </div>
+          <SmoothSelect
+            value={form.country ?? ''}
+            onChange={(v) => update('country', v)}
+            options={ONBOARDING_COUNTRIES.map((c) => ({ value: c.name, label: c.name }))}
+            placeholder="Select your country…"
+            aria-label="Country"
+            align="start"
+            triggerClassName="h-10 border-zinc-300 pl-3 text-sm text-zinc-900"
+          />
           {selectedCurrency && (
             <span className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
               <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />

@@ -74,7 +74,7 @@ On mount it fetches both sources in parallel and renders two sections. `onCountC
 
 - **Source:** `GET /api/urgent-payments` — approved, not-yet-dispatched `mesa_requests` of type `disbursement`. Each row carries the recipient's `processor` (preferred, else `wise`) and a full `details` object (per-processor payout fields) so the Mark Paid dialog pre-fills for whichever processor is chosen.
 - **Processor filter rail:** chips for "All" + each processor present in the queue (counted by the chosen processor). Filtering narrows the MESA cards only.
-- **Per-card processor `<select>`:** defaults to the recipient's preferred processor; the clerk can override per card. The chosen processor drives the `MarkPaidDialog` defaults and the dispatch record.
+- **Per-card processor dropdown** (a `SmoothSelect` since 2026-10-05, `ui-standards.md` § 9.5; a card with no rail on file shows *"No rail on file — choose one"* until one is picked): defaults to the recipient's preferred processor; the clerk can override per card. The chosen processor drives the `MarkPaidDialog` defaults and the dispatch record.
 - **Send →** opens the standard `MarkPaidDialog` (processor-aware) → on confirm, `POST /api/mesa-requests/[id]/dispatch`.
 
 ### Section 2 — Orphanage Budget Requests

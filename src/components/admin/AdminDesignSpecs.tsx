@@ -14,6 +14,7 @@ import {
   UserCog,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import {
   TICKET_BOARD_OWNER,
@@ -744,26 +745,28 @@ function TicketDevelopersSection({ onNavigate }: { onNavigate?: (tab: string) =>
                       >
                         {prio.label}
                       </span>
-                      <select
-                        aria-label={`Developer for ticket #${t.ticket_no}`}
-                        value={t.assigned_to ?? ''}
-                        disabled={savingId === t.id || !isOwner}
+                      <div
+                        className="w-full shrink-0 sm:w-44"
                         title={isOwner ? undefined : 'Only the board owner can assign or reassign a ticket'}
-                        onChange={(e) => void assign(t, e.target.value || null)}
-                        className="h-8 w-full shrink-0 rounded-lg border border-zinc-200 bg-white px-2 text-xs text-zinc-700 outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40 disabled:cursor-wait disabled:opacity-60 sm:w-44 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
                       >
-                        <option value="">Unassigned</option>
-                        {developers.map((d) => (
-                          <option key={d.email} value={d.email}>
-                            {d.name ?? d.email.split('@')[0]}
-                          </option>
-                        ))}
-                        {legacyAssignee && (
-                          <option value={legacyAssignee}>
-                            {legacyAssignee.split('@')[0]} (no Edit access)
-                          </option>
-                        )}
-                      </select>
+                        <SmoothSelect
+                          aria-label={`Developer for ticket #${t.ticket_no}`}
+                          value={t.assigned_to ?? ''}
+                          disabled={savingId === t.id || !isOwner}
+                          onChange={(v) => void assign(t, v || null)}
+                          options={[
+                            { value: '', label: 'Unassigned' },
+                            ...developers.map((d) => ({ value: d.email, label: d.name ?? d.email.split('@')[0] })),
+                            ...(legacyAssignee
+                              ? [{ value: legacyAssignee, label: `${legacyAssignee.split('@')[0]} (no Edit access)` }]
+                              : []),
+                          ]}
+                          triggerClassName={cn(
+                            'h-8 px-2 font-normal dark:bg-zinc-900 dark:text-zinc-200',
+                            savingId === t.id && 'disabled:cursor-wait',
+                          )}
+                        />
+                      </div>
                     </li>
                   );
                 })}

@@ -14,6 +14,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { isInternEmail, INTERN_EMAIL_DOMAIN } from '@/lib/interns/intern-email';
 import { INTERN_DEFAULTS, formatInternPHP, type OrphanageInternRow } from '@/lib/interns/intern-types';
@@ -335,21 +337,19 @@ export default function InternDialog({
               </div>
               <div className={field}>
                 <Label htmlFor="in-orph" className={labelCls}>Orphanage</Label>
-                <select
+                <SmoothSelect
                   id="in-orph"
                   value={orphanageId}
-                  onChange={(e) => setOrphanageId(e.target.value)}
-                  className="flex h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
-                >
-                  <option value="">— not assigned —</option>
-                  {orphanages.map((o) => (
-                    <option key={o.id} value={o.id}>{o.name}</option>
-                  ))}
-                </select>
+                  onChange={setOrphanageId}
+                  options={[{ value: '', label: '— not assigned —' }, ...orphanages.map((o) => ({ value: o.id, label: o.name }))]}
+                  accent="pink"
+                  align="start"
+                  triggerClassName="rounded-md px-3 text-sm font-normal text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100"
+                />
               </div>
               <div className={field}>
                 <Label htmlFor="in-start" className={labelCls}>Started on</Label>
-                <Input id="in-start" type="date" value={startedOn} onChange={(e) => setStartedOn(e.target.value)} />
+                <DatePicker id="in-start" value={startedOn} onChange={setStartedOn} />
               </div>
               <div className={cn(field, 'sm:col-span-2')}>
                 <Label htmlFor="in-note" className={labelCls}>Note</Label>
@@ -378,7 +378,14 @@ export default function InternDialog({
                       </div>
                       <div className={field}>
                         <Label htmlFor="in-rate-from" className={labelCls}>Effective from <span className="text-rose-500">*</span></Label>
-                        <Input id="in-rate-from" type="date" value={rateFrom} onChange={(e) => setRateFrom(e.target.value)} onBlur={() => touch('pay')} />
+                        <DatePicker
+                          id="in-rate-from"
+                          value={rateFrom}
+                          onChange={(v) => {
+                            setRateFrom(v);
+                            touch('pay');
+                          }}
+                        />
                       </div>
                     </div>
                   </>

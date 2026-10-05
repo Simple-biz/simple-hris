@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { cleanErrorMessage } from '@/lib/clean-error-message';
@@ -844,23 +845,30 @@ export default function SupportTicketsTab({ canEdit }: Props) {
                     )}
                     {canEdit ? (
                       <>
-                        <select
-                          value={selectedTicket.priority ?? ''}
+                        {/* The board's own Base UI Select (TicketsBoard's priority filter): semantic
+                            tokens, and the portaled list re-applies `tickets-theme dark` (ui-standards § 1.4). */}
+                        <Select
+                          value={selectedTicket.priority ?? 'line'}
                           disabled={busyAction !== null}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            void patchBoard('rank', selectedId, { priority: v === '' ? null : (v as TicketPriority) });
+                          onValueChange={(v) => {
+                            if (!v) return;
+                            void patchBoard('rank', selectedId, { priority: v === 'line' ? null : (v as TicketPriority) });
                           }}
-                          className="rounded-md border border-border bg-background px-2 py-1 text-[11px] text-foreground"
-                          aria-label="Set urgency"
                         >
-                          <option value="">Send back to line</option>
-                          {TICKET_PRIORITIES.map((p) => (
-                            <option key={p} value={p}>
-                              {TICKET_PRIORITY_LABELS[p]}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger size="sm" aria-label="Set urgency" className="text-[11px]">
+                            <SelectValue>
+                              {selectedTicket.priority ? TICKET_PRIORITY_LABELS[selectedTicket.priority] : 'Send back to line'}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent alignItemWithTrigger={false} className="tickets-theme dark">
+                            <SelectItem value="line">Send back to line</SelectItem>
+                            {TICKET_PRIORITIES.map((p) => (
+                              <SelectItem key={p} value={p}>
+                                {TICKET_PRIORITY_LABELS[p]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         {claimVerdict.allowed && (
                           <Button
                             variant="outline"

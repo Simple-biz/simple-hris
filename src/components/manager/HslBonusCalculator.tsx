@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
-  AlertTriangle, AppWindow, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  AlertTriangle, AppWindow, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
   Download, Eye, History, Loader2, Lock, Maximize2, Minus, PanelRight, Plus,
   RefreshCw, RotateCcw, Search, Trash2, UserPlus, Users, X, Zap,
 } from 'lucide-react';
@@ -4062,10 +4062,15 @@ function SsdTeamCard({
 
 // ── Sub-team picker (one roster row) ──────────────────────────────────────────
 
-/** A native <select> with the browser chrome removed — one control per row
- *  instead of seven chips, which is what keeps a 60-person roster readable.
- *  `option` styling is re-set to normal case: browsers otherwise inherit the
- *  uppercase tracking straight into the popup. */
+/** SmoothSelect options for a roster row: "Unassigned", then the seven teams. */
+const SUB_TEAM_OPTIONS: { value: SubTeamName | ''; label: string }[] = [
+  { value: '', label: 'Unassigned' },
+  ...SSD_TEAMS.map((t) => ({ value: t, label: t.charAt(0) + t.slice(1).toLowerCase() })),
+];
+
+/** One control per row instead of seven chips, which is what keeps a 60-person
+ *  roster readable. A pill-shaped `SmoothSelect` tinted with the row's `--team`
+ *  colour; the menu is the themed one (sentence case), never the browser's popup. */
 function SubTeamSelect({
   value, onChange, isLocked, employeeName,
 }: {
@@ -4075,40 +4080,24 @@ function SubTeamSelect({
   employeeName: string;
 }) {
   return (
-    <div className="relative block min-w-0 flex-1">
-      <select
-        aria-label={`Sub-team for ${employeeName}`}
-        value={value}
-        disabled={isLocked}
-        onChange={(e) => onChange(e.target.value as SubTeamName | '')}
-        className={cn(
-          'w-full min-w-0 appearance-none truncate rounded-full border py-1.5 pl-3 pr-7 outline-none',
-          'font-mono text-[10px] font-semibold uppercase tracking-[0.1em]',
-          'transition-[background-color,border-color,box-shadow] duration-[180ms] ease-[cubic-bezier(0.2,0.7,0.3,1)]',
-          'hover:brightness-[1.04] focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-950',
-          'disabled:cursor-not-allowed disabled:opacity-60',
-          value
-            ? 'border-[color-mix(in_srgb,var(--team)_60%,transparent)] bg-[color-mix(in_srgb,var(--team)_16%,transparent)] text-zinc-900 dark:text-zinc-100'
-            : 'border-zinc-200 bg-white text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400',
-        )}
-      >
-        <option value="" className="font-sans text-[13px] normal-case tracking-normal">
-          Unassigned
-        </option>
-        {SSD_TEAMS.map((t) => (
-          <option key={t} value={t} className="font-sans text-[13px] normal-case tracking-normal">
-            {t.charAt(0) + t.slice(1).toLowerCase()}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        aria-hidden
-        className={cn(
-          'pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 opacity-70',
-          value ? 'text-[var(--team-text)]' : 'text-zinc-500',
-        )}
-      />
-    </div>
+    <SmoothSelect<SubTeamName | ''>
+      aria-label={`Sub-team for ${employeeName}`}
+      value={value}
+      disabled={isLocked}
+      onChange={onChange}
+      options={SUB_TEAM_OPTIONS}
+      accent="blue"
+      size="sm"
+      className="min-w-0 flex-1"
+      triggerClassName={cn(
+        'h-auto rounded-full py-1.5 pl-3 pr-2.5 shadow-none hover:shadow-none hover:brightness-[1.04]',
+        'font-mono text-[10px] font-semibold uppercase tracking-[0.1em]',
+        'disabled:opacity-60',
+        value
+          ? 'border-[color-mix(in_srgb,var(--team)_60%,transparent)] bg-[color-mix(in_srgb,var(--team)_16%,transparent)] text-zinc-900 dark:bg-[color-mix(in_srgb,var(--team)_16%,transparent)] dark:text-zinc-100'
+          : 'text-zinc-500 dark:bg-zinc-950/60 dark:text-zinc-400',
+      )}
+    />
   );
 }
 

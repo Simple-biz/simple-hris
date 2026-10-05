@@ -519,8 +519,10 @@ then a full-width roster. Used by both the manager calculator and
   **both** rules shown separately (a team under 90% accuracy still earns its RFC
   pool, and one summed figure would hide that), a three-segment tier meter, and
   the per-member payout. Keyed by team so it replays its entrance on switch.
-- **Roster** — full width, filter chips, bulk-assign bar, and a single native
-  `<select>` per row instead of seven chips. At 60+ people the chips were the
+- **Roster** — full width, filter chips, bulk-assign bar, and a single dropdown
+  per row instead of seven chips (a pill `SmoothSelect` tinted with the row's
+  `--team` colour since 2026-10-05 — it was a native `<select>`, whose popup ignored
+  the app theme; `ui-standards.md` § 9.5). At 60+ people the chips were the
   loudest thing on the screen.
 - **Rules panel** — the real thresholds, read off `HSL_DEPTS` rather than
   restated, so a schema edit can never leave the UI describing a rate that no

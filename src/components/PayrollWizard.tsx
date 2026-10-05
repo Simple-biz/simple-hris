@@ -83,6 +83,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { periodLabelFromFilename } from '@/lib/hubstaff/period-label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -22586,26 +22587,24 @@ export default function PayrollWizard({
                 <Eye className="h-3 w-3" /> Replay
               </span>
             )}
-            <div className="relative">
-              <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-              <select
+            <div title="Replay a past payroll period — loads everything that was done for that Hubstaff report">
+              <SmoothSelect
                 value={calcSourceFile ?? ''}
-                onChange={(e) => setCalcSourceFile(e.target.value || null)}
-                title="Replay a past payroll period — loads everything that was done for that Hubstaff report"
-                className={cn(
-                  'h-8 cursor-pointer appearance-none rounded-lg border bg-white py-1 pl-8 pr-7 text-xs font-medium shadow-sm focus:outline-none focus:ring-1 dark:bg-zinc-950',
+                onChange={(v) => setCalcSourceFile(v || null)}
+                options={uploadedSourceFiles.map((f, i) => ({
+                  value: f,
+                  label: `${formatPeriodLabel(f)}${i === 0 ? ' · current' : ''}`,
+                }))}
+                aria-label="Payroll period"
+                accent="blue"
+                leading={<CalendarDays className="h-3.5 w-3.5 text-zinc-400" aria-hidden />}
+                triggerClassName={cn(
+                  'h-8 dark:bg-zinc-950',
                   isReplay
-                    ? 'border-amber-400 text-amber-800 focus:ring-amber-400 dark:border-amber-700/60 dark:text-amber-300'
-                    : 'border-zinc-200 text-zinc-700 focus:ring-indigo-400 dark:border-zinc-800 dark:text-zinc-300',
+                    ? 'border-amber-400 text-amber-800 dark:border-amber-700/60 dark:text-amber-300'
+                    : 'text-zinc-700 dark:text-zinc-300',
                 )}
-              >
-                {uploadedSourceFiles.map((f, i) => (
-                  <option key={f} value={f}>
-                    {formatPeriodLabel(f)}{i === 0 ? ' · current' : ''}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+              />
             </div>
           </div>
         )}

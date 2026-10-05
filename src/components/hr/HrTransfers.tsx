@@ -24,6 +24,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { getHrTabCache, hasHrTabCache, isHrTabCacheFresh, setHrTabCache, HR_TAB_CACHE_KEYS } from '@/lib/hr/tab-cache';
@@ -95,11 +96,13 @@ const STATUS_FILTER_OPTIONS: { value: '' | TransferRequestStatus; label: string 
   { value: 'cancelled', label: STATUS_LABEL.cancelled },
 ];
 
-// The <select> lives inside <SelectWrapper> — it's borderless/transparent and
-// lets the wrapper own the pill chrome, focus ring, and icon/label.
-const SELECT_CLASS =
-  'h-full cursor-pointer appearance-none bg-transparent pr-6 text-sm font-medium text-zinc-800 outline-none disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-100 [color-scheme:light] dark:[color-scheme:dark]';
-const OPTION_CLASS = 'bg-white font-normal text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100';
+/** Filter pill trigger: an emerald tint once a value is chosen. */
+const filterTriggerClass = (active: boolean) =>
+  cn(
+    'px-2.5 text-sm text-zinc-800 dark:text-zinc-100',
+    active &&
+      'border-emerald-300 bg-emerald-50/80 text-emerald-900 dark:border-emerald-700/60 dark:bg-emerald-950/30 dark:text-emerald-100',
+  );
 
 /**
  * HR "Transfers" tab — read-only history (v2). Managers now own the transfer
@@ -330,42 +333,32 @@ export default function HrTransfers() {
               )}
             </div>
 
-            <SelectWrapper
-              icon={<ArrowRightLeft className="h-3.5 w-3.5" />}
-              label="Dept"
-              active={!!deptFilter}
-            >
-              <select
-                value={deptFilter}
-                onChange={(e) => setDeptFilter(e.target.value)}
-                disabled={departmentOptions.length === 0}
-                aria-label="Filter by department"
-                className={SELECT_CLASS}
-              >
-                <option value="" className={OPTION_CLASS}>All departments</option>
-                {/* Label prettified, VALUE stays the raw cell so filtering still matches rows. */}
-                {departmentOptions.map((d) => (
-                  <option key={d} value={d} className={OPTION_CLASS}>{formatDeptLabel(d)}</option>
-                ))}
-              </select>
-            </SelectWrapper>
+            <SmoothSelect
+              value={deptFilter}
+              onChange={setDeptFilter}
+              disabled={departmentOptions.length === 0}
+              // Label prettified, VALUE stays the raw cell so filtering still matches rows.
+              options={[
+                { value: '', label: 'All departments' },
+                ...departmentOptions.map((d) => ({ value: d, label: formatDeptLabel(d) })),
+              ]}
+              searchable={departmentOptions.length > 8}
+              searchPlaceholder="Search departments…"
+              aria-label="Filter by department"
+              align="start"
+              leading={<FilterLeading icon={<ArrowRightLeft className="h-3.5 w-3.5" />} label="Dept" active={!!deptFilter} />}
+              triggerClassName={filterTriggerClass(!!deptFilter)}
+            />
 
-            <SelectWrapper
-              icon={<Clock className="h-3.5 w-3.5" />}
-              label="Status"
-              active={!!statusFilter}
-            >
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as '' | TransferRequestStatus)}
-                aria-label="Filter by status"
-                className={SELECT_CLASS}
-              >
-                {STATUS_FILTER_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value} className={OPTION_CLASS}>{o.label}</option>
-                ))}
-              </select>
-            </SelectWrapper>
+            <SmoothSelect<'' | TransferRequestStatus>
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={STATUS_FILTER_OPTIONS}
+              aria-label="Filter by status"
+              align="start"
+              leading={<FilterLeading icon={<Clock className="h-3.5 w-3.5" />} label="Status" active={!!statusFilter} />}
+              triggerClassName={filterTriggerClass(!!statusFilter)}
+            />
 
             {anyFilterActive && (
               <button
@@ -711,35 +704,14 @@ function DetailSection({
   );
 }
 
-/** A pill wrapper around a native <select>: leading icon + label, custom caret,
- *  and an emerald accent when a value is chosen. */
-function SelectWrapper({
-  icon,
-  label,
-  active,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  active: boolean;
-  children: ReactNode;
-}) {
+/** A filter pill's prefix inside the SmoothSelect trigger: icon + label, the icon
+ *  emerald once a value is chosen. */
+function FilterLeading({ icon, label, active }: { icon: ReactNode; label: string; active: boolean }) {
   return (
-    <div
-      className={cn(
-        'group relative flex h-9 items-center gap-1.5 rounded-lg border px-2.5 shadow-sm transition-colors focus-within:ring-2 focus-within:ring-emerald-500/20',
-        active
-          ? 'border-emerald-300 bg-emerald-50/80 focus-within:border-emerald-500 dark:border-emerald-700/60 dark:bg-emerald-950/30'
-          : 'border-zinc-200 bg-white hover:border-zinc-300 focus-within:border-emerald-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:border-zinc-700',
-      )}
-    >
-      <span className={cn('shrink-0', active ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400')}>
-        {icon}
-      </span>
-      <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-zinc-400">{label}</span>
-      {children}
-      <ChevronRight className="pointer-events-none absolute right-2 h-3.5 w-3.5 rotate-90 text-zinc-400" />
-    </div>
+    <span className="flex items-center gap-1.5">
+      <span className={cn('shrink-0', active ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-400')}>{icon}</span>
+      <span className="text-[11px] font-medium uppercase tracking-wide text-zinc-400">{label}</span>
+    </span>
   );
 }
 

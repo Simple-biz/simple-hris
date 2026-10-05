@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -1074,18 +1075,16 @@ function UrgentCard({
         <AmountBlock php={row.amount_needed} usd={row.amount_usd} />
         <div className="flex items-center gap-2">
           <label className="sr-only" htmlFor={`proc-${row.id}`}>Payment processor</label>
-          <select
-            id={`proc-${row.id}`}
-            value={processor ?? ''}
-            onChange={(e) => onProcessorChange(e.target.value as ProcessorId)}
-            className="h-8 rounded-md border border-amber-200 bg-amber-50/60 px-2 text-[12px] font-medium text-amber-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
-            title="Choose which processor to pay through"
-          >
-            {!processor && <option value="" disabled>No rail on file — choose one</option>}
-            {DISPATCH_PROCESSORS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
+          <div title="Choose which processor to pay through">
+            <SmoothSelect<ProcessorId>
+              id={`proc-${row.id}`}
+              value={processor ?? null}
+              onChange={onProcessorChange}
+              placeholder="No rail on file — choose one"
+              options={DISPATCH_PROCESSORS.map((p) => ({ value: p.id, label: p.label }))}
+              triggerClassName="h-8 rounded-md border-amber-200 bg-amber-50/60 px-2 text-[12px] text-amber-800 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
+            />
+          </div>
           <Button
             type="button"
             size="sm"

@@ -1577,13 +1577,13 @@ superseded on the points below. §12.1–§12.2 are from earlier in the month;
 
 ### 12.1 "Bank used (sent from)" is now a dropdown
 
-In [MarkPaidDialog.tsx](src/components/payroll-clerk/MarkPaidDialog.tsx) the **Bank used (sent from)** field became a `<select>` (the `FieldSelect` component) instead of free text, driven by the `BANK_USED_OPTIONS` constant. This replaces the inconsistent free-text spellings that were hard to report on. Options, in the accounting team's canonical order:
+In [MarkPaidDialog.tsx](src/components/payroll-clerk/MarkPaidDialog.tsx) the **Bank used (sent from)** field became a dropdown (the `FieldSelect` component — a `SmoothSelect` since 2026-10-05, `ui-standards.md` § 9.5; it was a native `<select>`) instead of free text, driven by the `BANK_USED_OPTIONS` constant. This replaces the inconsistent free-text spellings that were hard to report on. Options, in the accounting team's canonical order:
 
 ```
 Chase · Jeeves · Parallax · PayPal · Wise · x1161 · x1153 · x0048 · Remitly · HiGlobe · Kolan
 ```
 
-- The select opens on a disabled `Select a bank…` placeholder option (empty `value`), rendered in muted placeholder color via the `placeholderActive` prop while nothing is chosen.
+- While nothing is chosen (`bankUsed === ''`) the trigger shows a muted `Select a bank…` placeholder (`SmoothSelect`'s `placeholder`). It is not an option, so a picked bank can never be un-picked back to empty — the same as the disabled placeholder option it replaced.
 - The confirm button **stays disabled until a bank is picked**: `valid = transactionId.trim().length > 0 && bankUsed.trim().length > 0 && sentDate.length > 0`, and the button is `disabled={!valid || submitting}`. So transaction ID, a chosen bank, and a sent date are all required before a dispatch can be logged.
 
 ### 12.2 Wepay retired from the dispatch tabs

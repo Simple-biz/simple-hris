@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -73,7 +74,7 @@ export default function VendorInvoiceBuilderDialog({
     if (!open) return;
     if (editing) {
       // Only pre-select the dropdown if that vendor still exists — a deleted
-      // vendor would leave a dangling id that no <option> matches and that a
+      // vendor would leave a dangling id that no option matches and that a
       // Save would re-send, failing the FK. The snapshot fields below still
       // carry the vendor's details regardless.
       const vendorStillExists = !!editing.vendor_id && vendors.some((v) => v.id === editing.vendor_id);
@@ -240,19 +241,20 @@ export default function VendorInvoiceBuilderDialog({
           <div className="grid gap-4 md:grid-cols-2">
             <div className="flex flex-col gap-3">
               <Field id="i-vendor" label="Saved vendor">
-                <select
+                <SmoothSelect
                   id="i-vendor"
                   value={vendorId}
-                  onChange={(e) => handlePickVendor(e.target.value)}
-                  className="flex h-9 w-full rounded-md border border-input bg-white px-3 text-sm text-zinc-900 outline-none focus-visible:border-pink-400 focus-visible:ring-2 focus-visible:ring-pink-500/40 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
-                >
-                  <option value="">— Select a saved vendor (optional) —</option>
-                  {vendors.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.business_name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={handlePickVendor}
+                  options={[
+                    { value: '', label: '— Select a saved vendor (optional) —' },
+                    ...vendors.map((v) => ({ value: v.id, label: v.business_name })),
+                  ]}
+                  accent="pink"
+                  align="start"
+                  searchable={vendors.length > 8}
+                  searchPlaceholder="Search vendors…"
+                  triggerClassName="rounded-md px-3 text-sm font-normal text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100"
+                />
               </Field>
               <Field id="i-vname" label="Vendor / payee name" required>
                 <Input id="i-vname" value={vendorName} onChange={(e) => setVendorName(e.target.value)} placeholder="Business name" />

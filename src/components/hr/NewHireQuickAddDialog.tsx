@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { DatePicker } from '@/components/ui/date-picker';
 import { ONBOARDING_COUNTRIES } from '@/lib/onboarding/countries';
 import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source';
 import SmoothCombobox from './SmoothCombobox';
@@ -295,18 +296,30 @@ export default function NewHireQuickAddDialog({
                           {f.label}
                           {f.key === 'name' && <span className="text-emerald-600 dark:text-emerald-400">*</span>}
                         </label>
-                        <div className="relative mt-1.5">
-                          <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                          <input
-                            ref={i === 0 ? firstFieldRef : undefined}
+                        {f.type === 'date' ? (
+                          // The shared calendar, not the browser's native date popup (ui-standards § 9.3).
+                          <DatePicker
                             id={`nhc-qa-${f.key}`}
-                            type={f.type}
                             value={values[f.key]}
-                            placeholder={f.placeholder}
-                            onChange={(e) => set(f.key, e.target.value)}
-                            className={INPUT_CLASS}
+                            onChange={(v) => set(f.key, v)}
+                            placeholder="Pick a date"
+                            containerClassName="mt-1.5"
+                            className="h-10 rounded-xl text-[13.5px] focus-visible:border-emerald-400 focus-visible:ring-emerald-300/50"
                           />
-                        </div>
+                        ) : (
+                          <div className="relative mt-1.5">
+                            <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                            <input
+                              ref={i === 0 ? firstFieldRef : undefined}
+                              id={`nhc-qa-${f.key}`}
+                              type={f.type}
+                              value={values[f.key]}
+                              placeholder={f.placeholder}
+                              onChange={(e) => set(f.key, e.target.value)}
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                        )}
                       </div>
                     );
                   })}

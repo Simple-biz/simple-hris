@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, ClipboardCheck, Copy, Download, FileSpread
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatWeekLabel } from '@/lib/hr/hiring-week';
@@ -1062,22 +1063,22 @@ export default function NewlyHiredPanel({
             </button>
           )}
         </div>
-        <label className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300">
           <Layers className="h-3.5 w-3.5 text-zinc-400" />
-          <span className="sr-only sm:not-sr-only">Batch</span>
-          <select
+          <span className="sr-only sm:not-sr-only" aria-hidden>Batch</span>
+          <SmoothSelect
             value={batchFilter}
-            onChange={(e) => setBatchFilter(e.target.value)}
-            className="h-9 rounded-lg border border-zinc-200 bg-white px-2 text-sm text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-200 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
-          >
-            <option value="all">All batches ({rows.length})</option>
-            {batchKeys.map((k) => (
-              <option key={k} value={k}>
-                {batchLabelOf(k)} ({batchCounts.get(k) ?? 0})
-              </option>
-            ))}
-          </select>
-        </label>
+            onChange={setBatchFilter}
+            options={[
+              { value: 'all', label: `All batches (${rows.length})` },
+              ...batchKeys.map((k) => ({ value: k, label: `${batchLabelOf(k)} (${batchCounts.get(k) ?? 0})` })),
+            ]}
+            aria-label="Batch"
+            accent="blue"
+            align="start"
+            triggerClassName="text-sm font-normal text-zinc-800 dark:bg-zinc-950 dark:text-zinc-200"
+          />
+        </div>
         {/* Export the current view (respects search + batch). */}
         <div className="flex items-center gap-1.5 sm:ml-auto">
           <Button

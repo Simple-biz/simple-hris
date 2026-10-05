@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { milestoneLabel } from '@/lib/gift-milestones';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -533,23 +534,19 @@ export default function GiftOrders({
                                   </span>
                                 )}
                                 {l.variantOptions.length > 0 && (
-                                  <select
-                                    className="h-6 rounded border border-zinc-200 bg-transparent px-1 text-[11px] dark:border-zinc-700"
+                                  <SmoothSelect
+                                    size="sm"
+                                    align="start"
                                     value={variantChoices[l.key] ?? l.catalogItemId ?? ''}
-                                    onChange={(e) =>
-                                      setVariantChoices((v) => ({ ...v, [l.key]: e.target.value }))
-                                    }
+                                    onChange={(id) => setVariantChoices((v) => ({ ...v, [l.key]: id }))}
+                                    placeholder="Pick which…"
+                                    options={l.variantOptions.map((o) => ({
+                                      value: o.id,
+                                      label: `${o.description || o.item} — ${o.price_php > 0 ? `₱${o.price_php}` : 'no price'}`,
+                                    }))}
                                     aria-label={`Which ${l.item}`}
-                                  >
-                                    <option value="" disabled>
-                                      Pick which…
-                                    </option>
-                                    {l.variantOptions.map((o) => (
-                                      <option key={o.id} value={o.id}>
-                                        {o.description || o.item} — {o.price_php > 0 ? `₱${o.price_php}` : 'no price'}
-                                      </option>
-                                    ))}
-                                  </select>
+                                    triggerClassName="h-6 rounded px-1.5 font-normal shadow-none"
+                                  />
                                 )}
                                 {l.problem && (
                                   <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">

@@ -16,6 +16,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { NPD_COLUMNS, NPD_SHEETS, NPD_SHEET_LABELS, isNpdSheetKind, type NpdSheetKind } from '@/lib/npd/columns';
@@ -360,20 +361,21 @@ export default function NpdDashboard({ canEdit }: { canEdit: boolean }) {
           <label className="sr-only" htmlFor="npd-week">
             Pay week
           </label>
-          <select
+          <SmoothSelect
             id="npd-week"
             value={week ?? ''}
             disabled={!week || switching}
-            onChange={(e) => void switchTo({ week: e.target.value })}
-            className="h-8 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 text-sm font-medium text-zinc-800 sm:max-w-[27rem] sm:flex-none dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
-          >
-            {!week && <option value="">Loading weeks…</option>}
-            {weekOptions.map((o) => (
-              <option key={o.week} value={o.week}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => void switchTo({ week: v })}
+            options={
+              week
+                ? weekOptions.map((o) => ({ value: o.week, label: o.label }))
+                : [{ value: '', label: 'Loading weeks…' }]
+            }
+            accent="orange"
+            align="start"
+            className="min-w-0 flex-1 sm:max-w-[27rem]"
+            triggerClassName="h-8 px-2.5 text-sm text-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+          />
           <button
             type="button"
             aria-label="Next week"

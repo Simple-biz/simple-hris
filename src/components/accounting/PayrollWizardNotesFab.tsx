@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { SmoothSelect } from "@/components/ui/smooth-select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -2282,8 +2283,9 @@ function RowFixButton({
 /** Shared field label + input classes for the two readiness editors. */
 const EDITOR_LABEL_CLS =
   "text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:text-zinc-400";
+/** SmoothSelect trigger for the rate editor, matching its `h-8` inputs. */
 const EDITOR_SELECT_CLS =
-  "h-8 w-full rounded-md border border-orange-200/80 bg-white px-2 text-xs text-zinc-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-zinc-100 dark:focus-visible:ring-blue-900";
+  "h-8 rounded-md border-orange-200/80 px-2 text-xs font-normal text-zinc-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-zinc-100";
 
 /**
  * "Set rate" editor for a No Pay Rate row — files an EMPLOYEE-scoped Payment
@@ -2465,19 +2467,18 @@ function SetRateDialog({
             <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-dept">
               Department
             </label>
-            <select
+            <SmoothSelect
               id="readiness-rate-dept"
               value={deptKey}
-              onChange={(e) => setDeptKey(e.target.value)}
-              className={EDITOR_SELECT_CLS}
-            >
-              <option value="">Pick a department…</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d.key} value={d.key}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+              onChange={setDeptKey}
+              options={DEPARTMENTS.map((d) => ({ value: d.key, label: d.name }))}
+              placeholder="Pick a department…"
+              searchable
+              searchPlaceholder="Search departments…"
+              accent="orange"
+              align="start"
+              triggerClassName={EDITOR_SELECT_CLS}
+            />
             {isHslSub && (
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
                 {person.department} is an HSL sub-department — the rate files under Hogan
@@ -2530,14 +2531,13 @@ function SetRateDialog({
             <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-effective">
               Effective from
             </label>
-            <Input
+            <DatePicker
               id="readiness-rate-effective"
-              type="date"
               // NO `min`. A leaver's final pay is in the past by definition, so
               // the whole point of this field is reaching a closed week. The
               // Payment Catalog's own editor has no min either.
               value={effectiveDate}
-              onChange={(e) => setEffectiveDate(e.target.value)}
+              onChange={setEffectiveDate}
               className="h-8 text-xs"
             />
             {effectiveWeekStart && (
@@ -2553,18 +2553,15 @@ function SetRateDialog({
             <label className={EDITOR_LABEL_CLS} htmlFor="readiness-rate-currency">
               Currency
             </label>
-            <select
+            <SmoothSelect<PayCurrency>
               id="readiness-rate-currency"
               value={currency}
-              onChange={(e) => setCurrency(e.target.value as PayCurrency)}
-              className={EDITOR_SELECT_CLS}
-            >
-              {PAY_CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
+              onChange={setCurrency}
+              options={PAY_CURRENCIES.map((c) => ({ value: c, label: c }))}
+              accent="orange"
+              align="start"
+              triggerClassName={EDITOR_SELECT_CLS}
+            />
           </div>
           {error && (
             <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">

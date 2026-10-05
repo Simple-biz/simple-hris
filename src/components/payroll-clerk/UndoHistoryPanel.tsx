@@ -30,7 +30,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  CalendarDays,
   FileQuestion,
   Layers,
   Loader2,
@@ -43,6 +42,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { formatCOP, formatPHP, formatUSD, PROCESSORS } from './mock-queue';
 import type { UndoHistoryEntry, UndoKind } from '@/lib/payroll/undo-history';
 
@@ -404,19 +404,24 @@ export default function UndoHistoryPanel({ className }: { className?: string }) 
           className="w-[150px] rounded-lg border border-rose-200/80 bg-white/90 px-2.5 py-1.5 text-[12px] placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-rose-400/60 dark:border-rose-500/20 dark:bg-zinc-950/60 dark:placeholder:text-zinc-600"
         />
         <span className="inline-flex items-center gap-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-          <CalendarDays className="h-3.5 w-3.5" />
-          <input
-            type="date"
+          <DatePicker
             value={since}
-            onChange={(e) => setSince(e.target.value)}
-            className="rounded-lg border border-rose-200/80 bg-white/90 px-2 py-1.5 text-[12px] dark:border-rose-500/20 dark:bg-zinc-950/60"
+            onChange={setSince}
+            max={until || undefined}
+            placeholder="Since"
+            aria-label="Undone since"
+            containerClassName="w-[138px]"
+            className="h-8 border-rose-200/80 bg-white/90 text-[12px] dark:border-rose-500/20 dark:bg-zinc-950/60"
           />
-          <span>→</span>
-          <input
-            type="date"
+          <span aria-hidden>→</span>
+          <DatePicker
             value={until}
-            onChange={(e) => setUntil(e.target.value)}
-            className="rounded-lg border border-rose-200/80 bg-white/90 px-2 py-1.5 text-[12px] dark:border-rose-500/20 dark:bg-zinc-950/60"
+            onChange={setUntil}
+            min={since || undefined}
+            placeholder="Until"
+            aria-label="Undone until"
+            containerClassName="w-[138px]"
+            className="h-8 border-rose-200/80 bg-white/90 text-[12px] dark:border-rose-500/20 dark:bg-zinc-950/60"
           />
         </span>
         {hasFilters && (

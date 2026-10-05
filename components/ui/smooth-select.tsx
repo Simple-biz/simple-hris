@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useEscapingPopup } from '@/components/ui/popup-layer';
 
 /** Exponential ease-out — the same curve the My Team panes rise on. */
 const EASE_OUT = [0.22, 1, 0.36, 1] as const;
@@ -40,6 +40,15 @@ const ACCENTS = {
     check: 'text-orange-600 dark:text-orange-400',
     search: 'focus:border-orange-300 focus:ring-orange-200',
   },
+  /** The Orphanage family's pink/rose (orphanage-dashboard-standards.md § Color). */
+  pink: {
+    trigger: 'hover:border-pink-300 focus-visible:border-pink-500 focus-visible:ring-pink-500/20 dark:hover:border-pink-800',
+    open: 'border-pink-400 ring-2 ring-pink-500/20 dark:border-pink-700',
+    chevron: 'text-pink-600 dark:text-pink-400',
+    active: 'bg-pink-50 text-pink-900 dark:bg-pink-950/40 dark:text-pink-200',
+    check: 'text-pink-600 dark:text-pink-400',
+    search: 'focus:border-pink-300 focus:ring-pink-200',
+  },
 } as const;
 
 const SIZES = {
@@ -62,13 +71,19 @@ export interface SmoothSelectOption<T extends string = string> {
 }
 
 interface SmoothSelectProps<T extends string = string> {
-  value: T;
+  /** `null` = nothing chosen yet; the trigger shows `placeholder`. */
+  value: T | null;
   options: SmoothSelectOption<T>[];
   onChange: (value: T) => void;
   className?: string;
   /** Width of the trigger; menu matches it. */
   triggerClassName?: string;
   disabled?: boolean;
+  /** Put on the trigger button, so a `<label htmlFor>` still points at the control. */
+  id?: string;
+  /** Shown, muted, while `value` matches no option ("Select a bank…"). Without it an
+   *  unmatched value shows the first option's label, as it always has. */
+  placeholder?: string;
   'aria-label'?: string;
   /** Opt-in: render a type-to-filter search box at the top of the menu (for long
    *  option lists, e.g. departments). Off by default so existing dropdowns are
@@ -76,17 +91,17 @@ interface SmoothSelectProps<T extends string = string> {
   searchable?: boolean;
   /** Placeholder for the search box (searchable only). */
   searchPlaceholder?: string;
-  /** Opt-in: render the menu in a portal so it can never be clipped by
-   *  overflow-hidden / scroll ancestors (e.g. inside a dialog). The menu is
-   *  portaled into the nearest `[data-slot="dialog-content"]` popup — keeping
-   *  it inside the dialog's DOM so outside-press dismissal and focus traps
-   *  keep working — or into document.body outside a dialog. It matches the
-   *  trigger width, follows it on scroll/resize, and flips upward when there
-   *  is no room below. */
+  /** Opt-in: ALWAYS render the menu in a layer, never in place. Without it the menu
+   *  still leaves its spot on its own whenever an overflow-hidden / scrolling
+   *  ancestor would clip it (`useEscapingPopup`), so this is only needed to skip
+   *  the in-place judgement. A layer is the nearest dialog popup — keeping the
+   *  menu inside the dialog's DOM so outside-press dismissal and focus traps keep
+   *  working — or document.body; the menu is at least the trigger's width, follows
+   *  it on scroll/resize, and flips upward when there is no room below. */
   portal?: boolean;
   /** `md` (default) or `sm`, a compact trigger that lines up with segmented toggles. */
   size?: keyof typeof SIZES;
-  /** `teal` (default), `blue`, or `orange` (the Accounting family). */
+  /** `teal` (default), `blue`, `orange` (the Accounting family) or `pink` (the Orphanage family). */
   accent?: keyof typeof ACCENTS;
   /** A muted prefix inside the trigger, before the selected label (e.g. "KPI"). */
   leading?: ReactNode;
@@ -108,6 +123,8 @@ export function SmoothSelect<T extends string = string>({
   className,
   triggerClassName,
   disabled = false,
+  id,
+  placeholder,
   'aria-label': ariaLabel,
   searchable = false,
   searchPlaceholder = 'Search…',
@@ -129,11 +146,27 @@ export function SmoothSelect<T extends string = string>({
   const searchRef = useRef<HTMLInputElement | null>(null);
   const baseId = useId();
 
-  // Portal mode: where the menu mounts, and its measured on-screen position.
-  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number; up: boolean } | null>(null);
+  // In place unless a clipping ancestor would cut the menu off (or `portal` forces a layer).
+  const layer = useEscapingPopup({
+    open,
+    anchorRef: rootRef,
+    panelRef: menuRef,
+    force: portal,
+    align,
+    gap: 6,
+    matchAnchorWidth: true,
+    // In place: `absolute mt-1.5 min-w-full`, pinned to the trigger's left or right edge.
+    inFlowBox: (a, w, h) => {
+      const left = align === 'start' ? a.left : a.right - w;
+      return { top: a.bottom + 6, left, right: left + w, bottom: a.bottom + 6 + h };
+    },
+  });
+  const openMenu = () => {
+    layer.beginOpen();
+    setOpen(true);
+  };
 
-  const selected = options.find((o) => o.value === value) ?? options[0];
+  const selected = options.find((o) => o.value === value) ?? (placeholder == null ? options[0] : undefined);
 
   const filtered = useMemo(() => {
     if (!searchable) return options;
@@ -142,7 +175,7 @@ export function SmoothSelect<T extends string = string>({
     return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, query, searchable]);
 
-  // Close on outside click. The portaled menu lives outside rootRef, so it
+  // Close on outside click. An escaped menu lives outside rootRef, so it
   // must count as "inside" or selecting an option would close on mousedown
   // before the click can commit.
   useEffect(() => {
@@ -155,59 +188,6 @@ export function SmoothSelect<T extends string = string>({
     document.addEventListener('mousedown', onPointer);
     return () => document.removeEventListener('mousedown', onPointer);
   }, [open]);
-
-  // Portal mode: mount the menu inside the nearest dialog popup (so Base UI's
-  // outside-press dismissal and focus trap still see it as dialog content), or
-  // document.body when not in a dialog.
-  useLayoutEffect(() => {
-    if (!portal) {
-      setPortalHost(null);
-      setMenuPos(null);
-      return;
-    }
-    // Closing keeps the host and the last position so the menu can animate OUT
-    // where it was; the next open re-measures before paint.
-    if (!open) return;
-    setPortalHost(
-      (rootRef.current?.closest('[data-slot="dialog-content"]') as HTMLElement | null) ?? document.body,
-    );
-  }, [portal, open]);
-
-  // Portal mode: place the menu under (or above) the trigger and keep it
-  // anchored while ancestors scroll or the window resizes. Re-measures when
-  // the filtered list changes since that changes the menu height.
-  useLayoutEffect(() => {
-    if (!portal || !open || !portalHost) return;
-    const update = () => {
-      const anchor = rootRef.current;
-      const menu = menuRef.current;
-      if (!anchor || !menu) return;
-      const a = anchor.getBoundingClientRect();
-      const gap = 6;
-      const pad = 8;
-      const menuH = menu.offsetHeight;
-      // Flip upward only when the menu would spill past the viewport bottom
-      // AND it actually fits above the trigger.
-      const up = a.bottom + gap + menuH > window.innerHeight - pad && a.top - gap - menuH > pad;
-      const topVp = up ? a.top - gap - menuH : a.bottom + gap;
-      // document.body positions as fixed (viewport coords); a dialog popup is
-      // a transformed containing block, so coords are relative to its rect.
-      const host = portalHost === document.body ? null : portalHost.getBoundingClientRect();
-      setMenuPos({
-        top: topVp - (host?.top ?? 0),
-        left: a.left - (host?.left ?? 0),
-        width: a.width,
-        up,
-      });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [portal, open, portalHost, filtered.length]);
 
   // When opening: reset the search, point the active row at the current value,
   // and focus the search box if searchable.
@@ -236,7 +216,7 @@ export function SmoothSelect<T extends string = string>({
     if (!open) {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
         e.preventDefault();
-        setOpen(true);
+        openMenu();
       }
       return;
     }
@@ -265,7 +245,7 @@ export function SmoothSelect<T extends string = string>({
     listRef.current?.querySelector(`[data-idx="${active}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [active, open]);
 
-  const up = !!(portal && menuPos?.up);
+  const up = layer.up;
   const offset = reduceMotion ? 0 : up ? 4 : -4;
   const menu = (
     <AnimatePresence>
@@ -281,22 +261,11 @@ export function SmoothSelect<T extends string = string>({
           : { opacity: 0, y: offset, scale: 0.97, transition: { duration: 0.12, ease: EASE_OUT } }
       }
       transition={{ duration: reduceMotion ? 0.1 : 0.18, ease: EASE_OUT }}
-      style={
-        portal
-          ? menuPos
-            ? {
-                position: portalHost === document.body ? 'fixed' : 'absolute',
-                top: menuPos.top,
-                left: menuPos.left,
-                width: menuPos.width,
-              }
-            : { position: 'fixed', top: 0, left: 0, visibility: 'hidden' }
-          : undefined
-      }
+      style={layer.style}
       className={cn(
         'z-50 rounded-xl border border-zinc-200 bg-white p-1 shadow-xl shadow-zinc-900/10',
-        portal
-          ? 'pointer-events-auto z-[70]'
+        layer.escaped
+          ? 'pointer-events-auto'
           : cn('absolute mt-1.5 min-w-full', align === 'start' ? 'left-0' : 'right-0'),
         up ? 'origin-bottom' : 'origin-top',
         'dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-black/40',
@@ -380,11 +349,16 @@ export function SmoothSelect<T extends string = string>({
     <div ref={rootRef} className={cn('relative', className)}>
       <button
         type="button"
+        id={id}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
         disabled={disabled}
-        onClick={() => !disabled && setOpen((o) => !o)}
+        onClick={() => {
+          if (disabled) return;
+          if (open) setOpen(false);
+          else openMenu();
+        }}
         onKeyDown={onListKeyDown}
         className={cn(
           'group flex w-full items-center justify-between gap-2 border bg-white text-zinc-700 shadow-sm transition-all duration-200',
@@ -404,7 +378,11 @@ export function SmoothSelect<T extends string = string>({
               {leading}
             </span>
           )}
-          <span className="truncate">{selected?.label}</span>
+          {selected ? (
+            <span className="truncate">{selected.label}</span>
+          ) : (
+            <span className="truncate font-normal text-zinc-400 dark:text-zinc-500">{placeholder}</span>
+          )}
         </span>
         <ChevronDown
           className={cn(
@@ -414,7 +392,7 @@ export function SmoothSelect<T extends string = string>({
         />
       </button>
 
-      {portal ? (portalHost ? createPortal(menu, portalHost) : null) : menu}
+      {layer.pending ? null : layer.escaped ? layer.portal(menu) : menu}
     </div>
   );
 }

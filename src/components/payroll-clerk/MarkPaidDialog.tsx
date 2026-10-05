@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { AlertTriangle, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2, Pencil, X } from 'lucide-react';
+import { SmoothSelect, type SmoothSelectOption } from '@/components/ui/smooth-select';
+import { AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed, Copy, Gauge, Loader2, Pencil, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
@@ -275,39 +276,39 @@ function FieldInput({ cfg, className, onFocus, onBlur, ...props }: FieldInputPro
   );
 }
 
-interface FieldSelectProps extends Omit<React.ComponentPropsWithoutRef<'select'>, 'style'> {
+interface FieldSelectProps {
+  id?: string;
   cfg: StatusCfg;
-  /** Renders the value in muted placeholder color while nothing is chosen. */
-  placeholderActive?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  options: SmoothSelectOption[];
+  /** Shown, muted, while nothing is chosen. */
+  placeholder?: string;
 }
 
-function FieldSelect({ cfg, className, placeholderActive, onFocus, onBlur, children, ...props }: FieldSelectProps) {
+/** A `SmoothSelect` wearing the same status-tinted border and focus glow as `FieldInput`. */
+function FieldSelect({ id, cfg, value, onChange, options, placeholder }: FieldSelectProps) {
   const [focused, setFocused] = useState(false);
   return (
     <div
       className="relative rounded-md transition-[box-shadow] duration-200"
-      style={{ boxShadow: focused ? `0 0 0 3px ${cfg.accentGlow}` : '0 0 0 3px transparent' }}
+      style={
+        {
+          boxShadow: focused ? `0 0 0 3px ${cfg.accentGlow}` : '0 0 0 3px transparent',
+          '--field-border': focused ? cfg.accent : cfg.accentDim,
+        } as React.CSSProperties
+      }
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
     >
-      <select
-        {...props}
-        className={cn(
-          'flex h-9 w-full cursor-pointer appearance-none rounded-md border bg-white px-3 py-1 pr-9 text-sm text-zinc-900 outline-none',
-          'transition-[border-color] duration-200',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-          'dark:bg-zinc-950 dark:text-zinc-100',
-          placeholderActive && 'text-zinc-400 dark:text-zinc-500',
-          className,
-        )}
-        style={{ borderColor: focused ? cfg.accent : cfg.accentDim }}
-        onFocus={(e) => { setFocused(true);  onFocus?.(e); }}
-        onBlur={(e)  => { setFocused(false); onBlur?.(e);  }}
-      >
-        {children}
-      </select>
-      <ChevronDown
-        aria-hidden
-        className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400 transition-colors duration-200"
-        style={{ color: focused ? cfg.accent : undefined }}
+      <SmoothSelect
+        id={id}
+        value={value}
+        onChange={onChange}
+        options={options}
+        placeholder={placeholder}
+        align="start"
+        triggerClassName="rounded-md border-[color:var(--field-border)] px-3 text-sm font-normal text-zinc-900 shadow-none hover:shadow-none dark:bg-zinc-950 dark:text-zinc-100"
       />
     </div>
   );
@@ -938,14 +939,10 @@ export default function MarkPaidDialog({
               id="bank"
               cfg={cfg}
               value={bankUsed}
-              placeholderActive={bankUsed === ''}
-              onChange={(e) => setBankUsed(e.target.value)}
-            >
-              <option value="" disabled>Select a bank…</option>
-              {BANK_USED_OPTIONS.map((bank) => (
-                <option key={bank} value={bank}>{bank}</option>
-              ))}
-            </FieldSelect>
+              onChange={setBankUsed}
+              placeholder="Select a bank…"
+              options={BANK_USED_OPTIONS.map((bank) => ({ value: bank, label: bank }))}
+            />
           </Field>
 
           <div className="grid grid-cols-2 gap-3">

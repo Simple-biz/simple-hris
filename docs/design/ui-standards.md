@@ -1030,14 +1030,20 @@ third-party date library; both are hand-rolled and dependency-free:
   `containerClassName` (width/flex — the trigger itself is `w-full`). Calendar
   popover has month/year drill-down (click the header label), full keyboard
   nav (arrows, PageUp/Down ± month, Shift+PageUp/Down ± year, Home/End),
-  a Today shortcut, and edge-aware placement.
+  a Today shortcut, and edge-aware placement. The calendar is never clipped
+  (§ 9.5).
 - `<DateRangePicker />` for range filters (formerly
   `PeopleDateRangePicker`, now shared). Two-month calendar on `sm:`+, preset
   chips, hover span preview, optional `accent` object for per-dashboard
-  theming (defaults to the teal used by `SmoothSelect`).
+  theming. *(Corrected 2026-10-05: the default is the brand orange,
+  `DEFAULT_ACCENT` in `date-picker.tsx`, not `SmoothSelect`'s teal — the code
+  has said orange since the accent landed.)*
 
-Don't use native `<input type="date">` in new code — its popup ignores the
-app theme and renders inconsistently across browsers.
+Don't use native `<input type="date">` — its popup ignores the app theme and
+renders inconsistently across browsers. Since the 2026-10-05 sweep (§ 9.5) the
+app holds none; a field-config `type: 'date'` (e.g. `NewHireQuickAddDialog`,
+`GiftPayments`' `FieldRow`, `PeopleTab`'s `EditField`) must route to
+`DatePicker`, never to `<input type={type}>`.
 
 ### 9.4 Selects / dropdowns
 
@@ -1056,6 +1062,18 @@ app theme and renders inconsistently across browsers.
   Its first user is the Accounting Scoreboard, where every dropdown is
   `accent="orange" align="start" portal`. `portal` is there because the board's
   content scrolls, and a scroll container would clip an in-flow menu.
+  Since 2026-10-05 a clipped menu escapes on its own (§ 9.5), so `portal` only
+  skips the in-place judgement. Same day: `accent="pink"` for the Orphanage family
+  (`orphanage-dashboard-standards.md` § Color; first users `InternDialog`,
+  `VendorInvoiceBuilderDialog`), `id` on the trigger so a `<label htmlFor>` still
+  points at the control, and `placeholder` — shown muted while `value` is `null` or
+  matches no option (*"Select a bank…"*). Without `placeholder` an unmatched value
+  still shows the first option's label, as it always has.
+- **No native `<select>` anywhere** since the 2026-10-05 sweep (§ 9.5). The one
+  exception is the `/tickets` console: there a dropdown is the Base UI `<Select>`
+  (`components/ui/select.tsx`) with `SelectContent className="tickets-theme dark"`
+  (`TicketsBoard`, `TicketDialog`, `SupportTicketsTab`), because `SmoothSelect`'s
+  teal and zinc would break § 1.4's red-only, semantic-token rule.
 - **Themed collapsible picker** (the "beautifully wrapped dropdown" pattern —
   `HslBonusCalculator.tsx` branch picker): a sticky, `backdrop-blur-md` themed
   header (`sticky top-0 z-10 … bg-white/90 dark:bg-zinc-950/90`) over a body that
@@ -1063,6 +1081,43 @@ app theme and renders inconsistently across browsers.
   that rotates on `open`. Gate its very existence on there being more than one
   option to pick (`multiDept`) — a one-option "dropdown" is noise; render the
   single item flat instead. Self-disable the motion under reduced motion.
+
+### 9.5 Picker popups are never clipped (2026-10-05)
+
+Kane: *"Find all the Dropdowns and Calendar pickers in the system and make sure to wrap
+them in CSS properly."* Every `SmoothSelect` menu and every `DatePicker` /
+`DateRangePicker` calendar keeps itself whole — `useEscapingPopup` in
+`components/ui/popup-layer.tsx`, geometry in `src/lib/ui/popup-placement.ts`, pinned by
+`popup-placement.test.ts`:
+
+- It opens **in place**. Before the first paint it measures whether an ancestor whose
+  overflow is not `visible` (a scrolling dialog body, an `overflow-hidden` card, a table
+  scroller) would cut any of it off. Only then does it **escape**, into the nearest
+  dialog popup (`[data-slot="dialog-content"]`, any `role="dialog"`, or an element
+  marked `data-popup-host`), else `<body>`. A popup that fits stays exactly where it
+  always was, so no screen that worked moved.
+- Escaped, it opens under the trigger, flips above when it fits there and not below,
+  is height-capped and scrolls when it fits on neither side, slides sideways to stay
+  8px inside its bounds (the viewport, cut down to a dialog that hides its overflow),
+  and follows the trigger on scroll, resize and its own size changes.
+- An escaped popup carries the theme scopes it left behind (`dark`, `tickets-theme`) —
+  § 1.4's re-apply rule, done by the primitive. In `<body>` it paints at z-index 70, or
+  one above the highest z-index among the trigger's ancestors, so it clears dialogs
+  (z-50), the collab rail and any in-main overlay.
+- Staying inside the dialog's DOM is what keeps Base UI's focus trap and outside-press
+  dismissal treating the popup as dialog content. **A custom modal that is not
+  `role="dialog"` must carry `data-popup-host`**, or a click inside a `<body>`-escaped
+  popup reads as a click outside the modal.
+- The in-place / escaped / pending decision is made once per open; a popup that
+  escaped closes (and animates out) where it was drawn.
+
+**The sweep.** 30 native `<select>`s in 21 files became `SmoothSelect` (one, in
+`SupportTicketsTab`, became the tickets Base UI `<Select>` — § 9.4), and 7 native date
+inputs in 5 files became `DatePicker`. Not covered: native `type="time"` inputs (no
+calendar, and no shared time picker exists), and the hand-rolled themed dropdowns that
+are not `SmoothSelect` (`BonusCatalog`'s `AnimatedSelect`, `CycleSelector`, `DeptFilter`
+and the Base UI `<Select>`s, which portal on their own). Browser click-through of the
+escape is **owed** (session-log item 357).
 
 ---
 

@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { normEmail } from '@/lib/email/norm-email';
 import { normalizeCurrency, CONTRACTOR_CURRENCIES, type ContractorCurrency } from '@/lib/contractor-currency';
@@ -555,15 +556,15 @@ export default function ContractorProfile({
                             {paymentFieldSpecs('ach').map((spec) => (
                               <FieldGroup key={spec.key} label={spec.label}>
                                 {spec.kind === 'select' ? (
-                                  <select
+                                  <SmoothSelect
                                     value={achFields[spec.key] ?? spec.options?.[0] ?? ''}
-                                    onChange={(e) => setAchField(spec.key, e.target.value)}
-                                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-900 outline-none focus:border-blue-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                                  >
-                                    {spec.options?.map((o) => (
-                                      <option key={o} value={o}>{o}</option>
-                                    ))}
-                                  </select>
+                                    onChange={(v) => setAchField(spec.key, v)}
+                                    options={(spec.options ?? []).map((o) => ({ value: o, label: o }))}
+                                    accent="blue"
+                                    align="start"
+                                    aria-label={spec.label}
+                                    triggerClassName="rounded-md text-sm font-normal text-zinc-900 dark:text-zinc-100"
+                                  />
                                 ) : (
                                   <Input
                                     value={achFields[spec.key] ?? ''}

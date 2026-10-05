@@ -28,6 +28,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { slugifyDeptKey, subDeptStructureKey, type NewDepartmentMember } from '@/lib/departments/registry';
 import {
   CURRENCY_SYMBOL,
@@ -453,18 +454,15 @@ export function StepSubDepartments({
                                 />
                               </MiniField>
                               <MiniField label="Currency">
-                                <select
+                                <SmoothSelect<PayCurrency>
                                   value={sub.currency}
-                                  onChange={(e) => patch(sub.id, { currency: e.target.value as PayCurrency })}
-                                  className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                                  onChange={(v) => patch(sub.id, { currency: v })}
+                                  options={PAY_CURRENCIES.map((c) => ({ value: c, label: currencyChipLabel(c) }))}
+                                  accent="orange"
+                                  align="start"
+                                  triggerClassName="h-8 rounded-md"
                                   aria-label={`Currency for ${sub.name}`}
-                                >
-                                  {PAY_CURRENCIES.map((c) => (
-                                    <option key={c} value={c}>
-                                      {currencyChipLabel(c)}
-                                    </option>
-                                  ))}
-                                </select>
+                                />
                               </MiniField>
                             </div>
                           )}
@@ -760,19 +758,15 @@ export function StepPeople({
                 </span>
 
                 {subs.length > 0 && (
-                  <select
+                  <SmoothSelect
                     value={m.subDepartment ?? ''}
-                    onChange={(e) => patch(m.id, { subDepartment: e.target.value || null })}
-                    className="h-8 shrink-0 rounded-md border border-zinc-200 bg-white px-2 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                    onChange={(v) => patch(m.id, { subDepartment: v || null })}
+                    options={[{ value: '', label: 'No sub-department' }, ...subs.map((s) => ({ value: s.key, label: s.name }))]}
+                    accent="orange"
+                    className="shrink-0"
+                    triggerClassName="h-8 rounded-md"
                     aria-label={`Sub-department for ${m.name}`}
-                  >
-                    <option value="">No sub-department</option>
-                    {subs.map((s) => (
-                      <option key={s.key} value={s.key}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 )}
 
                 <button

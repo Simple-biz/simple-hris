@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { formatInternPHP, type OrphanageInternListItem, type OrphanageInternRateRow } from '@/lib/interns/intern-types';
 
 /**
@@ -97,7 +98,7 @@ export default function InternRateDialog({
           </div>
           <div>
             <Label htmlFor="rt-from" className="text-xs">Effective from</Label>
-            <Input id="rt-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <DatePicker id="rt-from" value={from} onChange={setFrom} />
           </div>
         </div>
 

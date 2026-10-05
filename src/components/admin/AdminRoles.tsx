@@ -8,7 +8,6 @@ import {
   Briefcase,
   Building2,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Crown,
@@ -27,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -1069,40 +1069,28 @@ export default function AdminRoles() {
                   className="h-10 rounded-lg border-zinc-200 bg-white pl-9 dark:border-zinc-800 dark:bg-zinc-950/50"
                 />
               </div>
-              <div className="relative shrink-0 sm:w-40">
-                <ShieldCheck className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-                <select
-                  value={roleFilter}
-                  onChange={(e) => setRoleFilter(e.target.value as 'all' | RoleKey)}
-                  aria-label="Filter by role"
-                  className="h-10 w-full appearance-none truncate rounded-lg border border-zinc-200 bg-white pl-8 pr-7 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-200"
-                >
-                  <option value="all">All roles</option>
-                  {ROLES.map((r) => (
-                    <option key={r.key} value={r.key}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden />
-              </div>
-              <div className="relative shrink-0 sm:w-48">
-                <Building2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
-                <select
-                  value={deptFilter}
-                  onChange={(e) => setDeptFilter(e.target.value)}
-                  aria-label="Filter by department"
-                  className="h-10 w-full appearance-none truncate rounded-lg border border-zinc-200 bg-white pl-8 pr-7 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-orange-500/30 dark:border-zinc-800 dark:bg-zinc-950/50 dark:text-zinc-200"
-                >
-                  <option value="all">All departments</option>
-                  {departments.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" aria-hidden />
-              </div>
+              <SmoothSelect<'all' | RoleKey>
+                value={roleFilter}
+                onChange={setRoleFilter}
+                options={[{ value: 'all', label: 'All roles' }, ...ROLES.map((r) => ({ value: r.key, label: r.label }))]}
+                aria-label="Filter by role"
+                accent="orange"
+                leading={<ShieldCheck className="h-3.5 w-3.5 text-zinc-400" aria-hidden />}
+                className="shrink-0 sm:w-40"
+                triggerClassName="h-10 text-sm font-normal dark:bg-zinc-950/50"
+              />
+              <SmoothSelect
+                value={deptFilter}
+                onChange={setDeptFilter}
+                options={[{ value: 'all', label: 'All departments' }, ...departments.map((d) => ({ value: d, label: d }))]}
+                aria-label="Filter by department"
+                accent="orange"
+                searchable
+                searchPlaceholder="Search departments…"
+                leading={<Building2 className="h-3.5 w-3.5 text-zinc-400" aria-hidden />}
+                className="shrink-0 sm:w-48"
+                triggerClassName="h-10 text-sm font-normal dark:bg-zinc-950/50"
+              />
               <div className="flex shrink-0 items-center justify-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50/80 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/40">
                 <Button
                   type="button"

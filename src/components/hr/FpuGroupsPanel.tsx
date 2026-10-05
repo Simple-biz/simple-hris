@@ -16,6 +16,7 @@ import { Users, Shuffle, Check, Crown, Lock, Loader2, AlertTriangle } from 'luci
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { formatDateOnly } from '@/lib/date-only';
@@ -297,20 +298,20 @@ export default function FpuGroupsPanel({ cls, seats, onChanged }: Props) {
                   <h4 className="text-sm font-bold text-zinc-900 dark:text-white">Group {g.groupNo}</h4>
                   <span className="text-xs text-zinc-500">{g.members.filter((m) => !m.leftOn).length} people</span>
                   {!closed && (
-                    <label className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                    <div className="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-600 dark:text-zinc-400">
                       <Crown className="h-3 w-3 text-amber-500" /> Leader
-                      <select
+                      <SmoothSelect
                         value={g.leaderEnrollmentId ?? ''}
                         disabled={busy}
-                        onChange={(e) => void setLeader(g.id, e.target.value || null)}
-                        className="h-7 rounded-md border border-zinc-200 bg-white px-2 text-[11px] dark:border-zinc-700 dark:bg-zinc-900"
-                      >
-                        <option value="">Not appointed</option>
-                        {g.members.filter((m) => !m.leftOn).map((m) => (
-                          <option key={m.enrollmentId} value={m.enrollmentId}>{m.name}</option>
-                        ))}
-                      </select>
-                    </label>
+                        onChange={(v) => void setLeader(g.id, v || null)}
+                        options={[
+                          { value: '', label: 'Not appointed' },
+                          ...g.members.filter((m) => !m.leftOn).map((m) => ({ value: m.enrollmentId, label: m.name })),
+                        ]}
+                        aria-label={`Leader of group ${g.groupNo}`}
+                        triggerClassName="h-7 rounded-md px-2 text-[11px]"
+                      />
+                    </div>
                   )}
                 </div>
 

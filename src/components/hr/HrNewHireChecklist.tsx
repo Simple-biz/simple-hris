@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { cn } from '@/lib/utils';
 import {
   getHrTabCache,
@@ -74,17 +75,13 @@ const COLUMNS = [
  *  these so Bulk Invite can segregate hires into the matching per-country box. */
 const COUNTRY_OPTIONS = ONBOARDING_COUNTRIES.map((c) => c.name);
 
-// Native <option> popups don't inherit the app's dark theme — without an
-// explicit dark background, the (light) option text renders on a white popup
-// and is invisible. Pair this on every <option> with `color-scheme` on the
-// <select> so both the closed control and the open list read correctly.
-const SELECT_OPTION_CLASS = 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100';
-const SELECT_SCHEME_CLASS = '[color-scheme:light] dark:[color-scheme:dark]';
-
-// Shared styling for the filter-bar dropdowns (neutral border so they read as
-// "view" controls, distinct from the emerald bulk-apply bar).
-const FILTER_SELECT_CLASS =
-  'h-8 min-w-[8.5rem] rounded-lg border border-zinc-200 bg-white px-2 text-[13px] text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
+// SmoothSelect triggers (ui-standards § 9.4 — the themed menu, never the browser's
+// native popup, which ignored dark mode). The bulk-apply bar's carry its emerald
+// border; the filter bar's stay neutral so they read as "view" controls.
+const BULK_SELECT_TRIGGER =
+  'h-8 min-w-[9rem] border-emerald-200 px-2 text-[13px] font-normal text-zinc-800 dark:border-emerald-800 dark:bg-zinc-900 dark:text-zinc-100';
+const FILTER_SELECT_TRIGGER =
+  'h-8 min-w-[8.5rem] px-2 text-[13px] font-normal text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 
 type FieldKey = (typeof COLUMNS)[number]['key'];
 
@@ -1465,20 +1462,16 @@ export default function HrNewHireChecklist({
 
               <span className="ml-1 text-[11px] text-zinc-600 dark:text-zinc-400">Dept</span>
               {departments.length > 0 ? (
-                <select
+                <SmoothSelect
                   value={bulkDept}
-                  onChange={(e) => setBulkDept(e.target.value)}
+                  onChange={setBulkDept}
+                  options={[{ value: '', label: 'Choose…' }, ...departments.map((d) => ({ value: d, label: formatDeptLabel(d) || d }))]}
+                  searchable={departments.length > 8}
+                  searchPlaceholder="Search departments…"
                   aria-label="Department to apply to selected rows"
-                  className={cn(
-                    'h-8 min-w-[9rem] rounded-lg border border-emerald-200 bg-white px-2 text-[13px] text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-300 dark:border-emerald-800 dark:bg-zinc-900 dark:text-zinc-100',
-                    SELECT_SCHEME_CLASS,
-                  )}
-                >
-                  <option value="" className={SELECT_OPTION_CLASS}>Choose…</option>
-                  {departments.map((d) => (
-                    <option key={d} value={d} className={SELECT_OPTION_CLASS}>{formatDeptLabel(d) || d}</option>
-                  ))}
-                </select>
+                  align="start"
+                  triggerClassName={BULK_SELECT_TRIGGER}
+                />
               ) : (
                 <input
                   value={bulkDept}
@@ -1500,20 +1493,14 @@ export default function HrNewHireChecklist({
               </Button>
 
               <span className="ml-2 text-[11px] text-zinc-600 dark:text-zinc-400">Country</span>
-              <select
+              <SmoothSelect
                 value={bulkCountry}
-                onChange={(e) => setBulkCountry(e.target.value)}
+                onChange={setBulkCountry}
+                options={[{ value: '', label: 'Choose…' }, ...COUNTRY_OPTIONS.map((c) => ({ value: c, label: c }))]}
                 aria-label="Country to apply to selected rows"
-                className={cn(
-                  'h-8 min-w-[9rem] rounded-lg border border-emerald-200 bg-white px-2 text-[13px] text-zinc-800 outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-300 dark:border-emerald-800 dark:bg-zinc-900 dark:text-zinc-100',
-                  SELECT_SCHEME_CLASS,
-                )}
-              >
-                <option value="" className={SELECT_OPTION_CLASS}>Choose…</option>
-                {COUNTRY_OPTIONS.map((c) => (
-                  <option key={c} value={c} className={SELECT_OPTION_CLASS}>{c}</option>
-                ))}
-              </select>
+                align="start"
+                triggerClassName={BULK_SELECT_TRIGGER}
+              />
               <Button
                 type="button"
                 size="sm"
@@ -1580,46 +1567,44 @@ export default function HrNewHireChecklist({
               </span>
 
               <span className="ml-1 text-[11px] text-zinc-600 dark:text-zinc-400">Dept</span>
-              <select
+              <SmoothSelect
                 value={filterDept}
-                onChange={(e) => setFilterDept(e.target.value)}
+                onChange={setFilterDept}
                 disabled={filterOptions.departments.length === 0}
+                options={[
+                  { value: '', label: 'All departments' },
+                  ...filterOptions.departments.map((d) => ({ value: d, label: formatDeptLabel(d) || d })),
+                ]}
+                searchable={filterOptions.departments.length > 8}
+                searchPlaceholder="Search departments…"
                 aria-label="Filter by department"
-                className={cn(FILTER_SELECT_CLASS, SELECT_SCHEME_CLASS)}
-              >
-                <option value="" className={SELECT_OPTION_CLASS}>All departments</option>
-                {filterOptions.departments.map((d) => (
-                  <option key={d} value={d} className={SELECT_OPTION_CLASS}>{formatDeptLabel(d) || d}</option>
-                ))}
-              </select>
+                align="start"
+                triggerClassName={FILTER_SELECT_TRIGGER}
+              />
 
               <span className="ml-2 text-[11px] text-zinc-600 dark:text-zinc-400">Country</span>
-              <select
+              <SmoothSelect
                 value={filterCountry}
-                onChange={(e) => setFilterCountry(e.target.value)}
+                onChange={setFilterCountry}
                 disabled={filterOptions.countries.length === 0}
+                options={[{ value: '', label: 'All countries' }, ...filterOptions.countries.map((c) => ({ value: c, label: c }))]}
                 aria-label="Filter by country"
-                className={cn(FILTER_SELECT_CLASS, SELECT_SCHEME_CLASS)}
-              >
-                <option value="" className={SELECT_OPTION_CLASS}>All countries</option>
-                {filterOptions.countries.map((c) => (
-                  <option key={c} value={c} className={SELECT_OPTION_CLASS}>{c}</option>
-                ))}
-              </select>
+                align="start"
+                triggerClassName={FILTER_SELECT_TRIGGER}
+              />
 
               <span className="ml-2 text-[11px] text-zinc-600 dark:text-zinc-400">Hired By</span>
-              <select
+              <SmoothSelect
                 value={filterHiredBy}
-                onChange={(e) => setFilterHiredBy(e.target.value)}
+                onChange={setFilterHiredBy}
                 disabled={filterOptions.hiredBy.length === 0}
+                options={[{ value: '', label: 'Anyone' }, ...filterOptions.hiredBy.map((h) => ({ value: h, label: h }))]}
+                searchable={filterOptions.hiredBy.length > 8}
+                searchPlaceholder="Search recruiters…"
                 aria-label="Filter by who hired"
-                className={cn(FILTER_SELECT_CLASS, SELECT_SCHEME_CLASS)}
-              >
-                <option value="" className={SELECT_OPTION_CLASS}>Anyone</option>
-                {filterOptions.hiredBy.map((h) => (
-                  <option key={h} value={h} className={SELECT_OPTION_CLASS}>{h}</option>
-                ))}
-              </select>
+                align="start"
+                triggerClassName={FILTER_SELECT_TRIGGER}
+              />
 
               {anyFilterActive && (
                 <>

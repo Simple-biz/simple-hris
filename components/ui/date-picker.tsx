@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useEscapingPopup } from '@/components/ui/popup-layer';
 
 /* ------------------------------------------------------------------ */
 /* Date helpers (ISO "YYYY-MM-DD" strings, local time — no libraries)  */
@@ -94,11 +95,30 @@ const DEFAULT_GRID = resolveGridAccent(DEFAULT_ACCENT);
 /* Popover shell: outside-click / Escape close + edge-aware placement  */
 /* ------------------------------------------------------------------ */
 
+/** In place the panel sits 8px off the trigger (`mt-2` / `mb-2`). */
+const PANEL_GAP = 8;
+
 function usePickerPopover(panelWidthPx: number) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<{ up: boolean; right: boolean }>({ up: false, right: false });
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // In place unless a clipping ancestor (a scrolling dialog body, an overflow-hidden
+  // card) would cut the calendar off — then it moves to a layer before it paints.
+  const layer = useEscapingPopup({
+    open,
+    anchorRef: rootRef,
+    panelRef,
+    align: placement.right ? 'end' : 'start',
+    gap: PANEL_GAP,
+    inFlowBox: (a, w, h) => {
+      const top = placement.up ? a.top - PANEL_GAP - h : a.bottom + PANEL_GAP;
+      const left = placement.right ? a.right - w : a.left;
+      return { top, left, right: left + w, bottom: top + h };
+    },
+  });
 
   const openPanel = () => {
     const rect = rootRef.current?.getBoundingClientRect();
@@ -109,6 +129,7 @@ function usePickerPopover(panelWidthPx: number) {
         right: rect.left + panelWidthPx > window.innerWidth - 16,
       });
     }
+    layer.beginOpen();
     setOpen(true);
   };
   const closePanel = (refocus = false) => {
@@ -119,7 +140,10 @@ function usePickerPopover(panelWidthPx: number) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) closePanel();
+      const t = e.target as Node;
+      // An escaped panel lives outside rootRef; a click in it is still "inside".
+      if (rootRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      closePanel();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closePanel(true);
@@ -133,18 +157,29 @@ function usePickerPopover(panelWidthPx: number) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  return { open, openPanel, closePanel, placement, rootRef, triggerRef };
+  return { open, openPanel, closePanel, placement, rootRef, triggerRef, panelRef, layer };
 }
 
-const panelClass = (up: boolean, right: boolean) =>
-  cn(
-    'absolute z-50 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl shadow-zinc-900/10',
+type PickerPopover = ReturnType<typeof usePickerPopover>;
+
+/** Panel chrome. In place it is pinned with `top-full`/`bottom-full` + `left-0`/`right-0`;
+ *  escaped, `layer.style` positions it and those classes would fight it. */
+const panelClass = ({ placement, layer }: PickerPopover) => {
+  const up = layer.escaped ? layer.up : placement.up;
+  return cn(
+    'z-50 rounded-xl border border-zinc-200 bg-white p-3 shadow-xl shadow-zinc-900/10',
     'dark:border-zinc-800 dark:bg-zinc-950 dark:shadow-black/40',
     'motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-150',
-    up ? 'bottom-full mb-2 motion-safe:slide-in-from-bottom-1' : 'top-full mt-2 motion-safe:slide-in-from-top-1',
-    right ? 'right-0' : 'left-0',
+    up ? 'motion-safe:slide-in-from-bottom-1' : 'motion-safe:slide-in-from-top-1',
+    layer.escaped
+      ? 'pointer-events-auto'
+      : cn('absolute', up ? 'bottom-full mb-2' : 'top-full mt-2', placement.right ? 'right-0' : 'left-0'),
     'max-w-[calc(100vw-2rem)]',
   );
+};
+
+/** Render the open panel in place, or in its layer once it has escaped. */
+const placePanel = ({ layer }: PickerPopover, panel: React.ReactNode) => (layer.escaped ? layer.portal(panel) : panel);
 
 const navBtnClass = (focusRing: string) =>
   cn(
@@ -361,8 +396,8 @@ export function DatePicker({
   'aria-label': ariaLabel,
   'aria-invalid': ariaInvalid,
 }: DatePickerProps) {
-  const { open, openPanel, closePanel, placement, rootRef, triggerRef } = usePickerPopover(304);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const popover = usePickerPopover(304);
+  const { open, openPanel, closePanel, rootRef, triggerRef, panelRef } = popover;
   const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [view, setView] = useState<PaneView>('days');
   const [focusIso, setFocusIso] = useState<string | null>(null);
@@ -477,8 +512,8 @@ export function DatePicker({
         />
       )}
 
-      {open && (
-        <div ref={panelRef} role="dialog" aria-label="Choose a date" className={cn(panelClass(placement.up, placement.right), 'w-[19rem]')}>
+      {open && placePanel(popover,
+        <div ref={panelRef} role="dialog" aria-label="Choose a date" style={popover.layer.style} className={cn(panelClass(popover), 'w-[19rem]')}>
           {/* Header: month/year drill-down + paging */}
           <div className="mb-1 flex items-center justify-between">
             <button
@@ -628,7 +663,7 @@ export function DatePicker({
               <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{value ? formatDay(value) : ''}</span>
             )}
           </div>
-        </div>
+        </div>,
       )}
     </div>
   );
@@ -696,8 +731,8 @@ export function DateRangePicker({
   className,
   title,
 }: DateRangePickerProps) {
-  const { open, openPanel, closePanel, placement, rootRef, triggerRef } = usePickerPopover(576);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const popover = usePickerPopover(576);
+  const { open, openPanel, closePanel, rootRef, triggerRef, panelRef } = popover;
   const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(new Date()));
   // First click of an in-progress selection (null = none pending / range complete).
   const [pendingStart, setPendingStart] = useState<string | null>(null);
@@ -828,12 +863,13 @@ export function DateRangePicker({
         )}
       </button>
 
-      {open && (
+      {open && placePanel(popover,
         <div
           ref={panelRef}
           role="dialog"
           aria-label="Choose a date range"
-          className={cn(panelClass(placement.up, placement.right), 'w-[19rem] sm:w-[36rem]')}
+          style={popover.layer.style}
+          className={cn(panelClass(popover), 'w-[19rem] sm:w-[36rem]')}
         >
           {/* Presets */}
           {presets.length > 0 && (
@@ -931,7 +967,7 @@ export function DateRangePicker({
               </button>
             )}
           </div>
-        </div>
+        </div>,
       )}
     </div>
   );

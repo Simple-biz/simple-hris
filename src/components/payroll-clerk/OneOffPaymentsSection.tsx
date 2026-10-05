@@ -39,6 +39,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Clock, Loader2, RefreshCw, RotateCcw, Send, Trash2, Wallet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import {
   Dialog,
   DialogContent,
@@ -219,18 +220,16 @@ function PendingOneOffCard({
         <AmountBlock php={row.amount_php} usd={row.amount_usd} />
         <div className="flex items-center gap-2">
           <label className="sr-only" htmlFor={`oneoff-proc-${row.id}`}>Payment processor</label>
-          <select
-            id={`oneoff-proc-${row.id}`}
-            value={processor ?? ''}
-            onChange={(e) => onProcessorChange(e.target.value as ProcessorId)}
-            className="h-8 rounded-md border border-violet-200 bg-violet-50/60 px-2 text-[12px] font-medium text-violet-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200 dark:border-violet-800/40 dark:bg-violet-950/20 dark:text-violet-200"
-            title="Choose which processor to pay through"
-          >
-            {!processor && <option value="" disabled>No rail on file — choose one</option>}
-            {DISPATCH_PROCESSORS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
+          <div title="Choose which processor to pay through">
+            <SmoothSelect<ProcessorId>
+              id={`oneoff-proc-${row.id}`}
+              value={processor ?? null}
+              onChange={onProcessorChange}
+              placeholder="No rail on file — choose one"
+              options={DISPATCH_PROCESSORS.map((p) => ({ value: p.id, label: p.label }))}
+              triggerClassName="h-8 rounded-md border-violet-200 bg-violet-50/60 px-2 text-[12px] text-violet-800 dark:border-violet-800/40 dark:bg-violet-950/20 dark:text-violet-200"
+            />
+          </div>
           <Button
             type="button"
             size="sm"

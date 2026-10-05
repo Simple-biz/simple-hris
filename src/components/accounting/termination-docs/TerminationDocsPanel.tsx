@@ -75,6 +75,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/ui/date-picker';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import { Input } from '@/components/ui/input';
 import {
   Dialog,
@@ -2035,20 +2036,19 @@ export default function TerminationDocsPanel({
                                     className="h-9 border-zinc-200 bg-white text-sm dark:border-zinc-800 dark:bg-zinc-900/60"
                                   />
                                 ) : field === 'reason' ? (
-                                  <select
+                                  <SmoothSelect
                                     id={inputId}
                                     value={raw}
-                                    onChange={(e) => setDraftField(field, e.target.value)}
+                                    onChange={(v) => setDraftField(field, v)}
+                                    options={[
+                                      { value: '', label: 'Choose a reason…' },
+                                      ...TERMINATION_DEPARTURE_REASONS.map((r) => ({ value: r, label: OFFBOARD_REASON_LABELS[r] ?? r })),
+                                    ]}
                                     aria-label="Departure reason"
-                                    className="h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm text-zinc-800 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-200"
-                                  >
-                                    <option value="">Choose a reason…</option>
-                                    {TERMINATION_DEPARTURE_REASONS.map((r) => (
-                                      <option key={r} value={r}>
-                                        {OFFBOARD_REASON_LABELS[r] ?? r}
-                                      </option>
-                                    ))}
-                                  </select>
+                                    accent="orange"
+                                    align="start"
+                                    triggerClassName="rounded-md px-2 text-sm font-normal text-zinc-800 dark:text-zinc-200"
+                                  />
                                 ) : rate ? (
                                   <div className="flex items-center gap-2">
                                     {/* The currency the SERVER resolved for this
@@ -2067,34 +2067,36 @@ export default function TerminationDocsPanel({
                                         {CURRENCY_SYMBOL[rate.currency]} {rate.currency}
                                       </span>
                                     ) : (
-                                      <select
-                                        value={pickedCurrency ?? ''}
-                                        onChange={(e) => {
-                                          const next = e.target.value;
-                                          if (!rateField) return;
-                                          setCurrencyDraft((d) => {
-                                            const patch: RateCurrencyDraft = { ...d };
-                                            // Anything outside the union clears the
-                                            // pick rather than being stored: the
-                                            // route validates it again anyway, and a
-                                            // cleared pick keeps the button disabled.
-                                            patch[rateField] = isTerminationCurrency(next)
-                                              ? next
-                                              : undefined;
-                                            return patch;
-                                          });
-                                        }}
-                                        aria-label={`Currency for the ${BLANK_LABEL[field].toLowerCase()}`}
+                                      <div
+                                        className="shrink-0"
                                         title="The record does not state a currency for this rate — choose the one it was paid in."
-                                        className="h-9 shrink-0 rounded-md border border-amber-300 bg-white px-2 font-mono text-[12px] font-semibold text-zinc-700 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20 dark:border-amber-500/40 dark:bg-zinc-900/60 dark:text-zinc-200"
                                       >
-                                        <option value="">Currency…</option>
-                                        {TERMINATION_CURRENCIES.map((c) => (
-                                          <option key={c} value={c}>
-                                            {CURRENCY_SYMBOL[c]} {c}
-                                          </option>
-                                        ))}
-                                      </select>
+                                        <SmoothSelect
+                                          value={pickedCurrency ?? ''}
+                                          options={[
+                                            { value: '', label: 'Currency…' },
+                                            ...TERMINATION_CURRENCIES.map((c) => ({ value: c, label: `${CURRENCY_SYMBOL[c]} ${c}` })),
+                                          ]}
+                                          onChange={(next) => {
+                                            if (!rateField) return;
+                                            setCurrencyDraft((d) => {
+                                              const patch: RateCurrencyDraft = { ...d };
+                                              // Anything outside the union clears the
+                                              // pick rather than being stored: the
+                                              // route validates it again anyway, and a
+                                              // cleared pick keeps the button disabled.
+                                              patch[rateField] = isTerminationCurrency(next)
+                                                ? next
+                                                : undefined;
+                                              return patch;
+                                            });
+                                          }}
+                                          aria-label={`Currency for the ${BLANK_LABEL[field].toLowerCase()}`}
+                                          accent="orange"
+                                          align="start"
+                                          triggerClassName="rounded-md border-amber-300 px-2 font-mono text-[12px] font-semibold text-zinc-700 dark:border-amber-500/40 dark:text-zinc-200"
+                                        />
+                                      </div>
                                     )}
                                     <Input
                                       id={inputId}
