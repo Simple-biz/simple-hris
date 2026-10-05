@@ -161,6 +161,21 @@ leaver's address.
 `failed_to_promote` was missing from the in-flight statuses until 2026-10-05, so a
 hire whose promote failed did not hold their own address.
 
+**One-off exception (Kane, 2026-10-05):** the five hires above kept their recycled
+addresses. Every previous holder's row, in every table and on the master Sheet, was
+re-keyed onto **that person's own personal email**, and `audit_log` was left as history.
+Each hire's own rows stayed on the address:
+- `maryt@`: Tan and Tronco, via `scripts/rekey-maryt-previous-holders.mts`, applied 17:49Z.
+- `johnt@`, `justinem@`, `marial@`, `marief@`: via
+  `scripts/rekey-recycled-previous-holders.mts`, applied 18:26Z.
+
+The re-key, not the promote, is what fixes the payout. Promote **updates** an existing
+`employee_ids` row found by work email, which is how Tronco's Hurupay landed on Tan's row,
+so a previous holder's bank row left on the address would have received the hire's bank
+details. Personal email was chosen over the employee ID number because two previous
+holders (Tronco, Tamala) were merged onto someone else's row and have no ID of their own.
+The rule above still holds for every new address.
+
 **Every route that writes a work email runs one gate:** `workEmailIssueDenial`
 (`work-email-server.ts`). The routes are `set-work-email` and
 `PATCH /api/hr/pending-employees/[id]`. Before 2026-10-05 the PATCH route wrote
