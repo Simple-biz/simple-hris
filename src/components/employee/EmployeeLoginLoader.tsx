@@ -11,8 +11,8 @@ import {
 
 /**
  * "Loading your Employee Dashboard" — the card that covers the employee shell
- * from the sign-in hand-off until the Overview is on screen. The same
- * `DashboardSwitchLoader` a dashboard switch paints, with sign-in copy.
+ * from its cold mount until the Overview is on screen. The same
+ * `DashboardSwitchLoader` a dashboard switch paints, with arrival copy.
  *
  * The shell decides when it is up (`shouldLiftLoginLoader`); this only draws it
  * and fades it out. Portaled to <body> at the ViewSwitcher's layer (z-[100]) so

@@ -1,14 +1,15 @@
-# Employee sign-in loading card — "Loading your Employee Dashboard"
+# Employee loading card — "Loading your Employee Dashboard"
 
-The card that covers the employee shell from the sign-in hand-off until the Overview is really on
-screen. It is the same `DashboardSwitchLoader` a dashboard switch paints (skeleton shell behind, a
-floating orange card in front), with sign-in copy: **LOADING YOUR / Employee Dashboard**, cycling
+The card that covers the employee shell from its cold mount until the Overview is really on screen.
+It is the same `DashboardSwitchLoader` a dashboard switch paints (skeleton shell behind, a floating
+orange card in front), with arrival copy: **LOADING YOUR / Employee Dashboard**, cycling
 *Loading your workspace · Fetching your hours · Preparing your pay week · Almost ready*. Every
-employee sees it once per sign-in. Shipped 2026-10-05 (`git log -- src/lib/employee/login-loader.ts`).
+employee sees it each time the dashboard loads fresh. Shipped 2026-10-05
+(`git log -- src/lib/employee/login-loader.ts`).
 
 Kane, 2026-10-05: *"a loading employee dashboard Modal as the Employee Dashboard is loading similar
-to switching tabs but this one is the first one when the person logs in"*. Before it, the hand-off
-went white veil → the Overview's inline skeleton, which clears on the essentials load while the
+to switching tabs but this one is the first one when the person logs in"*. Before it, arriving at the
+shell went straight to the Overview's inline skeleton, which clears on the essentials load while the
 selected week's hours are still in flight.
 
 ## Key files
@@ -21,19 +22,33 @@ selected week's hours are still in flight.
 | Mount, latch, ceiling timer, Penny `quiet` | `src/components/employee/EmployeeApp.tsx` |
 | The ready signal (`onFirstPaintReady`) | `src/components/employee/EmployeeDashboard.tsx` |
 | The shared card (`eyebrow` / `statusMessages` props) | `src/components/common/DashboardSwitchLoader.tsx` |
-| The baton it keys on | `app/login/page.tsx` (`hris_post_login`, set only for `/employee` destinations) |
+| The hard-load fallback (same card before the shell exists) | `app/employee/page.tsx` (`EmployeeShellFallback`) |
 
-## It shows on the sign-in hand-off only
+## It shows on EVERY cold mount of the shell — never only on the sign-in baton
 
-The shell mounts it only while `revealFromLogin` is true — the one-shot `hris_post_login` baton the
-login page sets before `router.replace('/employee…')`, the same baton the white veil reads. `EmployeeApp`
-clears the baton on mount, so **a refresh never shows the card. That is not a bug**: a refresh paints
-from the session cache ([employee-dashboard-cache](employee-dashboard-cache.md)), and a card over a
-painted dashboard would hide data that is already there. Signing in to another dashboard first
-(Accounting, Manager…) never sets the baton either, and neither does the login page's fallback
-(`router.replace('/employee?email=…')` when the role lookup never resolved a destination) — that path
-gets neither veil nor card. The latch state starts lifted on every non-login
-mount (`useState(!revealFromLogin)`), so nothing else in the shell can see the card as up.
+`EmployeeLoginLoader` is always mounted in `EmployeeApp` and the latch starts down
+(`useState(false)`), so the card is up whenever the shell mounts: a fresh Google sign-in, opening the
+site already signed in, a direct link, F5, or arriving from another dashboard. **Tab switches inside
+the shell never show it** — the shell keeps every visited tab mounted and only swaps which one is
+visible, so nothing remounts.
+
+**Do not re-key it on `hris_post_login`.** It first shipped that way and Kane could not find it
+(*"So where is the loading?"*, same day): someone already signed in reaches the dashboard via `/` →
+`/employee` (`app/page.tsx`), which sets no baton, so almost nobody ever saw the card. The reason
+given for the baton was also false: it claimed a refresh paints from the session cache
+([employee-dashboard-cache](employee-dashboard-cache.md)) and the card would hide it, but the
+Overview's `if (loading)` skeleton is **not** cache-seeded, so every cold mount starts on a skeleton
+and the card hides nothing real. The baton still drives only the white veil, which continues the
+sign-in video's closing fade and lifts to reveal the card.
+
+On a hard load, `app/employee/page.tsx`'s Suspense fallback paints the same card (same copy) before
+the shell exists, so the first paint is the card rather than a bare spinner. The fallback's card and
+the shell's are two mounts, so the card's entry animation and progress bar restart once at the
+hand-over.
+
+Arriving from another dashboard reads *"Switching to Employee Dashboard"* (the ViewSwitcher's card
+and the route's `loading.tsx`), then this card until the Overview is ready. The switch card covers
+the route load; this one covers the data load.
 
 ## It lifts when the Overview is really on screen — not when `loading` clears
 
@@ -57,12 +72,12 @@ selected-file effect's `finally`, and the essentials effect's `finally` when no 
 `shouldLiftLoginLoader` lifts on **any** of four reasons; none of them holds the card over another:
 
 1. the Overview reported (above);
-2. `LOGIN_LOADER_MAX_MS` (15s) passed since the shell mounted — a hung fetch;
+2. `LOGIN_LOADER_MAX_MS` (15s) passed since the shell mounted — a hung fetch (armed on every mount);
 3. the shell is on another tab (the Pages overlay hid Overview and the shell bounced);
 4. Overview's page visibility is not `visible` (under construction renders the placeholder, which
    never reports).
 
-**And it latches** (`loginLoaderLifted`): once lifted, it never comes back. Without the latch, a card
+**And it latches** (`loginLoaderLifted`): once lifted, it never comes back for that mount. Without the latch, a card
 lifted by a bounce would drop back over the page the moment Overview became visible again before its
 fetches finished. The lift is computed in the same render the reason appears (no extra frame of
 card); the effect only makes it stick.
@@ -99,18 +114,19 @@ inside the ~22s auto-hide window.
 `DashboardSwitchLoader` gained optional `eyebrow` (default `'Switching to'`) and `statusMessages`
 (default its original four lines). Every dashboard's `loading.tsx` and the ViewSwitcher pass neither,
 so the switch renders exactly as before; a test walks `src/` and `app/` and fails if anything but
-`EmployeeLoginLoader` overrides the eyebrow. Colors still come from `TONES.employee` — do not add
+`EmployeeLoginLoader` and the `/employee` fallback overrides the eyebrow. Colors still come from `TONES.employee` — do not add
 tone overrides here; [ui-standards § 14.6](../design/ui-standards.md) owns them and requires complete
 literal class strings.
 
-**What looks like a gap but is out of scope:** during the login `router.replace`, the route-level
-`app/employee/loading.tsx` may paint the stock *"Switching to Employee Dashboard"* for a moment before
-the shell mounts. It is the shared route loader every switch uses and is server-rendered, so it cannot
-read the baton without risking a hydration mismatch. It was left alone.
+**What looks like a gap but is out of scope:** during any client navigation into `/employee` (from
+`/login`, from `/`, from another dashboard) the route-level `app/employee/loading.tsx` may paint the
+stock *"Switching to Employee Dashboard"* for a moment before the shell mounts. It is the shared route
+loader every switch uses, and the ViewSwitcher's click card hands off to it as the same component
+(ui-standards § 4.1). It was left alone.
 
 ## Deploy notes
 
 **No migration.** No env vars, no n8n, no new fetch or route.
-Verified by `tsc` (0 errors in `src/` + `app/`) and 496 tests across the employee, Penny and
-switch-loader suites — **no browser click-through** (signing in needs Google SSO, unavailable in the
-building session). Kane's live sign-in is the remaining check: **PENDING**.
+Verified by `tsc` (0 errors in `src/` + `app/`) and the employee, Penny and switch-loader suites —
+**no browser click-through** (signing in needs Google SSO, unavailable in the building session).
+Kane's live look (open or refresh `/employee`) is the remaining check: **PENDING**.

@@ -148,13 +148,15 @@ export default function EmployeeApp() {
   });
   const [veilLifted, setVeilLifted] = useState(false);
   const [veilDone, setVeilDone] = useState(false);
-  // Sign-in loading card ("Loading your Employee Dashboard"), up from the hand-off
-  // until the Overview reports its first real paint. Same baton as the veil, so a
-  // refresh — which paints from the session cache — never shows it. The latch
-  // starts lifted for every other mount. See docs/features/employee-login-loader.md.
+  // "Loading your Employee Dashboard" — up on EVERY cold mount of this shell (sign-in,
+  // opening the site already signed in, a direct link, F5, arriving from another
+  // dashboard) until the Overview reports its first real paint. Tab switches never
+  // remount the shell, so they never show it. Not keyed on the sign-in baton: most
+  // visits arrive via `/` → `/employee` with no baton at all.
+  // See docs/features/employee-login-loader.md.
   const [overviewReady, setOverviewReady] = useState(false);
   const [loginLoaderTimedOut, setLoginLoaderTimedOut] = useState(false);
-  const [loginLoaderLatched, setLoginLoaderLatched] = useState(!revealFromLogin);
+  const [loginLoaderLatched, setLoginLoaderLatched] = useState(false);
 
   // Google SSO profile photo — falls back through Supabase upload → Gravatar in EmployeeAvatar.
   // Only honored when the NextAuth session email matches the employee being viewed, so
@@ -272,13 +274,12 @@ export default function EmployeeApp() {
     };
   }, [revealFromLogin]);
 
-  // The sign-in card's ceiling — it lifts at LOGIN_LOADER_MAX_MS whether or not
+  // The loading card's ceiling — it lifts at LOGIN_LOADER_MAX_MS whether or not
   // the Overview reported, so a hung fetch can never trap anyone behind it.
   useEffect(() => {
-    if (!revealFromLogin) return;
     const id = window.setTimeout(() => setLoginLoaderTimedOut(true), LOGIN_LOADER_MAX_MS);
     return () => window.clearTimeout(id);
-  }, [revealFromLogin]);
+  }, []);
 
   const emailFromQuery = searchParams?.get('email') ?? null;
 
@@ -710,7 +711,7 @@ export default function EmployeeApp() {
             // Read at render time inside `shouldShowGreeting`, never by a timer —
             // the 5s fuse outlives a tab switch, so gating it there would be a
             // stale closure (see the warning in CeoChatBubble).
-            // The sign-in card is a reason too: the fuse can burn down under it,
+            // The loading card is a reason too: the fuse can burn down under it,
             // and the balloon then shows once the card lifts (inside auto-hide).
             quiet: activeTab !== 'dashboard' || loginLoaderUp,
           }}
@@ -718,10 +719,10 @@ export default function EmployeeApp() {
       )}
     </motion.div>
 
-      {/* "Loading your Employee Dashboard" — sign-in hand-off only. Kept mounted
-          while the baton is set so its fade-out can play; the latch above decides
-          when it shows. Sits under the veil, which lifts to reveal it. */}
-      {revealFromLogin && <EmployeeLoginLoader show={loginLoaderUp} />}
+      {/* "Loading your Employee Dashboard" — every cold mount of the shell. Always
+          mounted so its fade-out can play; the latch above decides when it shows.
+          On the sign-in hand-off it sits under the veil, which lifts to reveal it. */}
+      <EmployeeLoginLoader show={loginLoaderUp} />
 
       {/* Matched white veil for the sign-in hand-off: starts opaque (continuing the video's
           closing fade), then lifts to reveal the already-laid-out shell so nothing pops in.

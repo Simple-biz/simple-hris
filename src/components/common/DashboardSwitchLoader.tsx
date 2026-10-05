@@ -29,9 +29,10 @@ import { cn } from '@/lib/utils';
  * its own dashboard from the `view` prop the route passes, since the switcher's
  * in-flight state lives on the outgoing page and is gone by the time this mounts.
  *
- * The employee sign-in hand-off reuses it as "Loading your Employee Dashboard"
- * (`EmployeeLoginLoader`, docs/features/employee-login-loader.md) — the only
- * caller that passes `eyebrow` / `statusMessages`.
+ * The employee shell reuses it as "Loading your Employee Dashboard" on every
+ * cold mount (`EmployeeLoginLoader`, plus the `/employee` Suspense fallback —
+ * docs/features/employee-login-loader.md), the only callers that pass
+ * `eyebrow` / `statusMessages`.
  */
 
 const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> = {
@@ -235,8 +236,9 @@ export default function DashboardSwitchLoader({
    *  set (e.g. payroll-clerk) and pass `label` instead. */
   view?: AppView;
   label?: string;
-  /** Small caps above the title. Only the employee sign-in card
-   *  (`EmployeeLoginLoader`) overrides it — "Switching to" is false there. */
+  /** Small caps above the title. Only the employee loading card
+   *  (`EmployeeLoginLoader` + the `/employee` fallback) overrides it —
+   *  "Switching to" is false on arrival. */
   eyebrow?: string;
   /** The cycling status line. Same override, same reason. */
   statusMessages?: readonly string[];

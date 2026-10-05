@@ -48,3 +48,17 @@ week's hours are still in flight.
 
 - [x] `npx tsc --noEmit` · `node --import tsx --test src/lib/employee/login-loader.test.ts`
 - [x] `docs/features/employee-login-loader.md` + INDEX row + memory `employee-login-loader`
+
+## Revision 1 — every cold mount (same day)
+
+Kane, after trying it: *"So where is the loading ? … modal?"*. The card was keyed on the
+`hris_post_login` baton, which only a fresh Google sign-in sets; a person already signed in reaches
+the dashboard via `/` → `/employee` (`app/page.tsx`) with no baton. CHOSEN 1's premise ("a refresh
+paints from cache") was also false: the Overview's `if (loading)` skeleton is not cache-seeded.
+
+- [x] `EmployeeApp.tsx` — `<EmployeeLoginLoader>` always mounted, latch starts `false`, ceiling armed
+  on every mount. The veil stays baton-only.
+- [x] `app/employee/page.tsx` — the Suspense fallback paints the same card instead of a bare spinner.
+- [x] `login-loader.test.ts` — the baton-only pin replaced by an every-mount pin and a no-spinner
+  fallback pin; the eyebrow-override allowlist gains `app/employee/page.tsx`.
+- [x] Doc, INDEX row, ui-standards § 14.6, memory rewritten to the new rule.

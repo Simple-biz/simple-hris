@@ -1,14 +1,20 @@
 import { Suspense } from 'react';
 import EmployeeApp from '@/components/employee/EmployeeApp';
+import DashboardSwitchLoader from '@/components/common/DashboardSwitchLoader';
+import { LOGIN_LOADER_EYEBROW, LOGIN_LOADER_STATUS_MESSAGES } from '@/lib/employee/login-loader';
 
+/**
+ * What a hard load paints before the shell exists: the same "Loading your
+ * Employee Dashboard" card the shell then holds until the Overview is on screen
+ * (docs/features/employee-login-loader.md) — not a bare spinner in between.
+ */
 function EmployeeShellFallback() {
   return (
-    <div className="flex h-screen items-center justify-center bg-white dark:bg-[#0d1117]">
-      <div
-        className="h-8 w-8 animate-spin rounded-full border-2 border-orange-500 border-t-transparent"
-        aria-hidden
-      />
-    </div>
+    <DashboardSwitchLoader
+      view="employee"
+      eyebrow={LOGIN_LOADER_EYEBROW}
+      statusMessages={LOGIN_LOADER_STATUS_MESSAGES}
+    />
   );
 }
 

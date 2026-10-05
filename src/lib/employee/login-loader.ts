@@ -1,19 +1,22 @@
 /**
  * The "Loading your Employee Dashboard" card that covers the employee shell
- * from the sign-in hand-off until the Overview is really on screen.
+ * from its cold mount until the Overview is really on screen.
  *
  * Kane, 2026-10-05: *"a loading employee dashboard Modal as the Employee
  * Dashboard is loading similar to switching tabs but this one is the first one
  * when the person logs in"*. The dashboard switch already had one
  * (`DashboardSwitchLoader`, painted by `ViewSwitcher` and every `loading.tsx`);
- * the sign-in hand-off went white veil → the Overview's inline skeleton instead.
+ * arriving at the employee shell went straight to the Overview's inline skeleton.
  *
  * Three rules this module encodes, each a way the card could go wrong:
  *
- * 1. **It shows on the sign-in hand-off only** — the `hris_post_login` baton the
- *    login page sets. A refresh already paints from the session cache
- *    (`docs/features/employee-dashboard-cache.md`), and a card over a painted
- *    dashboard would hide data that is already there.
+ * 1. **It shows on EVERY cold mount of the shell, never only on the sign-in
+ *    baton.** It first shipped keyed on `hris_post_login` and Kane could not
+ *    find it (*"So where is the loading?"*): a person already signed in reaches
+ *    the dashboard via `/` → `/employee` (app/page.tsx), which sets no baton. The
+ *    card hides nothing real — the Overview's `if (loading)` skeleton is not
+ *    cache-seeded, so a cold mount always starts on a skeleton. Tab switches
+ *    inside the shell never remount it, so they never show the card.
  * 2. **It never traps anyone.** Every way the Overview can fail to report ready
  *    has its own lift: the Overview is not the tab on screen (the Pages overlay
  *    hid it and the shell bounced), it is under construction (the placeholder
@@ -42,7 +45,7 @@ export const LOGIN_LOADER_FADE_S = 0.35;
 
 /**
  * Small caps above the title. The switch loader says "Switching to", which is
- * false at sign-in — nobody is switching from anything.
+ * false on arrival — nobody is switching from anything.
  */
 export const LOGIN_LOADER_EYEBROW = 'Loading your';
 

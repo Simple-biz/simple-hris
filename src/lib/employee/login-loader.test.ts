@@ -69,10 +69,20 @@ const APP = read('src/components/employee/EmployeeApp.tsx');
 const DASHBOARD = read('src/components/employee/EmployeeDashboard.tsx');
 const LOADER = read('src/components/employee/EmployeeLoginLoader.tsx');
 
-test('the shell mounts the card on the sign-in baton only — a refresh never shows it', () => {
-  assert.match(APP, /\{revealFromLogin && <EmployeeLoginLoader show=\{loginLoaderUp\} \/>\}/);
-  assert.match(APP, /useState\(!revealFromLogin\)/, 'every non-login mount starts latched lifted');
+test('the shell shows the card on EVERY cold mount — never gated on the sign-in baton', () => {
+  // Most visits arrive via `/` → `/employee` (app/page.tsx) with no baton at all;
+  // gating on it is what made the card invisible on 2026-10-05 ("where is the loading?").
+  assert.match(APP, /\n\s*<EmployeeLoginLoader show=\{loginLoaderUp\} \/>\n/);
+  assert.doesNotMatch(APP, /revealFromLogin && <EmployeeLoginLoader/);
+  assert.match(APP, /const \[loginLoaderLatched, setLoginLoaderLatched\] = useState\(false\);/);
   assert.equal(APP.match(/<EmployeeLoginLoader\b/g)?.length, 1);
+});
+
+test('a hard load paints the same card before the shell exists, not a bare spinner', () => {
+  const page = read('app/employee/page.tsx');
+  assert.match(page, /<Suspense fallback=\{<EmployeeShellFallback \/>\}>/);
+  assert.match(page, /eyebrow=\{LOGIN_LOADER_EYEBROW\}/);
+  assert.doesNotMatch(page, /animate-spin/);
 });
 
 test('the shell hears the Overview, and Penny stays quiet while the card is up', () => {
@@ -94,9 +104,11 @@ test('no minimum display time — the only timer is the ceiling', () => {
   assert.deepEqual(appTimers, [
     'setTimeout(() => setLoginLoaderTimedOut(true), LOGIN_LOADER_MAX_MS)',
   ]);
+  // The ceiling is armed on every mount, like the card — not behind the baton.
+  assert.match(APP, /LOGIN_LOADER_MAX_MS\);\n\s*return \(\) => window\.clearTimeout\(id\);\n\s*\}, \[\]\);/);
 });
 
-test('the dashboard switch keeps its own copy — only the sign-in card overrides it', () => {
+test('the dashboard switch keeps its own copy — only the employee loading card overrides it', () => {
   const switchLoader = read('src/components/common/DashboardSwitchLoader.tsx');
   assert.match(switchLoader, /eyebrow = 'Switching to'/);
   const overriders: string[] = [];
@@ -112,5 +124,8 @@ test('the dashboard switch keeps its own copy — only the sign-in card override
   };
   walk('src');
   walk('app');
-  assert.deepEqual(overriders, ['src/components/employee/EmployeeLoginLoader.tsx']);
+  assert.deepEqual(overriders.sort(), [
+    'app/employee/page.tsx',
+    'src/components/employee/EmployeeLoginLoader.tsx',
+  ]);
 });

@@ -312,7 +312,7 @@ interface EmployeeDashboardProps {
   /**
    * Called ONCE, the first time the Overview is really on screen: the essentials
    * load and the selected week's hours have both settled (success or failure).
-   * The shell lifts the sign-in card on it — docs/features/employee-login-loader.md.
+   * The shell lifts its loading card on it — docs/features/employee-login-loader.md.
    */
   onFirstPaintReady?: () => void;
 }
@@ -493,7 +493,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
   // One-way: true once the FIRST hours load has settled, or once the essentials
   // load settled without selecting a week (no files, or it failed). `loading`
   // alone clears a render before the selected week's hours start, which would
-  // lift the sign-in card onto the skeleton it exists to cover.
+  // lift the loading card onto the skeleton it exists to cover.
   const [firstHoursSettled, setFirstHoursSettled] = useState(false);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   // The time-of-day greeting depends on the viewer's LOCAL hour, which only
@@ -1221,7 +1221,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     return () => { cancelled = true; };
   }, [selectedFile, loadHoursData]);
 
-  // Tell the shell, once, that the Overview is really on screen — the sign-in
+  // Tell the shell, once, that the Overview is really on screen — the loading
   // card lifts on it. The ref is the once: the callback is an inline arrow in
   // the shell, so keying an effect on it alone would re-fire on every render.
   const firstPaintReportedRef = useRef(false);
