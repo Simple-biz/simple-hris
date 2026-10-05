@@ -166,6 +166,20 @@ interface EmployeeProfileProps {
    * tab's ping to rose and shows a callout guiding them to fill it in.
    */
   escalatePayment?: boolean;
+  /**
+   * Who the shell already resolved this person to be — the same name,
+   * department and ID the sidebar is showing. `null` until the shell's own
+   * fetch lands. Read ONLY while this page's roster row is still in flight, so a
+   * cold mount paints the hero instead of a skeleton; once the row lands the
+   * page's own values replace it. It paints, it never decides.
+   */
+  shellIdentity?: ShellIdentity | null;
+}
+
+export interface ShellIdentity {
+  name: string;
+  department: string | null;
+  employeeId: string | null;
 }
 
 /* ───────── Pure helpers ───────── */
@@ -804,54 +818,317 @@ function TabBar({
   );
 }
 
-function ProfileSkeleton() {
+/**
+ * The page's frame: the hero and tab bar on top, the active pane under them.
+ *
+ * The cold-load bail-out and the loaded render BOTH return this component with
+ * the same `header`, so React reconciles one tree across the `loading` flip —
+ * the hero and the tab bar mount once and stay put, and only the pane beneath
+ * them changes from skeleton to content. Two separately-written wrappers would
+ * remount the hero (replaying its entrance) and let their paddings drift apart,
+ * which is what made the old whole-page skeleton jump on arrival.
+ */
+function ProfileFrame({
+  header,
+  overlays,
+  children,
+}: {
+  header: React.ReactNode;
+  /** Modals that sit outside the content column. Absent on the skeleton render. */
+  overlays?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-white dark:bg-[#0d1117]">
-      <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 lg:px-10">
-        {/* Header — avatar + name + dept/ID + Active badge (mirrors the real header row). */}
-        <div className="flex items-center gap-4 sm:gap-6">
-          <div className="h-16 w-16 shrink-0 animate-pulse rounded-full bg-zinc-100 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800 sm:h-20 sm:w-20" />
-          <div className="min-w-0 flex-1 space-y-2">
-            <div className="h-7 w-48 animate-pulse rounded-md bg-zinc-100 dark:bg-zinc-900 sm:h-8 sm:w-64" />
-            <div className="h-3.5 w-40 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70" />
-            <div className="h-5 w-20 animate-pulse rounded-full bg-emerald-100/70 dark:bg-emerald-500/10" />
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0d1117]">
+      <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
+        {header}
+        <div className="mt-6 sm:mt-8">{children}</div>
+      </div>
+      {overlays}
+    </div>
+  );
+}
+
+/** Overview's section headings, shared by the pane and its skeleton so the two cannot drift. */
+const OVERVIEW_PERSONAL = { title: 'Personal', description: 'From the HR master roster' } as const;
+const OVERVIEW_EMPLOYMENT = {
+  title: 'Employment',
+  description: 'Authoritative source: HR roster (same as payroll)',
+} as const;
+
+/** A pulsing placeholder bar. `delay` staggers neighbouring bars so they don't pulse in lockstep. */
+function SkeletonBar({ className, delay = 0 }: { className: string; delay?: number }) {
+  return (
+    <span
+      aria-hidden
+      className={cn('block animate-pulse rounded bg-zinc-100 dark:bg-zinc-900', className)}
+      style={delay ? { animationDelay: `${delay}ms` } : undefined}
+    />
+  );
+}
+
+/**
+ * A `Row` whose label is known and whose value is still in flight. Same grid and
+ * padding as `Row`, so nothing moves when the value lands.
+ */
+function SkeletonRow({ label, width, delay }: { label: string; width: string; delay: number }) {
+  return (
+    <div className="grid grid-cols-1 items-center gap-1 border-b border-zinc-100 py-3.5 last:border-b-0 dark:border-zinc-800/40 sm:grid-cols-[10rem_1fr] sm:gap-6">
+      <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">{label}</div>
+      <div className="flex h-5 items-center">
+        <SkeletonBar className={cn('h-3.5', width)} delay={delay} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The ID card's loading state: the badge FORMING, like a picture on a bad
+ * signal trying to lock in (Kane, 2026-10-05: "make a nice animated skeleton on
+ * it please like broken television", then "Lets not make it very staticky lets
+ * make it like a jittery one where its forming").
+ * Same 372px track, CR80 aspect and `5cqw` corners as `EmployeeIdCard`, and the
+ * silhouette is the card's own layout — plate, logo, portrait, name, rule,
+ * department, record, footer band — so the column does not reflow and the
+ * placeholder is recognisably the ID, not a generic box.
+ *
+ * Four things move, all `transform` or `opacity` on their own layers:
+ * - three horizontal SLICES of the card tear sideways in short bursts, each on
+ *   its own period so the pattern never visibly repeats;
+ * - a red and a cyan copy sit just off-register and jump wider during a burst;
+ * - a scan line draws down the card, the picture being built;
+ * - the picture's strength steps up and down a little, never to nothing.
+ *
+ * Nothing flashes: every step is a small change on a low-contrast silhouette,
+ * under three per second. Like the card it never themes. Reduced motion parks
+ * it all on one aligned, still frame — the same rule as the real card's sheen.
+ */
+const ID_FORMING_CSS = `
+  @keyframes idFormSignal {
+    0%   { opacity: 0.8; }
+    21%  { opacity: 0.6; }
+    27%  { opacity: 0.86; }
+    58%  { opacity: 0.68; }
+    64%  { opacity: 0.9; }
+    100% { opacity: 0.8; }
+  }
+  /* A slice is visible ONLY mid-burst. At rest it would sit exactly over the
+     picture but without the fringe beneath it, and read as a stripe. */
+  @keyframes idFormTear {
+    0%, 7%, 13%, 45%, 53%, 80%, 85%, 100% { opacity: 0; transform: translate3d(0, 0, 0); }
+    8%    { opacity: 1; transform: translate3d(-5.5%, 0, 0); }
+    10%   { opacity: 1; transform: translate3d(3%, 0, 0); }
+    11.5% { opacity: 1; transform: translate3d(-1.5%, 0, 0); }
+    46%   { opacity: 1; transform: translate3d(7%, 0, 0); }
+    48%   { opacity: 1; transform: translate3d(-2.5%, 0, 0); }
+    50%   { opacity: 1; transform: translate3d(1.2%, 0, 0); }
+    81%   { opacity: 1; transform: translate3d(-3.5%, 0, 0); }
+    83%   { opacity: 1; transform: translate3d(2%, 0, 0); }
+  }
+  @keyframes idFormFringeRed {
+    0%, 45%, 53%, 100% { transform: translate3d(0.7%, 0, 0); }
+    46% { transform: translate3d(2.6%, 0, 0); }
+    49% { transform: translate3d(1.6%, 0.3%, 0); }
+  }
+  @keyframes idFormFringeCyan {
+    0%, 45%, 53%, 100% { transform: translate3d(-0.7%, 0, 0); }
+    46% { transform: translate3d(-2.6%, 0, 0); }
+    49% { transform: translate3d(-1.6%, -0.3%, 0); }
+  }
+  @keyframes idFormScan {
+    from { transform: translate3d(0, -100%, 0); }
+    to   { transform: translate3d(0, 2600%, 0); }
+  }
+  .id-form-signal { animation: idFormSignal 2.6s steps(1) infinite; }
+  .id-form-tear   { animation: idFormTear var(--id-form-period, 3s) steps(1) var(--id-form-delay, 0s) infinite; }
+  .id-form-red    { animation: idFormFringeRed 3.1s steps(1) infinite; }
+  .id-form-cyan   { animation: idFormFringeCyan 3.1s steps(1) infinite; }
+  .id-form-scan   { animation: idFormScan 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .id-form-signal, .id-form-tear, .id-form-red, .id-form-cyan, .id-form-scan { animation: none !important; }
+    .id-form-signal { opacity: 0.8; }
+    .id-form-tear, .id-form-red, .id-form-cyan, .id-form-scan { opacity: 0 !important; }
+  }
+`;
+
+/** The card body under the silhouette — the real card's silver ramp. */
+const ID_FORMING_BODY = 'linear-gradient(162deg, #F7F8FC 0%, #EEEFF5 48%, #E3E4EE 100%)';
+
+/**
+ * The badge's silhouette, positioned in `cqw` from `EmployeeIdCard`'s own
+ * geometry (6cqw top padding, the 46% plate, a 35cqw portrait 27cqw under the
+ * logo, the record anchored 21cqw above the bottom). `tint` paints every shape
+ * in one colour for the off-register fringe copies.
+ */
+function IdCardSilhouette({ tint }: { tint?: string }) {
+  const navy = tint ?? 'rgba(39,40,90,0.55)';
+  const ink = tint ?? 'rgba(39,40,90,0.2)';
+  const faint = tint ?? 'rgba(39,40,90,0.11)';
+  const paper = tint ?? 'rgba(255,255,255,0.92)';
+  return (
+    <>
+      <span className="absolute inset-x-0 top-0 block h-[46%]" style={{ background: navy }} />
+      <span className="absolute left-[7cqw] top-[6cqw] block h-[9.4cqw] w-[22cqw] rounded-[1.6cqw]" style={{ background: paper }} />
+      <span
+        className="absolute left-1/2 top-[42.4cqw] block h-[35cqw] w-[35cqw] -translate-x-1/2 rounded-full"
+        style={{ background: paper, boxShadow: tint ? undefined : 'inset 0 0 0 1.1cqw rgba(215,217,230,0.9)' }}
+      />
+      <span className="absolute left-1/2 top-[83cqw] block h-[6cqw] w-[54cqw] -translate-x-1/2 rounded-full" style={{ background: ink }} />
+      <span
+        className="absolute left-1/2 top-[93.2cqw] block h-[0.9cqw] w-[10cqw] -translate-x-1/2 rounded-full"
+        style={{ background: tint ?? 'rgba(242,111,7,0.7)' }}
+      />
+      <span className="absolute left-1/2 top-[97cqw] block h-[3cqw] w-[30cqw] -translate-x-1/2 rounded-full" style={{ background: faint }} />
+      <span className="absolute inset-x-[7cqw] top-[113cqw] block h-px" style={{ background: faint }} />
+      <span className="absolute left-[7cqw] top-[118cqw] block h-[3cqw] w-[60cqw] rounded-full" style={{ background: faint }} />
+      <span className="absolute left-[7cqw] top-[125.5cqw] block h-[3cqw] w-[44cqw] rounded-full" style={{ background: faint }} />
+      <span className="absolute left-[7cqw] top-[133cqw] block h-[3cqw] w-[68cqw] rounded-full" style={{ background: faint }} />
+      <span className="absolute inset-x-0 bottom-0 block h-[11%]" style={{ background: navy }} />
+    </>
+  );
+}
+
+/** The bands that tear, as [top, bottom] insets in % of the card, each on its own period and phase. */
+const ID_FORMING_TEARS: ReadonlyArray<{ inset: readonly [number, number]; period: string; delay: string }> = [
+  { inset: [17, 76], period: '2.3s', delay: '0s' },
+  { inset: [49, 44], period: '3.1s', delay: '-0.7s' },
+  { inset: [77, 17], period: '3.9s', delay: '-1.6s' },
+];
+
+function IdCardForming() {
+  return (
+    <div className="@container w-full max-w-[372px]" aria-hidden>
+      <style>{ID_FORMING_CSS}</style>
+      <div
+        className="relative isolate aspect-[54/85.6] overflow-hidden rounded-[5cqw] border border-[#DEDFEA]"
+        style={{ backgroundImage: ID_FORMING_BODY }}
+      >
+        {/* The picture, at a strength that wavers. */}
+        <div className="id-form-signal absolute inset-0">
+          <IdCardSilhouette />
+        </div>
+
+        {/* Off-register colour copies — the fringe of a picture not yet locked. */}
+        <div className="id-form-red absolute inset-0 opacity-[0.16] mix-blend-multiply">
+          <IdCardSilhouette tint="#FF3B5C" />
+        </div>
+        <div className="id-form-cyan absolute inset-0 opacity-[0.16] mix-blend-multiply">
+          <IdCardSilhouette tint="#00B8F0" />
+        </div>
+
+        {/* The tears: full copies of the card clipped to a band, so a burst
+            SHIFTS that band of the picture instead of doubling it. */}
+        {ID_FORMING_TEARS.map(({ inset: [top, bottom], period, delay }) => (
+          <div
+            key={top}
+            className="id-form-tear absolute inset-0"
+            style={
+              {
+                clipPath: `inset(${top}% 0 ${bottom}% 0)`,
+                backgroundImage: ID_FORMING_BODY,
+                '--id-form-period': period,
+                '--id-form-delay': delay,
+              } as React.CSSProperties
+            }
+          >
+            <div className="absolute inset-0 opacity-80">
+              <IdCardSilhouette />
+            </div>
+          </div>
+        ))}
+
+        {/* Scanlines — the glass, fixed and faint. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              'repeating-linear-gradient(to bottom, rgba(39,40,90,0.05) 0 1px, rgba(0,0,0,0) 1px 3px)',
+          }}
+        />
+
+        {/* The scan line drawing the picture down the card. */}
+        <div
+          className="id-form-scan absolute inset-x-0 top-0 h-[3.8%]"
+          style={{
+            backgroundImage:
+              'linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 60%, rgba(255,255,255,0.95) 82%, rgba(39,40,90,0.18) 86%, rgba(255,255,255,0) 100%)',
+          }}
+        />
+
+        {/* In the card's own gap between the department and the record, so it
+            covers none of the silhouette. */}
+        <span className="absolute inset-x-0 top-[102cqw] flex justify-center">
+          <span className="rounded-full bg-[#27285A]/85 px-[3.6cqw] py-[1.4cqw] text-[3.5cqw] font-medium tracking-[0.01em] text-white">
+            Loading your ID…
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The PANE's skeleton — never the page's. The hero and tab bar above it render
+ * for real (see `ProfileFrame`); this stands in only for the values that wait on
+ * the roster row.
+ *
+ * Overview mirrors its real layout: the section headings and row labels are
+ * fixed text, so they paint as-is and only the values pulse; the ID card keeps
+ * its 372px track and CR80 shape so the column does not reflow when the badge
+ * lands. Any other tab (a cold deep link into Compensation or Skill Sets) gets
+ * generic section cards.
+ */
+function ProfileSkeleton({ tab }: { tab: TabId }) {
+  if (tab === 'overview') {
+    return (
+      <div className="@container" aria-busy="true">
+        <span className="sr-only">Loading your profile…</span>
+        <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-[minmax(0,1fr)_372px] @4xl:items-start @4xl:gap-6">
+          <div className="min-w-0 space-y-4">
+            <Section {...OVERVIEW_PERSONAL}>
+              <SkeletonRow label="Full Name" width="w-44" delay={0} />
+              <SkeletonRow label="Work Email" width="w-56" delay={90} />
+              <SkeletonRow label="Personal Email" width="w-52" delay={180} />
+            </Section>
+            <Section {...OVERVIEW_EMPLOYMENT}>
+              <SkeletonRow label="Department" width="w-36" delay={0} />
+              <SkeletonRow label="Start Date" width="w-28" delay={90} />
+              <Row label="Status" value="Active" status="active" />
+            </Section>
+          </div>
+          <div className="flex flex-col items-center gap-5 py-2 @4xl:py-0">
+            <IdCardForming />
+            <SkeletonBar className="h-9 w-36 rounded-md" delay={120} />
+            <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Read-only, from the HR master roster. Anything missing or wrong here is
+              corrected by HR, not on this screen.
+            </p>
           </div>
         </div>
-        {/* Tab bar (Overview / Payment / Skill Sets / …). */}
-        <div className="mt-8 flex gap-1 border-b border-zinc-200 dark:border-zinc-800 sm:mt-10">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="px-4 py-3">
-              <div
-                className="h-3.5 w-20 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900"
-                style={{ animationDelay: `${i * 80}ms` }}
-              />
-            </div>
-          ))}
-        </div>
-        {/* Tab content — section cards with title + description + label/value rows. */}
-        <div className="mt-6 space-y-4 sm:mt-8">
-          {[0, 1].map((s) => (
-            <div
-              key={s}
-              className="rounded-2xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950/40"
-            >
-              <div className="h-4 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
-              <div className="mt-1 h-2.5 w-40 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70" />
-              <div className="mt-4 divide-y divide-zinc-100 dark:divide-zinc-800/60">
-                {[0, 1, 2].map((r) => (
-                  <div key={r} className="flex items-center justify-between py-3.5">
-                    <div className="h-3 w-24 animate-pulse rounded bg-zinc-100 dark:bg-zinc-900" />
-                    <div
-                      className="h-3.5 w-36 animate-pulse rounded bg-zinc-100/70 dark:bg-zinc-900/70"
-                      style={{ animationDelay: `${r * 90}ms` }}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" aria-busy="true">
+      <span className="sr-only">Loading your profile…</span>
+      {[0, 1].map((s) => (
+        <div
+          key={s}
+          className="rounded-2xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800/80 dark:bg-zinc-950/40"
+        >
+          <SkeletonBar className="h-4 w-24" />
+          <SkeletonBar className="mt-1 h-2.5 w-40 opacity-70" />
+          <div className="mt-4 divide-y divide-zinc-100 dark:divide-zinc-800/60">
+            {[0, 1, 2].map((r) => (
+              <div key={r} className="flex items-center justify-between py-3.5">
+                <SkeletonBar className="h-3 w-24" />
+                <SkeletonBar className="h-3.5 w-36 opacity-70" delay={r * 90} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -868,6 +1145,7 @@ export default function EmployeeProfile({
   onSkillSetCompletionChange,
   payrollLocked = false,
   escalatePayment = false,
+  shellIdentity = null,
 }: EmployeeProfileProps) {
   const norm = normEmail(employeeEmail) ?? employeeEmail.toLowerCase();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -898,8 +1176,9 @@ export default function EmployeeProfile({
   );
   const [bankInfo, setBankInfo] = useState<EmployeeIdRow | null>(null);
   const [bankInfoLoaded, setBankInfoLoaded] = useState(false);
-  // Whole-page skeleton ONLY while nothing is known yet. A cached identity paints
-  // at once and refreshes in place when the live fetch lands.
+  // Pane skeleton ONLY while nothing is known yet — the hero and tab bar render
+  // regardless (see ProfileFrame). A cached identity paints at once and
+  // refreshes in place when the live fetch lands.
   const [loading, setLoading] = useState(() => master === null);
   const [usdToPhpRate, setUsdToPhpRate] = useState(OFFICIAL_USD_TO_PHP_RATE);
 
@@ -969,7 +1248,7 @@ export default function EmployeeProfile({
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   // The section a deep link asked for, consumed by the Compensation and Skill
   // Sets panes. Declared HERE, with the rest of the state and ABOVE the
-  // whole-page ProfileSkeleton bail-out further down: a hook below that early
+  // ProfileSkeleton bail-out further down: a hook below that early
   // return is skipped on the cold loading render and called on the loaded one,
   // which throws and blanks the route. profile-hook-order.test.ts guards it —
   // and scans SOURCE, so do not spell that early return out literally nearby.
@@ -1598,6 +1877,18 @@ export default function EmployeeProfile({
     master?.name?.trim() || employeeEmail.split('@')[0]?.replace(/\./g, ' ') || '—';
 
   const employmentDepartment = master?.department?.trim() || null;
+
+  // What the hero prints. Once the roster row lands it is the page's own values,
+  // exactly as before. Until then it is the identity the SHELL already resolved
+  // (the sidebar is showing it) — and if the shell has not resolved one either,
+  // skeleton bars. Never the email-prefix fallback in `displayName`: on a cold
+  // mount that is a guess, and it would flip to the real name a beat later.
+  const shellName = shellIdentity?.name.trim() || null;
+  const heroIdentityPending = loading && !shellName;
+  const heroName = loading ? shellName : displayName;
+  const heroDepartment = loading ? shellIdentity?.department?.trim() || null : employmentDepartment;
+  const heroEmployeeId = loading ? shellIdentity?.employeeId?.trim() || null : master?.employee_id ?? null;
+
   // Role / Title suggestions tailored to the employee's department (falls back
   // to the general list when the department is unknown).
   const roleTitleOptions = useMemo(
@@ -1676,7 +1967,7 @@ export default function EmployeeProfile({
   };
 
   const avatarInitials = useMemo(() => {
-    const n = displayName.replace(/—/g, '').trim();
+    const n = (heroName ?? '').replace(/—/g, '').trim();
     if (n) {
       const parts = n.split(/\s+/).filter(Boolean);
       if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -1684,7 +1975,7 @@ export default function EmployeeProfile({
       return (parts[0][0] + (parts[0][1] || parts[0][0])).toUpperCase();
     }
     return employeeEmail.slice(0, 2).toUpperCase();
-  }, [displayName, employeeEmail]);
+  }, [heroName, employeeEmail]);
 
   const savePaymentDetails = async () => {
     if (payrollLocked) {
@@ -1865,7 +2156,240 @@ export default function EmployeeProfile({
     }
   };
 
-  if (loading) return <ProfileSkeleton />;
+  // ── The hero and tab bar render on EVERY pass, the cold one included ──
+  //
+  // Everything they read is declared here, above the bail-out, as plain consts.
+  // While `loading` (a cold mount: nothing cached, the roster row in flight)
+  // each "needs setup" signal is held back, because the value it would judge
+  // has not arrived and an absent row is not a missing one.
+
+  // Gated on `loading`: the roster's photo (`master.profile_photo_url`) is one
+  // of the two sources, and it is not here yet.
+  const needsProfilePhoto = !loading && !displayProfilePhotoUrl && !googlePhotoUrl;
+  // Gated on `bankInfoLoaded`, the payout row's OWN readiness — the same shape
+  // as `needsSkillSetSetup` below. Ungated, `bankInfo` is `null` for the whole
+  // round trip (that row is never cached), so the tab bar's bank dot, the
+  // Compensation strip's Payout chip and Accounting's rose escalation all told
+  // someone with saved details to add them.
+  const needsPayoutSetup =
+    bankInfoLoaded && !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
+  const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
+
+  const profileHeader = (
+    <>
+      {/* ─────────── Hero ─────────── */}
+      <motion.section
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="flex items-center gap-4 sm:gap-6"
+      >
+        <div className="group relative shrink-0">
+          {/* Pulsing ring — draws the eye to an empty placeholder so the
+              employee finishes their profile. */}
+          {needsProfilePhoto && (
+            <span
+              className="pointer-events-none absolute -inset-1 rounded-full bg-amber-400/40 motion-safe:animate-ping dark:bg-amber-400/30"
+              aria-hidden
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingPhoto || removingPhoto}
+            className={cn(
+              'relative block h-16 w-16 overflow-hidden rounded-full ring-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 sm:h-20 sm:w-20',
+              needsProfilePhoto
+                ? 'ring-2 ring-amber-400 dark:ring-amber-500'
+                : 'ring-zinc-200 hover:ring-zinc-300 dark:ring-zinc-800 dark:hover:ring-zinc-700',
+            )}
+            aria-label={needsProfilePhoto ? 'Add a profile photo' : 'Replace photograph'}
+          >
+            <EmployeeAvatar
+              photoUrl={displayProfilePhotoUrl}
+              googlePhotoUrl={googlePhotoUrl}
+              email={avatarEmail}
+              initials={avatarInitials}
+              className="absolute inset-0 h-full w-full text-xl sm:text-2xl"
+              pixelSize={192}
+            />
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+              {uploadingPhoto || removingPhoto ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Camera className="h-4 w-4" />
+              )}
+            </span>
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="sr-only"
+            aria-label="Upload profile photo"
+            onChange={onAvatarFileChange}
+            disabled={uploadingPhoto || removingPhoto}
+          />
+
+          {/* Persistent change-photo badge — always visible so the avatar
+              reads as editable whether or not a photo is set. */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingPhoto || removingPhoto}
+            className={cn(
+              'absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-sm ring-2 ring-white transition-colors disabled:opacity-60 dark:ring-[#0d1117]',
+              needsProfilePhoto
+                ? 'bg-amber-500 hover:bg-amber-600'
+                : 'bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600',
+            )}
+            title={needsProfilePhoto ? 'Add a profile photo' : 'Change photo'}
+            aria-label={needsProfilePhoto ? 'Add a profile photo' : 'Change photo'}
+          >
+            {uploadingPhoto ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Camera className="h-3 w-3" aria-hidden />
+            )}
+          </button>
+
+          {/* Remove badge — only for a manually-uploaded photo (a Google SSO
+              photo can't be deleted; readers fall back to it). */}
+          {displayProfilePhotoUrl && (
+            <button
+              type="button"
+              onClick={onAvatarRemove}
+              disabled={uploadingPhoto || removingPhoto}
+              className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-zinc-500 shadow-sm ring-1 ring-zinc-200 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-60 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+              title="Remove photo"
+              aria-label="Remove photo"
+            >
+              {removingPhoto ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Trash2 className="h-2.5 w-2.5" aria-hidden />
+              )}
+            </button>
+          )}
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          {heroIdentityPending ? (
+            <>
+              <span className="sr-only">Loading your name…</span>
+              <SkeletonBar className="h-[30px] w-48 rounded-md sm:h-[42px] sm:w-64" />
+              <SkeletonBar className="h-[19.5px] w-40 opacity-70" delay={90} />
+            </>
+          ) : (
+            <>
+              <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-zinc-900 dark:text-zinc-50 sm:text-[28px]">
+                {heroName}
+              </h1>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-zinc-500 dark:text-zinc-400">
+                {heroDepartment && (
+                  <span className="text-zinc-700 dark:text-zinc-200">{heroDepartment}</span>
+                )}
+                {heroDepartment && heroEmployeeId && (
+                  <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                )}
+                {heroEmployeeId && (
+                  <span className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
+                    ID {heroEmployeeId}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
+              <span className="relative inline-flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              </span>
+              Active
+            </span>
+            {payrollLocked && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20">
+                <Lock className="h-2.5 w-2.5" />
+                Payroll locked
+              </span>
+            )}
+          </div>
+        </div>
+
+      </motion.section>
+
+      {needsProfilePhoto && (
+        <div className="mt-6">
+          <SetupNudge
+            title="Profile photo needed"
+            description="Upload a clear profile photo so teammates and managers can recognize you across rosters."
+            action={
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingPhoto}
+              >
+                {uploadingPhoto ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Camera className="mr-1.5 h-3 w-3" />}
+                Upload
+              </Button>
+            }
+          />
+        </div>
+      )}
+
+      {/* ─────────── Error / missing roster banner ─────────── */}
+      {error && (
+        <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="leading-relaxed text-amber-900 dark:text-amber-200">{cleanErrorMessage(error)}</p>
+        </div>
+      )}
+      {/* Not while `loading`: `master` is null then because it has not arrived,
+          not because there is no roster entry. */}
+      {!loading && !master && !error && (
+        <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3 text-[12.5px] dark:border-zinc-800 dark:bg-zinc-900/50">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
+          <p className="leading-relaxed text-zinc-600 dark:text-zinc-400">
+            {rate ? (
+              <>
+                No <span className="font-medium text-zinc-700 dark:text-zinc-300">global_master_list</span> entry for{' '}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                  {employeeEmail}
+                </span>{' '}
+                — rates only. Identity will appear once HR adds you to the roster.
+              </>
+            ) : (
+              <>
+                No directory or payroll record on file for{' '}
+                <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                  {employeeEmail}
+                </span>
+                .
+              </>
+            )}
+          </p>
+        </div>
+      )}
+
+      {/* ─────────── Tabs ─────────── */}
+      <div className="mt-8 border-b border-zinc-200 dark:border-zinc-800 sm:mt-10">
+        <TabBar
+          active={activeTab}
+          onChange={setActiveTab}
+          needsPhoto={needsProfilePhoto}
+          needsBank={needsPayoutSetup}
+          needsSkillSet={needsSkillSetSetup}
+          paymentEscalated={escalatePayment && needsPayoutSetup}
+          resignPending={resignation?.status === 'pending'}
+        />
+      </div>
+    </>
+  );
+
+  if (loading) return <ProfileFrame header={profileHeader}><ProfileSkeleton tab={activeTab} /></ProfileFrame>;
 
   const personalEmail =
     bankInfo?.personal_email?.trim() ||
@@ -1880,9 +2404,6 @@ export default function EmployeeProfile({
       .join(', ') ||
     null;
 
-  const needsProfilePhoto = !displayProfilePhotoUrl && !googlePhotoUrl;
-  const needsPayoutSetup = !isPayoutComplete((bankInfo as unknown as Record<string, unknown>) ?? null);
-
   // The account the money actually lands in — the preferred slot with a
   // per-field fallback to the other one, the ONE cross-slot rule Accounting's
   // People card and Payment Dispatch's queue row both read. Fed from `bankInfo`
@@ -1894,7 +2415,6 @@ export default function EmployeeProfile({
   // A plain const, not a hook: it is a pure function of state already in scope,
   // and it is below the ProfileSkeleton bail-out where a hook would be fatal.
   const paidSlotBank: PreferredBank = pickPreferredBank(bankInfo);
-  const needsSkillSetSetup = skillSetLoaded && !hasAnySkillSetContent(skillSet);
 
   // Show the free-text title input when the employee opted into "Custom title…"
   // or when a previously-saved title isn't one of this department's suggestions.
@@ -1902,1232 +2422,8 @@ export default function EmployeeProfile({
     roleTitleCustom ||
     (!!skillSet.role_title.trim() && !roleTitleOptions.includes(skillSet.role_title));
 
-  return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-white dark:bg-[#0d1117]">
-      <div className="mx-auto w-full max-w-[1400px] px-5 pb-16 pt-8 sm:px-8 sm:pt-12 sm:pb-20 lg:px-10 lg:pt-14">
-        {/* ─────────── Hero ─────────── */}
-        <motion.section
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="flex items-center gap-4 sm:gap-6"
-        >
-          <div className="group relative shrink-0">
-            {/* Pulsing ring — draws the eye to an empty placeholder so the
-                employee finishes their profile. */}
-            {needsProfilePhoto && (
-              <span
-                className="pointer-events-none absolute -inset-1 rounded-full bg-amber-400/40 motion-safe:animate-ping dark:bg-amber-400/30"
-                aria-hidden
-              />
-            )}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploadingPhoto || removingPhoto}
-              className={cn(
-                'relative block h-16 w-16 overflow-hidden rounded-full ring-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/40 focus-visible:ring-offset-2 sm:h-20 sm:w-20',
-                needsProfilePhoto
-                  ? 'ring-2 ring-amber-400 dark:ring-amber-500'
-                  : 'ring-zinc-200 hover:ring-zinc-300 dark:ring-zinc-800 dark:hover:ring-zinc-700',
-              )}
-              aria-label={needsProfilePhoto ? 'Add a profile photo' : 'Replace photograph'}
-            >
-              <EmployeeAvatar
-                photoUrl={displayProfilePhotoUrl}
-                googlePhotoUrl={googlePhotoUrl}
-                email={avatarEmail}
-                initials={avatarInitials}
-                className="absolute inset-0 h-full w-full text-xl sm:text-2xl"
-                pixelSize={192}
-              />
-              <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                {uploadingPhoto || removingPhoto ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Camera className="h-4 w-4" />
-                )}
-              </span>
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              className="sr-only"
-              aria-label="Upload profile photo"
-              onChange={onAvatarFileChange}
-              disabled={uploadingPhoto || removingPhoto}
-            />
-
-            {/* Persistent change-photo badge — always visible so the avatar
-                reads as editable whether or not a photo is set. */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploadingPhoto || removingPhoto}
-              className={cn(
-                'absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full text-white shadow-sm ring-2 ring-white transition-colors disabled:opacity-60 dark:ring-[#0d1117]',
-                needsProfilePhoto
-                  ? 'bg-amber-500 hover:bg-amber-600'
-                  : 'bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600',
-              )}
-              title={needsProfilePhoto ? 'Add a profile photo' : 'Change photo'}
-              aria-label={needsProfilePhoto ? 'Add a profile photo' : 'Change photo'}
-            >
-              {uploadingPhoto ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Camera className="h-3 w-3" aria-hidden />
-              )}
-            </button>
-
-            {/* Remove badge — only for a manually-uploaded photo (a Google SSO
-                photo can't be deleted; readers fall back to it). */}
-            {displayProfilePhotoUrl && (
-              <button
-                type="button"
-                onClick={onAvatarRemove}
-                disabled={uploadingPhoto || removingPhoto}
-                className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-zinc-500 shadow-sm ring-1 ring-zinc-200 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-60 dark:bg-zinc-900 dark:text-zinc-400 dark:ring-zinc-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
-                title="Remove photo"
-                aria-label="Remove photo"
-              >
-                {removingPhoto ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Trash2 className="h-2.5 w-2.5" aria-hidden />
-                )}
-              </button>
-            )}
-          </div>
-
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-zinc-900 dark:text-zinc-50 sm:text-[28px]">
-              {displayName}
-            </h1>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-zinc-500 dark:text-zinc-400">
-              {employmentDepartment && (
-                <span className="text-zinc-700 dark:text-zinc-200">{employmentDepartment}</span>
-              )}
-              {employmentDepartment && master?.employee_id && (
-                <span className="text-zinc-300 dark:text-zinc-700">·</span>
-              )}
-              {master?.employee_id && (
-                <span className="text-[12.5px] text-zinc-500 dark:text-zinc-400">
-                  ID {master.employee_id}
-                </span>
-              )}
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
-                <span className="relative inline-flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                </span>
-                Active
-              </span>
-              {payrollLocked && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:ring-rose-500/20">
-                  <Lock className="h-2.5 w-2.5" />
-                  Payroll locked
-                </span>
-              )}
-            </div>
-          </div>
-
-        </motion.section>
-
-        {needsProfilePhoto && (
-          <div className="mt-6">
-            <SetupNudge
-              title="Profile photo needed"
-              description="Upload a clear profile photo so teammates and managers can recognize you across rosters."
-              action={
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadingPhoto}
-                >
-                  {uploadingPhoto ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Camera className="mr-1.5 h-3 w-3" />}
-                  Upload
-                </Button>
-              }
-            />
-          </div>
-        )}
-
-        {/* ─────────── Error / missing roster banner ─────────── */}
-        {error && (
-          <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="leading-relaxed text-amber-900 dark:text-amber-200">{cleanErrorMessage(error)}</p>
-          </div>
-        )}
-        {!master && !error && (
-          <div className="mt-6 flex items-start gap-2.5 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3 text-[12.5px] dark:border-zinc-800 dark:bg-zinc-900/50">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" />
-            <p className="leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {rate ? (
-                <>
-                  No <span className="font-medium text-zinc-700 dark:text-zinc-300">global_master_list</span> entry for{' '}
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                    {employeeEmail}
-                  </span>{' '}
-                  — rates only. Identity will appear once HR adds you to the roster.
-                </>
-              ) : (
-                <>
-                  No directory or payroll record on file for{' '}
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                    {employeeEmail}
-                  </span>
-                  .
-                </>
-              )}
-            </p>
-          </div>
-        )}
-
-        {/* ─────────── Tabs ─────────── */}
-        <div className="mt-8 border-b border-zinc-200 dark:border-zinc-800 sm:mt-10">
-          <TabBar
-            active={activeTab}
-            onChange={setActiveTab}
-            needsPhoto={needsProfilePhoto}
-            needsBank={needsPayoutSetup}
-            needsSkillSet={needsSkillSetSetup}
-            paymentEscalated={escalatePayment && needsPayoutSetup}
-            resignPending={resignation?.status === 'pending'}
-          />
-        </div>
-
-        {/* ─────────── Tab content ─────────── */}
-        <div className="mt-6 sm:mt-8">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="space-y-4"
-            >
-              {activeTab === 'overview' && (
-                /* Information left, ID card right — once the PANE (not the viewport) is
-                   56rem wide, so a collapsed sidebar earns the split sooner. Below that the
-                   card stacks under the information, as before. */
-                <div className="@container">
-                  <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-[minmax(0,1fr)_372px] @4xl:items-start @4xl:gap-6">
-                    <div className="min-w-0 space-y-4">
-                      <Section
-                        title="Personal"
-                        description="From the HR master roster"
-                      >
-                        <Row label="Full Name" value={displayName !== '—' ? displayName : null} />
-                        <Row label="Work Email" value={workEmail} mono />
-                        <Row label="Personal Email" value={personalEmail} mono />
-                      </Section>
-
-                      <Section
-                        title="Employment"
-                        description="Authoritative source: HR roster (same as payroll)"
-                      >
-                        <Row
-                          label="Department"
-                          value={employmentDepartment ? formatDeptLabel(employmentDepartment) : '—'}
-                        />
-                        <Row
-                          label="Start Date"
-                          value={formatStartDate(master?.start_date ?? null) ?? '—'}
-                        />
-                        <Row label="Status" value="Active" status="active" />
-                      </Section>
-
-                      {hasAnyAddress && (
-                        <Section
-                          title="Address"
-                          description="Home address on record"
-                        >
-                          {fullAddressDisplay && (
-                            <div className="flex items-start gap-3 border-b border-zinc-100 py-4 dark:border-zinc-800/40">
-                              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-orange-50 ring-1 ring-inset ring-orange-100 dark:bg-orange-500/10 dark:ring-orange-500/20">
-                                <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                                  Full Address
-                                </div>
-                                <p className="mt-1 text-[14px] leading-snug text-zinc-900 dark:text-zinc-100">
-                                  {fullAddressDisplay}
-                                </p>
-                              </div>
-                            </div>
-                          )}
-                          <Row label="Street" value={master?.street ?? null} />
-                          <Row label="City" value={master?.city ?? null} />
-                          <Row label="Province" value={master?.province ?? null} />
-                          <Row label="Postal Code" value={master?.postal_code ?? null} mono />
-                        </Section>
-                      )}
-                    </div>
-
-                    {/* The badge is container-query sized — every dimension inside
-                        EmployeeIdCard.tsx is `cqw` against a `@container w-full max-w-[372px]`.
-                        The exported PNG is painted from data at a fixed size, so if this host
-                        narrows below 372px the on-screen badge and its typography shrink while
-                        the download does not, and the two diverge with no error. So the side
-                        track is a FIXED `372px`, never `fr`/`auto`/a percentage, and the
-                        stacked layout gives it the full content column. */}
-                    <div className="flex flex-col items-center gap-5 py-2 @4xl:py-0">
-                      <EmployeeIdCard card={idCard} />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleDownloadId}
-                        disabled={savingId}
-                        className="gap-2"
-                      >
-                        {savingId ? (
-                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                        ) : (
-                          <Download className="h-4 w-4" aria-hidden />
-                        )}
-                        {savingId ? 'Saving…' : 'Download PNG'}
-                      </Button>
-                      <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                        Read-only, from the HR master roster. Anything missing or wrong here is
-                        corrected by HR, not on this screen.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === 'compensation' && (
-                <>
-                  <CompensationSections
-                    active={activeCompensationSection}
-                    onChange={setStoredSection}
-                    needsPayout={needsPayoutSetup}
-                    payoutEscalated={escalatePayment && needsPayoutSetup}
-                  />
-
-                  {/* ONE panel node per section, keyed on the active section so
-                      AnimatePresence can slide the swap. It carries that section's
-                      DERIVED dom id, which makes the deep-link scroll anchor and the
-                      strip's aria-controls target the same element — neither can drift
-                      away from the other, or from the section's name. */}
-                  <AnimatePresence mode="wait" initial={false} custom={compensationSlide}>
-                    <motion.div
-                      key={activeCompensationSection}
-                      custom={compensationSlide}
-                      variants={COMPENSATION_PANE_VARIANTS}
-                      initial="enter"
-                      animate="center"
-                      exit="exit"
-                      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                      id={profileSectionDomId(activeCompensationSection)}
-                      ref={scrollToCompensationAnchor}
-                      role="tabpanel"
-                      aria-labelledby={profileSectionTabDomId(activeCompensationSection)}
-                      className="space-y-4"
-                    >
-                      {activeCompensationSection === 'rates' && (
-                        <>
-                          <Section
-                            title="Hourly Rates"
-                            description="From employee_hourly_rates · per current period"
-                          >
-                            <div className="grid gap-6 py-5 sm:grid-cols-2">
-                              <CompactStat
-                                label="Regular"
-                                value={reg != null ? formatPHP(reg) : '—'}
-                                hint="per hour"
-                              />
-                              <CompactStat
-                                label="Overtime"
-                                value={ot != null ? formatPHP(ot) : '—'}
-                                hint="per hour"
-                              />
-                            </div>
-                            {!reg && !ot && (
-                              <p className="border-t border-zinc-100 py-3 text-[12.5px] italic text-zinc-500 dark:border-zinc-800/40 dark:text-zinc-400">
-                                No hourly rates on file. Reach out to HR.
-                              </p>
-                            )}
-                          </Section>
-
-                          <Section
-                            title="Currency"
-                            description="USD-denominated bonuses are converted using this rate"
-                          >
-                            <div className="flex items-end justify-between gap-4 py-3">
-                              <CompactStat
-                                label="USD → PHP"
-                                value={`₱${usdToPhpRate.toLocaleString('en-PH', {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 5,
-                                })}`}
-                                hint="= USD 1.00"
-                              />
-                              <span className="text-[11px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-                                Live · payroll
-                              </span>
-                            </div>
-                          </Section>
-
-                          {/* Re-scoped, not deleted. "Bonuses are not shown here" was
-                              true of a standalone Rates TAB; one section away there is
-                              now a statement list that itemises Perfect Attendance and
-                              Technology by week, so the old sentence read as a flat
-                              contradiction of the pane next door. The claim it was
-                              actually making — these two figures are RATES, and no
-                              bonus is folded into them — is the one worth keeping. */}
-                          <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                            These are your hourly rates only — no bonus is folded into them.
-                            Bonuses (Perfect Attendance, Technology) are applied during payroll
-                            processing, and appear itemised on each week's statement under Pay
-                            Stubs as well as on your dashboard.
-                          </p>
-                        </>
-                      )}
-
-                      {activeCompensationSection === 'payStubs' && (
-                        <>
-                          <Section
-                            title="Pay Stubs"
-                            description="Every week you've been paid. Open a week for the full statement, or export them all."
-                            action={
-                              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={payStubsLoading || exportingPdf || payStubs.length === 0}
-                                  onClick={handleExportPayStubsPdf}
-                                  className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                  title="Download all weeks as a PDF"
-                                >
-                                  {exportingPdf ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <FileText className="h-3 w-3" />
-                                  )}
-                                  PDF
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={payStubsLoading || exportingXlsx || payStubs.length === 0}
-                                  onClick={handleExportPayStubsXlsx}
-                                  className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                  title="Download all weeks as an Excel spreadsheet"
-                                >
-                                  {exportingXlsx ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <FileSpreadsheet className="h-3 w-3" />
-                                  )}
-                                  XLSX
-                                </Button>
-                              </div>
-                            }
-                          >
-                            {payStubsLoading && payStubs.length === 0 ? (
-                              <div className="flex items-center justify-center py-14">
-                                <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                              </div>
-                            ) : payStubsError ? (
-                              <div className="my-4 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
-                                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                                <p className="leading-relaxed text-amber-900 dark:text-amber-200">{payStubsError}</p>
-                              </div>
-                            ) : payStubs.length === 0 ? (
-                              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-                                <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
-                                  <Receipt className="h-5 w-5" aria-hidden />
-                                </span>
-                                <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No pay stubs yet</p>
-                                <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
-                                  Your weekly pay statements appear here once your pay for a week has been sent.
-                                </p>
-                              </div>
-                            ) : (
-                              <>
-                                {/* At-a-glance band */}
-                                <div className="grid gap-6 border-b border-zinc-100 py-5 dark:border-zinc-800/40 sm:grid-cols-3">
-                                  <CompactStat
-                                    label="Weeks on record"
-                                    value={String(payStubs.length)}
-                                  />
-                                  <CompactStat
-                                    label="Total net pay"
-                                    value={formatPHP(payStubTotalPhp)}
-                                    hint={`≈ $${payStubTotalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
-                                  />
-                                  <CompactStat
-                                    label="Latest week"
-                                    value={payStubs[0]?.weekHuman || '—'}
-                                    hint={payStubs[0]?.payDate ? `Paid ${formatStartDate(payStubs[0].payDate)}` : undefined}
-                                  />
-                                </div>
-
-                                {/* Weekly statements (paginated) */}
-                                <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/40">
-                                  {payStubPageRows.map((w) => (
-                                    <li
-                                      key={w.sourceFile}
-                                      className="flex items-center justify-between gap-3 py-3.5"
-                                    >
-                                      <div className="flex min-w-0 items-center gap-3">
-                                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
-                                          <Receipt className="h-4 w-4" aria-hidden />
-                                        </span>
-                                        <div className="min-w-0">
-                                          <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
-                                            Period ending {w.weekHuman || '—'}
-                                          </p>
-                                          <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                                            {w.payDate ? `Paid ${formatStartDate(w.payDate)}` : 'Statement ready'}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      <div className="flex shrink-0 items-center gap-3">
-                                        <div className="text-right">
-                                          <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                                            {formatPHP(w.totalPayPhp)}
-                                          </p>
-                                          <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
-                                            ${w.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                                          </p>
-                                        </div>
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => setPayStubModalFile(w.sourceFile)}
-                                          className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                        >
-                                          <ArrowUpRight className="h-3 w-3" />
-                                          View
-                                        </Button>
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-
-                                {/* Pagination — 10 per page */}
-                                {payStubPageCount > 1 && (
-                                  <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-3.5 dark:border-zinc-800/40">
-                                    <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                                      Showing{' '}
-                                      <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                                        {payStubPageSafe * PAY_STUBS_PAGE_SIZE + 1}–
-                                        {Math.min((payStubPageSafe + 1) * PAY_STUBS_PAGE_SIZE, payStubs.length)}
-                                      </span>{' '}
-                                      of {payStubs.length}
-                                    </span>
-                                    <div className="flex items-center gap-1.5">
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={payStubPageSafe <= 0}
-                                        onClick={() => goToPayStubPage(Math.max(0, payStubPageSafe - 1))}
-                                        className="h-8 gap-1 rounded-lg text-[12px]"
-                                      >
-                                        <ChevronLeft className="h-3.5 w-3.5" />
-                                        Prev
-                                      </Button>
-                                      <span className="px-1 text-[11.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
-                                        {payStubPageSafe + 1} / {payStubPageCount}
-                                      </span>
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        disabled={payStubPageSafe >= payStubPageCount - 1}
-                                        onClick={() =>
-                                          goToPayStubPage(Math.min(payStubPageCount - 1, payStubPageSafe + 1))
-                                        }
-                                        className="h-8 gap-1 rounded-lg text-[12px]"
-                                      >
-                                        Next
-                                        <ChevronRight className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </div>
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          </Section>
-
-                          {payStubs.length > 0 && (
-                            <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                              The PDF and XLSX exports cover all {payStubs.length}{' '}
-                              {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown.
-                              {' '}These reflect the pay dispatched for each week.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {/* Three readiness states share this pane, and they stay
-                          independent. Rates and Pay Stubs paint from the session
-                          cache immediately; the bank/payout row is deliberately
-                          never cached (account numbers stay out of storage), so
-                          PAYOUT ALONE waits for the live row — its own skeleton,
-                          never the empty "add your details" form flashing over
-                          real saved details. `loading` is not widened to cover
-                          this, and no combined effect awaits `bankInfoLoaded`. */}
-                      {payoutPaneVisible && !bankInfoLoaded && (
-                        <Section title="Disbursement" description="How and where you get paid">
-                          <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading payout details">
-                            {[0, 1, 2, 3].map((i) => (
-                              <div
-                                key={i}
-                                className="h-10 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900"
-                              />
-                            ))}
-                          </div>
-                        </Section>
-                      )}
-                      {payoutPaneVisible && bankInfoLoaded && (
-                        <>
-                          <Section
-                            title="Disbursement"
-                            description="How and where you get paid"
-                            action={
-                              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                                <AnimatePresence initial={false}>
-                                  {payoutSavedAt && (
-                                    <motion.span
-                                      key="payout-saved"
-                                      initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
-                                      animate={{ opacity: 1, y: 0 }}
-                                      exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
-                                      transition={{ duration: prefersReducedMotion ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }}
-                                      className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex"
-                                    >
-                                      <CheckCircle className="h-3 w-3" />
-                                      Saved {payoutSavedAt}
-                                    </motion.span>
-                                  )}
-                                </AnimatePresence>
-                                {/* Edit and Cancel are ONE slot, not two separate
-                                    conditions: `popLayout` lifts the leaving button
-                                    out of flow, so Save glides across the width
-                                    difference between them instead of being shoved
-                                    sideways the instant the swap commits. */}
-                                {!payrollLocked && (
-                                  <AnimatePresence mode="popLayout" initial={false}>
-                                    {payoutEditing ? (
-                                      <motion.div key="payout-cancel" {...payoutControlSwap}>
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="sm"
-                                          className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                          disabled={payoutSaving}
-                                          onClick={resetPayoutDraft}
-                                        >
-                                          <X className="h-3 w-3" />
-                                          Cancel
-                                        </Button>
-                                      </motion.div>
-                                    ) : bankInfo ? (
-                                      <motion.div key="payout-edit" {...payoutControlSwap}>
-                                        <Button
-                                          type="button"
-                                          variant="outline"
-                                          size="sm"
-                                          className="h-8 gap-1.5 rounded-lg text-[12px]"
-                                          onClick={() => setPayoutEditing(true)}
-                                        >
-                                          <Pencil className="h-3 w-3" />
-                                          Edit
-                                        </Button>
-                                      </motion.div>
-                                    ) : null}
-                                  </AnimatePresence>
-                                )}
-                                <motion.div
-                                  layout={!prefersReducedMotion}
-                                  transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-                                >
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    disabled={payoutSaving || payrollLocked || !payoutEditing}
-                                    onClick={savePaymentDetails}
-                                    className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
-                                  >
-                                    {payoutSaving ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <Save className="h-3 w-3" />
-                                    )}
-                                    Save
-                                  </Button>
-                                </motion.div>
-                              </div>
-                            }
-                          >
-                            <motion.div
-                              initial={false}
-                              animate={{
-                                height: prefersReducedMotion ? 'auto' : (payoutBodyHeight ?? 'auto'),
-                              }}
-                              transition={{
-                                duration: prefersReducedMotion ? 0 : 0.38,
-                                ease: [0.22, 1, 0.36, 1],
-                              }}
-                              onAnimationStart={() => {
-                                if (!prefersReducedMotion) setPayoutClipping(true);
-                              }}
-                              onAnimationComplete={() => setPayoutClipping(false)}
-                              // The negative margin buys back the room the clip
-                              // would otherwise take out of a focus ring on the
-                              // controls at the body's edge.
-                              className={cn('-mx-1 px-1', payoutClipping && 'overflow-hidden')}
-                            >
-                            <div ref={measurePayoutBody} className="space-y-5 py-4">
-                              {payrollLocked && (
-                                <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
-                                  <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                                  <p className="leading-relaxed text-rose-900 dark:text-rose-200">
-                                    Payroll processing is in progress. Disbursement details are read-only
-                                    until accounting finishes the run.
-                                  </p>
-                                </div>
-                              )}
-                              {escalatePayment && needsPayoutSetup && !payrollLocked && (
-                                <div className="flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-500/40 dark:bg-rose-950/30">
-                                  <span className="relative mt-0.5 flex h-4 w-4 shrink-0">
-                                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/50" />
-                                    <Bell className="relative h-4 w-4 text-rose-600 dark:text-rose-400" />
-                                  </span>
-                                  <div className="min-w-0">
-                                    <p className="text-[13px] font-semibold text-rose-800 dark:text-rose-200">Payroll needs your bank details</p>
-                                    <p className="mt-0.5 text-[12px] leading-relaxed text-rose-700 dark:text-rose-300">
-                                      Accounting asked you to add your payout details so they can send your pay. Please complete the fields below.
-                                    </p>
-                                  </div>
-                                </div>
-                              )}
-                              {needsPayoutSetup && !payrollLocked && (
-                                <SetupNudge
-                                  title="Payment details needed"
-                                  description="Add your preferred disbursement channel and required account details so payroll can route your pay."
-                                  action={
-                                    !payoutEditing ? (
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
-                                        onClick={() => setPayoutEditing(true)}
-                                      >
-                                        Add details
-                                      </Button>
-                                    ) : undefined
-                                  }
-                                />
-                              )}
-                              {!bankInfo && !payrollLocked && (
-                                <p className="text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                                  Choose a payment channel and complete the corresponding fields. Your first
-                                  submission creates a payroll routing record linked to your work email.
-                                </p>
-                              )}
-                              <PreferredPaymentMethodRadios
-                                value={preferredProcessor}
-                                // The receiving channel only. Picking Kolan/HiGlobe no
-                                // longer files a matching sending-bank change (the
-                                // 2026-08-31 in-form mirror): the sending bank is
-                                // Accounting's since 2026-09-24, and a mismatch this
-                                // save leaves behind is named in Accounting's "Bank
-                                // details updated" alert instead.
-                                onChange={(id) => setPreferredProcessor(id)}
-                                disabled={payoutReadOnly}
-                              />
-                              {/* Card when reading, form when editing. The pane
-                                  was ALREADY read-with-an-Edit-button, so this
-                                  changes what the read state looks like and
-                                  nothing about how it is reached.
-
-                                  The read view is gated on `walletRailEffective`
-                                  — the SERVER-resolved rail, across all three
-                                  routing tiers — and never on `preferredProcessor`
-                                  or the stored `bank_preferred`: those three are
-                                  distinct values and changing one never changes
-                                  the others, so the raw Disbursement pick can
-                                  disagree with how the person is really paid.
-                                  The edit view stays keyed on
-                                  `preferredProcessor`, because that IS the
-                                  channel the employee is choosing between. */}
-                              {/* The two views cross-fade in place while the box
-                                  above travels between their heights, so the
-                                  record does not blink out and a form appear in
-                                  its stead. `popLayout` lifts the leaving view
-                                  out of flow the instant the swap commits —
-                                  which is what lets the measured height read the
-                                  INCOMING view immediately rather than waiting
-                                  out an exit. */}
-                              <div className="relative">
-                                <AnimatePresence
-                                  mode="popLayout"
-                                  initial={false}
-                                  custom={{ toEdit: payoutEditing, reduce: !!prefersReducedMotion }}
-                                >
-                                  <motion.div
-                                    key={payoutEditing ? 'edit' : 'read'}
-                                    custom={{ toEdit: payoutEditing, reduce: !!prefersReducedMotion }}
-                                    variants={PAYOUT_SWAP}
-                                    initial="enter"
-                                    animate="settled"
-                                    exit="leave"
-                                    transition={{
-                                      duration: prefersReducedMotion ? 0.12 : 0.28,
-                                      ease: [0.16, 1, 0.3, 1],
-                                    }}
-                                  >
-                                    {payoutEditing ? (
-                                      preferredProcessor ? (
-                                        <PayoutDetailsFields
-                                          processor={preferredProcessor}
-                                          payout={payout}
-                                          setPayout={setPayout}
-                                          disabled={payoutReadOnly}
-                                        />
-                                      ) : null
-                                    ) : (
-                                      <PayoutReadView
-                                        rail={walletRailEffective}
-                                        bank={paidSlotBank}
-                                        row={bankInfo}
-                                        reduceMotion={!!prefersReducedMotion}
-                                      />
-                                    )}
-                                  </motion.div>
-                                </AnimatePresence>
-                              </div>
-                            </div>
-                            </motion.div>
-                          </Section>
-
-                          {/* The "Bank Preferred" (sending bank) card that sat here was
-                              RETIRED 2026-09-24 (Kane): the sending bank is set by
-                              Accounting alone, in People → Banking, and employee
-                              changes no longer file an approval into Accounting →
-                              Issues. The payout card's "Paid via" line above is the
-                              employee's read-only view of it. The "Selected channel: X"
-                              line that followed was removed 2026-09-25 (Kane) — the
-                              radios above already show the pick. */}
-                        </>
-                      )}
-
-                      {activeCompensationSection === 'currentPaycycle' && (
-                        <Section
-                          title="Current Paycycle"
-                          description="The week being processed right now — your hours, your pay line by line, and where payroll has got to."
-                        >
-                          <div className="py-2">
-                            <CurrentPaycycle
-                              data={paycycle}
-                              loading={paycycleLoading}
-                              error={paycycleError}
-                            />
-                          </div>
-                        </Section>
-                      )}
-                    </motion.div>
-                  </AnimatePresence>
-                </>
-              )}
-
-              {activeTab === 'skills' && (
-                <>
-                  <div
-                    id={profileSectionDomId('skillSets')}
-                    ref={scrollToSectionAnchor}
-                    className="scroll-mt-24"
-                  >
-                    <Section
-                      title="Skill Sets"
-                      description="Visible to your teammates as read-only on the My Team page"
-                      action={
-                        <div className="flex flex-wrap items-center justify-end gap-1.5">
-                          {skillSetSavedAt && !skillSetDirty && (
-                            <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
-                              <CheckCircle className="h-3 w-3" />
-                              Saved {skillSetSavedAt}
-                            </span>
-                          )}
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={skillSetSaving || skillSetLoading || !skillSetDirty}
-                            onClick={saveSkillSet}
-                            className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
-                          >
-                            {skillSetSaving ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              <Save className="h-3 w-3" />
-                            )}
-                            Save
-                          </Button>
-                        </div>
-                      }
-                    >
-                      {skillSetLoading ? (
-                        <div className="flex items-center justify-center py-10">
-                          <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                        </div>
-                      ) : (
-                        <div className="space-y-5 py-4">
-                          {needsSkillSetSetup && (
-                            <SetupNudge
-                              title="Skill Sets needed"
-                              description="Add your role, current focus, skills, or strengths so teammates can understand how to collaborate with you."
-                            />
-                          )}
-                          <div className="block">
-                            <div className="flex items-baseline justify-between gap-2">
-                              <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                                Role / Title
-                              </span>
-                              <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                                {employmentDepartment
-                                  ? `${employmentDepartment} roles · shown on your My Team card`
-                                  : 'Shown on your My Team card'}
-                              </span>
-                            </div>
-                            <SmoothSelect
-                              aria-label="Role / Title"
-                              value={showCustomRoleInput ? '__custom__' : skillSet.role_title}
-                              onChange={(v) => {
-                                if (v === '__custom__') {
-                                  setRoleTitleCustom(true);
-                                  return;
-                                }
-                                setRoleTitleCustom(false);
-                                setSkillSet((s) => ({ ...s, role_title: v }));
-                              }}
-                              triggerClassName="mt-1.5 w-full"
-                              options={[
-                                { value: '', label: 'Select a title...' },
-                                ...roleTitleOptions.map((title) => ({ value: title, label: title })),
-                                { value: '__custom__', label: '✏️  Custom title…' },
-                              ]}
-                            />
-                            {showCustomRoleInput && (
-                              <input
-                                type="text"
-                                value={skillSet.role_title}
-                                onChange={(e) =>
-                                  setSkillSet((s) => ({ ...s, role_title: e.target.value }))
-                                }
-                                placeholder="Type your own title…"
-                                maxLength={80}
-                                className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
-                              />
-                            )}
-                          </div>
-                          <ProjectsField
-                            projects={skillSet.projects}
-                            current={skillSet.current_projects}
-                            onChange={(projects, current_projects) =>
-                              setSkillSet((s) => ({ ...s, projects, current_projects }))
-                            }
-                          />
-                          <SkillSetField
-                            label="Skills"
-                            hint="Languages, tools, frameworks, methodologies"
-                            value={skillSet.skills}
-                            onChange={(v) => setSkillSet((s) => ({ ...s, skills: v }))}
-                            placeholder="e.g. TypeScript, React, Postgres, Figma, copywriting"
-                            rows={4}
-                          />
-                          <SkillSetField
-                            label="Strengths"
-                            hint="What you bring to the team"
-                            value={skillSet.strengths}
-                            onChange={(v) => setSkillSet((s) => ({ ...s, strengths: v }))}
-                            placeholder="e.g. Calm under pressure, fast feedback loops, customer empathy"
-                            rows={3}
-                          />
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">
-                                Member Notes
-                              </span>
-                              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                                <Lock className="h-2.5 w-2.5" aria-hidden />
-                                Manager only
-                              </span>
-                            </div>
-                            <p className="text-[11.5px] text-zinc-500 dark:text-zinc-500">
-                              Added by your manager — visible to you and your team.
-                            </p>
-                            {skillSet.member_notes?.trim() ? (
-                              <p className="whitespace-pre-wrap break-words rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-200">
-                                {skillSet.member_notes}
-                              </p>
-                            ) : (
-                              <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12.5px] italic text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-600">
-                                No notes from your manager yet.
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </Section>
-                  </div>
-
-                  <div
-                    id={profileSectionDomId('commendations')}
-                    ref={scrollToSectionAnchor}
-                    className="scroll-mt-24"
-                  >
-                    <div className="mb-3 px-5 sm:px-6">
-                      <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">
-                        Commendations
-                      </h3>
-                      <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                        Shared by your manager
-                      </p>
-                    </div>
-                    {commendationsLoading ? (
-                      <div className="flex items-center justify-center py-20">
-                        <div className="h-5 w-5 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
-                      </div>
-                    ) : commendations.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-zinc-200/80 bg-white py-20 text-center dark:border-zinc-800/80 dark:bg-zinc-950/40">
-                        <span className="text-3xl" style={{ filter: 'hue-rotate(120deg)' }} aria-hidden>🚩</span>
-                        <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No commendations yet</p>
-                        <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
-                          When your manager shares a commendation with you it will appear here.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-3 pt-2">
-                        {commendations.map((c) => (
-                          <div key={c.id} className="flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white px-5 py-4 dark:border-zinc-800/80 dark:bg-zinc-950/40">
-                            <span
-                              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-base ring-1 ring-emerald-200/60 dark:bg-emerald-900/20 dark:ring-emerald-700/30"
-                              style={{ filter: 'hue-rotate(120deg)' }}
-                              aria-hidden
-                            >
-                              🚩
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              {c.note ? (
-                                <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">&ldquo;{c.note}&rdquo;</p>
-                              ) : (
-                                <p className="text-sm italic text-zinc-400 dark:text-zinc-600">No note left.</p>
-                              )}
-                              <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">
-                                From <span className="font-medium text-zinc-500 dark:text-zinc-400">{c.awarded_by}</span>
-                                {' · '}
-                                {new Date(c.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-
-              {activeTab === 'requestDocuments' && (
-                <RequestDocumentsTab
-                  employeeEmail={norm}
-                  employeeName={displayName && displayName !== '—' ? displayName : null}
-                  department={employmentDepartment || null}
-                />
-              )}
-
-              {activeTab === 'resign' && (
-                <>
-                  {resignation?.status === 'pending' ? (
-                    <Section
-                      title="Resignation submitted"
-                      description="Awaiting your department manager's approval"
-                    >
-                      <div className="space-y-4 py-4">
-                        <div className="flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-[12.5px] dark:border-amber-900/40 dark:bg-amber-950/30">
-                          <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-amber-950 dark:text-amber-100">
-                              Pending manager approval
-                            </p>
-                            <p className="mt-0.5 leading-relaxed text-amber-900/80 dark:text-amber-100/75">
-                              Once your manager approves, HR will handle your offboarding. You can
-                              withdraw this request any time before it's approved.
-                            </p>
-                          </div>
-                        </div>
-                        <Row
-                          label="Effective date"
-                          value={formatStartDate(resignation.effective_date) ?? resignation.effective_date}
-                        />
-                        {resignation.manager_email && (
-                          <Row label="Awaiting" value={resignation.manager_email} mono />
-                        )}
-                        {resignation.message && (
-                          <div className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/40">
-                            <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
-                              Your message
-                            </div>
-                            <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100">
-                              {resignation.message}
-                            </p>
-                          </div>
-                        )}
-                        <div className="flex justify-end pt-1">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={resignWithdrawing}
-                            onClick={withdrawResignation}
-                            className="h-9 gap-1.5 rounded-lg border-zinc-300 text-zinc-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
-                          >
-                            {resignWithdrawing ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <X className="h-3.5 w-3.5" />
-                            )}
-                            Withdraw request
-                          </Button>
-                        </div>
-                      </div>
-                    </Section>
-                  ) : resignation?.status === 'approved' ? (
-                    <Section
-                      title="Resignation approved"
-                      description="Your manager approved your resignation"
-                    >
-                      <div className="space-y-4 py-4">
-                        <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
-                          <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-rose-950 dark:text-rose-100">
-                              Approved — HR will process your offboarding
-                            </p>
-                            <p className="mt-0.5 leading-relaxed text-rose-900/80 dark:text-rose-100/75">
-                              Your resignation is now with HR. Reach out to them for any questions
-                              about your final pay and handover.
-                            </p>
-                          </div>
-                        </div>
-                        <Row
-                          label="Effective date"
-                          value={formatStartDate(resignation.effective_date) ?? resignation.effective_date}
-                        />
-                        {resignation.approver_email && (
-                          <Row label="Approved by" value={resignation.approver_email} mono />
-                        )}
-                        {resignation.message && (
-                          <div className="py-3.5">
-                            <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
-                              Your message
-                            </div>
-                            <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100">
-                              {resignation.message}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </Section>
-                  ) : (
-                    <>
-                      {resignation?.status === 'rejected' && (
-                        <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
-                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-rose-950 dark:text-rose-100">
-                              A previous resignation was declined
-                            </p>
-                            {resignation.approver_note && (
-                              <p className="mt-0.5 leading-relaxed text-rose-900/80 dark:text-rose-100/75">
-                                Manager's note: &ldquo;{resignation.approver_note}&rdquo;
-                              </p>
-                            )}
-                            <p className="mt-0.5 leading-relaxed text-rose-900/70 dark:text-rose-100/65">
-                              You can submit a new resignation below.
-                            </p>
-                          </div>
-                        </div>
-                      )}
-                      <Section
-                        title="Resign"
-                        description="Notify your department manager that you intend to resign"
-                      >
-                        <div className="space-y-5 py-4">
-                          <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/20">
-                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                            <p className="leading-relaxed text-rose-900/90 dark:text-rose-100/80">
-                              Submitting sends a resignation request to your
-                              {employmentDepartment ? ` ${employmentDepartment}` : ''} manager. Once
-                              they approve it, HR begins your offboarding. You choose your effective
-                              (last working) date.
-                            </p>
-                          </div>
-
-                          <label className="block">
-                            <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                              Effective date
-                            </div>
-                            <DatePicker
-                              value={resignEffectiveDate}
-                              min={new Date().toISOString().slice(0, 10)}
-                              onChange={setResignEffectiveDate}
-                              containerClassName="sm:max-w-[16rem]"
-                              className="dark:bg-zinc-950/60 focus-visible:border-rose-300 focus-visible:ring-rose-200 dark:focus-visible:border-rose-500/40 dark:focus-visible:ring-rose-500/20"
-                            />
-                          </label>
-
-                          <label className="block">
-                            <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
-                              Message to your manager{' '}
-                              <span className="font-normal text-zinc-400 dark:text-zinc-500">(optional)</span>
-                            </div>
-                            <textarea
-                              value={resignMessage}
-                              onChange={(e) => setResignMessage(e.target.value)}
-                              rows={4}
-                              maxLength={2000}
-                              placeholder="Share your reason for leaving, a note of thanks, or anything your manager should know."
-                              className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-rose-500/40 dark:focus:ring-rose-500/20"
-                            />
-                          </label>
-
-                          <Button
-                            type="button"
-                            onClick={() => setResignConfirmOpen(true)}
-                            disabled={!resignEffectiveDate}
-                            className="h-12 w-full gap-2 rounded-xl bg-red-600 text-base font-semibold text-white shadow-sm shadow-red-600/20 transition-colors hover:bg-red-700 disabled:opacity-50 dark:bg-red-600 dark:hover:bg-red-500"
-                          >
-                            <DoorOpen className="h-5 w-5" />
-                            Resign
-                          </Button>
-                        </div>
-                      </Section>
-                    </>
-                  )}
-                </>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-      </div>
-
+  const profileOverlays = (
+    <>
       {/* Pay statement modal — opens one paid week (session-scoped fetch inside). */}
       <PayStubModal
         open={payStubModalFile !== null}
@@ -3194,6 +2490,1025 @@ export default function EmployeeProfile({
           </div>
         </div>
       )}
-    </div>
+    </>
+  );
+
+  return (
+    <ProfileFrame header={profileHeader} overlays={profileOverlays}>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={activeTab}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="space-y-4"
+        >
+          {activeTab === 'overview' && (
+            /* Information left, ID card right — once the PANE (not the viewport) is
+               56rem wide, so a collapsed sidebar earns the split sooner. Below that the
+               card stacks under the information, as before. */
+            <div className="@container">
+              <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-[minmax(0,1fr)_372px] @4xl:items-start @4xl:gap-6">
+                <div className="min-w-0 space-y-4">
+                  <Section {...OVERVIEW_PERSONAL}>
+                    <Row label="Full Name" value={displayName !== '—' ? displayName : null} />
+                    <Row label="Work Email" value={workEmail} mono />
+                    <Row label="Personal Email" value={personalEmail} mono />
+                  </Section>
+
+                  <Section {...OVERVIEW_EMPLOYMENT}>
+                    <Row
+                      label="Department"
+                      value={employmentDepartment ? formatDeptLabel(employmentDepartment) : '—'}
+                    />
+                    <Row
+                      label="Start Date"
+                      value={formatStartDate(master?.start_date ?? null) ?? '—'}
+                    />
+                    <Row label="Status" value="Active" status="active" />
+                  </Section>
+
+                  {hasAnyAddress && (
+                    <Section
+                      title="Address"
+                      description="Home address on record"
+                    >
+                      {fullAddressDisplay && (
+                        <div className="flex items-start gap-3 border-b border-zinc-100 py-4 dark:border-zinc-800/40">
+                          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-orange-50 ring-1 ring-inset ring-orange-100 dark:bg-orange-500/10 dark:ring-orange-500/20">
+                            <MapPin className="h-3.5 w-3.5 text-orange-600 dark:text-orange-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                              Full Address
+                            </div>
+                            <p className="mt-1 text-[14px] leading-snug text-zinc-900 dark:text-zinc-100">
+                              {fullAddressDisplay}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <Row label="Street" value={master?.street ?? null} />
+                      <Row label="City" value={master?.city ?? null} />
+                      <Row label="Province" value={master?.province ?? null} />
+                      <Row label="Postal Code" value={master?.postal_code ?? null} mono />
+                    </Section>
+                  )}
+                </div>
+
+                {/* The badge is container-query sized — every dimension inside
+                    EmployeeIdCard.tsx is `cqw` against a `@container w-full max-w-[372px]`.
+                    The exported PNG is painted from data at a fixed size, so if this host
+                    narrows below 372px the on-screen badge and its typography shrink while
+                    the download does not, and the two diverge with no error. So the side
+                    track is a FIXED `372px`, never `fr`/`auto`/a percentage, and the
+                    stacked layout gives it the full content column. */}
+                <div className="flex flex-col items-center gap-5 py-2 @4xl:py-0">
+                  <EmployeeIdCard card={idCard} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDownloadId}
+                    disabled={savingId}
+                    className="gap-2"
+                  >
+                    {savingId ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Download className="h-4 w-4" aria-hidden />
+                    )}
+                    {savingId ? 'Saving…' : 'Download PNG'}
+                  </Button>
+                  <p className="max-w-xs text-center text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    Read-only, from the HR master roster. Anything missing or wrong here is
+                    corrected by HR, not on this screen.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'compensation' && (
+            <>
+              <CompensationSections
+                active={activeCompensationSection}
+                onChange={setStoredSection}
+                needsPayout={needsPayoutSetup}
+                payoutEscalated={escalatePayment && needsPayoutSetup}
+              />
+
+              {/* ONE panel node per section, keyed on the active section so
+                  AnimatePresence can slide the swap. It carries that section's
+                  DERIVED dom id, which makes the deep-link scroll anchor and the
+                  strip's aria-controls target the same element — neither can drift
+                  away from the other, or from the section's name. */}
+              <AnimatePresence mode="wait" initial={false} custom={compensationSlide}>
+                <motion.div
+                  key={activeCompensationSection}
+                  custom={compensationSlide}
+                  variants={COMPENSATION_PANE_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                  id={profileSectionDomId(activeCompensationSection)}
+                  ref={scrollToCompensationAnchor}
+                  role="tabpanel"
+                  aria-labelledby={profileSectionTabDomId(activeCompensationSection)}
+                  className="space-y-4"
+                >
+                  {activeCompensationSection === 'rates' && (
+                    <>
+                      <Section
+                        title="Hourly Rates"
+                        description="From employee_hourly_rates · per current period"
+                      >
+                        <div className="grid gap-6 py-5 sm:grid-cols-2">
+                          <CompactStat
+                            label="Regular"
+                            value={reg != null ? formatPHP(reg) : '—'}
+                            hint="per hour"
+                          />
+                          <CompactStat
+                            label="Overtime"
+                            value={ot != null ? formatPHP(ot) : '—'}
+                            hint="per hour"
+                          />
+                        </div>
+                        {!reg && !ot && (
+                          <p className="border-t border-zinc-100 py-3 text-[12.5px] italic text-zinc-500 dark:border-zinc-800/40 dark:text-zinc-400">
+                            No hourly rates on file. Reach out to HR.
+                          </p>
+                        )}
+                      </Section>
+
+                      <Section
+                        title="Currency"
+                        description="USD-denominated bonuses are converted using this rate"
+                      >
+                        <div className="flex items-end justify-between gap-4 py-3">
+                          <CompactStat
+                            label="USD → PHP"
+                            value={`₱${usdToPhpRate.toLocaleString('en-PH', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 5,
+                            })}`}
+                            hint="= USD 1.00"
+                          />
+                          <span className="text-[11px] uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+                            Live · payroll
+                          </span>
+                        </div>
+                      </Section>
+
+                      {/* Re-scoped, not deleted. "Bonuses are not shown here" was
+                          true of a standalone Rates TAB; one section away there is
+                          now a statement list that itemises Perfect Attendance and
+                          Technology by week, so the old sentence read as a flat
+                          contradiction of the pane next door. The claim it was
+                          actually making — these two figures are RATES, and no
+                          bonus is folded into them — is the one worth keeping. */}
+                      <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        These are your hourly rates only — no bonus is folded into them.
+                        Bonuses (Perfect Attendance, Technology) are applied during payroll
+                        processing, and appear itemised on each week's statement under Pay
+                        Stubs as well as on your dashboard.
+                      </p>
+                    </>
+                  )}
+
+                  {activeCompensationSection === 'payStubs' && (
+                    <>
+                      <Section
+                        title="Pay Stubs"
+                        description="Every week you've been paid. Open a week for the full statement, or export them all."
+                        action={
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={payStubsLoading || exportingPdf || payStubs.length === 0}
+                              onClick={handleExportPayStubsPdf}
+                              className="h-8 gap-1.5 rounded-lg text-[12px]"
+                              title="Download all weeks as a PDF"
+                            >
+                              {exportingPdf ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <FileText className="h-3 w-3" />
+                              )}
+                              PDF
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={payStubsLoading || exportingXlsx || payStubs.length === 0}
+                              onClick={handleExportPayStubsXlsx}
+                              className="h-8 gap-1.5 rounded-lg text-[12px]"
+                              title="Download all weeks as an Excel spreadsheet"
+                            >
+                              {exportingXlsx ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <FileSpreadsheet className="h-3 w-3" />
+                              )}
+                              XLSX
+                            </Button>
+                          </div>
+                        }
+                      >
+                        {payStubsLoading && payStubs.length === 0 ? (
+                          <div className="flex items-center justify-center py-14">
+                            <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                          </div>
+                        ) : payStubsError ? (
+                          <div className="my-4 flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/80 px-4 py-3 text-[13px] dark:border-amber-900/40 dark:bg-amber-950/30">
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                            <p className="leading-relaxed text-amber-900 dark:text-amber-200">{payStubsError}</p>
+                          </div>
+                        ) : payStubs.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-900 dark:text-zinc-600">
+                              <Receipt className="h-5 w-5" aria-hidden />
+                            </span>
+                            <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No pay stubs yet</p>
+                            <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
+                              Your weekly pay statements appear here once your pay for a week has been sent.
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            {/* At-a-glance band */}
+                            <div className="grid gap-6 border-b border-zinc-100 py-5 dark:border-zinc-800/40 sm:grid-cols-3">
+                              <CompactStat
+                                label="Weeks on record"
+                                value={String(payStubs.length)}
+                              />
+                              <CompactStat
+                                label="Total net pay"
+                                value={formatPHP(payStubTotalPhp)}
+                                hint={`≈ $${payStubTotalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
+                              />
+                              <CompactStat
+                                label="Latest week"
+                                value={payStubs[0]?.weekHuman || '—'}
+                                hint={payStubs[0]?.payDate ? `Paid ${formatStartDate(payStubs[0].payDate)}` : undefined}
+                              />
+                            </div>
+
+                            {/* Weekly statements (paginated) */}
+                            <ul className="divide-y divide-zinc-100 dark:divide-zinc-800/40">
+                              {payStubPageRows.map((w) => (
+                                <li
+                                  key={w.sourceFile}
+                                  className="flex items-center justify-between gap-3 py-3.5"
+                                >
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 ring-1 ring-inset ring-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20">
+                                      <Receipt className="h-4 w-4" aria-hidden />
+                                    </span>
+                                    <div className="min-w-0">
+                                      <p className="truncate text-[13.5px] font-medium text-zinc-900 dark:text-zinc-100">
+                                        Period ending {w.weekHuman || '—'}
+                                      </p>
+                                      <p className="mt-0.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                                        {w.payDate ? `Paid ${formatStartDate(w.payDate)}` : 'Statement ready'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex shrink-0 items-center gap-3">
+                                    <div className="text-right">
+                                      <p className="text-[13.5px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
+                                        {formatPHP(w.totalPayPhp)}
+                                      </p>
+                                      <p className="text-[11px] tabular-nums text-zinc-400 dark:text-zinc-500">
+                                        ${w.totalPayUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                      </p>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => setPayStubModalFile(w.sourceFile)}
+                                      className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                    >
+                                      <ArrowUpRight className="h-3 w-3" />
+                                      View
+                                    </Button>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+
+                            {/* Pagination — 10 per page */}
+                            {payStubPageCount > 1 && (
+                              <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-3.5 dark:border-zinc-800/40">
+                                <span className="text-[11.5px] text-zinc-500 dark:text-zinc-400">
+                                  Showing{' '}
+                                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                                    {payStubPageSafe * PAY_STUBS_PAGE_SIZE + 1}–
+                                    {Math.min((payStubPageSafe + 1) * PAY_STUBS_PAGE_SIZE, payStubs.length)}
+                                  </span>{' '}
+                                  of {payStubs.length}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={payStubPageSafe <= 0}
+                                    onClick={() => goToPayStubPage(Math.max(0, payStubPageSafe - 1))}
+                                    className="h-8 gap-1 rounded-lg text-[12px]"
+                                  >
+                                    <ChevronLeft className="h-3.5 w-3.5" />
+                                    Prev
+                                  </Button>
+                                  <span className="px-1 text-[11.5px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                                    {payStubPageSafe + 1} / {payStubPageCount}
+                                  </span>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={payStubPageSafe >= payStubPageCount - 1}
+                                    onClick={() =>
+                                      goToPayStubPage(Math.min(payStubPageCount - 1, payStubPageSafe + 1))
+                                    }
+                                    className="h-8 gap-1 rounded-lg text-[12px]"
+                                  >
+                                    Next
+                                    <ChevronRight className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </Section>
+
+                      {payStubs.length > 0 && (
+                        <p className="px-1 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                          The PDF and XLSX exports cover all {payStubs.length}{' '}
+                          {payStubs.length === 1 ? 'week' : 'weeks'} with the full earnings breakdown.
+                          {' '}These reflect the pay dispatched for each week.
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {/* Three readiness states share this pane, and they stay
+                      independent. Rates and Pay Stubs paint from the session
+                      cache immediately; the bank/payout row is deliberately
+                      never cached (account numbers stay out of storage), so
+                      PAYOUT ALONE waits for the live row — its own skeleton,
+                      never the empty "add your details" form flashing over
+                      real saved details. `loading` is not widened to cover
+                      this, and no combined effect awaits `bankInfoLoaded`. */}
+                  {payoutPaneVisible && !bankInfoLoaded && (
+                    <Section title="Disbursement" description="How and where you get paid">
+                      <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading payout details">
+                        {[0, 1, 2, 3].map((i) => (
+                          <div
+                            key={i}
+                            className="h-10 animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900"
+                          />
+                        ))}
+                      </div>
+                    </Section>
+                  )}
+                  {payoutPaneVisible && bankInfoLoaded && (
+                    <>
+                      <Section
+                        title="Disbursement"
+                        description="How and where you get paid"
+                        action={
+                          <div className="flex flex-wrap items-center justify-end gap-1.5">
+                            <AnimatePresence initial={false}>
+                              {payoutSavedAt && (
+                                <motion.span
+                                  key="payout-saved"
+                                  initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                                  transition={{ duration: prefersReducedMotion ? 0 : 0.24, ease: [0.16, 1, 0.3, 1] }}
+                                  className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex"
+                                >
+                                  <CheckCircle className="h-3 w-3" />
+                                  Saved {payoutSavedAt}
+                                </motion.span>
+                              )}
+                            </AnimatePresence>
+                            {/* Edit and Cancel are ONE slot, not two separate
+                                conditions: `popLayout` lifts the leaving button
+                                out of flow, so Save glides across the width
+                                difference between them instead of being shoved
+                                sideways the instant the swap commits. */}
+                            {!payrollLocked && (
+                              <AnimatePresence mode="popLayout" initial={false}>
+                                {payoutEditing ? (
+                                  <motion.div key="payout-cancel" {...payoutControlSwap}>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                      disabled={payoutSaving}
+                                      onClick={resetPayoutDraft}
+                                    >
+                                      <X className="h-3 w-3" />
+                                      Cancel
+                                    </Button>
+                                  </motion.div>
+                                ) : bankInfo ? (
+                                  <motion.div key="payout-edit" {...payoutControlSwap}>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 gap-1.5 rounded-lg text-[12px]"
+                                      onClick={() => setPayoutEditing(true)}
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                      Edit
+                                    </Button>
+                                  </motion.div>
+                                ) : null}
+                              </AnimatePresence>
+                            )}
+                            <motion.div
+                              layout={!prefersReducedMotion}
+                              transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+                            >
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={payoutSaving || payrollLocked || !payoutEditing}
+                                onClick={savePaymentDetails}
+                                className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+                              >
+                                {payoutSaving ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Save className="h-3 w-3" />
+                                )}
+                                Save
+                              </Button>
+                            </motion.div>
+                          </div>
+                        }
+                      >
+                        <motion.div
+                          initial={false}
+                          animate={{
+                            height: prefersReducedMotion ? 'auto' : (payoutBodyHeight ?? 'auto'),
+                          }}
+                          transition={{
+                            duration: prefersReducedMotion ? 0 : 0.38,
+                            ease: [0.22, 1, 0.36, 1],
+                          }}
+                          onAnimationStart={() => {
+                            if (!prefersReducedMotion) setPayoutClipping(true);
+                          }}
+                          onAnimationComplete={() => setPayoutClipping(false)}
+                          // The negative margin buys back the room the clip
+                          // would otherwise take out of a focus ring on the
+                          // controls at the body's edge.
+                          className={cn('-mx-1 px-1', payoutClipping && 'overflow-hidden')}
+                        >
+                        <div ref={measurePayoutBody} className="space-y-5 py-4">
+                          {payrollLocked && (
+                            <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
+                              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                              <p className="leading-relaxed text-rose-900 dark:text-rose-200">
+                                Payroll processing is in progress. Disbursement details are read-only
+                                until accounting finishes the run.
+                              </p>
+                            </div>
+                          )}
+                          {escalatePayment && needsPayoutSetup && !payrollLocked && (
+                            <div className="flex items-start gap-2.5 rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 dark:border-rose-500/40 dark:bg-rose-950/30">
+                              <span className="relative mt-0.5 flex h-4 w-4 shrink-0">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/50" />
+                                <Bell className="relative h-4 w-4 text-rose-600 dark:text-rose-400" />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-[13px] font-semibold text-rose-800 dark:text-rose-200">Payroll needs your bank details</p>
+                                <p className="mt-0.5 text-[12px] leading-relaxed text-rose-700 dark:text-rose-300">
+                                  Accounting asked you to add your payout details so they can send your pay. Please complete the fields below.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                          {needsPayoutSetup && !payrollLocked && (
+                            <SetupNudge
+                              title="Payment details needed"
+                              description="Add your preferred disbursement channel and required account details so payroll can route your pay."
+                              action={
+                                !payoutEditing ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className="h-8 rounded-lg bg-amber-600 text-xs text-white hover:bg-amber-700 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400"
+                                    onClick={() => setPayoutEditing(true)}
+                                  >
+                                    Add details
+                                  </Button>
+                                ) : undefined
+                              }
+                            />
+                          )}
+                          {!bankInfo && !payrollLocked && (
+                            <p className="text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                              Choose a payment channel and complete the corresponding fields. Your first
+                              submission creates a payroll routing record linked to your work email.
+                            </p>
+                          )}
+                          <PreferredPaymentMethodRadios
+                            value={preferredProcessor}
+                            // The receiving channel only. Picking Kolan/HiGlobe no
+                            // longer files a matching sending-bank change (the
+                            // 2026-08-31 in-form mirror): the sending bank is
+                            // Accounting's since 2026-09-24, and a mismatch this
+                            // save leaves behind is named in Accounting's "Bank
+                            // details updated" alert instead.
+                            onChange={(id) => setPreferredProcessor(id)}
+                            disabled={payoutReadOnly}
+                          />
+                          {/* Card when reading, form when editing. The pane
+                              was ALREADY read-with-an-Edit-button, so this
+                              changes what the read state looks like and
+                              nothing about how it is reached.
+
+                              The read view is gated on `walletRailEffective`
+                              — the SERVER-resolved rail, across all three
+                              routing tiers — and never on `preferredProcessor`
+                              or the stored `bank_preferred`: those three are
+                              distinct values and changing one never changes
+                              the others, so the raw Disbursement pick can
+                              disagree with how the person is really paid.
+                              The edit view stays keyed on
+                              `preferredProcessor`, because that IS the
+                              channel the employee is choosing between. */}
+                          {/* The two views cross-fade in place while the box
+                              above travels between their heights, so the
+                              record does not blink out and a form appear in
+                              its stead. `popLayout` lifts the leaving view
+                              out of flow the instant the swap commits —
+                              which is what lets the measured height read the
+                              INCOMING view immediately rather than waiting
+                              out an exit. */}
+                          <div className="relative">
+                            <AnimatePresence
+                              mode="popLayout"
+                              initial={false}
+                              custom={{ toEdit: payoutEditing, reduce: !!prefersReducedMotion }}
+                            >
+                              <motion.div
+                                key={payoutEditing ? 'edit' : 'read'}
+                                custom={{ toEdit: payoutEditing, reduce: !!prefersReducedMotion }}
+                                variants={PAYOUT_SWAP}
+                                initial="enter"
+                                animate="settled"
+                                exit="leave"
+                                transition={{
+                                  duration: prefersReducedMotion ? 0.12 : 0.28,
+                                  ease: [0.16, 1, 0.3, 1],
+                                }}
+                              >
+                                {payoutEditing ? (
+                                  preferredProcessor ? (
+                                    <PayoutDetailsFields
+                                      processor={preferredProcessor}
+                                      payout={payout}
+                                      setPayout={setPayout}
+                                      disabled={payoutReadOnly}
+                                    />
+                                  ) : null
+                                ) : (
+                                  <PayoutReadView
+                                    rail={walletRailEffective}
+                                    bank={paidSlotBank}
+                                    row={bankInfo}
+                                    reduceMotion={!!prefersReducedMotion}
+                                  />
+                                )}
+                              </motion.div>
+                            </AnimatePresence>
+                          </div>
+                        </div>
+                        </motion.div>
+                      </Section>
+
+                      {/* The "Bank Preferred" (sending bank) card that sat here was
+                          RETIRED 2026-09-24 (Kane): the sending bank is set by
+                          Accounting alone, in People → Banking, and employee
+                          changes no longer file an approval into Accounting →
+                          Issues. The payout card's "Paid via" line above is the
+                          employee's read-only view of it. The "Selected channel: X"
+                          line that followed was removed 2026-09-25 (Kane) — the
+                          radios above already show the pick. */}
+                    </>
+                  )}
+
+                  {activeCompensationSection === 'currentPaycycle' && (
+                    <Section
+                      title="Current Paycycle"
+                      description="The week being processed right now — your hours, your pay line by line, and where payroll has got to."
+                    >
+                      <div className="py-2">
+                        <CurrentPaycycle
+                          data={paycycle}
+                          loading={paycycleLoading}
+                          error={paycycleError}
+                        />
+                      </div>
+                    </Section>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </>
+          )}
+
+          {activeTab === 'skills' && (
+            <>
+              <div
+                id={profileSectionDomId('skillSets')}
+                ref={scrollToSectionAnchor}
+                className="scroll-mt-24"
+              >
+                <Section
+                  title="Skill Sets"
+                  description="Visible to your teammates as read-only on the My Team page"
+                  action={
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      {skillSetSavedAt && !skillSetDirty && (
+                        <span className="hidden items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 sm:flex">
+                          <CheckCircle className="h-3 w-3" />
+                          Saved {skillSetSavedAt}
+                        </span>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={skillSetSaving || skillSetLoading || !skillSetDirty}
+                        onClick={saveSkillSet}
+                        className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
+                      >
+                        {skillSetSaving ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Save className="h-3 w-3" />
+                        )}
+                        Save
+                      </Button>
+                    </div>
+                  }
+                >
+                  {skillSetLoading ? (
+                    <div className="flex items-center justify-center py-10">
+                      <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
+                    </div>
+                  ) : (
+                    <div className="space-y-5 py-4">
+                      {needsSkillSetSetup && (
+                        <SetupNudge
+                          title="Skill Sets needed"
+                          description="Add your role, current focus, skills, or strengths so teammates can understand how to collaborate with you."
+                        />
+                      )}
+                      <div className="block">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                            Role / Title
+                          </span>
+                          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                            {employmentDepartment
+                              ? `${employmentDepartment} roles · shown on your My Team card`
+                              : 'Shown on your My Team card'}
+                          </span>
+                        </div>
+                        <SmoothSelect
+                          aria-label="Role / Title"
+                          value={showCustomRoleInput ? '__custom__' : skillSet.role_title}
+                          onChange={(v) => {
+                            if (v === '__custom__') {
+                              setRoleTitleCustom(true);
+                              return;
+                            }
+                            setRoleTitleCustom(false);
+                            setSkillSet((s) => ({ ...s, role_title: v }));
+                          }}
+                          triggerClassName="mt-1.5 w-full"
+                          options={[
+                            { value: '', label: 'Select a title...' },
+                            ...roleTitleOptions.map((title) => ({ value: title, label: title })),
+                            { value: '__custom__', label: '✏️  Custom title…' },
+                          ]}
+                        />
+                        {showCustomRoleInput && (
+                          <input
+                            type="text"
+                            value={skillSet.role_title}
+                            onChange={(e) =>
+                              setSkillSet((s) => ({ ...s, role_title: e.target.value }))
+                            }
+                            placeholder="Type your own title…"
+                            maxLength={80}
+                            className="mt-2 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-orange-300 focus:outline-none focus:ring-1 focus:ring-orange-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-orange-500/40 dark:focus:ring-orange-500/20"
+                          />
+                        )}
+                      </div>
+                      <ProjectsField
+                        projects={skillSet.projects}
+                        current={skillSet.current_projects}
+                        onChange={(projects, current_projects) =>
+                          setSkillSet((s) => ({ ...s, projects, current_projects }))
+                        }
+                      />
+                      <SkillSetField
+                        label="Skills"
+                        hint="Languages, tools, frameworks, methodologies"
+                        value={skillSet.skills}
+                        onChange={(v) => setSkillSet((s) => ({ ...s, skills: v }))}
+                        placeholder="e.g. TypeScript, React, Postgres, Figma, copywriting"
+                        rows={4}
+                      />
+                      <SkillSetField
+                        label="Strengths"
+                        hint="What you bring to the team"
+                        value={skillSet.strengths}
+                        onChange={(v) => setSkillSet((s) => ({ ...s, strengths: v }))}
+                        placeholder="e.g. Calm under pressure, fast feedback loops, customer empathy"
+                        rows={3}
+                      />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">
+                            Member Notes
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                            <Lock className="h-2.5 w-2.5" aria-hidden />
+                            Manager only
+                          </span>
+                        </div>
+                        <p className="text-[11.5px] text-zinc-500 dark:text-zinc-500">
+                          Added by your manager — visible to you and your team.
+                        </p>
+                        {skillSet.member_notes?.trim() ? (
+                          <p className="whitespace-pre-wrap break-words rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-200">
+                            {skillSet.member_notes}
+                          </p>
+                        ) : (
+                          <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2.5 text-[12.5px] italic text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-600">
+                            No notes from your manager yet.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </Section>
+              </div>
+
+              <div
+                id={profileSectionDomId('commendations')}
+                ref={scrollToSectionAnchor}
+                className="scroll-mt-24"
+              >
+                <div className="mb-3 px-5 sm:px-6">
+                  <h3 className="text-[14px] font-semibold tracking-[-0.01em] text-zinc-900 dark:text-zinc-100">
+                    Commendations
+                  </h3>
+                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                    Shared by your manager
+                  </p>
+                </div>
+                {commendationsLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+                  </div>
+                ) : commendations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-zinc-200/80 bg-white py-20 text-center dark:border-zinc-800/80 dark:bg-zinc-950/40">
+                    <span className="text-3xl" style={{ filter: 'hue-rotate(120deg)' }} aria-hidden>🚩</span>
+                    <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No commendations yet</p>
+                    <p className="max-w-xs text-xs text-zinc-400 dark:text-zinc-600">
+                      When your manager shares a commendation with you it will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3 pt-2">
+                    {commendations.map((c) => (
+                      <div key={c.id} className="flex items-start gap-3 rounded-2xl border border-zinc-200/80 bg-white px-5 py-4 dark:border-zinc-800/80 dark:bg-zinc-950/40">
+                        <span
+                          className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-base ring-1 ring-emerald-200/60 dark:bg-emerald-900/20 dark:ring-emerald-700/30"
+                          style={{ filter: 'hue-rotate(120deg)' }}
+                          aria-hidden
+                        >
+                          🚩
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          {c.note ? (
+                            <p className="text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">&ldquo;{c.note}&rdquo;</p>
+                          ) : (
+                            <p className="text-sm italic text-zinc-400 dark:text-zinc-600">No note left.</p>
+                          )}
+                          <p className="mt-2 text-[11px] text-zinc-400 dark:text-zinc-600">
+                            From <span className="font-medium text-zinc-500 dark:text-zinc-400">{c.awarded_by}</span>
+                            {' · '}
+                            {new Date(c.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeTab === 'requestDocuments' && (
+            <RequestDocumentsTab
+              employeeEmail={norm}
+              employeeName={displayName && displayName !== '—' ? displayName : null}
+              department={employmentDepartment || null}
+            />
+          )}
+
+          {activeTab === 'resign' && (
+            <>
+              {resignation?.status === 'pending' ? (
+                <Section
+                  title="Resignation submitted"
+                  description="Awaiting your department manager's approval"
+                >
+                  <div className="space-y-4 py-4">
+                    <div className="flex items-start gap-2.5 rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 text-[12.5px] dark:border-amber-900/40 dark:bg-amber-950/30">
+                      <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-amber-950 dark:text-amber-100">
+                          Pending manager approval
+                        </p>
+                        <p className="mt-0.5 leading-relaxed text-amber-900/80 dark:text-amber-100/75">
+                          Once your manager approves, HR will handle your offboarding. You can
+                          withdraw this request any time before it's approved.
+                        </p>
+                      </div>
+                    </div>
+                    <Row
+                      label="Effective date"
+                      value={formatStartDate(resignation.effective_date) ?? resignation.effective_date}
+                    />
+                    {resignation.manager_email && (
+                      <Row label="Awaiting" value={resignation.manager_email} mono />
+                    )}
+                    {resignation.message && (
+                      <div className="border-b border-zinc-100 py-3.5 dark:border-zinc-800/40">
+                        <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Your message
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100">
+                          {resignation.message}
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex justify-end pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={resignWithdrawing}
+                        onClick={withdrawResignation}
+                        className="h-9 gap-1.5 rounded-lg border-zinc-300 text-zinc-700 hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-rose-800 dark:hover:bg-rose-950/30 dark:hover:text-rose-300"
+                      >
+                        {resignWithdrawing ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <X className="h-3.5 w-3.5" />
+                        )}
+                        Withdraw request
+                      </Button>
+                    </div>
+                  </div>
+                </Section>
+              ) : resignation?.status === 'approved' ? (
+                <Section
+                  title="Resignation approved"
+                  description="Your manager approved your resignation"
+                >
+                  <div className="space-y-4 py-4">
+                    <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
+                      <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-rose-950 dark:text-rose-100">
+                          Approved — HR will process your offboarding
+                        </p>
+                        <p className="mt-0.5 leading-relaxed text-rose-900/80 dark:text-rose-100/75">
+                          Your resignation is now with HR. Reach out to them for any questions
+                          about your final pay and handover.
+                        </p>
+                      </div>
+                    </div>
+                    <Row
+                      label="Effective date"
+                      value={formatStartDate(resignation.effective_date) ?? resignation.effective_date}
+                    />
+                    {resignation.approver_email && (
+                      <Row label="Approved by" value={resignation.approver_email} mono />
+                    )}
+                    {resignation.message && (
+                      <div className="py-3.5">
+                        <div className="text-[12px] font-medium text-zinc-500 dark:text-zinc-400">
+                          Your message
+                        </div>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-zinc-900 dark:text-zinc-100">
+                          {resignation.message}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </Section>
+              ) : (
+                <>
+                  {resignation?.status === 'rejected' && (
+                    <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/70 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/30">
+                      <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                      <div className="min-w-0">
+                        <p className="font-semibold text-rose-950 dark:text-rose-100">
+                          A previous resignation was declined
+                        </p>
+                        {resignation.approver_note && (
+                          <p className="mt-0.5 leading-relaxed text-rose-900/80 dark:text-rose-100/75">
+                            Manager's note: &ldquo;{resignation.approver_note}&rdquo;
+                          </p>
+                        )}
+                        <p className="mt-0.5 leading-relaxed text-rose-900/70 dark:text-rose-100/65">
+                          You can submit a new resignation below.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  <Section
+                    title="Resign"
+                    description="Notify your department manager that you intend to resign"
+                  >
+                    <div className="space-y-5 py-4">
+                      <div className="flex items-start gap-2.5 rounded-xl border border-rose-200/80 bg-rose-50/60 px-4 py-3 text-[12.5px] dark:border-rose-900/40 dark:bg-rose-950/20">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                        <p className="leading-relaxed text-rose-900/90 dark:text-rose-100/80">
+                          Submitting sends a resignation request to your
+                          {employmentDepartment ? ` ${employmentDepartment}` : ''} manager. Once
+                          they approve it, HR begins your offboarding. You choose your effective
+                          (last working) date.
+                        </p>
+                      </div>
+
+                      <label className="block">
+                        <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                          Effective date
+                        </div>
+                        <DatePicker
+                          value={resignEffectiveDate}
+                          min={new Date().toISOString().slice(0, 10)}
+                          onChange={setResignEffectiveDate}
+                          containerClassName="sm:max-w-[16rem]"
+                          className="dark:bg-zinc-950/60 focus-visible:border-rose-300 focus-visible:ring-rose-200 dark:focus-visible:border-rose-500/40 dark:focus-visible:ring-rose-500/20"
+                        />
+                      </label>
+
+                      <label className="block">
+                        <div className="mb-1.5 text-[12px] font-medium text-zinc-700 dark:text-zinc-200">
+                          Message to your manager{' '}
+                          <span className="font-normal text-zinc-400 dark:text-zinc-500">(optional)</span>
+                        </div>
+                        <textarea
+                          value={resignMessage}
+                          onChange={(e) => setResignMessage(e.target.value)}
+                          rows={4}
+                          maxLength={2000}
+                          placeholder="Share your reason for leaving, a note of thanks, or anything your manager should know."
+                          className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[13.5px] leading-relaxed text-zinc-900 placeholder:text-zinc-400 transition-colors focus:border-rose-300 focus:outline-none focus:ring-1 focus:ring-rose-200 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-100 dark:focus:border-rose-500/40 dark:focus:ring-rose-500/20"
+                        />
+                      </label>
+
+                      <Button
+                        type="button"
+                        onClick={() => setResignConfirmOpen(true)}
+                        disabled={!resignEffectiveDate}
+                        className="h-12 w-full gap-2 rounded-xl bg-red-600 text-base font-semibold text-white shadow-sm shadow-red-600/20 transition-colors hover:bg-red-700 disabled:opacity-50 dark:bg-red-600 dark:hover:bg-red-500"
+                      >
+                        <DoorOpen className="h-5 w-5" />
+                        Resign
+                      </Button>
+                    </div>
+                  </Section>
+                </>
+              )}
+            </>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </ProfileFrame>
   );
 }

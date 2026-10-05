@@ -128,9 +128,12 @@ The **bank / payout row** (`GET /api/employee-ids?email=`) carries account numbe
 is never written to storage. Consequence: when the rest of the Profile paints from
 cache, the payout view alone waits for the live row behind its own `bankInfoLoaded`
 flag and shows a skeleton — never the empty "add your payout details" form flashing over
-saved details. The whole-page `ProfileSkeleton` now shows only when nothing is cached
+saved details. The pane skeleton (`ProfileSkeleton`) shows only when nothing is cached
 (`loading` seeds from `master === null`); with a cached identity the page paints at once
-and refreshes in place.
+and refreshes in place. Since 2026-10-05 even a cold mount skeletons only the PANE: the hero
+paints from the identity the shell already resolved and the tab bar renders for real
+([employee-profile.md](./employee-profile.md) §5.1). That prop follows this store's rule too:
+it paints while the roster row is in flight and never outlives it.
 
 **Since the 2026-09-12 tab merge that uncached row lives INSIDE a merged tab.** Payment is
 no longer its own chip — it is the **Payout** section of Compensation, sitting beside Rates

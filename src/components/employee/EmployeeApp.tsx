@@ -524,6 +524,14 @@ export default function EmployeeApp() {
             onSkillSetCompletionChange={(complete) => setSkillSetComplete(complete)}
             payrollLocked={lockState.locked}
             escalatePayment={bankInfoNudge}
+            // The identity the sidebar is already showing, so a cold Profile
+            // mount paints its hero instead of a skeleton. Profile reads it only
+            // until its own roster row lands.
+            shellIdentity={
+              employeeName
+                ? { name: employeeName, department: employeeDepartment, employeeId }
+                : null
+            }
           />
         );
       case 'hours':

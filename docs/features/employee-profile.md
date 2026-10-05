@@ -101,7 +101,7 @@ does not move. `nextProfileTarget` always advances it.
 `<AnimatePresence mode="wait"><motion.div key={activeTab}>`: under `mode="wait"` only the
 *exiting* pane renders until its ~0.22s exit finishes, so the incoming pane's anchors do not
 exist when an effect would fire. The same gap opens on a cold mount while `ProfileSkeleton`
-stands in. An effect fires into empty air and — if it clears the pending target
+stands in for the pane. An effect fires into empty air and — if it clears the pending target
 unconditionally — destroys it, so the **first** nudge from any other tab never scrolls. A
 callback ref is only invoked against a node that actually mounted. Each pane has its own copy,
 scoped to its own `PROFILE_SECTIONS` entry, and clears the pending target **only on an exact
@@ -167,9 +167,10 @@ skeleton — never the empty *"add your payout details"* copy flashing over save
 
 ## 5. Hook order — nothing below the bail-out
 
-`if (loading) return <ProfileSkeleton />;` is a real early return, and `loading` seeds from
-`master === null` where `master` is cache-seeded. So on a **cold** load render 1 returns early
-with N hooks and render 2 runs N+k, React throws *"Rendered more hooks than during the
+`if (loading) return <ProfileFrame header={profileHeader}><ProfileSkeleton tab={activeTab} /></ProfileFrame>;`
+is a real early return (it returned a bare `<ProfileSkeleton />` until 2026-10-05, see §5.1),
+and `loading` seeds from `master === null` where `master` is cache-seeded. So on a **cold** load
+render 1 returns early with N hooks and render 2 runs N+k, React throws *"Rendered more hooks than during the
 previous render"*, and — because **there is still no error boundary anywhere in `app/` or
 `src/`** — the throw blanks the whole `/employee` route. That was live on `main` before this
 work (2026-09-12 session log, row 31).
@@ -186,6 +187,53 @@ Two things about that guard a future editor needs:
   nested angle brackets — `useCallback<(x: string) => void>(…)`, `useState<Map<string,
   number>>(…)` — is still invisible to it. None exists in this file today. If you add one,
   confirm the guard actually sees it before trusting a green run.
+
+### 5.1 A cold load skeletons the PANE, never the page (2026-10-05)
+
+Kane: *"Lets improve the Skeleton in here where only the table is being skeletoned the rest are
+already loaded"*. Until 2026-10-05 a
+cold mount replaced the whole page — hero, tab bar and pane — with one skeleton, although the
+sidebar beside it was already printing the person's name, department and ID, and the tab bar is
+fixed text. Now:
+
+- **Both returns render `ProfileFrame` with the same `profileHeader`** (hero + nudges + banners +
+  tab bar), so React reconciles ONE tree across the `loading` flip: the hero mounts once, never
+  replays its entrance, and only the pane beneath swaps from skeleton to content. The two
+  wrappers used to be written separately with different paddings, which is what made the page
+  jump on arrival. Everything the header reads is a plain const declared **above** the bail-out
+  (§5 still holds: no hook moved below it).
+- **The hero paints from `shellIdentity`** — the name, department and ID `EmployeeApp` already
+  resolved for the sidebar — **only while `loading`**. Once the roster row lands the page's own
+  values replace it, exactly as before: it paints, it never decides (the cache doc's rule, applied
+  to a prop). With no shell identity either, the name and department lines are **skeleton bars —
+  never the email-prefix fallback** in `displayName`, which on a cold mount is a guess that flips
+  to the real name a beat later. The shell's department falls back to the rates sheet when the
+  roster has none and the Profile's does not, so for that rare person the department line can
+  change once on arrival.
+- **No "needs setup" signal asserts before its data has arrived.** `needsProfilePhoto` is
+  gated on `!loading` (the roster's `profile_photo_url` is one of its two sources),
+  `needsPayoutSetup` on `bankInfoLoaded` (same shape as `needsSkillSetSetup` on
+  `skillSetLoaded`), and the *"No global_master_list entry"* banner on `!loading`. Rendering the
+  real tab bar during a cold load would otherwise flash the bank dot at everyone. A FAILED
+  `/api/employee-ids` read leaves `bankInfoLoaded` false, so the dot stays off — unknown is not
+  "missing", the same way the shell's `payoutComplete === null` suppresses its nudge.
+- **The pane skeleton mirrors Overview**: the real section headings (shared constants
+  `OVERVIEW_PERSONAL` / `OVERVIEW_EMPLOYMENT`, so the two cannot drift) and row labels paint as
+  text, and only the values pulse, on `Row`'s own grid. Status is static and renders for real.
+  Any other tab (a cold deep link into Compensation or Skill Sets) gets generic section cards.
+- **The ID card's placeholder is the badge FORMING** (`IdCardForming`; Kane: *"make a nice
+  animated skeleton on it please like broken television"*, then, on seeing TV snow, *"Lets not
+  make it very staticky lets make it like a jittery one where its forming"*).
+  It is the card's own silhouette (plate, logo, portrait, name, rule, department, record, footer)
+  in the same 372px track, CR80 aspect and `5cqw` corners, so the column does not reflow. Three
+  bands tear sideways in short bursts on their own periods (2.3s · 3.1s · 3.9s), a red and a
+  cyan copy sit off-register and jump wider during a burst, a scan line draws down the card, and
+  the picture's strength steps a little. **Every animated property is `transform` or `opacity`.**
+  **A tear slice is visible only mid-burst**: at rest it would sit over the picture without the
+  fringe beneath it and read as a permanent stripe. **Nothing flashes** — small steps on a
+  low-contrast silhouette, under three a second. **It never themes**, like the card.
+  **Reduced motion parks it on one aligned, still frame** with the slices, fringe and scan line
+  hidden.
 
 ## 6. The payout read view
 
@@ -413,12 +461,11 @@ call site passes nothing and is byte-identical.
   the only width at which the badge can still shrink remains phone width, where it stacks.
   **Browser pass on the side-by-side layout also owed** — the Tailwind classes were confirmed
   in the dev server's compiled CSS, but the employee sign-in could not be driven.
-- **`needsPayoutSetup` has no `bankInfoLoaded` gate**, unlike its immediate neighbour
-  `needsSkillSetSetup`, which is gated on `skillSetLoaded`. `bankInfo` is null until
-  `/api/employee-ids` resolves, and on a cache-warm paint `loading` is already false — so the
-  TabBar's bank dot, Accounting's rose escalation and the Compensation strip's Payout chip all
-  assert "needs setup" **on screen** to an employee who already has details. Pre-existing and
-  byte-identical through this merge.
+- **~~`needsPayoutSetup` has no `bankInfoLoaded` gate~~ — fixed in code 2026-10-05 (§5.1).**
+  It was ungated, unlike its neighbour `needsSkillSetSetup`, so on a cache-warm paint the TabBar's
+  bank dot, Accounting's rose escalation and the Compensation strip's Payout chip all asserted
+  "needs setup" to an employee who already had details, for the whole `/api/employee-ids` round
+  trip. It is now `bankInfoLoaded && !isPayoutComplete(…)`. Not observed in a browser (below).
 - **~~`/employee` mounts sonner's `<Toaster>` twice~~ — fixed 2026-09-23 by Kane's `217544cd`.**
   The `EmployeeApp` mount is gone; only `app/layout.tsx:60` remains, so each toast renders once.
   The root Toaster carries no `theme` prop, so dark-mode appearance is unverified (audit item 188).
@@ -431,7 +478,12 @@ call site passes nothing and is byte-identical.
   not installed. Unobserved there: the deck's resting offset at phone width (the cards are
   `max-w-[440px]`, so at 400px they fill the column and the tucked card's 7 % inset is ~14px a
   side), the spin's read at 60fps, and the proof that the bank picker's popover is NOT clipped
-  by the height wrapper once it settles.
+  by the height wrapper once it settles. **2026-10-05 (§5.1):** the Overview pane skeleton and
+  `IdCardForming` were checked only as a static replica — the real components rendered from
+  source with `react-dom/server`, Tailwind compiled offline, screenshotted in headless Chromium at
+  1400px light/dark, 400px, reduced motion, and one frame frozen mid-burst. Still unobserved: a
+  real signed-in cold load (the hero painting from `shellIdentity`, the swap to content, no bank
+  dot flashing), and the tears in motion at 60fps.
 - **Accounting's own card is still single.** §6.2 gives the EMPLOYEE the deck. People → Banking
   ([people-bank-card.md](./people-bank-card.md)) — the surface a clerk is actually on "if they
   have a problem in Payment Dispatch" — still prints only the paid slot. `BankCardDeck` is
