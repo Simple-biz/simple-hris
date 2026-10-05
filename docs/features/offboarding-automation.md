@@ -16,6 +16,9 @@ Key files:
 - `app/api/hr/offboard/route.ts` — the actual offboard (single **or** batch), fires teardown webhooks.
 - `src/lib/hr/offboard-webhooks.ts` — slugs, URL resolution, `fireOffboardWebhook`.
 - `src/lib/hr/offboard-rbac.ts` — snapshot / revoke / restore RBAC grants.
+- `app/api/manager/pending-hires/[id]/no-show/route.ts` + `src/lib/hr/no-show-ledger.ts` — the manager
+  "Did not attend" teardown, and the Offboarded-list row it writes (see [*A no-show goes on the
+  Offboarded list*](#a-no-show-goes-on-the-offboarded-list-2026-10-05)).
 - `app/api/cron/process-scheduled-deletions/route.ts` — legacy drain: fires the delayed delete for
   rows stamped with `scheduled_deletion_at` before the 2026-08-07 routing change (new offboards
   never set it). **It never deletes someone who is here**: every due row passes the hold in
@@ -341,18 +344,74 @@ effect here. When the pending row has **no** `work_email` yet, nothing is torn d
 flipped to `no_show`. Every no-show stamps `deletion_processed_at` immediately; the 14-day
 `scheduled_deletion_at` timer is no longer set.
 
-**A no-show does NOT reach the Offboarded list** (OPEN, audit item 343, 2026-10-05). The route
-never inserts `offboarded_sheet`, unlike `/api/hr/offboard` (§2 step 3). So a no-show is visible only in
-HR → Onboarding → No-show, and its trash button hard-deletes that record. In the sheet era HR filed
-them by hand (401 `No Show During Orientation` + 457 `No Show` ledger rows, through 2026-07). Measured
-2026-10-05: 42 of 59 no-shows are absent from the ledger and 21 re-applied. Writing one is a write to
-off-board evidence source #2. Read the recycled-email rule below before building it.
-
 The warning copy is now explicit that this is a real offboard:
 [NewlyHiredPanel.tsx](src/components/manager/NewlyHiredPanel.tsx) both the button tooltip, the panel
 intro, and the confirm dialog spell out "same offboarding webhook HR uses — Workspace account removed,
 access revoked. Cannot be undone," and the toast/dialog branch on `work_email` so a hire with no
-account reads "recorded as a no-show only."
+account reads "nothing to tear down". Since 2026-10-05 both also say the hire is added to HR's
+Offboarded list as NCNS (next section).
+
+### A no-show goes on the Offboarded list (2026-10-05)
+
+**Every orientation no-show is written to `offboarded_sheet`**, the table both Offboarded lists read
+(HR → Offboarding → Offboarded and People → Offboarded). HR checks that list before interviewing a
+returning applicant. Until 2026-10-05 the route never wrote it, so a no-show was findable only on
+HR → Onboarding → No-show, whose trash button hard-deletes the record. HR then nearly re-interviewed a
+returning no-show (audit item 343). In the sheet era HR typed these rows by hand (401
+`No Show During Orientation` + 457 `No Show` ledger rows, every month through 2026-07); the HRIS button
+replaced the habit and dropped the record. Measured 2026-10-05: of 59 no-shows, 21 had re-applied and 13
+had been rehired, **9 of them on the SAME work email**.
+
+The row ([no-show-ledger.ts](src/lib/hr/no-show-ledger.ts), shared with the backfill so both write the
+same thing):
+
+| Column | Value | Why |
+|---|---|---|
+| `off_boarded_reason` | `ncns` | the same key the webhook sends; a did-not-attend no-show IS an NCNS |
+| `off_boarded_note` | `Did not attend orientation (pending hire #<id>)` + the manager's note | the marker makes it **one row per pending hire, ever** |
+| `work_email` | the hire's — **or NULL when a live master row carries it** | the ledger is off-board evidence source #2; a record on a work email someone is using now counts against them (recycled emails, below). The note says the work email was withheld and why |
+| `personal_email` · `name` · `department` | from the pending row | what HR searches by |
+| `start_date` | NULL | they never started; a guessed date would be evidence of a stint |
+| `off_boarded_at` · `off_boarded_by` · `origin` | the no-show stamp · the manager · `hris` | |
+
+- **Written only after the no-show is saved**, and **awaited**, not fired-and-forgotten. A ledger
+  failure never undoes the no-show. It comes back as `ledger.error`, and the manager gets a red toast
+  telling them to let HR know. The audit row records `ledger_written` / `ledger_skipped` /
+  `ledger_work_email_withheld` / `ledger_error`.
+- **A failed marker read writes nothing.** A blind insert could duplicate the row, and the backfill
+  (idempotent on the same marker) is the repair. **A failed liveness read still writes, with the work
+  email withheld**, because on an evidence table the safe direction is the record that cannot count
+  against anyone.
+- **No personal email → no row**, reported as `ledger.skipped = 'no_personal_email'`. The column is
+  NOT NULL and the Offboarded tab never falls back to the work address. 0 such hires on 2026-10-05.
+- **Money surfaces.** A no-show row on a rehire's work email or personal email is ignored by the
+  Payment Catalog and QC departed guards, because they require the record to post-date the person's
+  own Start Date (`catalog-roster-visibility.ts`). The Payroll Notes Offboarded tab lists only leavers
+  with hours in the cycle, and a no-show has none. About 860 sheet-era no-show rows already sat on the
+  ledger the same way.
+- **Not written to the Google "Offboarded" sheet.** That sheet is history only (no intake since
+  2026-08-07), and the route's 30 s budget is mostly spent by the 25 s webhook timeout.
+- **Known consequences, left as they are:** the Weekly Pulse counts a no-show as a separation (the sheet
+  era did too); a row whose work email was withheld has Restore / Remove from Sheet disabled (both key
+  on the work email); and Restore on any no-show row behaves as it does on every row: it clears every
+  master stamp and ledger row on that work email. Two pending rows for the same person marked on the
+  same day each get a row from the route (the backfill folds them).
+
+**Backfill** — `scripts/backfill-noshow-offboarded.mts` (dry run by default, `--apply` to write). It
+builds every past no-show's row through the same helper and is INSERT-ONLY. It skips a pending hire
+whose marker is already on the ledger, and it skips a no-show already recorded under **any** reason (the
+same personal email within 3 days: HR filed #439 as `Withdrawn` that day). The same check folds
+duplicate pending rows (#902/#903/#904 are one person on one day) into one row. Any failed read stops the
+run before a write. The full ledger plus the planned rows are backed up to `references/backups/`, and the
+inserted ids are saved there so the write is reversible. Dry run 2026-10-05: **55 to insert**, 5 skipped,
+work email withheld on 4 live rehires.
+
+**Deploy notes — PENDING:**
+1. **The backfill has NOT been applied.** The session's `--apply` run was blocked by the permission
+   check. Kane runs `node --import tsx scripts/backfill-noshow-offboarded.mts --apply`. It prints the
+   backup path, the inserted ids and a read-back.
+2. **Run it again after the deploy.** Until the route change is live, no-shows marked on the deployed
+   build still skip the ledger. A second run picks them up and inserts nothing twice.
 
 ### Offboarded-tab sheet writer fixed
 

@@ -426,13 +426,18 @@ export default function NewlyHiredPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: noShowNote.trim() || null }),
       });
-      const json = (await res.json()) as { error?: string };
+      const json = (await res.json()) as { error?: string; ledger?: { error: string | null } | null };
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       toast.warning(`${r.name} marked as did not attend — offboarding triggered`, {
         description: r.work_email
-          ? 'Same offboarding webhook HR uses: Workspace account removed and access revoked.'
-          : 'No work account exists yet — recorded as a no-show only.',
+          ? 'Same offboarding webhook HR uses: Workspace account removed and access revoked. Added to the Offboarded list.'
+          : 'No work account exists yet — nothing to tear down. Added to the Offboarded list.',
       });
+      if (json.ledger?.error) {
+        toast.error(`${r.name} was NOT added to the Offboarded list`, {
+          description: `${json.ledger.error} — let HR know so they can add them.`,
+        });
+      }
       setNoShowNote('');
       void refresh();
     } catch (e) {
@@ -656,6 +661,7 @@ export default function NewlyHiredPanel({
     let fail = 0;
     let firstErr = '';
     const failures: { name: string; error: string }[] = [];
+    const ledgerFails: string[] = [];
     for (const t of targets) {
       setBulkProgress((p) => (p ? { ...p, current: t.name } : p));
       try {
@@ -664,9 +670,10 @@ export default function NewlyHiredPanel({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ note: note || null }),
         });
-        const json = (await res.json()) as { error?: string };
+        const json = (await res.json()) as { error?: string; ledger?: { error: string | null } | null };
         if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
         ok += 1;
+        if (json.ledger?.error) ledgerFails.push(t.name);
       } catch (e) {
         fail += 1;
         const msg = e instanceof Error ? e.message : String(e);
@@ -678,10 +685,15 @@ export default function NewlyHiredPanel({
     setBulkProgress((p) => (p ? { ...p, current: null, finished: true } : p));
     if (fail === 0) {
       toast.warning(`${ok} hire${ok !== 1 ? 's' : ''} marked did not attend — offboarding triggered`, {
-        description: 'Workspace accounts removed and access revoked where one existed.',
+        description: 'Workspace accounts removed and access revoked where one existed. Added to the Offboarded list.',
       });
     } else {
       toast.warning(`${ok} offboarded, ${fail} failed`, { description: firstErr || undefined });
+    }
+    if (ledgerFails.length > 0) {
+      toast.error(`${ledgerFails.length} not added to the Offboarded list`, {
+        description: `${ledgerFails.join(', ')} — let HR know so they can add them.`,
+      });
     }
     setBulkNoShowNote('');
     setBulkBusy(false);
@@ -1264,10 +1276,11 @@ export default function NewlyHiredPanel({
                 <li>• HRIS &amp; app access revoked immediately</li>
                 <li>• Fires the same offboarding webhook HR uses (Workspace + Hubstaff teardown)</li>
                 <li>• Removed from the promote queue — HR can&apos;t promote them</li>
+                <li>• Added to HR&apos;s Offboarded list as NCNS</li>
               </ul>
             ) : (
               <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 p-2.5 text-[11px] text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400">
-                No work account exists yet — this just records the no-show; nothing to tear down.
+                No work account exists yet — nothing to tear down. They are recorded as a no-show and added to HR&apos;s Offboarded list as NCNS.
               </p>
             )}
             <input
@@ -1345,8 +1358,8 @@ export default function NewlyHiredPanel({
 
               <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
                 {withAccount > 0
-                  ? `${withAccount} of ${targets.length} have a Google Workspace account that will be disabled & deleted and access revoked. The rest are recorded as no-shows only.`
-                  : 'None have a work account yet — this just records the no-shows; nothing to tear down.'}
+                  ? `${withAccount} of ${targets.length} have a Google Workspace account that will be disabled & deleted and access revoked. The rest are recorded as no-shows only. All ${targets.length} are added to HR's Offboarded list as NCNS.`
+                  : `None have a work account yet, so nothing is torn down. All ${targets.length} are recorded as no-shows and added to HR's Offboarded list as NCNS.`}
               </p>
 
               <input

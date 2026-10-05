@@ -918,7 +918,7 @@ export default function HrOffboarding() {
                               className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1', origin.chip)}
                               title={
                                 r.origin === 'hris'
-                                  ? 'Off-boarded through the HRIS — a manager request processed by HR.'
+                                  ? "Off-boarded through the HRIS — HR's Offboard, or a manager marking a new hire as did not attend orientation (reason NCNS)."
                                   : r.origin === 'google_sheet'
                                   ? "Recorded on the master sheet's Offboarded tab. History only — the sheet has not been an offboarding source since 2026-08-07."
                                   : 'This record predates origin tracking, so where it came from is not known.'

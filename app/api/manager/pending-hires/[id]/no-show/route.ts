@@ -13,6 +13,12 @@ import {
 import { requireFeatureEdit } from "@/lib/auth/authorize-feature";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import type { OffboardReason } from "@/lib/hr/offboard-reasons";
+import {
+  NO_SHOW_LEDGER_REASON,
+  escapeIlike,
+  recordNoShowOnLedger,
+  type NoShowLedgerStore,
+} from "@/lib/hr/no-show-ledger";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -24,7 +30,36 @@ export const maxDuration = 30;
  * mirrors the `reason` HR sends from the Offboard dialog and gives the n8n
  * automation the same key to branch on for a manager-triggered teardown.
  */
-const NO_SHOW_REASON: OffboardReason = "ncns";
+const NO_SHOW_REASON: OffboardReason = NO_SHOW_LEDGER_REASON;
+
+type ServiceClient = NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>;
+
+/** The Offboarded-list reads/writes `recordNoShowOnLedger` needs. */
+function ledgerStore(sb: ServiceClient): NoShowLedgerStore {
+  return {
+    async markerExists(marker) {
+      const { data, error } = await sb
+        .from("offboarded_sheet")
+        .select("id")
+        .ilike("off_boarded_note", `%${escapeIlike(marker)}%`)
+        .limit(1);
+      return { exists: (data ?? []).length > 0, error: error?.message ?? null };
+    },
+    async workEmailLive(workEmail) {
+      const { data, error } = await sb
+        .from("global_master_list")
+        .select("id")
+        .ilike('"Work Email"', escapeIlike(workEmail))
+        .is("off_boarded_at", null)
+        .limit(1);
+      return { live: (data ?? []).length > 0, error: error?.message ?? null };
+    },
+    async insert(row) {
+      const { error } = await sb.from("offboarded_sheet").insert(row);
+      return { error: error?.message ?? null };
+    },
+  };
+}
 
 function normEmail(s: string | null | undefined): string {
   return (s ?? "").trim().toLowerCase();
@@ -87,7 +122,7 @@ async function authorizeAndLoad(id: number) {
     }
   }
 
-  return { ok: true as const, sessionEmail, row };
+  return { ok: true as const, sessionEmail, row, sb };
 }
 
 /**
@@ -107,6 +142,13 @@ async function authorizeAndLoad(id: number) {
  *
  * never_promoted:true tells n8n the Hubstaff member was never invited (invite
  * only fires at promote), so Hubstaff removal is a no-op.
+ *
+ * Once the no-show is saved, the hire is written to the Offboarded list
+ * (`offboarded_sheet`, reason `ncns`) so HR finds them before re-interviewing a
+ * returning applicant — with or without a work email. The rules (work email
+ * withheld when live on the roster, one row per pending hire) live in
+ * `src/lib/hr/no-show-ledger.ts`. A ledger failure never undoes the no-show; it
+ * comes back as `ledger.error` so the manager is told.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const feat = await requireFeatureEdit("manager", "team");
@@ -120,7 +162,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const authz = await authorizeAndLoad(id);
   if (!authz.ok) return authz.res;
-  const { row, sessionEmail } = authz;
+  const { row, sessionEmail, sb } = authz;
 
   if (row.status === "promoted") {
     return NextResponse.json(
@@ -171,6 +213,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (error) return NextResponse.json({ error }, { status: 500 });
 
+  // Only now that the no-show is saved: put them on the Offboarded list.
+  const ledger = await recordNoShowOnLedger(ledgerStore(sb), {
+    pendingId: id,
+    name: row.name,
+    workEmail: row.work_email,
+    personalEmail: row.personal_email,
+    department: row.department,
+    noShowAt: updated?.no_show_at ?? nowIso,
+    markedBy: sessionEmail,
+    managerNote: body.note ?? null,
+  });
+  if (ledger.error) {
+    console.error(`[no-show] hire ${id} not added to the Offboarded list:`, ledger.error);
+  }
+
   void insertAuditLog({
     user_name: sessionEmail,
     user_role: "manager",
@@ -186,8 +243,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       webhook_fired: webhook ? webhook.fired && webhook.error == null : false,
       webhook_status: webhook?.status ?? null,
       webhook_error: webhook?.error ?? null,
+      ledger_written: ledger.written,
+      ledger_skipped: ledger.skipped,
+      ledger_work_email_withheld: ledger.workEmailWithheld,
+      ledger_error: ledger.error,
     },
   });
 
-  return NextResponse.json({ row: updated, webhook });
+  return NextResponse.json({ row: updated, webhook, ledger });
 }
