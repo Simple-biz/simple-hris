@@ -161,6 +161,15 @@
         ],
         "createdAt": "2026-10-05T11:13:32.150Z",
         "reason": "Claude triage 2026-10-05: zinc-500/600/700 text on white (bg-white) controls; emerald-50 is the hover tint only and text turns emerald on hover, so no gray-on-color state exists"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/components/admin/AdminRoles.tsx"
+        ],
+        "createdAt": "2026-10-05T19:30:10.837Z",
+        "reason": "Kane (user confirmed 2026-10-05): the left-4 accent on the Admin -> Roles cards (L1466, L1797) is kept as designed"
       }
     ]
   }
