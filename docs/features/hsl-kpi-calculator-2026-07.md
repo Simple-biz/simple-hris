@@ -1080,6 +1080,63 @@ So a cached definition can be *drawn*, and only a live one can be *derived from*
 into anything that gets saved. The seeded paint is `seeded` (untouched), which is
 exactly why `isUnsavedLocalWork` lets the live load replace it.
 
+### The QC first-pass rail and the departed set *(2026-10-05)*
+
+Kane: *"KPI Calculator - Lead Gen - QC First Pass - Please lets add caching in here so
+it loads faster or even the whole KPI Calculator check if it is stored in cache."* Both
+reads shipped after this cache did (09-14) and painted cold on every visit:
+
+| Dataset | Key | What it cost uncached |
+|---|---|---|
+| The **QC first pass** rail (`QcOfficerLog`) — `GET /api/qc/assignments` | `KPI_CACHE_KEYS.qcOfficerLog(week)` | The slowest read on the Lead Gen card, because the route **deals the week before it answers**. The rail said *"Loading…"* for all of it, on every open and every week switch. |
+| The departed set (`useDepartedMembers`) — `GET /api/manager/departed-members` | `KPI_CACHE_KEYS.departedMembers(week)` | Each landing was a new `Set`. The per-dept loads are keyed on the roster it filters, so every visit re-fetched **every department a second time**. A cached Lead Gen table also lost ~158 rows a round trip after it painted. |
+
+What decides what may be stored is `src/lib/manager/kpi-cache-payloads.ts` (pure, plus
+`kpi-cache-payloads.test.ts`):
+
+- **Only an answer is cached.** `qcOfficerLogPayload` returns `null` for a non-2xx, an
+  `error` body or a malformed row. Before this, the rail parsed a 500's `{ error }` as
+  four empty lists and said *"No QC officer is assigned to score this department yet"*.
+  That was a failed read shown as an empty answer, and it is what would have been
+  cached. A failed read with nothing cached now says *"Couldn't load the QC log"* and
+  offers **Retry**.
+- **The rail's payload is an allow-list.** The route also returns `mine` (the caller's own
+  slots, with full `EmployeeRow`s for an officer) and each slot's lifecycle columns. The
+  rail draws neither, so neither reaches `sessionStorage`.
+- **A `degraded` departed answer is never cached.** The route fails OPEN with a 200, an
+  empty list and a `degraded` reason. Caching that would paint "hide nobody" over a good
+  list on the next visit.
+
+**The rail paints the week on screen. It fetches only the resolved one.** It takes two
+props: `periodStart` (`weekResolved ? weekStart : ''`, unchanged and still the only week
+the deal-writing GET is ever sent, `qc-scoring.md` → *The period key is a SUNDAY*) and
+`paintPeriod` (`weekStart`, the presumed week included). An entry exists only for a week
+a fetch was sent, so the Monday clock seed finds nothing to paint. **Return to QC** is
+disabled until the week resolves, because it is a write keyed on that week. The cached
+log carries a neutral **"as of HH:MM"** under the rail header, and no spinner. It clears
+once the live log lands and stays if that read failed. A late answer for a week the
+manager has left is dropped and never painted over the new week. While the week is still
+resolving with nothing cached, the rail says *"Waiting for the payroll week…"*, not a
+spinner, because the week can fail to resolve and a spinner would then never stop.
+
+**The departed set is NOT painted before the week resolves.** It filters the member
+list, and `departed-guard.test.ts` pins `useDepartedMembers(weekResolved ? weekStart : '')`
+(*"never filter on the unresolved week seed"*). So the cache is read only under the week
+the fetch is sent. The set is seeded the moment the week resolves, in the same render
+that unlocks the first live load, so that load already reads the cached set. The live
+answer still always runs, and an unchanged answer keeps the **same `Set`** (`sameEmailSet`)
+so it cannot trigger a second load. **A failure still hides nobody.** The cached set is
+dropped on a failed read and is never kept as the last good answer, because hiding a live
+person means their bonus is never scored or paid.
+
+Residual, as before the cache: an officer filter keeps the slice it was clicked with,
+until it is clicked again. It did the same across a Realtime reload. It narrows what is
+displayed and writes nothing.
+
+**Not clicked through signed in.** `tsc` is clean for these files and all 5,774 tests
+pass. The two `.next/types` errors are for the deleted `bank-preferred-requests` route
+and predate this change.
+
 ### Not cached, on purpose
 
 - **The FX rates.** `usd_to_php_rate` is snapshotted into the stored peso amount
@@ -1087,7 +1144,19 @@ exactly why `isUnsavedLocalWork` lets the live load replace it.
   copy would silently displace. One small request, and `fxSettled` already holds
   scoring until it answers.
 - **SSD sub-team inputs** (above).
+- **Settlement-currency markers** (`POST /api/payroll/settlement-currency`). They decide
+  which currency a person's figure is shown and settled in, and they are fetched in
+  batches as members appear.
 - **Nothing server-side changed.** Every route keeps `cache: 'no-store'`.
+
+### Not cached yet — found 2026-10-05, OPEN
+
+- **HSL Branches' Bonus Library read** (`HslBonusCalculator.tsx`, the
+  `/api/bonus-catalog` effect). A Library bonus folds into the `calculated_bonus` an HSL
+  save stores, so it is a write input. Unlike the Departments side, HSL has no
+  `catalogAvailable` / `catalogLoaded` split for it, and nothing holds scoring until it is
+  live. Seeding it from `KPI_CACHE_KEYS.catalog` first needs that hold. That makes it a
+  money-path change of its own, not a cache wiring. Session log item 346.
 
 ### Not verified in a browser
 

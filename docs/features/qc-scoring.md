@@ -133,6 +133,12 @@ Three locks now, because one was demonstrably not enough:
    reject the response after the phantom week had already been dealt.
 3. **Neither client seeds a period from the clock.** `QCApp` holds `''` until `usePayWeeks`
    resolves a real batch Sunday; `QcOfficerLog` is passed `weekResolved ? weekStart : ''`.
+   Since 2026-10-05 it also takes `paintPeriod` (the week on screen), and that prop **only
+   picks which cached log may be painted** from the Manager KPI cache. The fetch, and
+   with it the deal, still waits for `periodStart`. An entry exists only for a week a
+   fetch was sent, and **Return to QC** is disabled until the week resolves.
+   `kpi-cache-payloads.test.ts` pins both props. See `hsl-kpi-calculator-2026-07.md` →
+   *The QC first-pass rail and the departed set*.
 
 > The ten phantom periods are **left in place** (Kane, 2026-09-14: fix and report, delete
 > never). They hold no scores, so they are dead slot rows; the audit script re-reads them and

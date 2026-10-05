@@ -127,6 +127,7 @@ import {
   readKpiCacheStamp,
   setKpiCache,
 } from '@/lib/manager/kpi-cache';
+import { qcOfficerLogPayload, type QcOfficerLogPayload } from '@/lib/manager/kpi-cache-payloads';
 import { useKpiCacheIdentity } from '@/hooks/useKpiCacheIdentity';
 import { validateFormula, evaluateFormula } from '@/lib/bonus-catalog/formula';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
@@ -580,32 +581,57 @@ function bonusVariables(bonus: BonusDef): string[] {
  * panel. Surfaces which QC officer was responsible for the week's first pass,
  * how many members each scored, whether they've locked, and a Return-to-QC
  * action. The scored values themselves are pre-filled into the table by loadDept.
+ *
+ * Painted from the KPI cache (2026-10-05): the route behind it deals the week
+ * before it answers, so this was the last thing on the Lead Gen card still
+ * saying "Loading…" on every visit. A cached log paints; the fetch still runs on
+ * every mount and still waits for a resolved week.
  */
-interface QcLogOfficer { email: string; index: number; memberCount: number; name?: string | null }
-interface QcLogAssignment { qc_officer_email: string; member_email: string; member_name: string | null; department: string }
-interface QcLogLock { qc_officer_email: string; status: 'draft' | 'locked'; member_count: number; locked_at: string | null }
-interface QcLogReview { department: string; status: 'pending' | 'accepted' | 'returned'; reviewed_by: string | null; reviewed_at: string | null; note: string | null }
-
 function QcOfficerLog({
   deptKey,
   periodStart,
+  paintPeriod,
   selectedOfficer = null,
   onSelectOfficer,
 }: {
   deptKey: string;
+  /** The week to FETCH — `''` until the payroll week resolves, because the
+   *  route behind it writes (it deals the week it is handed). */
   periodStart: string;
+  /** The week on screen, resolved or not. Picks which cached log may be PAINTED
+   *  and nothing else: an entry only exists for a week a fetch was sent, so the
+   *  local-clock seed finds none. */
+  paintPeriod: string;
   /** The officer whose people the table is currently filtered to (parent-owned). */
   selectedOfficer?: string | null;
   /** Click an officer to filter the table to the people they scored; null clears. */
   onSelectOfficer?: (sel: { officer: string; emails: string[] } | null) => void;
 }) {
-  const [data, setData] = useState<{
-    officers: QcLogOfficer[];
-    assignments: QcLogAssignment[];
-    locks: QcLogLock[];
-    review: QcLogReview[];
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
+  /**
+   * What is on screen, and for which week. `settled` = the live read for that
+   * week finished on THIS mount (success or failure) — reset per week on
+   * purpose, because a different week is a different dataset. `asOf` is the
+   * cache write time while a cached copy is all there is.
+   */
+  type Shown = {
+    week: string;
+    data: QcOfficerLogPayload | null;
+    settled: boolean;
+    failed: boolean;
+    asOf: number | null;
+  };
+  const seed = (week: string): Shown => {
+    const key = week ? KPI_CACHE_KEYS.qcOfficerLog(week) : null;
+    const data = key ? (getKpiCache<QcOfficerLogPayload>(key) ?? null) : null;
+    return { week, data, settled: false, failed: false, asOf: data && key ? (readKpiCacheStamp(key) ?? null) : null };
+  };
+  const [shown, setShown] = useState<Shown>(() => seed(paintPeriod));
+  let current = shown;
+  if (shown.week !== paintPeriod) {
+    current = seed(paintPeriod);
+    setShown(current);
+  }
+  const data = current.data;
   const [returning, setReturning] = useState(false);
   // Unique per mount so two QcOfficerLogs that briefly coexist during the
   // calculator's view-mode swap (AnimatePresence keeps the exiting panel mounted
@@ -619,31 +645,28 @@ function QcOfficerLog({
     // the Monday local-clock seed manufactured phantom periods from the manager
     // side exactly as the QC shell did (both measured 2026-09-14). The route now
     // refuses a non-Sunday key as well — this guard keeps us from asking.
-    if (!periodStart) {
-      setData(null);
-      setLoading(false);
-      return;
-    }
+    if (!periodStart) return;
+    // Every landing is checked against the week on screen, so a slow answer for
+    // a week the manager has since left never paints over the new one.
+    const forWeek = (prev: Shown, next: Partial<Shown>): Shown =>
+      prev.week === periodStart ? { ...prev, ...next } : prev;
     try {
       const res = await fetch(`/api/qc/assignments?period_start=${periodStart}`, { cache: 'no-store' });
-      const json = (await res.json()) as {
-        officers?: QcLogOfficer[]; assignments?: QcLogAssignment[]; locks?: QcLogLock[]; review?: QcLogReview[];
-      };
-      setData({
-        officers: json.officers ?? [],
-        assignments: json.assignments ?? [],
-        locks: json.locks ?? [],
-        review: json.review ?? [],
-      });
+      const json: unknown = await res.json().catch(() => null);
+      // `null` for a failed read. It used to become four empty lists — "No QC
+      // officer is assigned" — which is also what would have been cached.
+      const payload = qcOfficerLogPayload(res.ok, json);
+      if (!payload) throw new Error(`QC log unavailable (${res.status})`);
+      setKpiCache(KPI_CACHE_KEYS.qcOfficerLog(periodStart), payload);
+      setShown((prev) => forWeek(prev, { data: payload, settled: true, failed: false, asOf: null }));
     } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
+      // Keep whatever is on screen: a cached log and its "as of" stay up, which
+      // is the honest answer to a dropped refresh.
+      setShown((prev) => forWeek(prev, { settled: true, failed: true }));
     }
   }, [periodStart]);
 
   useEffect(() => {
-    setLoading(true);
     void load();
   }, [load]);
 
@@ -731,13 +754,42 @@ function QcOfficerLog({
         <p className="mt-1 text-[9.5px] leading-tight text-zinc-400 dark:text-zinc-500">
           Click an officer to filter the table to who they scored.
         </p>
+        {/* Neutral, never amber, and no spinner: a background reload never
+            announces itself — the timestamp is the whole message. Stays up when
+            the live read failed, so the label keeps explaining what is shown. */}
+        {data && current.asOf !== null && (!current.settled || current.failed) && (
+          <p className="mt-1 font-mono text-[9px] tabular-nums text-zinc-400 dark:text-zinc-500">
+            as of {new Date(current.asOf).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+          </p>
+        )}
       </div>
 
       {/* Officer list (scrolls) */}
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        {loading ? (
+        {!data && !periodStart ? (
+          // Not a spinner: the week can fail to resolve, and a spinner that never
+          // stops is the terminal-skeleton failure (First-load reveal). The
+          // calculator's own alert explains a week that cannot be confirmed.
+          <p className="px-1 text-[11px] text-zinc-500 dark:text-zinc-400">Waiting for the payroll week…</p>
+        ) : !data && !current.settled ? (
           <div className="flex items-center gap-1.5 px-1 text-[11px] text-zinc-500">
             <Loader2 className="h-3 w-3 animate-spin" /> Loading…
+          </div>
+        ) : !data ? (
+          // A failed read with nothing cached. Never "no officer assigned": that
+          // is an answer, and this is the absence of one.
+          <div className="px-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+            <p>Couldn&rsquo;t load the QC log.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setShown((prev) => ({ ...prev, settled: false, failed: false }));
+                void load();
+              }}
+              className="mt-1 font-medium text-orange-700 underline-offset-2 hover:underline dark:text-orange-300"
+            >
+              Retry
+            </button>
           </div>
         ) : officerEmails.length === 0 ? (
           <p className="px-1 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -814,7 +866,9 @@ function QcOfficerLog({
             size="sm"
             variant="outline"
             className="h-7 w-full gap-1.5 text-[11px]"
-            disabled={returning}
+            // A cached log may paint before the week resolves; the return is a
+            // write keyed on that week, so it waits for the live one.
+            disabled={returning || !periodStart}
             onClick={() => void returnToQc()}
           >
             <CornerUpLeft className="h-3 w-3" /> Return to QC
@@ -4382,6 +4436,7 @@ export default function DeptBonusCalculator({
             <QcOfficerLog
               deptKey={key}
               periodStart={weekResolved ? weekStart : ''}
+              paintPeriod={weekStart}
               selectedOfficer={qcOfficerFilter?.dept === key ? qcOfficerFilter.officer : null}
               onSelectOfficer={(sel) => {
                 setQcOfficerFilter(sel ? { dept: key, officer: sel.officer, emails: sel.emails } : null);

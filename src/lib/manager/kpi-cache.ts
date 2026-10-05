@@ -461,4 +461,25 @@ export const KPI_CACHE_KEYS = {
    */
   insights: (surface: KpiCacheSurface, week: string, depts: readonly string[]): string =>
     `${surface}:insights:${week}:${[...depts].sort().join(',')}`,
+
+  /**
+   * `GET /api/qc/assignments` as the manager's **QC first pass** rail draws it
+   * (`QcOfficerLog`), for one week — projected through `qcOfficerLogPayload`
+   * (`kpi-cache-payloads.ts`), never the raw response, which also carries the
+   * caller's own slots with full `EmployeeRow`s.
+   *
+   * Manager mode only: the rail is never rendered for `variant="qc"`. Not per
+   * department, because one response answers every QC department the viewer
+   * may see and the rail filters it. **Paint only** — that route DEALS the week
+   * it is handed, so the rail still fetches only once `weekResolved`.
+   */
+  qcOfficerLog: (week: string): string => `dept-manager:qc-log:${week}`,
+
+  /**
+   * `GET /api/manager/departed-members` for one week: the sorted, lower-cased
+   * addresses the table drops. Written only for a clean answer — never a
+   * `degraded` one, which the route returns as a 200 with an empty list.
+   * **Paint only**; a failed live read still falls back to hiding nobody.
+   */
+  departedMembers: (week: string): string => `departed:${week}`,
 } as const;
