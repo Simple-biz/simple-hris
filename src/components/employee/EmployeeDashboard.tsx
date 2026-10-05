@@ -309,6 +309,12 @@ interface EmployeeDashboardProps {
   onNavigateToNotifications?: () => void;
   /** Unread notification count — drives the bell badge in the dashboard header. */
   unreadNotifications?: number;
+  /**
+   * Called ONCE, the first time the Overview is really on screen: the essentials
+   * load and the selected week's hours have both settled (success or failure).
+   * The shell lifts the sign-in card on it — docs/features/employee-login-loader.md.
+   */
+  onFirstPaintReady?: () => void;
 }
 
 /** Align with mapHubstaffHoursRow / PayrollWizard so rows match after Supabase sync. */
@@ -482,8 +488,13 @@ function EmployeeSpecialTransfers({ employeeEmail }: { employeeEmail: string | n
 }
 
 
-export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0 }: EmployeeDashboardProps) {
+export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, needsBank = false, needsSkillSet = false, onNavigateToProfile, onNavigateToNotifications, unreadNotifications = 0, onFirstPaintReady }: EmployeeDashboardProps) {
   const [loading, setLoading] = useState(true);
+  // One-way: true once the FIRST hours load has settled, or once the essentials
+  // load settled without selecting a week (no files, or it failed). `loading`
+  // alone clears a render before the selected week's hours start, which would
+  // lift the sign-in card onto the skeleton it exists to cover.
+  const [firstHoursSettled, setFirstHoursSettled] = useState(false);
   const [employeeStartDate, setEmployeeStartDate] = useState<Date | null>(null);
   // The time-of-day greeting depends on the viewer's LOCAL hour, which only
   // exists on the client. Computing it during SSR uses the server's timezone
@@ -1032,6 +1043,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     (async () => {
       setDataError(null);
       setEssentialsError(null);
+      // Whether a week was handed to the selected-file effect below, which then
+      // owns settling `firstHoursSettled`. Anything else settles it here.
+      let weekSelected = false;
       try {
         const [ratesRes, fxRes, filesRes, holidaysRes, sysBonusRes] = await Promise.all([
           fetch(`/api/employee-hourly-rates?email=${encodeURIComponent(email)}`, { cache: 'no-store' }),
@@ -1082,6 +1096,7 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
         setLastLoadedAt(Date.now());
         if (files.length > 0) {
           setSelectedFile(files[0]); // latest (API returns newest-first)
+          weekSelected = true;
         } else {
           // No source files — fall back to loading all data
           await loadHoursData(null, cancelled);
@@ -1094,7 +1109,10 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
           setEssentialsError(cleanErrorMessage(e, 'Failed to load dashboard data'));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          if (!weekSelected) setFirstHoursSettled(true);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -1195,10 +1213,24 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     setFileLoading(true);
     setDataError(null);
     loadHoursData(selectedFile, false).finally(() => {
-      if (!cancelled) setFileLoading(false);
+      if (!cancelled) {
+        setFileLoading(false);
+        setFirstHoursSettled(true);
+      }
     });
     return () => { cancelled = true; };
   }, [selectedFile, loadHoursData]);
+
+  // Tell the shell, once, that the Overview is really on screen — the sign-in
+  // card lifts on it. The ref is the once: the callback is an inline arrow in
+  // the shell, so keying an effect on it alone would re-fire on every render.
+  const firstPaintReportedRef = useRef(false);
+  const firstPaintReady = !loading && firstHoursSettled && !fileLoading;
+  useEffect(() => {
+    if (!firstPaintReady || firstPaintReportedRef.current) return;
+    firstPaintReportedRef.current = true;
+    onFirstPaintReady?.();
+  }, [firstPaintReady, onFirstPaintReady]);
 
   // Fetch ALL source files and merge this employee's daily columns for full-month PAB.
   // The server does the fan-out and ships just this employee's row per file

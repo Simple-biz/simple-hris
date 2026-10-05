@@ -2158,7 +2158,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/common/CollapsibleSidebarShell.tsx` | component | *this file* · [accounting-cobrowse](../features/accounting-cobrowse.md) |
 | `src/components/common/ConstructionBanner.tsx` | component | *this file* |
 | `src/components/common/ConstructionMark.tsx` | component | — **no doc** |
-| `src/components/common/DashboardSwitchLoader.tsx` | component | — **no doc** |
+| `src/components/common/DashboardSwitchLoader.tsx` | component | [employee-login-loader](../features/employee-login-loader.md) |
 | `src/components/common/DispatchPaidToastsGlobal.tsx` | component | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
 | `src/components/common/SidebarBrandMark.tsx` | component | [employee-penny-ai](../features/employee-penny-ai.md) |
 | `src/components/common/SidebarCollapseToggle.tsx` | component | *this file* |
@@ -2176,9 +2176,9 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/employee/CurrentPaycycle.tsx` | component | [employee-current-paycycle](../features/employee-current-paycycle.md) |
 | `src/components/employee/DisputeDialog.tsx` | component | *this file* |
 | `src/components/employee/DocumentPreviewPanel.tsx` | component | — **no doc** |
-| `src/components/employee/EmployeeApp.tsx` | component | *this file* · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-penny-ai](../features/employee-penny-ai.md) |
+| `src/components/employee/EmployeeApp.tsx` | component | *this file* · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-login-loader](../features/employee-login-loader.md) · [employee-penny-ai](../features/employee-penny-ai.md) |
 | `src/components/employee/EmployeeAvatar.tsx` | component | *this file* · [employee-id-card](../features/employee-id-card.md) |
-| `src/components/employee/EmployeeDashboard.tsx` | component | [bonus-calculator](../features/bonus-calculator.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) |
+| `src/components/employee/EmployeeDashboard.tsx` | component | [bonus-calculator](../features/bonus-calculator.md) · [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-login-loader](../features/employee-login-loader.md) |
 | `src/components/employee/EmployeeFpu.tsx` | component | *this file* · [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) |
 | `src/components/employee/EmployeeFpuGroup.tsx` | component | *this file* · [fpu-groups-attendance](../features/fpu-groups-attendance.md) |
 | `src/components/employee/EmployeeHelpMenu.tsx` | component | — **no doc** |
@@ -2186,6 +2186,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/employee/EmployeeKpiResults.tsx` | component | [kpi-scored-notification](../features/kpi-scored-notification.md) |
 | `src/components/employee/EmployeeLeaves.tsx` | component | *this file* |
 | `src/components/employee/EmployeeLogin.tsx` | component | *this file* |
+| `src/components/employee/EmployeeLoginLoader.tsx` | component | [employee-login-loader](../features/employee-login-loader.md) |
 | `src/components/employee/EmployeeMesa.tsx` | component | *this file* · [mesa](../features/mesa.md) · [urgent-payments](../features/urgent-payments.md) |
 | `src/components/employee/EmployeeMyHours.tsx` | component | [bonus-catalog](../features/bonus-catalog.md) · [employee-my-hours-calendar](../features/employee-my-hours-calendar.md) |
 | `src/components/employee/EmployeePabCalendar.tsx` | component | *this file* · [orphanage-pab-coverage](../features/orphanage-pab-coverage.md) · [payroll-wizard-pab-step](../features/payroll-wizard-pab-step.md) |

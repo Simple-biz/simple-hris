@@ -28,6 +28,10 @@ import { cn } from '@/lib/utils';
  * boundary — Next SSRs the first frame, then it hydrates and animates. It knows
  * its own dashboard from the `view` prop the route passes, since the switcher's
  * in-flight state lives on the outgoing page and is gone by the time this mounts.
+ *
+ * The employee sign-in hand-off reuses it as "Loading your Employee Dashboard"
+ * (`EmployeeLoginLoader`, docs/features/employee-login-loader.md) — the only
+ * caller that passes `eyebrow` / `statusMessages`.
  */
 
 const VIEW_ICONS: Record<AppView, React.ComponentType<{ className?: string }>> = {
@@ -224,11 +228,18 @@ const EXPECTED_MS = 6000;
 export default function DashboardSwitchLoader({
   view,
   label: labelProp,
+  eyebrow = 'Switching to',
+  statusMessages = STATUS_MESSAGES,
 }: {
   /** Maps to the label + icon. Omit for routes outside the switcher's AppView
    *  set (e.g. payroll-clerk) and pass `label` instead. */
   view?: AppView;
   label?: string;
+  /** Small caps above the title. Only the employee sign-in card
+   *  (`EmployeeLoginLoader`) overrides it — "Switching to" is false there. */
+  eyebrow?: string;
+  /** The cycling status line. Same override, same reason. */
+  statusMessages?: readonly string[];
 }) {
   const label = labelProp ?? (view ? VIEW_LABELS[view] : 'Dashboard');
   const Icon = view ? VIEW_ICONS[view] : LayoutDashboard;
@@ -236,10 +247,12 @@ export default function DashboardSwitchLoader({
   const [index, setIndex] = useState(0);
   const [percent, setPercent] = useState(0);
 
+  const messageCount = statusMessages.length;
   useEffect(() => {
-    const id = setInterval(() => setIndex((i) => (i + 1) % STATUS_MESSAGES.length), CYCLE_MS);
+    if (messageCount < 2) return;
+    const id = setInterval(() => setIndex((i) => (i + 1) % messageCount), CYCLE_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [messageCount]);
 
   useEffect(() => {
     let elapsed = 0;
@@ -259,7 +272,7 @@ export default function DashboardSwitchLoader({
     <div
       className={cn('relative h-dvh max-h-dvh w-full overflow-hidden', tone.root)}
       aria-busy="true"
-      aria-label={`Switching to ${label} dashboard`}
+      aria-label={`${eyebrow} ${label} dashboard`}
     >
       {/* ── Skeleton layer — the dashboard shell shape behind the card ── */}
       <div className="absolute inset-0 flex">
@@ -336,7 +349,7 @@ export default function DashboardSwitchLoader({
                 tone.eyebrow,
               )}
             >
-              Switching to
+              {eyebrow}
             </div>
             <h2 className={cn('mt-1 text-xl font-bold', tone.title)}>{label} Dashboard</h2>
           </div>
@@ -362,7 +375,7 @@ export default function DashboardSwitchLoader({
                     />
                   ))}
                 </span>
-                {STATUS_MESSAGES[index]}
+                {statusMessages[index % messageCount]}
               </motion.div>
             </AnimatePresence>
           </div>

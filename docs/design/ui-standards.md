@@ -1670,6 +1670,11 @@ surface, add its `TONES` entry (mirror the dashboard's §17 accent) — and keep
 every Tailwind value a **complete literal string** (no interpolated fragments),
 or the JIT compiler drops the class.
 
+A third caller, the employee sign-in card (`EmployeeLoginLoader.tsx`, 2026-10-05), renders the
+same component with its own `eyebrow` ("Loading your") and status lines, because "Switching to"
+is false at sign-in. It is the only caller allowed to override them; tone still comes from
+`TONES.employee`. See [employee-login-loader](../features/employee-login-loader.md).
+
 ### 14.7 Background orbs (branded only)
 
 Decorative blurred blobs (`<motion.div className="absolute … rounded-full bg-orange-300/30 blur-3xl" />`) are reserved for the highest-traffic branded
