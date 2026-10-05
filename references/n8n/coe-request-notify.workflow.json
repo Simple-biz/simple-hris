@@ -1,0 +1,127 @@
+{
+  "name": "COE Request → Notify",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "coe-request-notify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000001",
+      "name": "COE Requested",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "coe-request-notify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node — \"Build COE Emails\" (Run Once for All Items)\n// Fired by Simple HRIS once per Certificate of Engagement request an employee\n// files from Profile → Request Documents (POST /api/employee/documents). Fans\n// out ONE item per recipient, each carrying a ready-to-send HTML email saying a\n// COE is waiting in Accounting → Documents.\n//\n// WHO is mailed comes from the payload: the HRIS resolves it from Admin →\n// Webhooks → \"COE Request → Notify\" → Open automation (default\n// jakec@simple.biz). Subject and body are FIXED here — the caller only says who\n// asked and when, so this endpoint cannot become an arbitrary-content mailer.\n//\n// NO PAY FIGURES: the HRIS never sends the rate or the certificate. Do not add\n// them here either — the recipient list is admin-editable.\n//\n// Payload (n8n may nest the POST body under `.body`):\n//   {\n//     event: 'coe.requested', trigger: 'employee_coe_request',\n//     request: { id, document_type: 'coe', document_label, employee_name,\n//                employee_email, requested_at, requested_at_manila, note },\n//     recipients: [ { email, name } ],\n//     sent_by: 'system',\n//     test: true            // Admin → Webhooks test run (goes to the admin only)\n//   }\n\n// --- OPTIONAL shared-secret gate ---\n// Leave '' to accept any caller. To lock down: put a long random string here AND\n// set HRIS env N8N_COE_REQUEST_NOTIFY_SECRET to the same value (sent as the\n// 'x-webhook-secret' header).\nconst REQUIRED_SECRET = '';\n\nconst HRIS_LINK = 'https://simple-hris.vercel.app/';\nconst LOGO = 'https://simple-hris.vercel.app/simple-logo.png';\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst MAX = 300;\n\nconst root = (items[0] && items[0].json) || {};\nconst body = (root && typeof root.body === 'object' && root.body) ? root.body : root;\nconst headers = (root && typeof root.headers === 'object' && root.headers) ? root.headers : {};\n\nconst providedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'] || body.secret || '';\nif (REQUIRED_SECRET && providedSecret !== REQUIRED_SECRET) {\n  throw new Error('Unauthorized: missing or invalid webhook secret.');\n}\n\nif (body.event !== 'coe.requested') {\n  throw new Error('Not a COE request event (got ' + JSON.stringify(body.event) + ').');\n}\n\nfunction esc(v) {\n  if (v == null) return '';\n  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// --- recipients (from the HRIS; validated, deduped, capped) ---\nconst seen = {};\nconst recipients = [];\nfor (const r of (Array.isArray(body.recipients) ? body.recipients : [])) {\n  const email = String((r && r.email) || '').trim().toLowerCase();\n  if (!EMAIL_RE.test(email) || seen[email]) continue;\n  seen[email] = true;\n  recipients.push(email);\n}\nif (recipients.length === 0) throw new Error('No valid recipients in the payload.');\nif (recipients.length > MAX) throw new Error('Too many recipients (' + recipients.length + ' > ' + MAX + ').');\n\n// --- the request ---\nconst req = (body.request && typeof body.request === 'object') ? body.request : {};\nconst isTest = body.test === true;\nconst name = esc(String(req.employee_name || '').trim()) || esc(req.employee_email) || 'An employee';\nconst workEmail = esc(req.employee_email || '');\nconst when = esc(req.requested_at_manila || req.requested_at || '');\nconst note = esc(String(req.note || '').trim());\nconst refId = esc(req.id || '');\n\nconst SUBJECT = (isTest ? '[TEST RUN] ' : '') + '📄 COE request — ' + (String(req.employee_name || '').trim() || 'an employee') + ' is waiting for a signature';\n\nfunction detailRow(label, value) {\n  if (!value) return '';\n  return '<tr>' +\n    '<td style=\"padding:8px 14px;font-size:12px;color:#71717a;white-space:nowrap;vertical-align:top;border-bottom:1px solid #f4f4f5\">' + label + '</td>' +\n    '<td style=\"padding:8px 14px;font-size:13px;color:#18181b;font-weight:bold;border-bottom:1px solid #f4f4f5\">' + value + '</td>' +\n  '</tr>';\n}\n\nfunction ctaButton() {\n  return '' +\n    '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 6px\"><tr><td>' +\n      '<!--[if mso]><v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\" href=\"' + HRIS_LINK + '\" style=\"height:48px;v-text-anchor:middle;width:300px;\" arcsize=\"21%\" strokecolor=\"#ea580c\" fillcolor=\"#ea580c\"><w:anchorlock/><center style=\"color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;\">Open HRIS &rarr; Accounting &rarr; Documents</center></v:roundrect><![endif]-->' +\n      '<!--[if !mso]><!-- --><a href=\"' + HRIS_LINK + '\" style=\"display:inline-block;background:#ea580c;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 28px;border-radius:10px\">Open HRIS &rarr; Accounting &rarr; Documents</a><!--<![endif]-->' +\n    '</td></tr></table>';\n}\n\nfunction renderHtml() {\n  const details =\n    detailRow('Requested by', name + (workEmail ? ' &middot; <span style=\"font-weight:normal;color:#52525b\">' + workEmail + '</span>' : '')) +\n    detailRow('Document', 'Certificate of Engagement') +\n    detailRow('Requested on', when ? when + ' <span style=\"font-weight:normal;color:#71717a\">(Manila)</span>' : '') +\n    detailRow('Their note', note) +\n    detailRow('Reference ID', refId ? '<span style=\"font-family:Consolas,Menlo,monospace;font-weight:normal\">' + refId + '</span>' : '');\n  const testBanner = isTest\n    ? '<tr><td style=\"background:#fef3c7;border-bottom:1px solid #fde68a;padding:10px 26px;font-size:12px;color:#92400e;font-weight:bold\">TEST RUN &mdash; sent from Admin &rarr; Webhooks to you only. No employee filed this request.</td></tr>'\n    : '';\n  return '' +\n    '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>COE request</title></head>' +\n    '<body style=\"margin:0;background:#f4f4f5;padding:24px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#18181b\">' +\n      '<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px\">' + name + ' requested a Certificate of Engagement &mdash; it is waiting in Accounting &rarr; Documents.</div>' +\n      '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5\"><tr><td align=\"center\">' +\n        '<table role=\"presentation\" width=\"520\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:520px;background:#ffffff;border:1px solid #e4e4e7;border-radius:14px;overflow:hidden;box-shadow:0 6px 24px rgba(234,88,12,0.10)\">' +\n          testBanner +\n          '<tr><td style=\"padding:18px 26px 12px\"><img src=\"' + LOGO + '\" alt=\"Simple\" width=\"88\" height=\"30\" style=\"display:block;border:0;height:30px;width:88px\"></td></tr>' +\n          '<tr><td bgcolor=\"#0a0a0b\" style=\"background:#0a0a0b;padding:22px 26px;border-bottom:4px solid #ea580c\">' +\n            '<span style=\"display:inline-block;background:#ea580c;color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;padding:5px 12px;border-radius:999px\">&#128196; COE request</span>' +\n            '<div style=\"margin-top:14px;font-size:22px;line-height:1.3;color:#ffffff;font-weight:bold\">A Certificate of Engagement is waiting</div>' +\n            '<div style=\"margin-top:6px;font-size:13px;color:#d4d4d8\">An employee just requested one from their profile.</div>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:22px 26px 4px\">' +\n            '<p style=\"margin:0 0 14px;font-size:15px;color:#18181b\">Hi,</p>' +\n            '<p style=\"margin:0 0 16px;font-size:14px;line-height:1.6;color:#3f3f46\">A <strong>Certificate of Engagement</strong> request was just filed in the HRIS. The certificate is already generated &mdash; it needs a review and a signature in <strong>Accounting &rarr; Documents</strong>.</p>' +\n            '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;margin:0 0 18px;overflow:hidden\">' + details + '</table>' +\n            ctaButton() +\n            '<p style=\"margin:10px 0 18px;font-size:12px;color:#71717a;word-break:break-all\">Button not working? Copy and paste this link:<br><a href=\"' + HRIS_LINK + '\" style=\"color:#ea580c\">' + esc(HRIS_LINK) + '</a></p>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:16px 26px 20px;border-top:1px solid #f4f4f5\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-size:12px;color:#52525b;font-weight:bold\">Simple &middot; Confidential</td><td align=\"right\" style=\"font-size:11px;color:#71717a\">Automated alert from Simple HRIS</td></tr></table></td></tr>' +\n        '</table>' +\n        '<div style=\"max-width:520px;margin:12px auto 0;font-size:11px;color:#71717a;text-align:center;line-height:1.5\">You are receiving this because you are on the COE request list in Admin &rarr; Webhooks.</div>' +\n      '</td></tr></table>' +\n    '</body></html>';\n}\n\nconst html = renderHtml();\nreturn recipients.map(function (email) {\n  return { json: { to: email, subject: SUBJECT, html: html } };\n});\n"
+      },
+      "id": "c3000000-0000-4000-8000-000000000002",
+      "name": "Build COE Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', notified: $items('Build COE Emails').length } }}",
+        "options": {}
+      },
+      "id": "c3000000-0000-4000-8000-000000000003",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "c3000000-0000-4000-8000-000000000004",
+      "name": "Send COE Alert (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "COE Requested": {
+      "main": [
+        [
+          {
+            "node": "Build COE Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build COE Emails": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send COE Alert (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hris"
+    },
+    {
+      "name": "documents"
+    },
+    {
+      "name": "coe"
+    }
+  ],
+  "meta": {
+    "description": "Fired by the HRIS once per Certificate of Engagement request an employee files from Profile → Request Documents (POST /api/employee/documents; Accounting's Generate COE never fires it). Acks immediately, then emails each recipient in the payload that a COE is waiting in Accounting → Documents (who / when / their note / reference id + a button to the HRIS). Recipients come from the HRIS — default jakec@simple.biz, changed in Admin → Webhooks → COE Request → Notify → Open automation. Subject/body are fixed in Build COE Emails; no pay figures are ever sent. Attach a Gmail OAuth2 credential to the send node before activating; register the production URL under Admin → Webhooks slug `coe_request_notify` (or env N8N_COE_REQUEST_NOTIFY_WEBHOOK_URL); optionally set REQUIRED_SECRET here + N8N_COE_REQUEST_NOTIFY_SECRET in the HRIS to lock the webhook."
+  }
+}

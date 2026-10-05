@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth/auth-options';
 import { getEmployeeMasterRecord } from '@/lib/supabase/employees';
@@ -8,6 +8,7 @@ import {
   listDocumentRequests,
 } from '@/lib/documents/requests';
 import { MAX_DOCUMENT_BYTES, isDocumentRequestType } from '@/lib/documents/types';
+import { notifyCoeRequested } from '@/lib/documents/coe-request-notify';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -24,6 +25,8 @@ export const runtime = 'nodejs';
  *          list + Payment Catalog and renders the PDF itself. Every other type
  *          is employee-supplied and still requires `file`.
  *          Either way the request lands `pending` in Accounting → Documents.
+ *          A COE also fires the `coe_request_notify` email (after the response,
+ *          best-effort) — the only call site of `notifyCoeRequested`.
  */
 
 async function sessionEmail(): Promise<string | null> {
@@ -71,6 +74,10 @@ export async function POST(req: NextRequest) {
       // ready. The client shows `blocked` verbatim.
       if (blocked) return NextResponse.json({ error: blocked, blocked }, { status: 422 });
       if (error || !row) return NextResponse.json({ error: error ?? 'Submit failed' }, { status: 400 });
+      // The COE request email (docs/features/coe-request-notify.md) — after the
+      // response so the platform cannot cut the POST short, and it never fails
+      // the submit: the row above is the request.
+      after(() => notifyCoeRequested(row));
       return NextResponse.json({ row });
     }
 

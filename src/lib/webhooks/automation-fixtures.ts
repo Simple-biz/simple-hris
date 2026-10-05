@@ -67,3 +67,18 @@ export function samplePaidDetailRows(): PaidDetailRow[] {
     dateSent: '2026-07-25',
   }));
 }
+
+/**
+ * A fictional COE request for the `coe_request_notify` preview and test run
+ * (docs/features/coe-request-notify.md). Same row fields production reads, an
+ * invented person, plainly labelled TEST RUN.
+ */
+export function sampleCoeRequestRow(now: Date = new Date()) {
+  return {
+    id: '00000000-0000-4000-8000-00000000c0e1',
+    employee_email: 'test.run@example.invalid',
+    employee_name: 'TEST RUN · Sample Employee',
+    note: 'Sample note — for a visa appointment.',
+    requested_at: now.toISOString(),
+  };
+}

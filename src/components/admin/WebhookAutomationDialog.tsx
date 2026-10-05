@@ -35,9 +35,11 @@ import {
 /**
  * Admin → Webhooks → "Open automation" (2026-09-04).
  *
- * A mimicry of the automation as it will fire: WHO it mails (the role's holders,
- * as adjusted here), WHAT it sends (the exact payload, attachments listed by
- * name) and the ONE thing that fires it. Recipients and top-level payload keys
+ * A mimicry of the automation as it will fire: WHO it mails (the code's default
+ * audience — a role's holders, or a fixed default address — as adjusted here),
+ * WHAT it sends (the exact payload, attachments listed by name) and the ONE
+ * thing that fires it. Every automation-specific sentence comes from the
+ * descriptor's `copy` (webhook-config.ts); this component hard-codes none. Recipients and top-level payload keys
  * are editable; the week's facts are not — protected keys are refused by the
  * server and shown greyed here so nobody wonders why.
  *
@@ -247,7 +249,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
       });
       const json = (await res.json()) as { ok?: boolean; to?: string; status?: number | null; error?: string | null };
       if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      toast.success(`Test run sent to ${json.to} (n8n answered ${json.status}). Check your inbox for the three files.`);
+      toast.success(`Test run sent to ${json.to} (n8n answered ${json.status}). ${data?.descriptor.copy.testSentNote ?? ''}`.trim());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Test run failed');
     } finally {
@@ -332,15 +334,15 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
                             : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-white',
                         )}
                       >
-                        {m === 'role' ? 'Role ± changes' : 'Fixed list'}
+                        {m === 'role' ? data.descriptor.copy.defaultModeLabel : 'Fixed list'}
                       </button>
                     ))}
                   </div>
                 </div>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {draft.mode === 'role'
-                    ? data.descriptor.audience + ' Removing someone here keeps them out even while they hold the role; adding someone mails them even without it.'
-                    : 'A fixed list REPLACES the role: a revoked role no longer removes anyone, and a new hire must be typed in here.'}
+                    ? `${data.descriptor.audience} ${data.descriptor.copy.defaultModeHint}`
+                    : data.descriptor.copy.fixedListWarning}
                 </p>
 
                 <ul className="divide-y divide-zinc-100 rounded-lg border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
@@ -358,7 +360,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
                             : 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300',
                         )}
                       >
-                        {r.source === 'role' ? 'accounting role' : r.source === 'added' ? 'added here' : 'fixed list'}
+                        {r.source === 'role' ? data.descriptor.copy.defaultSourceChip : r.source === 'added' ? 'added here' : 'fixed list'}
                       </span>
                       <button
                         type="button"
@@ -390,7 +392,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
                   ))}
                   {effective.length === 0 && (
                     <li className="px-3 py-3 text-xs text-amber-700 dark:text-amber-300">
-                      Nobody would be mailed. The automation refuses to fire with no recipients — and the week&apos;s one celebration is NOT burned by that.
+                      {data.descriptor.copy.emptyNote}
                     </li>
                   )}
                 </ul>
@@ -412,7 +414,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
                   <Button variant="outline" size="sm" onClick={addRecipient} className="gap-1.5">
                     <Plus className="h-3.5 w-3.5" /> Add
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={resetToRole} className="gap-1.5 text-zinc-500" title="Back to the role's holders, no changes">
+                  <Button variant="ghost" size="sm" onClick={resetToRole} className="gap-1.5 text-zinc-500" title={data.descriptor.copy.resetTitle}>
                     <RotateCcw className="h-3.5 w-3.5" /> Reset
                   </Button>
                 </div>
@@ -423,16 +425,18 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
                 <h3 className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-white">
                   <Paperclip className="h-4 w-4 text-orange-500" /> Payload
                 </h3>
-                <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
-                  <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Attached files (built from the filed close-out record)</div>
-                  <ul className="mt-1.5 space-y-1">
-                    {data.descriptor.attachments.map((a) => (
-                      <li key={a} className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> {a}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                {data.descriptor.attachments.length > 0 && (
+                  <div className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
+                    <div className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Attached files (built from the filed close-out record)</div>
+                    <ul className="mt-1.5 space-y-1">
+                      {data.descriptor.attachments.map((a) => (
+                        <li key={a} className="flex items-center gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> {a}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <label className="block space-y-1.5">
                   <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
@@ -478,7 +482,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
 
                 <div className="space-y-1.5">
                   <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                    Effective payload — exactly what n8n receives (sample week; <code className="font-mono">content_base64</code> elided)
+                    Effective payload — exactly what n8n receives ({data.descriptor.copy.previewNote})
                   </span>
                   <pre className="max-h-72 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 font-mono text-[11px] leading-relaxed text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
                     {preview ? JSON.stringify(preview.payload, null, 2) : ''}
@@ -494,7 +498,7 @@ export default function WebhookAutomationDialog({ slug, label, onSaved }: Webhoo
               size="sm"
               onClick={() => void sendTest()}
               disabled={testing || !data.delivery}
-              title={data.delivery ? 'Sends the production payload, built from a fictional week, to YOUR email only' : 'Add and activate a URL first'}
+              title={data.delivery ? 'Sends the production payload, built from a fictional record, to YOUR email only' : 'Add and activate a URL first'}
               className="gap-1.5"
             >
               {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}

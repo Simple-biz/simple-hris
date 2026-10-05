@@ -198,6 +198,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Fired when a ticket gets a (new) assignee. POSTs the ticket + assignee email (send_to); the n8n flow emails them the full ask. Pairs with the in-app assignment notification.',
   },
   {
+    slug: 'coe_request_notify',
+    label: 'COE Request → Notify (n8n)',
+    description:
+      'Fired once per Certificate of Engagement request an employee files from Profile → Request Documents (never by Accounting\'s Generate COE, never by other document types). POSTs { request: { id, employee_name, employee_email, requested_at, note }, recipients } — no rate, no PDF; the n8n flow emails each recipient that a COE is waiting in Accounting → Documents. Recipients default to jakec@simple.biz and are changed in Open automation.',
+  },
+  {
     slug: 'payment_cycle_complete',
     label: 'Payment Cycle Closed → Celebrate Accounting (n8n)',
     description:

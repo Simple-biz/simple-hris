@@ -7,7 +7,9 @@ holders, as adjusted here), **what** it sends (the exact payload, attachments li
 and the **one thing that fires it**. Recipients and extra top-level payload keys are editable
 and saved onto the slug's `webhooks.config` entry; the week's facts are not editable, by
 construction. A **Send test run** button mails the signed-in admin only, from a fictional week.
-Shipped 2026-09-04. First and only automation: `payment_cycle_complete`.
+Shipped 2026-09-04 with `payment_cycle_complete`. Second automation, 2026-10-05:
+`coe_request_notify` ([coe-request-notify.md](./coe-request-notify.md)), whose default audience is a fixed
+address rather than a role.
 
 Built because the celebration email's audience was "everyone holding the accounting role" with
 no way to say "not Carla any more, but her replacement" without touching roles — and because
@@ -105,17 +107,34 @@ the subject with `[TEST RUN]` and adds a banner. Audit action `webhook.test_run`
 "Test" button still sends a bare ping and is still useful for "does the URL reach n8n?"; the
 workflow's Code node rejects a ping for having no recipients, which is expected.
 
-## Adding a second automation
+## Adding an automation
 
-Absent from `WEBHOOK_AUTOMATIONS` = no button. Adding a slug is a feature, not a config change:
-the descriptor (title, the one trigger sentence, audience, attachment names) **plus** a preview
-and test-run branch in the admin route for that slug's payload builder, **plus** the consumer
-reading `resolveWebhookDelivery` instead of `resolveWebhookUrl`, plus a section here.
+Absent from `WEBHOOK_AUTOMATIONS` = no button. Adding a slug is a feature, not a config change.
+It needs four things:
+
+- **the descriptor:** title, the one trigger sentence, audience, attachment names (`[]` hides the
+  box), and `copy`, which holds every automation-specific sentence the dialog shows (chip, mode
+  label, hints, empty note, reset title, preview note, test toast). The dialog hard-codes none of
+  them, and a test fails on a blank one;
+- **a `RUNTIMES` entry** in the admin route: `resolveDelivery`, `defaults`, `previewBase`,
+  `testRun` and `post`. All of them must be the builders production sends through. A slug with a
+  descriptor and no runtime 404s;
+- **the consumer** reading `resolveWebhookDelivery` instead of `resolveWebhookUrl`;
+- **a section here** and its own feature doc.
+
+### `coe_request_notify` — the second one (2026-10-05)
+
+Its default audience is **one fixed address** (jakec@simple.biz), not a role, so the first mode
+reads "Default ± changes" and the chip reads "default". It has no attachments and no
+once-per-anything claim: every employee-filed COE sends one email. It adds `request` to
+`PROTECTED_PAYLOAD_KEYS`, and its payload never carries a pay figure. Full rules:
+[coe-request-notify.md](./coe-request-notify.md).
 
 ## Deploy notes
 
 **No migration.** Two optional fields on an existing JSON value in `app_settings`; one new
-audit action family (`webhook.automation_updated`, `webhook.test_run`).
+audit action family (`webhook.automation_updated`, `webhook.test_run`; `webhook.coe_request_notify`
+joined it 2026-10-05).
 
 **n8n — PENDING Kane:** the updated
 [payment-cycle-complete-celebration.workflow.json](../../references/n8n/payment-cycle-complete-celebration.workflow.json)

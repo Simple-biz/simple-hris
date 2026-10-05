@@ -515,7 +515,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'webhook.',
     surfaces: ['admin'],
     label: 'Webhook automations',
-    note: 'automation_updated, test_run',
+    note: 'automation_updated, test_run, coe_request_notify — one row per attempted COE-request email (ok/status/to, or no_recipients)',
   },
   {
     match: 'notification.',

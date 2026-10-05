@@ -372,6 +372,25 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
   // right after it files a FRESH close-out record. Every figure below is read
   // off that record. `celebrate: false` = the week's celebration was already
   // burned (reopen → re-close) and this is a plain "close-out reports" email.
+  // docs/features/coe-request-notify.md — no pay figures by design. Recipients
+  // are adjustable in Open automation; every key here is protected.
+  coe_request_notify: {
+    event: 'coe.requested',
+    trigger: 'employee_coe_request',
+    request: {
+      id: '0b6f3c2e-6a1d-4f8e-9c55-2f1e8d7a4b10',
+      document_type: 'coe',
+      document_label: 'Certificate of Engagement',
+      employee_name: 'Jordan Cruz',
+      employee_email: 'jordan.cr@simple.biz',
+      requested_at: '2026-10-05T01:30:00.000Z',
+      requested_at_manila: 'Oct 5, 2026, 9:30 AM',
+      note: 'For my visa appointment',
+    },
+    recipients: [{ email: 'jakec@simple.biz', name: null }],
+    sent_by: 'system',
+  },
+
   // The three attachments carry `content_base64` in production; the sample shows
   // the metadata only. Admin → Webhooks → Open automation edits the recipients
   // and adds top-level keys — the keys shown here are protected and cannot be

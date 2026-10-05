@@ -19,7 +19,19 @@ import {
   resolveCycleCompleteDelivery,
 } from '@/lib/payroll/cycle-complete-notify';
 import { buildCycleCloseAttachmentsFromModel, describeAttachments } from '@/lib/payroll/cycle-close-attachments';
-import { sampleCycleCloseoutRecord, samplePaidDetailRows } from '@/lib/webhooks/automation-fixtures';
+import {
+  sampleCoeRequestRow,
+  sampleCycleCloseoutRecord,
+  samplePaidDetailRows,
+} from '@/lib/webhooks/automation-fixtures';
+import { buildCoeRequestPayload, COE_REQUEST_NOTIFY_SLUG } from '@/lib/documents/coe-request-notify-payload';
+import {
+  listCoeRequestDefaultRecipients,
+  postCoeRequestWebhook,
+  resolveCoeRequestDelivery,
+} from '@/lib/documents/coe-request-notify';
+import type { WebhookDelivery } from '@/lib/webhooks/resolve-webhook';
+import type { WebhookRecipient } from '@/lib/webhooks/webhook-config';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -39,10 +51,95 @@ export const runtime = 'nodejs';
  *                mailed to the signed-in admin ONLY, `test: true`. Never the real
  *                audience, never a real week.
  *
- * Only slugs in `WEBHOOK_AUTOMATIONS` are served; today that is one.
+ * Only slugs in `WEBHOOK_AUTOMATIONS` that ALSO have a runtime below are served:
+ * `payment_cycle_complete` and `coe_request_notify` (2026-10-05).
  */
 
 const SETTINGS_KEY = 'webhooks.config';
+
+type Attachments = Awaited<ReturnType<typeof buildCycleCloseAttachmentsFromModel>>;
+
+/**
+ * What the route needs from each automation: where it posts, who it mails by
+ * default, the payload for the preview (from a fictional record), and the
+ * test-run payload + files. Every builder is the one production sends through,
+ * so the preview is the payload.
+ */
+interface AutomationRuntime {
+  resolveDelivery: () => Promise<WebhookDelivery | null>;
+  defaults: () => Promise<WebhookRecipient[]>;
+  previewBase: (recipients: readonly WebhookRecipient[]) => Promise<Record<string, unknown>>;
+  testRun: (to: string, now: Date) => Promise<{ payload: Record<string, unknown>; attachments: Attachments | null }>;
+  post: (
+    url: string,
+    payload: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; status: number | null; detail: string | null }>;
+}
+
+const RUNTIMES: Record<string, AutomationRuntime> = {
+  payment_cycle_complete: {
+    resolveDelivery: resolveCycleCompleteDelivery,
+    defaults: listAccountingCelebrationRecipients,
+    previewBase: async (recipients) => {
+      const record = sampleCycleCloseoutRecord(new Date('2026-08-03T17:00:00.000Z'));
+      const attachments = describeAttachments(
+        await buildCycleCloseAttachmentsFromModel({
+          kind: 'final',
+          record,
+          livePaidRows: samplePaidDetailRows(),
+          generatedAt: new Date('2026-08-03T17:00:00.000Z'),
+        }),
+      ).map((a) => ({ ...a, content_base64: '…' }));
+      return buildCycleCompletePayload({
+        record,
+        celebrate: true,
+        recipients,
+        attachments: attachments as never,
+        attachmentsError: null,
+      });
+    },
+    testRun: async (to, now) => {
+      const record = sampleCycleCloseoutRecord(now);
+      const attachments = await buildCycleCloseAttachmentsFromModel({
+        kind: 'final',
+        record,
+        livePaidRows: samplePaidDetailRows(),
+        generatedAt: now,
+      });
+      const payload = buildCycleCompletePayload({
+        record,
+        celebrate: true,
+        recipients: [{ email: to, name: null }],
+        attachments,
+        attachmentsError: null,
+        test: true,
+      });
+      return { payload, attachments };
+    },
+    post: postCycleCompleteWebhook,
+  },
+  [COE_REQUEST_NOTIFY_SLUG]: {
+    resolveDelivery: resolveCoeRequestDelivery,
+    defaults: listCoeRequestDefaultRecipients,
+    previewBase: async (recipients) =>
+      buildCoeRequestPayload({ row: sampleCoeRequestRow(new Date('2026-10-05T01:30:00.000Z')), recipients }),
+    testRun: async (to, now) => ({
+      payload: buildCoeRequestPayload({
+        row: sampleCoeRequestRow(now),
+        recipients: [{ email: to, name: null }],
+        test: true,
+      }),
+      attachments: null,
+    }),
+    post: postCoeRequestWebhook,
+  },
+};
+
+/** The runtime for a served slug, or null (unknown, or no runtime wired). */
+function runtimeFor(slug: string | null): AutomationRuntime | null {
+  if (!slug || !WEBHOOK_AUTOMATIONS[slug]) return null;
+  return RUNTIMES[slug] ?? null;
+}
 
 function cleanSlug(v: unknown): string | null {
   if (typeof v !== 'string') return null;
@@ -55,29 +152,14 @@ async function loadEntries(): Promise<{ entries: WebhookConfigEntry[]; raw: stri
   return { entries: parseWebhookConfig(raw), raw };
 }
 
-async function describeAutomation(slug: string, entries: WebhookConfigEntry[]) {
+async function describeAutomation(slug: string, runtime: AutomationRuntime, entries: WebhookConfigEntry[]) {
   const descriptor = WEBHOOK_AUTOMATIONS[slug];
   const entry = entries.find((e) => e.slug === slug) ?? null;
-  const delivery = await resolveCycleCompleteDelivery();
-  const defaults = await listAccountingCelebrationRecipients();
+  const delivery = await runtime.resolveDelivery();
+  const defaults = await runtime.defaults();
   const { effective, added, removed } = applyRecipientOverride(defaults, entry?.recipients ?? null);
 
-  const record = sampleCycleCloseoutRecord(new Date('2026-08-03T17:00:00.000Z'));
-  const attachments = describeAttachments(
-    await buildCycleCloseAttachmentsFromModel({
-      kind: 'final',
-      record,
-      livePaidRows: samplePaidDetailRows(),
-      generatedAt: new Date('2026-08-03T17:00:00.000Z'),
-    }),
-  ).map((a) => ({ ...a, content_base64: '…' }));
-  const base = buildCycleCompletePayload({
-    record,
-    celebrate: true,
-    recipients: effective,
-    attachments: attachments as never,
-    attachmentsError: null,
-  });
+  const base = await runtime.previewBase(effective);
   const { payload, rejected } = mergePayloadOverrides(base, entry?.payload_overrides ?? null);
 
   return {
@@ -111,12 +193,13 @@ export async function GET(req: NextRequest) {
   const authz = await requireAdminSession();
   if (!authz.ok) return deniedResponse(authz);
   const slug = cleanSlug(req.nextUrl.searchParams.get('slug'));
-  if (!slug || !WEBHOOK_AUTOMATIONS[slug]) {
+  const runtime = runtimeFor(slug);
+  if (!slug || !runtime) {
     return NextResponse.json({ error: 'Unknown automation slug' }, { status: 404 });
   }
   try {
     const { entries } = await loadEntries();
-    return NextResponse.json({ ...(await describeAutomation(slug, entries)), error: null });
+    return NextResponse.json({ ...(await describeAutomation(slug, runtime, entries)), error: null });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
@@ -133,7 +216,8 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const slug = cleanSlug(body.slug);
-  if (!slug || !WEBHOOK_AUTOMATIONS[slug]) {
+  const runtime = runtimeFor(slug);
+  if (!slug || !runtime) {
     return NextResponse.json({ error: 'Unknown automation slug' }, { status: 404 });
   }
   const validated = validateAutomationConfig({
@@ -183,7 +267,7 @@ export async function PUT(req: NextRequest) {
       },
     }).catch(() => undefined);
 
-    return NextResponse.json({ ...(await describeAutomation(slug, next)), error: null });
+    return NextResponse.json({ ...(await describeAutomation(slug, runtime, next)), error: null });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
@@ -200,14 +284,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
   const slug = cleanSlug(body.slug);
-  if (!slug || !WEBHOOK_AUTOMATIONS[slug]) {
+  const runtime = runtimeFor(slug);
+  if (!slug || !runtime) {
     return NextResponse.json({ error: 'Unknown automation slug' }, { status: 404 });
   }
 
   const me = authz.sessionEmail?.trim().toLowerCase();
   if (!me) return NextResponse.json({ error: 'No session email to send the test to' }, { status: 400 });
 
-  const delivery = await resolveCycleCompleteDelivery();
+  const delivery = await runtime.resolveDelivery();
   if (!delivery) {
     return NextResponse.json(
       { ok: false, error: 'No webhook URL is configured for this slug — add and activate one first.' },
@@ -218,20 +303,10 @@ export async function POST(req: NextRequest) {
   try {
     const { entries } = await loadEntries();
     const entry = entries.find((e) => e.slug === slug) ?? null;
-    const now = new Date();
-    const record = sampleCycleCloseoutRecord(now);
-    const attachments = await buildCycleCloseAttachmentsFromModel({
-      kind: 'final',
-      record,
-      livePaidRows: samplePaidDetailRows(),
-      generatedAt: now,
-    });
-    const recipients = [{ email: me, name: null }];
-    const { payload, rejected } = mergePayloadOverrides(
-      buildCycleCompletePayload({ record, celebrate: true, recipients, attachments, attachmentsError: null, test: true }),
-      entry?.payload_overrides ?? null,
-    );
-    const result = await postCycleCompleteWebhook(delivery.url, payload);
+    const run = await runtime.testRun(me, new Date());
+    const { payload, rejected } = mergePayloadOverrides(run.payload, entry?.payload_overrides ?? null);
+    const result = await runtime.post(delivery.url, payload);
+    const attachments = run.attachments ? describeAttachments(run.attachments) : [];
 
     const actor = await getSessionActor();
     await insertAuditLog({
@@ -246,7 +321,7 @@ export async function POST(req: NextRequest) {
         ok: result.ok,
         status: result.status,
         detail: result.detail,
-        attachments: describeAttachments(attachments),
+        attachments,
         payload_overrides_rejected: rejected,
         webhook_source: delivery.source,
       },
@@ -257,7 +332,7 @@ export async function POST(req: NextRequest) {
       status: result.status,
       detail: result.detail,
       to: me,
-      attachments: describeAttachments(attachments),
+      attachments,
       error: result.ok ? null : result.detail ?? 'Webhook delivery failed',
     });
   } catch (e) {

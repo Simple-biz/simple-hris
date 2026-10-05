@@ -573,6 +573,10 @@ are session-scoped only.
 (ungated). Mapped in [notification-views.ts](../../src/lib/notifications/notification-views.ts);
 types added to the `employee_notifications` CHECK by the migration.
 
+**Email, COE only (2026-10-05):** an employee-filed COE also fires the `coe_request_notify` n8n email.
+The default recipient is jakec@simple.biz, editable in Admin → Webhooks → Open automation. It
+carries no pay figures and Generate COE never fires it. See [coe-request-notify.md](./coe-request-notify.md).
+
 ## Deploy
 
 1. Run [`references/sql/migrate/2026-07-18_documents_tab.sql`](../../references/sql/migrate/2026-07-18_documents_tab.sql)

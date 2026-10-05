@@ -153,7 +153,7 @@ describe('payload overrides', () => {
   });
 
   test('every honesty + envelope field is protected', () => {
-    for (const k of ['event', 'trigger', 'celebrate', 'cycle', 'stats', 'recipients', 'attachments', 'attachments_error', 'sent_by', 'test']) {
+    for (const k of ['event', 'trigger', 'celebrate', 'cycle', 'stats', 'recipients', 'attachments', 'attachments_error', 'sent_by', 'test', 'request']) {
       assert.ok(PROTECTED_PAYLOAD_KEYS.includes(k), `${k} must be protected`);
     }
   });
@@ -200,8 +200,14 @@ describe('validateAutomationConfig (strict, for the editor)', () => {
 });
 
 describe('automation descriptors', () => {
-  test('payment_cycle_complete is the only automation, and it names its single trigger', () => {
-    assert.deepEqual(Object.keys(WEBHOOK_AUTOMATIONS), ['payment_cycle_complete']);
+  test('two automations, each with its own editor wording', () => {
+    assert.deepEqual(Object.keys(WEBHOOK_AUTOMATIONS), ['payment_cycle_complete', 'coe_request_notify']);
+    for (const d of Object.values(WEBHOOK_AUTOMATIONS)) {
+      for (const [k, v] of Object.entries(d.copy)) assert.ok(v.trim(), `${d.slug}.copy.${k} is blank`);
+    }
+  });
+
+  test('payment_cycle_complete names its single trigger', () => {
     const d = WEBHOOK_AUTOMATIONS.payment_cycle_complete;
     assert.match(d.trigger, /Close the pay cycle/);
     assert.match(d.trigger, /Nothing else can fire it/);

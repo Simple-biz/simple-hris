@@ -72,6 +72,8 @@ export const PROTECTED_PAYLOAD_KEYS: readonly string[] = [
   'attachments_error',
   'sent_by',
   'test',
+  // coe_request_notify (2026-10-05): who asked for a COE and when.
+  'request',
 ];
 
 /** n8n's own refusal threshold in the celebration workflow — mirrored here so a
@@ -330,8 +332,29 @@ export interface WebhookAutomationDescriptor {
   trigger: string;
   /** Where the default recipients come from. */
   audience: string;
-  /** Attached files, by name, in send order. */
+  /** Attached files, by name, in send order. Empty = the dialog hides the box. */
   attachments: string[];
+  /** The editor's wording for THIS automation — the dialog hard-codes none of it. */
+  copy: WebhookAutomationCopy;
+}
+
+export interface WebhookAutomationCopy {
+  /** Chip on a recipient that came from the code's default audience. */
+  defaultSourceChip: string;
+  /** Label of the "default ± changes" mode toggle. */
+  defaultModeLabel: string;
+  /** Appended after `audience` in that mode. */
+  defaultModeHint: string;
+  /** Shown in "Fixed list" mode. */
+  fixedListWarning: string;
+  /** Shown when the effective list is empty. */
+  emptyNote: string;
+  /** Title of the Reset button. */
+  resetTitle: string;
+  /** "(… ; …)" note after "Effective payload — exactly what n8n receives". */
+  previewNote: string;
+  /** Appended to the test-run success toast. */
+  testSentNote: string;
 }
 
 export const WEBHOOK_AUTOMATIONS: Record<string, WebhookAutomationDescriptor> = {
@@ -342,5 +365,40 @@ export const WEBHOOK_AUTOMATIONS: Record<string, WebhookAutomationDescriptor> = 
       'Payment Dispatch → Stop processing → "Close the pay cycle" ON. Fires once, from the server, right after the close-out record is filed. Nothing else can fire it.',
     audience: 'Everyone currently holding the accounting role (revoked grants excluded).',
     attachments: ['Cycle close-out CSV', 'Cycle close-out XLSX', 'Cycle close-out PDF'],
+    copy: {
+      defaultSourceChip: 'accounting role',
+      defaultModeLabel: 'Role ± changes',
+      defaultModeHint:
+        'Removing someone here keeps them out even while they hold the role; adding someone mails them even without it.',
+      fixedListWarning:
+        'A fixed list REPLACES the role: a revoked role no longer removes anyone, and a new hire must be typed in here.',
+      emptyNote:
+        "Nobody would be mailed. The automation refuses to fire with no recipients — and the week's one celebration is NOT burned by that.",
+      resetTitle: "Back to the role's holders, no changes",
+      previewNote: 'sample week; content_base64 elided',
+      testSentNote: 'Check your inbox for the three files.',
+    },
+  },
+  // docs/features/coe-request-notify.md (2026-10-05)
+  coe_request_notify: {
+    slug: 'coe_request_notify',
+    title: 'COE requested → notify the COE handler',
+    trigger:
+      "An employee submits a Certificate of Engagement request from Profile → Request Documents. Fires once per request, from the server, right after the pending row is filed. Accounting's own Generate COE does NOT fire it (that one is signed in the same click), and other document types never do.",
+    audience: 'jakec@simple.biz by default (a fixed address, not a role).',
+    attachments: [],
+    copy: {
+      defaultSourceChip: 'default',
+      defaultModeLabel: 'Default ± changes',
+      defaultModeHint:
+        'Remove the default to stop mailing them; add anyone else who should hear about new COE requests. The email carries no pay figures.',
+      fixedListWarning:
+        'A fixed list REPLACES the default: exactly these addresses are mailed, nobody else.',
+      emptyNote:
+        'Nobody would be mailed. A COE request still lands in Accounting → Documents as usual — only this email is skipped (logged as no_recipients).',
+      resetTitle: 'Back to the default recipient, no changes',
+      previewNote: 'sample request; no pay figures are ever sent',
+      testSentNote: 'Check your inbox for the COE request email.',
+    },
   },
 };
