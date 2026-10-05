@@ -82,3 +82,20 @@ export function sampleCoeRequestRow(now: Date = new Date()) {
     requested_at: now.toISOString(),
   };
 }
+
+/**
+ * A fictional MESA request for the `mesa_request_notify` preview and test run
+ * (docs/features/mesa-request-notify.md). Same row fields production reads, an
+ * invented person, plainly labelled TEST RUN. No amount: the payload never
+ * carries one.
+ */
+export function sampleMesaRequestRow(now: Date = new Date()) {
+  return {
+    id: '00000000-0000-4000-8000-0000000e5a01',
+    work_email: 'test.run@example.invalid',
+    full_name: 'TEST RUN · Sample Employee',
+    department: 'Lead Gen',
+    request_type: 'disbursement' as const,
+    created_at: now.toISOString(),
+  };
+}

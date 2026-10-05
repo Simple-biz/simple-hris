@@ -39,6 +39,8 @@ import {
   ImageIcon,
   FileWarning,
   Maximize2,
+  Archive,
+  ArchiveRestore,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
@@ -81,6 +83,7 @@ import type { EmployeeHourlyRateRow } from '@/lib/supabase/employee-hourly-rates
 
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { BulkBar, reportBulk, runBulk, SelectCheckbox, useRowSelection } from '@/components/mesa/bulk-selection';
+import { isMesaRequestArchived, mesaRequestCompletion } from '@/lib/mesa/request-archive';
 type MesaView = 'requests' | 'non-members' | 'active-members';
 
 /** Peso, two decimals — follows the app-wide money convention. */
@@ -116,6 +119,11 @@ interface MesaRequest {
   reviewed_at: string | null;
   dispatched_at: string | null;
   created_at: string;
+  /** Set when Accounting archived this COMPLETED request out of the main view.
+   *  Absent (undefined) until the 2026-10-05 archive migration runs — read as
+   *  not archived, so nothing is hidden before then. */
+  archived_at?: string | null;
+  archived_by?: string | null;
   /** Disbursement only: attached receipt files (0–3), derived on read from
    *  mesa_request_receipts. This is the "was this legitimate" signal — a member
    *  substantiating their claim, visible before the row is even opened. */
@@ -318,9 +326,11 @@ export default function AccountingMesa() {
   );
   const [loading, setLoading] = useState(!hasTabCache(TAB_CACHE_KEYS.mesaRequests));
   const [refreshing, setRefreshing] = useState(false);
-  /** Requests flagged off-roster on the last successful load (still shown, just badged). */
-  const [offRosterCount, setOffRosterCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Requests → Active (default) or Archived. Archived holds only COMPLETED
+   *  requests (src/lib/mesa/request-archive.ts), so the main view never loses
+   *  money that is still owed. */
+  const [showArchived, setShowArchived] = useState(false);
   const [query, setQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<MesaRequestStatus | ''>('');
   const [filterType, setFilterType] = useState<MesaRequestType | ''>('');
@@ -370,7 +380,6 @@ export default function AccountingMesa() {
           : undefined;
         return { ...r, off_roster, off_roster_reason };
       });
-      setOffRosterCount(data.filter((r) => r.off_roster).length);
       setLoadError(null);
       setTabCache(TAB_CACHE_KEYS.mesaRequests, data);
       setRows(data);
@@ -396,9 +405,19 @@ export default function AccountingMesa() {
     [rows],
   );
 
+  // The main view is every request NOT archived; Archived is the rest. Stats,
+  // filters, selection and the export all work on the view being looked at.
+  const archivedCount = useMemo(() => rows.filter(isMesaRequestArchived).length, [rows]);
+  const viewRows = useMemo(
+    () => rows.filter((r) => isMesaRequestArchived(r) === showArchived),
+    [rows, showArchived],
+  );
+  /** Requests in this view flagged off-roster (still shown, just badged). */
+  const offRosterCount = useMemo(() => viewRows.filter((r) => r.off_roster).length, [viewRows]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
+    return viewRows.filter((r) => {
       if (filterStatus && r.status !== filterStatus) return false;
       if (filterType && r.request_type !== filterType) return false;
       if (filterDepartment && r.department !== filterDepartment) return false;
@@ -412,9 +431,9 @@ export default function AccountingMesa() {
       }
       return true;
     });
-  }, [rows, query, filterStatus, filterType, filterDepartment]);
+  }, [viewRows, query, filterStatus, filterType, filterDepartment]);
 
-  useEffect(() => { setPage(0); }, [query, filterStatus, filterType, filterDepartment]);
+  useEffect(() => { setPage(0); }, [query, filterStatus, filterType, filterDepartment, showArchived]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
@@ -423,16 +442,17 @@ export default function AccountingMesa() {
   const sel = useRowSelection(filtered, (r) => r.id);
 
   const stats = useMemo(() => ({
-    total: rows.length,
-    pending: rows.filter((r) => r.status === 'pending').length,
-    approved: rows.filter((r) => r.status === 'approved').length,
-    denied: rows.filter((r) => r.status === 'denied').length,
-  }), [rows]);
+    total: viewRows.length,
+    pending: viewRows.filter((r) => r.status === 'pending').length,
+    approved: viewRows.filter((r) => r.status === 'approved').length,
+    denied: viewRows.filter((r) => r.status === 'denied').length,
+  }), [viewRows]);
 
   // Export of the rows currently in view — stat band recomputed over the
   // filtered set so the document is internally consistent with its row count.
   const exportSpec = useMemo<MesaExportSpec>(() => {
     const scopeParts = [
+      showArchived ? 'Archived' : null,
       filterType ? TYPE_LABELS[filterType] : null,
       filterStatus ? filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1) : null,
       filterDepartment || null,
@@ -452,7 +472,7 @@ export default function AccountingMesa() {
       title: 'MESA Requests',
       sheetName: 'MESA Requests',
       fileBase: 'mesa-requests',
-      scopeLabel: scopeParts.length ? scopeParts.join(' · ') : 'All money-related requests',
+      scopeLabel: scopeParts.length ? scopeParts.join(' · ') : 'All money-related requests (archived excluded)',
       countNoun: ['request', 'requests'],
       stats: [
         { label: 'In this export', value: filtered.length.toLocaleString() },
@@ -493,7 +513,7 @@ export default function AccountingMesa() {
         r.reviewed_by ?? '-',
       ]),
     };
-  }, [filtered, filterStatus, filterType, filterDepartment, query]);
+  }, [filtered, filterStatus, filterType, filterDepartment, query, showArchived]);
 
   const handleRefresh = async () => {
     clearTabCache(TAB_CACHE_KEYS.mesaRequests);
@@ -681,6 +701,58 @@ export default function AccountingMesa() {
     }
   };
 
+  // Archive / unarchive. Only a COMPLETED request gets the Archive button, and the
+  // route refuses anything else with the same predicate
+  // (src/lib/mesa/request-archive.ts), so a still-owed payout can't be hidden.
+  const patchArchived = async (r: MesaRequest, archived: boolean) => {
+    const res = await fetch(`/api/mesa-requests/${r.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived }),
+    });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(j.error ?? `HTTP ${res.status}`);
+    }
+  };
+
+  const setArchived = async (r: MesaRequest, archived: boolean) => {
+    setBusyId(r.id);
+    try {
+      await patchArchived(r, archived);
+      toast.success(archived ? 'Request archived' : 'Request moved back to Requests');
+      clearTabCache(TAB_CACHE_KEYS.mesaRequests);
+      await load(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : archived ? 'Archive failed' : 'Unarchive failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Bulk archive acts on the completed rows in the selection and says how many
+  // it skipped; bulk unarchive (Archived view) acts on every selected row.
+  const bulkArchive = async (archived: boolean) => {
+    const targets = archived
+      ? sel.selectedRows.filter((r) => mesaRequestCompletion(r).complete)
+      : sel.selectedRows;
+    const skipped = sel.selectedRows.length - targets.length;
+    if (targets.length === 0) {
+      toast.error('None of the selected requests is completed yet — only completed requests can be archived');
+      return;
+    }
+    setBulkBusy(true);
+    const { ok, fail, firstError } = await runBulk(targets, (r) => patchArchived(r, archived));
+    reportBulk(archived ? 'Archived' : 'Unarchived', ok, fail, firstError);
+    if (skipped > 0) {
+      toast.message(`${skipped} not archived — still pending, unpaid, or awaiting the paycheck`);
+    }
+    sel.clear();
+    setBulkBusy(false);
+    clearTabCache(TAB_CACHE_KEYS.mesaRequests);
+    await load(false);
+  };
+
   // Bulk approve/deny — only acts on the selected rows that are still pending.
   // Approving an opt_out also unenrolls the member (mirrors submitReview).
   const bulkReview = async (status: 'approved' | 'denied') => {
@@ -756,7 +828,7 @@ export default function AccountingMesa() {
             </h2>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
               {view === 'requests'
-                ? 'Opt-out, disbursement, and return requests submitted by members. Opt-in requests are handled by HR.'
+                ? 'Opt-out, disbursement, and return requests submitted by members. Completed requests can be archived out of this list. Opt-in requests are handled by HR.'
                 : view === 'non-members'
                 ? 'Employees not enrolled in MESA — those who never joined, plus opted-out ex-members (last status: Opted out). Temporary manual Opt In until members self-serve from the Employee Dashboard.'
                 : 'Employees currently enrolled in MESA, with their contribution, match, and balance to date.'}
@@ -791,6 +863,41 @@ export default function AccountingMesa() {
 
         {/* Toolbar */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Active ↔ Archived. Archived holds completed requests only, so the
+              main view never loses one that still has money owed on it. */}
+          <div
+            role="tablist"
+            aria-label="Request list"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-800 dark:bg-zinc-900/60"
+          >
+            {([
+              { archived: false, label: 'Active', icon: ClipboardList, count: rows.length - archivedCount },
+              { archived: true, label: 'Archived', icon: Archive, count: archivedCount },
+            ] as const).map((t) => (
+              <button
+                key={t.label}
+                type="button"
+                role="tab"
+                aria-selected={showArchived === t.archived}
+                onClick={() => {
+                  setShowArchived(t.archived);
+                  sel.clear();
+                }}
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors',
+                  showArchived === t.archived
+                    ? 'bg-teal-600 text-white shadow-sm dark:bg-teal-600'
+                    : 'text-zinc-600 hover:bg-teal-50 hover:text-teal-700 dark:text-zinc-400 dark:hover:bg-teal-950/40 dark:hover:text-teal-200',
+                )}
+              >
+                <t.icon className="h-3.5 w-3.5" />
+                {t.label}
+                <span className={cn('tabular-nums', showArchived === t.archived ? 'text-teal-100' : 'text-zinc-400')}>
+                  {t.count}
+                </span>
+              </button>
+            ))}
+          </div>
           <div className="relative min-w-[200px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
             <Input
@@ -866,15 +973,26 @@ export default function AccountingMesa() {
           <CardContent className="p-0">
             {sel.selectedRows.length > 0 && (
               <BulkBar count={sel.selectedRows.length} onClear={sel.clear}>
-                <Button type="button" size="sm" disabled={bulkBusy} onClick={() => bulkReview('approved')} className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500">
-                  <CheckCircle2 className="mr-1 h-3 w-3" />Approve
-                </Button>
-                <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkReview('denied')} className="h-7 border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300">
-                  <XCircle className="mr-1 h-3 w-3" />Deny
-                </Button>
-                <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={bulkDelete} className="h-7 border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300">
-                  <Trash2 className="mr-1 h-3 w-3" />Delete
-                </Button>
+                {showArchived ? (
+                  <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkArchive(false)} className="h-7 border-teal-200 bg-teal-50 text-[11px] text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300">
+                    <ArchiveRestore className="mr-1 h-3 w-3" />Unarchive
+                  </Button>
+                ) : (
+                  <>
+                    <Button type="button" size="sm" disabled={bulkBusy} onClick={() => bulkReview('approved')} className="h-7 bg-teal-600 text-[11px] text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500">
+                      <CheckCircle2 className="mr-1 h-3 w-3" />Approve
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkReview('denied')} className="h-7 border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300">
+                      <XCircle className="mr-1 h-3 w-3" />Deny
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={() => bulkArchive(true)} className="h-7 border-zinc-200 bg-white text-[11px] text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                      <Archive className="mr-1 h-3 w-3" />Archive
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" disabled={bulkBusy} onClick={bulkDelete} className="h-7 border-rose-200 bg-rose-50 text-[11px] text-rose-700 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300">
+                      <Trash2 className="mr-1 h-3 w-3" />Delete
+                    </Button>
+                  </>
+                )}
               </BulkBar>
             )}
             {loading ? (
@@ -886,7 +1004,11 @@ export default function AccountingMesa() {
                   ? loadError
                     ? `Couldn't load requests — ${loadError}. Use Refresh to retry.`
                     : 'No MESA requests yet.'
-                  : 'No results match your filters.'}
+                  : viewRows.length === 0
+                    ? showArchived
+                      ? 'No archived requests. Archive a completed request to move it here.'
+                      : 'Nothing active — every request is archived.'
+                    : 'No results match your filters.'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1017,11 +1139,59 @@ export default function AccountingMesa() {
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </div>
+                          ) : isMesaRequestArchived(r) ? (
+                            /* An archived row is a closed record: read it, or move
+                               it back. Revoke / delete / date edits wait until it
+                               is unarchived (the route refuses them too). */
+                            <div className="flex items-center justify-end gap-2">
+                              <span
+                                className="text-[11px] text-zinc-400"
+                                title={r.archived_by ? `Archived by ${r.archived_by}` : undefined}
+                              >
+                                Archived{' '}
+                                {r.archived_at
+                                  ? new Date(r.archived_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                  : ''}
+                              </span>
+                              <button
+                                type="button"
+                                title="View details"
+                                onClick={() => openReview(r)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:border-zinc-700 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Unarchive — move back to Requests"
+                                disabled={busyId === r.id}
+                                onClick={() => setArchived(r, false)}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 disabled:opacity-40 dark:border-zinc-700 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400"
+                              >
+                                <ArchiveRestore className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           ) : (
                             <div className="flex items-center justify-end gap-2">
                               <span className="text-[11px] text-zinc-400">
                                 {r.reviewed_by ? `by ${r.reviewed_by.split('@')[0]}` : '—'}
                               </span>
+                              {/* Completed (denied, approved opt-out, PAID
+                                  disbursement) — nothing left to do, so it can
+                                  leave the main view. An approved-but-unpaid draw
+                                  or an approved return never gets the button. */}
+                              {mesaRequestCompletion(r).complete && (
+                                <button
+                                  type="button"
+                                  title="Archive — completed, move to Archived"
+                                  disabled={busyId === r.id}
+                                  onClick={() => setArchived(r, true)}
+                                  className="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-200 px-2 text-[11px] font-semibold text-zinc-500 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-300"
+                                >
+                                  <Archive className="h-3.5 w-3.5" />
+                                  Archive
+                                </button>
+                              )}
                               {/* A decided opt-out still needs its effective date
                                   editable — the member's leaving date can move
                                   after the decision. */}
@@ -1141,14 +1311,18 @@ export default function AccountingMesa() {
                         Effective Date
                       </label>
                       <span className="text-[10.5px] text-zinc-400 dark:text-zinc-500">
-                        {savingEffective ? 'Saving…' : 'Editable — saves on pick'}
+                        {isMesaRequestArchived(reviewTarget)
+                          ? 'Archived — unarchive to edit'
+                          : savingEffective
+                            ? 'Saving…'
+                            : 'Editable — saves on pick'}
                       </span>
                     </div>
                     <DatePicker
                       id="mesa-review-effective"
                       value={reviewTarget.effective_date ?? ''}
                       onChange={saveEffectiveDate}
-                      disabled={savingEffective}
+                      disabled={savingEffective || isMesaRequestArchived(reviewTarget)}
                       required
                       placeholder="Not set — pick a date"
                       className="mt-1 dark:bg-zinc-900"
@@ -1967,22 +2141,32 @@ function MesaBalanceImpact({
 }) {
   const isReturn = request.request_type === 'return';
   const isOptOut = request.request_type === 'opt_out';
-  // Legacy/partial rows: a disbursement that never captured an amount can't be
-  // subtracted, so the projection is suppressed rather than shown as −PHP0.00.
-  const amountMissing = request.request_type === 'disbursement' && request.amount_needed == null;
+  // Legacy/partial rows: a disbursement — or a return filed before returns
+  // carried an amount (2026-10-05) — can't be projected, so the projection is
+  // suppressed rather than shown as ±PHP0.00.
+  const amountMissing =
+    (request.request_type === 'disbursement' || isReturn) && request.amount_needed == null;
   const balance = ledger?.balance ?? 0;
   // An approved opt-out settles the whole account, so the draw is the entire
-  // balance; a disbursement takes only what was asked for. A return is an
-  // inflow and carries no amount on the request row.
+  // balance; a disbursement takes only what was asked for. A return is the
+  // inflow the member is putting back: it is ADDED, never judged against the
+  // balance.
   const draw = isReturn ? 0 : isOptOut ? balance : request.amount_needed ?? 0;
+  const inflow = isReturn ? request.amount_needed ?? 0 : 0;
   const ready = state === 'ready';
   // Balance is only known once the ledger resolves, so an opt-out's draw is too.
   const drawKnown = ready || !isOptOut;
   const showProjection = !isReturn && !amountMissing;
+  const showReturnProjection = isReturn && !amountMissing;
   const remaining = balance - draw;
+  const afterReturn = balance + inflow;
   const shortfall = draw - balance;
   // Half-centavo epsilon — float sums of peso figures shouldn't trip a warning.
   const insufficient = ready && showProjection && shortfall > 0.005;
+  // A return larger than everything drawn from this account is unusual (there is
+  // nothing left over to give back) — flagged, not refused: no rule caps it.
+  const returnExceedsDraws =
+    ready && showReturnProjection && !!ledger && inflow - ledger.disbursed > 0.005;
 
   const shimmer = (
     <span className="inline-block h-4 w-24 animate-pulse rounded bg-teal-200/60 align-middle dark:bg-teal-800/50" />
@@ -2047,6 +2231,28 @@ function MesaBalanceImpact({
             </div>
           </>
         )}
+
+        {showReturnProjection && (
+          <>
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-zinc-600 dark:text-zinc-400">Added back by this return</dt>
+              <dd className="font-mono font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                + {formatPHP(inflow)}
+              </dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-3 border-t border-teal-200/70 pt-1.5 dark:border-teal-800/40">
+              <dt className="font-semibold text-zinc-800 dark:text-zinc-200">Balance after return</dt>
+              <dd
+                className={cn(
+                  'font-mono text-base font-bold tabular-nums',
+                  ready ? 'text-teal-700 dark:text-teal-300' : 'text-zinc-400 dark:text-zinc-500',
+                )}
+              >
+                {figure(afterReturn)}
+              </dd>
+            </div>
+          </>
+        )}
       </dl>
 
       {insufficient && (
@@ -2083,15 +2289,28 @@ function MesaBalanceImpact({
         </p>
       )}
 
-      {isReturn && (
+      {showReturnProjection && (
         <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          A return adds funds back — the balance above updates once Accounting records the deposit.
+          Projected. The current balance changes only once the returned amount is recorded in the
+          MESA ledger.
+        </p>
+      )}
+
+      {returnExceedsDraws && ledger && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            More than this account has ever paid out ({formatPHP(ledger.disbursed)} disbursed) — check
+            what is being returned before approving.
+          </span>
         </p>
       )}
 
       {amountMissing && (
         <p className="mt-2 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
-          This request has no amount recorded, so the balance after payout can&apos;t be projected.
+          {isReturn
+            ? 'This return was filed before returns carried an amount, so the balance after it can’t be projected.'
+            : 'This request has no amount recorded, so the balance after payout can’t be projected.'}
         </p>
       )}
 

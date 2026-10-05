@@ -10,6 +10,12 @@
 > `urgent_` marker, undo, the weekly reports) is unchanged — only the card placement
 > moved. See `people-offboarded-pay.md` for the rules that must not regress.
 
+> **OPEN MONEY, 2026-10-05 (Open items 349): this rule and the Payroll Wizard disagree.** The Wizard ALSO folds
+> every approved, undispatched MESA disbursement into Final pay ([mesa.md](mesa.md) § The Payroll Wizard deduction),
+> and only Send here stamps `dispatched_at` — so a paycheck that carries a disbursement leaves it in this queue to be
+> paid again, and the next cycle folds it in again. Live: `ruffag@` ₱4,000. A tickets-board ask to move MESA money
+> onto the paycheck is held on Kane's ruling. Until then: **Send a MESA disbursement here before its cycle is locked.**
+
 Urgent payments are non-weekly payouts that must be sent **immediately upon approval** and bypass the regular weekly Payroll Wizard cycle, then reconcile into a weekly report. Per the Carla/Kentshin meeting (`docs/meetings/meeting-with-carla-and-kentshin2.md` §4.1), urgent payments cover **MESA account disbursements** (e.g. medical emergencies) **and orphanage budget requests**.
 
 **Key design decisions:**
@@ -140,7 +146,7 @@ not paid, invisible. Per source:
 | Source | How the request is recovered |
 |---|---|
 | **One-off payment** | links back via `urgent_payment_requests.dispatch_id` — flip the request to `pending`, then delete the dispatch row |
-| **MESA disbursement** | **no link column exists** (Send only stamps `dispatched_at`), so the request is found from the `mesa.disbursement.dispatched` **audit event** written at Send time, with a fallback to an exact email + amount + dispatched match accepted **only when unambiguous**. If neither finds it (a legacy row) the money log is still removed but the clerk gets an explicit warning toast that nothing was restored |
+| **MESA disbursement** | **no link column exists** (Send only stamps `dispatched_at`), so the request is found from the `mesa.disbursement.dispatched` **audit event** written at Send time, with a fallback to an exact email + amount + dispatched match accepted **only when unambiguous**. If neither finds it (a legacy row) the money log is still removed but the clerk gets an explicit warning toast that nothing was restored. **Since 2026-10-05 the request is UNARCHIVED first** (`archived_at` / `archived_by` cleared): an undone payout is owed again and must be back in Accounting → MESA → Requests' main view, and the database refuses `dispatched_at = NULL` on an archived row (`mesa_requests_archive_only_completed_chk`). Before the archive migration runs there is nothing to clear and the step is skipped; any other failure stops the undo |
 | **Orphanage budget** | only the `orphanage_dispatches` row is deleted — pending is derived as "approved request with no dispatch row", so it revives itself |
 
 Two safety choices worth preserving:

@@ -200,8 +200,8 @@ describe('validateAutomationConfig (strict, for the editor)', () => {
 });
 
 describe('automation descriptors', () => {
-  test('two automations, each with its own editor wording', () => {
-    assert.deepEqual(Object.keys(WEBHOOK_AUTOMATIONS), ['payment_cycle_complete', 'coe_request_notify']);
+  test('three automations, each with its own editor wording', () => {
+    assert.deepEqual(Object.keys(WEBHOOK_AUTOMATIONS), ['payment_cycle_complete', 'coe_request_notify', 'mesa_request_notify']);
     for (const d of Object.values(WEBHOOK_AUTOMATIONS)) {
       for (const [k, v] of Object.entries(d.copy)) assert.ok(v.trim(), `${d.slug}.copy.${k} is blank`);
     }

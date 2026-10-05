@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { createSupabaseServiceRoleClient, createSupabaseServerClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
@@ -21,6 +21,9 @@ import {
   sumOutstandingDisbursements,
   type OutstandingDisbursement,
 } from '@/lib/mesa/disbursement-guard';
+import { checkReturnAmount } from '@/lib/mesa/return-amount';
+import { isMesaNotifyRequestType } from '@/lib/mesa/request-notify-payload';
+import { notifyMesaRequested } from '@/lib/mesa/request-notify';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -192,7 +195,9 @@ export async function GET(request: Request) {
 }
 
 // POST /api/mesa-requests
-// Employee submitting a new MESA request.
+// Employee submitting a new MESA request. An opt-out, disbursement or return
+// also fires the `mesa_request_notify` email (after the response, best-effort)
+// — the only call site of `notifyMesaRequested`.
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -276,6 +281,16 @@ export async function POST(request: Request) {
         );
       }
       amount_needed = check.requested;
+    } else if (request_type === 'return') {
+      // A return puts money back, so it is not judged against the balance — but
+      // it must say how much (tickets board, 2026-10-05), or Accounting has
+      // nothing to credit and nothing to take from the paycheck.
+      const ret = checkReturnAmount(body.amount_needed);
+      if (!ret.ok) return NextResponse.json({ error: ret.message }, { status: 400 });
+      amount_needed = ret.amount;
+    } else {
+      // Opt-out / opt-in carry no amount; the column stays single-purpose.
+      amount_needed = null;
     }
 
     const row: Omit<MesaRequestRow, 'id' | 'created_at' | 'status' | 'review_notes' | 'reviewed_by' | 'reviewed_at'> = {
@@ -290,8 +305,24 @@ export async function POST(request: Request) {
       amount_needed,
     };
 
-    const { data, error } = await supabase.from(TABLE).insert(row).select('id').single();
+    const { data, error } = await supabase.from(TABLE).insert(row).select('id, created_at').single();
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    // The new-request email (docs/features/mesa-request-notify.md) — after the
+    // response so the platform cannot cut the POST short, and it never fails the
+    // submit: the row above is the request.
+    const filed = data as { id: string; created_at: string } | null;
+    if (filed && isMesaNotifyRequestType(row.request_type)) {
+      const notifyRow = {
+        id: filed.id,
+        work_email: row.work_email,
+        full_name: row.full_name,
+        department: row.department,
+        request_type: row.request_type,
+        created_at: filed.created_at,
+      };
+      after(() => notifyMesaRequested(notifyRow));
+    }
 
     const actor = await getSessionActor();
     void insertAuditLog({

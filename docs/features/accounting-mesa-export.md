@@ -28,7 +28,12 @@ the new export module.
 - **Requests** (`mesa-requests-YYYY-MM-DD.*`): employee, email, department,
   type, details (reason + explanation), amount, status, submitted, reviewed by.
   Stat band (In this export / Pending / Approved / Denied) is recomputed over
-  the filtered set so it always matches the row count.
+  the filtered set so it always matches the row count. **It exports the view
+  being looked at (2026-10-05):** the Active view excludes archived requests
+  (scope reads *"All money-related requests (archived excluded)"* when no filter
+  is set), and the Archived view exports only archived ones (scope starts
+  *"Archived"*). A return's Amount is the PHP being put back; returns filed
+  before 2026-10-05 print `-`.
 - **Non Members** (`mesa-non-members-*`): name, department, email. Note line
   clarifies opted-out ex-members are not listed (they're former members).
 - **Active Members** (`mesa-active-members-*`): member, email, account #,

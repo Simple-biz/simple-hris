@@ -401,4 +401,26 @@ export const WEBHOOK_AUTOMATIONS: Record<string, WebhookAutomationDescriptor> = 
       testSentNote: 'Check your inbox for the COE request email.',
     },
   },
+  // docs/features/mesa-request-notify.md (2026-10-05)
+  mesa_request_notify: {
+    slug: 'mesa_request_notify',
+    title: 'New MESA request → notify Accounting',
+    trigger:
+      'A member submits an opt-out, disbursement or return request from Employee → MESA → Request. Fires once per request, from the server, right after the pending row is filed. Approving, denying or archiving a request does NOT fire it.',
+    audience: 'carla@simple.biz and april@simple.biz by default (fixed addresses, not a role).',
+    attachments: [],
+    copy: {
+      defaultSourceChip: 'default',
+      defaultModeLabel: 'Default ± changes',
+      defaultModeHint:
+        'Remove a default to stop mailing them; add anyone else who should hear about new MESA requests. The email carries no amount and no reason.',
+      fixedListWarning:
+        'A fixed list REPLACES the defaults: exactly these addresses are mailed, nobody else.',
+      emptyNote:
+        'Nobody would be mailed. A MESA request still lands in Accounting → MESA → Requests as usual — only this email is skipped (logged as no_recipients).',
+      resetTitle: 'Back to the default recipients, no changes',
+      previewNote: 'sample request; no amount or reason is ever sent',
+      testSentNote: 'Check your inbox for the MESA request email.',
+    },
+  },
 };

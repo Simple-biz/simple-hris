@@ -204,6 +204,12 @@ const KNOWN_SLUGS: Array<{ slug: string; label: string; description: string }> =
       'Fired once per Certificate of Engagement request an employee files from Profile → Request Documents (never by Accounting\'s Generate COE, never by other document types). POSTs { request: { id, employee_name, employee_email, requested_at, note }, recipients } — no rate, no PDF; the n8n flow emails each recipient that a COE is waiting in Accounting → Documents. Recipients default to jakec@simple.biz and are changed in Open automation.',
   },
   {
+    slug: 'mesa_request_notify',
+    label: 'MESA Request → Notify Accounting (n8n)',
+    description:
+      'Fired once per opt-out, disbursement or return request a member files from Employee → MESA → Request (never by an Accounting decision or archive). POSTs { request: { id, request_type, employee_name, employee_email, department, requested_at }, recipients } — no amount, no reason, no explanation; the n8n flow emails each recipient that a request is waiting in Accounting → MESA → Requests. Recipients default to carla@simple.biz and april@simple.biz and are changed in Open automation.',
+  },
+  {
     slug: 'payment_cycle_complete',
     label: 'Payment Cycle Closed → Celebrate Accounting (n8n)',
     description:

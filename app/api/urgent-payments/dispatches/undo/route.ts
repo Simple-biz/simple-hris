@@ -7,6 +7,7 @@ import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { pulsePaymentsLive } from '@/lib/supabase/app-settings';
 import { isUrgentSourceFile } from '@/lib/payroll/urgent-cycle';
+import { classifyColumnProbe } from '@/lib/db/probe-verdict';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -140,6 +141,22 @@ export async function POST(req: NextRequest) {
 
         if (mesaRequestId) {
           source = 'mesa';
+          // An undone payout is owed again, so it cannot stay in Accounting's
+          // Archived view — and the database refuses dispatched_at = NULL on an
+          // archived row (mesa_requests_archive_only_completed_chk). Unarchive
+          // first. Before the archive migration runs the columns are absent and
+          // there is nothing to clear; any other failure stops the undo.
+          const { error: unarchiveErr } = await supabase
+            .from('mesa_requests')
+            .update({ archived_at: null, archived_by: null })
+            .eq('id', mesaRequestId)
+            .not('archived_at', 'is', null);
+          if (unarchiveErr && classifyColumnProbe(unarchiveErr) !== 'MISSING') {
+            return NextResponse.json(
+              { error: `Could not unarchive the MESA request before reopening it: ${unarchiveErr.message}` },
+              { status: 500 },
+            );
+          }
           const { error: reviveErr } = await supabase
             .from('mesa_requests')
             .update({ dispatched_at: null })

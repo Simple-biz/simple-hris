@@ -22,6 +22,7 @@ import { buildCycleCloseAttachmentsFromModel, describeAttachments } from '@/lib/
 import {
   sampleCoeRequestRow,
   sampleCycleCloseoutRecord,
+  sampleMesaRequestRow,
   samplePaidDetailRows,
 } from '@/lib/webhooks/automation-fixtures';
 import { buildCoeRequestPayload, COE_REQUEST_NOTIFY_SLUG } from '@/lib/documents/coe-request-notify-payload';
@@ -30,6 +31,12 @@ import {
   postCoeRequestWebhook,
   resolveCoeRequestDelivery,
 } from '@/lib/documents/coe-request-notify';
+import { buildMesaRequestPayload, MESA_REQUEST_NOTIFY_SLUG } from '@/lib/mesa/request-notify-payload';
+import {
+  listMesaRequestDefaultRecipients,
+  postMesaRequestWebhook,
+  resolveMesaRequestDelivery,
+} from '@/lib/mesa/request-notify';
 import type { WebhookDelivery } from '@/lib/webhooks/resolve-webhook';
 import type { WebhookRecipient } from '@/lib/webhooks/webhook-config';
 
@@ -52,7 +59,7 @@ export const runtime = 'nodejs';
  *                audience, never a real week.
  *
  * Only slugs in `WEBHOOK_AUTOMATIONS` that ALSO have a runtime below are served:
- * `payment_cycle_complete` and `coe_request_notify` (2026-10-05).
+ * `payment_cycle_complete`, `coe_request_notify` and `mesa_request_notify` (both 2026-10-05).
  */
 
 const SETTINGS_KEY = 'webhooks.config';
@@ -132,6 +139,21 @@ const RUNTIMES: Record<string, AutomationRuntime> = {
       attachments: null,
     }),
     post: postCoeRequestWebhook,
+  },
+  [MESA_REQUEST_NOTIFY_SLUG]: {
+    resolveDelivery: resolveMesaRequestDelivery,
+    defaults: listMesaRequestDefaultRecipients,
+    previewBase: async (recipients) =>
+      buildMesaRequestPayload({ row: sampleMesaRequestRow(new Date('2026-10-05T01:30:00.000Z')), recipients }),
+    testRun: async (to, now) => ({
+      payload: buildMesaRequestPayload({
+        row: sampleMesaRequestRow(now),
+        recipients: [{ email: to, name: null }],
+        test: true,
+      }),
+      attachments: null,
+    }),
+    post: postMesaRequestWebhook,
   },
 };
 

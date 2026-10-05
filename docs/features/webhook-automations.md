@@ -9,7 +9,8 @@ and saved onto the slug's `webhooks.config` entry; the week's facts are not edit
 construction. A **Send test run** button mails the signed-in admin only, from a fictional week.
 Shipped 2026-09-04 with `payment_cycle_complete`. Second automation, 2026-10-05:
 `coe_request_notify` ([coe-request-notify.md](./coe-request-notify.md)), whose default audience is a fixed
-address rather than a role.
+address rather than a role. Third, the same day: `mesa_request_notify`
+([mesa-request-notify.md](./mesa-request-notify.md)), two fixed addresses.
 
 Built because the celebration email's audience was "everyone holding the accounting role" with
 no way to say "not Carla any more, but her replacement" without touching roles — and because
@@ -130,11 +131,19 @@ once-per-anything claim: every employee-filed COE sends one email. It adds `requ
 `PROTECTED_PAYLOAD_KEYS`, and its payload never carries a pay figure. Full rules:
 [coe-request-notify.md](./coe-request-notify.md).
 
+### `mesa_request_notify` — the third one (2026-10-05)
+
+Same shape as the COE one: a **fixed default** (carla@simple.biz + april@simple.biz), "Default ±
+changes", no attachments, one email per member-filed opt-out / disbursement / return. It reuses the
+already-protected `request` key and adds none. Its payload never carries the amount, the reason or the
+explanation (a disbursement's explanation is often medical). Full rules:
+[mesa-request-notify.md](./mesa-request-notify.md).
+
 ## Deploy notes
 
 **No migration.** Two optional fields on an existing JSON value in `app_settings`; one new
 audit action family (`webhook.automation_updated`, `webhook.test_run`; `webhook.coe_request_notify`
-joined it 2026-10-05).
+and `webhook.mesa_request_notify` joined it 2026-10-05).
 
 **n8n — PENDING Kane:** the updated
 [payment-cycle-complete-celebration.workflow.json](../../references/n8n/payment-cycle-complete-celebration.workflow.json)

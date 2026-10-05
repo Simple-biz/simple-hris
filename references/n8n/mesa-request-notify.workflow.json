@@ -1,0 +1,127 @@
+{
+  "name": "MESA Request → Notify Accounting",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mesa-request-notify",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e5a00000-0000-4000-8000-000000000001",
+      "name": "MESA Request Filed",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "mesa-request-notify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node — \"Build MESA Emails\" (Run Once for All Items)\n// Fired by Simple HRIS once per MESA request a member files from Employee → MESA →\n// Request (POST /api/mesa-requests): an opt-out, a disbursement or a return. Fans\n// out ONE item per recipient, each carrying a ready-to-send HTML email saying a\n// request is waiting in Accounting → MESA → Requests.\n//\n// WHO is mailed comes from the payload: the HRIS resolves it from Admin →\n// Webhooks → \"MESA Request → Notify Accounting\" → Open automation (default\n// carla@simple.biz + april@simple.biz). Subject and body are FIXED here — the\n// caller only says who filed what kind of request and when, so this endpoint\n// cannot become an arbitrary-content mailer.\n//\n// NO MONEY, NO REASON: the HRIS never sends the peso figure or why the member is\n// asking (often medical). Do not add them here either — the recipient list is\n// admin-editable. The reviewer reads both inside the HRIS.\n//\n// Payload (n8n may nest the POST body under `.body`):\n//   {\n//     event: 'mesa.requested', trigger: 'employee_mesa_request',\n//     request: { id, request_type, request_label, employee_name, employee_email,\n//                department, requested_at, requested_at_manila },\n//     recipients: [ { email, name } ],\n//     sent_by: 'system',\n//     test: true            // Admin → Webhooks test run (goes to the admin only)\n//   }\n\n// --- OPTIONAL shared-secret gate ---\n// Leave '' to accept any caller. To lock down: put a long random string here AND\n// set HRIS env N8N_MESA_REQUEST_NOTIFY_SECRET to the same value (sent as the\n// 'x-webhook-secret' header).\nconst REQUIRED_SECRET = '';\n\nconst HRIS_LINK = 'https://simple-hris.vercel.app/';\nconst LOGO = 'https://simple-hris.vercel.app/simple-logo.png';\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst MAX = 300;\nconst LABELS = { opt_out: 'Opt-out', disbursement: 'Disbursement', return: 'Return' };\n\nconst root = (items[0] && items[0].json) || {};\nconst body = (root && typeof root.body === 'object' && root.body) ? root.body : root;\nconst headers = (root && typeof root.headers === 'object' && root.headers) ? root.headers : {};\n\nconst providedSecret = headers['x-webhook-secret'] || headers['X-Webhook-Secret'] || body.secret || '';\nif (REQUIRED_SECRET && providedSecret !== REQUIRED_SECRET) {\n  throw new Error('Unauthorized: missing or invalid webhook secret.');\n}\n\nif (body.event !== 'mesa.requested') {\n  throw new Error('Not a MESA request event (got ' + JSON.stringify(body.event) + ').');\n}\n\nfunction esc(v) {\n  if (v == null) return '';\n  return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');\n}\n\n// --- recipients (from the HRIS; validated, deduped, capped) ---\nconst seen = {};\nconst recipients = [];\nfor (const r of (Array.isArray(body.recipients) ? body.recipients : [])) {\n  const email = String((r && r.email) || '').trim().toLowerCase();\n  if (!EMAIL_RE.test(email) || seen[email]) continue;\n  seen[email] = true;\n  recipients.push(email);\n}\nif (recipients.length === 0) throw new Error('No valid recipients in the payload.');\nif (recipients.length > MAX) throw new Error('Too many recipients (' + recipients.length + ' > ' + MAX + ').');\n\n// --- the request ---\nconst req = (body.request && typeof body.request === 'object') ? body.request : {};\nconst isTest = body.test === true;\nconst label = LABELS[req.request_type] || 'MESA';\nconst plainName = String(req.employee_name || '').trim() || String(req.employee_email || '').trim() || 'A member';\nconst name = esc(plainName);\nconst workEmail = esc(req.employee_email || '');\nconst dept = esc(String(req.department || '').trim());\nconst when = esc(req.requested_at_manila || req.requested_at || '');\nconst refId = esc(req.id || '');\n\nconst SUBJECT = (isTest ? '[TEST RUN] ' : '') + '🩺 New MESA ' + label.toLowerCase() + ' request — ' + plainName;\n\nfunction detailRow(rowLabel, value) {\n  if (!value) return '';\n  return '<tr>' +\n    '<td style=\"padding:8px 14px;font-size:12px;color:#71717a;white-space:nowrap;vertical-align:top;border-bottom:1px solid #f4f4f5\">' + rowLabel + '</td>' +\n    '<td style=\"padding:8px 14px;font-size:13px;color:#18181b;font-weight:bold;border-bottom:1px solid #f4f4f5\">' + value + '</td>' +\n  '</tr>';\n}\n\nfunction ctaButton() {\n  return '' +\n    '<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:4px 0 6px\"><tr><td>' +\n      '<!--[if mso]><v:roundrect xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:w=\"urn:schemas-microsoft-com:office:word\" href=\"' + HRIS_LINK + '\" style=\"height:48px;v-text-anchor:middle;width:300px;\" arcsize=\"21%\" strokecolor=\"#0d9488\" fillcolor=\"#0d9488\"><w:anchorlock/><center style=\"color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:bold;\">Open HRIS &rarr; Accounting &rarr; MESA</center></v:roundrect><![endif]-->' +\n      '<!--[if !mso]><!-- --><a href=\"' + HRIS_LINK + '\" style=\"display:inline-block;background:#0d9488;color:#ffffff;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 28px;border-radius:10px\">Open HRIS &rarr; Accounting &rarr; MESA</a><!--<![endif]-->' +\n    '</td></tr></table>';\n}\n\nfunction renderHtml() {\n  const details =\n    detailRow('Requested by', name + (workEmail ? ' &middot; <span style=\"font-weight:normal;color:#52525b\">' + workEmail + '</span>' : '')) +\n    detailRow('Request', esc(label)) +\n    detailRow('Department', dept) +\n    detailRow('Submitted on', when ? when + ' <span style=\"font-weight:normal;color:#71717a\">(Manila)</span>' : '') +\n    detailRow('Reference ID', refId ? '<span style=\"font-family:Consolas,Menlo,monospace;font-weight:normal\">' + refId + '</span>' : '');\n  const testBanner = isTest\n    ? '<tr><td style=\"background:#fef3c7;border-bottom:1px solid #fde68a;padding:10px 26px;font-size:12px;color:#92400e;font-weight:bold\">TEST RUN &mdash; sent from Admin &rarr; Webhooks to you only. No member filed this request.</td></tr>'\n    : '';\n  return '' +\n    '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>MESA request</title></head>' +\n    '<body style=\"margin:0;background:#f4f4f5;padding:24px 12px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#18181b\">' +\n      '<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;font-size:1px;line-height:1px\">' + name + ' filed a MESA ' + esc(label.toLowerCase()) + ' request &mdash; it is waiting in Accounting &rarr; MESA &rarr; Requests.</div>' +\n      '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f4f4f5\"><tr><td align=\"center\">' +\n        '<table role=\"presentation\" width=\"520\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:520px;background:#ffffff;border:1px solid #e4e4e7;border-radius:14px;overflow:hidden;box-shadow:0 6px 24px rgba(13,148,136,0.10)\">' +\n          testBanner +\n          '<tr><td style=\"padding:18px 26px 12px\"><img src=\"' + LOGO + '\" alt=\"Simple\" width=\"88\" height=\"30\" style=\"display:block;border:0;height:30px;width:88px\"></td></tr>' +\n          '<tr><td bgcolor=\"#0a0a0b\" style=\"background:#0a0a0b;padding:22px 26px;border-bottom:4px solid #0d9488\">' +\n            '<span style=\"display:inline-block;background:#0d9488;color:#ffffff;font-size:11px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;padding:5px 12px;border-radius:999px\">MESA &middot; ' + esc(label) + '</span>' +\n            '<div style=\"margin-top:14px;font-size:22px;line-height:1.3;color:#ffffff;font-weight:bold\">A MESA request is waiting for review</div>' +\n            '<div style=\"margin-top:6px;font-size:13px;color:#d4d4d8\">A member just filed one from their dashboard.</div>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:22px 26px 4px\">' +\n            '<p style=\"margin:0 0 14px;font-size:15px;color:#18181b\">Hi,</p>' +\n            '<p style=\"margin:0 0 16px;font-size:14px;line-height:1.6;color:#3f3f46\">A new <strong>MESA ' + esc(label.toLowerCase()) + ' request</strong> was just filed in the HRIS. Review it in <strong>Accounting &rarr; MESA &rarr; Requests</strong> &mdash; the details and the member&rsquo;s balance are there.</p>' +\n            '<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#f0fdfa;border:1px solid #99f6e4;border-radius:10px;margin:0 0 18px;overflow:hidden\">' + details + '</table>' +\n            ctaButton() +\n            '<p style=\"margin:10px 0 18px;font-size:12px;color:#71717a;word-break:break-all\">Button not working? Copy and paste this link:<br><a href=\"' + HRIS_LINK + '\" style=\"color:#0d9488\">' + esc(HRIS_LINK) + '</a></p>' +\n          '</td></tr>' +\n          '<tr><td style=\"padding:16px 26px 20px;border-top:1px solid #f4f4f5\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr><td style=\"font-size:12px;color:#52525b;font-weight:bold\">Simple &middot; Confidential</td><td align=\"right\" style=\"font-size:11px;color:#71717a\">Automated alert from Simple HRIS</td></tr></table></td></tr>' +\n        '</table>' +\n        '<div style=\"max-width:520px;margin:12px auto 0;font-size:11px;color:#71717a;text-align:center;line-height:1.5\">You are receiving this because you are on the MESA request list in Admin &rarr; Webhooks.</div>' +\n      '</td></tr></table>' +\n    '</body></html>';\n}\n\nconst html = renderHtml();\nreturn recipients.map(function (email) {\n  return { json: { to: email, subject: SUBJECT, html: html } };\n});\n"
+      },
+      "id": "e5a00000-0000-4000-8000-000000000002",
+      "name": "Build MESA Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'ok', notified: $items('Build MESA Emails').length } }}",
+        "options": {}
+      },
+      "id": "e5a00000-0000-4000-8000-000000000003",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e5a00000-0000-4000-8000-000000000004",
+      "name": "Send MESA Alert (Gmail · hris@simple.biz)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        900,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "MESA Request Filed": {
+      "main": [
+        [
+          {
+            "node": "Build MESA Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build MESA Emails": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Send MESA Alert (Gmail · hris@simple.biz)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hris"
+    },
+    {
+      "name": "mesa"
+    },
+    {
+      "name": "accounting"
+    }
+  ],
+  "meta": {
+    "description": "Fired by the HRIS once per MESA opt-out, disbursement or return request a member files from Employee → MESA → Request (POST /api/mesa-requests; Accounting decisions and archiving never fire it). Acks immediately, then emails each recipient in the payload that a request is waiting in Accounting → MESA → Requests (who / which request / department / when / reference id + a button to the HRIS). Recipients come from the HRIS — default carla@simple.biz and april@simple.biz, changed in Admin → Webhooks → MESA Request → Notify Accounting → Open automation. Subject/body are fixed in Build MESA Emails; no peso figure and no reason are ever sent. Attach the hris@simple.biz Gmail OAuth2 credential to the send node before activating (that account is the sender); register the production URL under Admin → Webhooks slug `mesa_request_notify` (or env N8N_MESA_REQUEST_NOTIFY_WEBHOOK_URL); optionally set REQUIRED_SECRET here + N8N_MESA_REQUEST_NOTIFY_SECRET in the HRIS to lock the webhook."
+  }
+}

@@ -41,6 +41,7 @@ import {
   checkDisbursementAmount,
   sumOutstandingDisbursements,
 } from '@/lib/mesa/disbursement-guard';
+import { checkReturnAmount } from '@/lib/mesa/return-amount';
 import MesaReceiptDialog from './MesaReceiptDialog';
 import EmployeeFpu from './EmployeeFpu';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -1044,7 +1045,12 @@ function MesaRequestForm({
           outstanding: outstandingDraws,
         });
   const availableToDraw = balanceCheck?.available ?? null;
-  const overBalance = Boolean(hasAmount && balanceCheck && !balanceCheck.ok);
+  // The balance limit is a DRAW rule. A return puts money back, so a return larger
+  // than the balance is not "over" anything — the amount field is shared between
+  // the two tabs, and gating on it unconditionally refused such a return.
+  const overBalance = Boolean(requestType === 'disbursement' && hasAmount && balanceCheck && !balanceCheck.ok);
+  // Same check the server runs on a return (src/lib/mesa/return-amount.ts).
+  const returnCheck = checkReturnAmount(amountNeeded);
   const explanationAtLimit = explanation.length >= EXPLANATION_MAX;
 
   React.useEffect(() => {
@@ -1146,6 +1152,9 @@ function MesaRequestForm({
       if (!explanation.trim()) { toast.error('Please provide an explanation'); return; }
       if (!hasAmount) { toast.error('Please enter the amount you need'); return; }
     }
+    if (requestType === 'return' && !returnCheck.ok) {
+      toast.error(returnCheck.message); return;
+    }
     if (identityIncomplete) {
       toast.error(
         `Your employee record is missing your ${missingIdentityFields.join(' and ')}. Email accounting@simple.biz to have it added.`,
@@ -1166,8 +1175,12 @@ function MesaRequestForm({
           fpu_date: null,
           effective_date: requestType === 'opt_out' ? optOutEffective : null,
           disbursement_reason: requestType === 'disbursement' ? disbursementReason : null,
-          explanation: requestType === 'disbursement' ? explanation.trim() : null,
-          amount_needed: requestType === 'disbursement' ? amountValue : null,
+          // A return's optional notes ride in the same column; they used to be
+          // typed into the form and dropped here.
+          explanation:
+            requestType === 'disbursement' || requestType === 'return' ? explanation.trim() || null : null,
+          amount_needed:
+            requestType === 'disbursement' ? amountValue : requestType === 'return' && returnCheck.ok ? returnCheck.amount : null,
         }),
       });
       const json = (await res.json()) as { success?: boolean; error?: string };
@@ -1398,9 +1411,40 @@ function MesaRequestForm({
                 {requestType === 'return' && (
                   <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-4 dark:border-zinc-700 dark:bg-zinc-900/40">
                     <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                      Use this option to return funds to your MESA account. Accounting will process
-                      this request and update your balance accordingly.
+                      Use this option to return funds to your MESA account — for example, money left
+                      over from a disbursement. Accounting reviews it and adds the amount back to
+                      your balance.
                     </p>
+                    <div className="mt-3 space-y-1.5">
+                      <Label htmlFor="mesa-return-amount" className={FIELD_LABEL_CLASS}>
+                        Amount to return <RequiredMark />
+                      </Label>
+                      <div className="relative">
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-zinc-500 dark:text-zinc-400"
+                        >
+                          ₱
+                        </span>
+                        <input
+                          id="mesa-return-amount"
+                          type="text"
+                          inputMode="decimal"
+                          autoComplete="off"
+                          aria-required
+                          aria-describedby="mesa-return-amount-hint"
+                          value={amountNeeded}
+                          onChange={(e) => setAmountNeeded(sanitizeAmountInput(e.target.value))}
+                          placeholder="0.00"
+                          className={cn(FIELD_CLASS, 'pl-8 font-mono tabular-nums')}
+                        />
+                      </div>
+                      <p id="mesa-return-amount-hint" aria-live="polite" className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                        {returnCheck.ok
+                          ? `You are returning ${formatPesoAmount(returnCheck.amount)} to your MESA account.`
+                          : 'Philippine pesos. Numbers only, for example 500 or 500.50.'}
+                      </p>
+                    </div>
                     <div className="mt-3 space-y-1.5">
                       <Label htmlFor="mesa-return-notes" className={FIELD_LABEL_CLASS}>
                         Notes <span className="font-normal text-zinc-500">(optional)</span>

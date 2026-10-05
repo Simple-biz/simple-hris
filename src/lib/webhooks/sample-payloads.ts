@@ -372,6 +372,29 @@ export const WEBHOOK_SAMPLE_PAYLOADS: Record<string, unknown> = {
   // right after it files a FRESH close-out record. Every figure below is read
   // off that record. `celebrate: false` = the week's celebration was already
   // burned (reopen → re-close) and this is a plain "close-out reports" email.
+  // docs/features/mesa-request-notify.md — no amount, reason or explanation by
+  // design (a disbursement's explanation is often medical). Every key here is
+  // protected; recipients are adjustable in Open automation.
+  mesa_request_notify: {
+    event: 'mesa.requested',
+    trigger: 'employee_mesa_request',
+    request: {
+      id: '5d2e8f41-3c7a-4b19-a0e6-7f1c9b2d4e83',
+      request_type: 'disbursement',
+      request_label: 'Disbursement',
+      employee_name: 'Jordan Cruz',
+      employee_email: 'jordan.cr@simple.biz',
+      department: 'Lead Gen',
+      requested_at: '2026-10-05T01:30:00.000Z',
+      requested_at_manila: 'Oct 5, 2026, 9:30 AM',
+    },
+    recipients: [
+      { email: 'carla@simple.biz', name: null },
+      { email: 'april@simple.biz', name: null },
+    ],
+    sent_by: 'system',
+  },
+
   // docs/features/coe-request-notify.md — no pay figures by design. Recipients
   // are adjustable in Open automation; every key here is protected.
   coe_request_notify: {

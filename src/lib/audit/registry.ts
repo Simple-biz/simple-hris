@@ -228,7 +228,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'mesa.',
     surfaces: ['accounting'],
     label: 'MESA program',
-    note: 'request.*, disbursement.dispatched, receipt.uploaded/deleted, note.added, dispatch.stamp_failed',
+    note: 'request.* (incl. request.archived / request.unarchived), disbursement.dispatched, receipt.uploaded/deleted, note.added, dispatch.stamp_failed',
   },
   {
     match: 'employee.mesa.',
@@ -515,7 +515,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'webhook.',
     surfaces: ['admin'],
     label: 'Webhook automations',
-    note: 'automation_updated, test_run, coe_request_notify — one row per attempted COE-request email (ok/status/to, or no_recipients)',
+    note: 'automation_updated, test_run, coe_request_notify / mesa_request_notify — one row per attempted COE- or MESA-request email (ok/status/to, or no_recipients)',
   },
   {
     match: 'notification.',

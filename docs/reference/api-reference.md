@@ -1859,7 +1859,7 @@ Employee submits a new MESA request. Auth: `authorizeEmailAccess(work_email)` �
 | `fpu_date` | string | No | Opt-in only — date FPU was completed |
 | `disbursement_reason` | string | No | Disbursement only — reason category |
 | `explanation` | string | No | Disbursement / return notes (max 250 chars enforced by UI) |
-| `amount_needed` | number | No | Disbursement only — amount in PHP |
+| `amount_needed` | number | **Disbursement and return** | PHP. A **disbursement** is checked against the member's open-account balance minus draws in flight (`checkDisbursementAmount`, 503 if the balance cannot be read). A **return** (2026-10-05) must be a positive amount of at most PHP 999,999,999.99 (`checkReturnAmount`, `src/lib/mesa/return-amount.ts`) and is never judged against the balance. Forced `null` for every other type |
 
 **Response** `200`:
 ```json
@@ -1867,12 +1867,15 @@ Employee submits a new MESA request. Auth: `authorizeEmailAccess(work_email)` �
 ```
 
 **Error Response**:
-- `400` — missing required fields or invalid `request_type`
+- `400` — missing required fields, invalid `request_type`, a disbursement over the available balance, or a return with no / a non-positive amount
 - `401` — not signed in
 - `403` — attempting to submit for another employee without elevated role
+- `503` — a disbursement whose balance could not be verified (fails closed)
 - `500` — DB error
 
 Audit log: `mesa.request.<request_type>`.
+
+**Side effect (2026-10-05):** an `opt_out` / `disbursement` / `return` fires the `mesa_request_notify` n8n email **after the response** (`after()`), best-effort — it never fails the submit. See [mesa-request-notify.md](../features/mesa-request-notify.md).
 
 **Tables**: `mesa_requests`, `audit_log`
 **Service Role**: Required
@@ -1881,34 +1884,40 @@ Audit log: `mesa.request.<request_type>`.
 
 ### `PATCH /api/mesa-requests/[id]`
 
-Accounting approves or denies a pending MESA request. Auth: `requireElevatedSession`.
+Accounting edits a MESA request. Auth: `requireFeatureEditAnyView('mesa')`. Three independent edits share the route; send one per call (archive may not ride along with the others):
 
-**Request Body** `application/json`:
+**Request Body** `application/json` — one of:
 ```json
-{
-  "status": "approved",
-  "review_notes": "Verified with accounting — disbursement queued for this Friday."
-}
+{ "status": "approved", "review_notes": "Verified — queued for this Friday." }
+{ "effective_date": "2026-10-10" }
+{ "archived": true }
 ```
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `status` | string | Yes | `approved` or `denied` |
-| `review_notes` | string | No | Optional note surfaced back to the employee |
+| Field | Type | Notes |
+|---|---|---|
+| `status` | string | `approved` / `denied`, or `pending` to **revoke** a decision (refused 409 once `dispatched_at` is set) |
+| `review_notes` | string | Optional note surfaced back to the employee |
+| `effective_date` | string | Opt-out only, strict `YYYY-MM-DD` |
+| `archived` *(2026-10-05)* | boolean | `true` moves a **completed** request to the Archived view, `false` moves it back. Completed = denied · approved opt-out · approved disbursement with `dispatched_at` (`mesaRequestCompletion`, `src/lib/mesa/request-archive.ts`). An approved-unpaid disbursement or an approved return is refused 409. Repeating the current state returns `{ success: true, unchanged: true }` |
 
 **Response** `200`:
 ```json
 { "success": true }
 ```
 
-Side effects: stamps `reviewed_by` (session email), `reviewed_at` (server timestamp), and `review_notes` on the row. Note: approving an `opt_in` request does **not** automatically flip `employee_hourly_rates.mesa_member`; accounting must do that separately via `POST /api/toggle-mesa-member`. This is intentional — the request is a signal, not an automated toggle.
+Side effects: a decision stamps `reviewed_by` (session email), `reviewed_at` and `review_notes`; a revoke clears them. Archive stamps `archived_at` + `archived_by`; unarchive clears both.
 
 **Error Response**:
-- `400` — `status` not `approved` or `denied`, or missing `id`
+- `400` — invalid `status` / `effective_date` / `archived`, nothing to update, or `archived` sent together with another edit
 - `401` / `403` — auth
+- `404` — no such request
+- `409` — revoke of a paid disbursement · archive of an incomplete request · **any** status or date edit on an ARCHIVED row ("Unarchive it before changing it")
+- `503` — archive before `references/sql/alter/2026-10-05_add_mesa_request_archive.sql` has run ("Archiving is not set up yet")
 - `500` — DB error
 
-Audit log: `mesa.request.approved` or `mesa.request.denied`.
+Audit log: `mesa.request.approved` / `.denied` / `.revoked` / `.effective_date_updated` / **`.archived` / `.unarchived`**.
+
+`DELETE /api/mesa-requests/[id]` (same gate) refuses 409 a paid disbursement **and** an archived row.
 
 **Tables**: `mesa_requests`, `audit_log`
 **Service Role**: Required

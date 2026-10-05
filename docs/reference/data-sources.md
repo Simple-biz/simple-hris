@@ -332,7 +332,7 @@ Single `app_settings` key (`auth.force_logout_map`) holding a JSON map of `{ "em
 
 ### 10. `mesa_requests` *(added 2026-06-01)*
 
-Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_requests.sql` to create this table; `references/sql/alter/add_mesa_dispatched_at.sql` adds the `dispatched_at` column + the urgent-queue index, and `references/sql/alter/2026-07-29_add_mesa_effective_date.sql` adds `effective_date`. See the paired ledger table §15 and the feature doc [mesa.md](../features/mesa.md).
+Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_requests.sql` to create this table; `references/sql/alter/add_mesa_dispatched_at.sql` adds the `dispatched_at` column + the urgent-queue index, and `references/sql/alter/2026-07-29_add_mesa_effective_date.sql` adds `effective_date`, and `references/sql/alter/2026-10-05_add_mesa_request_archive.sql` adds `archived_at` / `archived_by` (**PENDING** — apply with `scripts/apply-mesa-request-archive-migration.mts --apply`). See the paired ledger table §15 and the feature doc [mesa.md](../features/mesa.md).
 
 **Columns:**
 
@@ -347,12 +347,14 @@ Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_re
 | `effective_date` *(2026-07-29)* | date | Opt-out only — the day participation ends (weekly deduction + match stop). Required by `POST /api/mesa-requests` for an `opt_out` (strict `YYYY-MM-DD`), forced null for every other type |
 | `disbursement_reason` | text | Disbursement only — Medical Emergency / Natural Disaster / Computer Repair / Other |
 | `explanation` | text | Disbursement explanation or return notes (max 250 chars enforced by UI) |
-| `amount_needed` | numeric(12,2) | Disbursement only — PHP amount requested |
+| `amount_needed` | numeric(12,2) | PHP. **Disbursement:** the amount drawn. **Return (2026-10-05):** the amount being put back, required by `POST /api/mesa-requests` (returns filed before then carry null). Null for every other type |
 | `status` | text NOT NULL | `pending` (default) \| `approved` \| `denied` |
 | `review_notes` | text | Reviewer's note to the employee |
 | `reviewed_by` | text | Session email of the reviewer |
 | `reviewed_at` | timestamptz | When the review was completed |
 | `dispatched_at` *(2026-06-04)* | timestamptz | Stamped when an approved disbursement is paid out via the Urgent Payments queue. Non-null = money sent; the request can no longer be revoked or deleted |
+| `archived_at` *(2026-10-05, PENDING)* | timestamptz | Accounting archived this **completed** request out of the Requests main view. NULL = active. `mesa_requests_archive_only_completed_chk` admits it only on a denied row, an approved opt-out/opt-in, or an approved disbursement WITH `dispatched_at` — so a revoke or a dispatch undo on an archived row is refused until it is unarchived |
+| `archived_by` *(2026-10-05, PENDING)* | text | Session email of the archiver. Set and cleared with `archived_at` (`mesa_requests_archive_pair_chk`) |
 | `created_at` | timestamptz | Submission time |
 
 **Indexes**: `work_email`, `status`, `created_at DESC`, plus a partial index `idx_mesa_requests_urgent_queue` on `(status, request_type, dispatched_at) WHERE status='approved' AND request_type='disbursement'` for the Urgent Payments queue.

@@ -4,14 +4,21 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { getSessionActor } from '@/lib/auth/session-actor';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { classifyColumnProbe } from '@/lib/db/probe-verdict';
+import { isMesaRequestArchived, mesaArchiveRefusal } from '@/lib/mesa/request-archive';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const TABLE = 'mesa_requests';
 
+/** Shown when the archive columns are not there yet (migration PENDING). */
+const ARCHIVE_NOT_SET_UP =
+  'Archiving is not set up yet — run scripts/apply-mesa-request-archive-migration.mts --apply.';
+
 // PATCH /api/mesa-requests/[id]
-// Accounting-only: approve or deny a MESA request.
+// Accounting-only: approve or deny a MESA request, correct an opt-out's
+// effective date, or archive / unarchive a completed request.
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -27,6 +34,7 @@ export async function PATCH(
       status?: string;
       review_notes?: string | null;
       effective_date?: string | null;
+      archived?: boolean;
     };
 
     // Two independent edits share this route: the decision (approve / deny /
@@ -36,8 +44,20 @@ export async function PATCH(
     const status = (body.status ?? '').trim();
     const editsStatus = status !== '';
     const editsEffective = body.effective_date !== undefined;
+    // Archive is its own edit: it changes where the row is shown, never what it
+    // says, so it is not allowed to ride along with a decision or a date.
+    const editsArchive = body.archived !== undefined;
 
-    if (!editsStatus && !editsEffective) {
+    if (editsArchive && typeof body.archived !== 'boolean') {
+      return NextResponse.json({ error: 'archived must be true or false' }, { status: 400 });
+    }
+    if (editsArchive && (editsStatus || editsEffective)) {
+      return NextResponse.json(
+        { error: 'archive on its own — not together with a decision or a date' },
+        { status: 400 },
+      );
+    }
+    if (!editsStatus && !editsEffective && !editsArchive) {
       return NextResponse.json({ error: 'nothing to update' }, { status: 400 });
     }
     // 'pending' = revoke a prior decision (un-approve / un-deny).
@@ -52,12 +72,64 @@ export async function PATCH(
     const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
     if (!supabase) return NextResponse.json({ error: 'DB unavailable' }, { status: 500 });
 
-    const { data: existing } = await supabase
-      .from(TABLE)
-      .select('request_type, effective_date, dispatched_at')
-      .eq('id', id)
-      .single();
-    if (!existing) return NextResponse.json({ error: 'request not found' }, { status: 404 });
+    // `*`, not a column list: `archived_at` does not exist until the archive
+    // migration runs, and naming it would fail every PATCH before then.
+    const { data: existingRow } = await supabase.from(TABLE).select('*').eq('id', id).single();
+    if (!existingRow) return NextResponse.json({ error: 'request not found' }, { status: 404 });
+    const existing = existingRow as {
+      request_type: string;
+      status: string;
+      effective_date: string | null;
+      dispatched_at: string | null;
+      archived_at?: string | null;
+    };
+
+    if (editsArchive) {
+      const archive = body.archived === true;
+      if (!('archived_at' in existing)) {
+        return NextResponse.json({ error: ARCHIVE_NOT_SET_UP }, { status: 503 });
+      }
+      const refusal = mesaArchiveRefusal(existing, archive);
+      if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+      // Repeating the current state is a no-op, not a second audit row.
+      if (archive === isMesaRequestArchived(existing)) {
+        return NextResponse.json({ success: true, unchanged: true });
+      }
+      const archivePatch = archive
+        ? { archived_at: new Date().toISOString(), archived_by: authz.sessionEmail }
+        : { archived_at: null, archived_by: null };
+      const { error: archiveErr } = await supabase.from(TABLE).update(archivePatch).eq('id', id);
+      if (archiveErr) {
+        if (classifyColumnProbe(archiveErr) === 'MISSING') {
+          return NextResponse.json({ error: ARCHIVE_NOT_SET_UP }, { status: 503 });
+        }
+        return NextResponse.json({ error: archiveErr.message }, { status: 500 });
+      }
+      const archiveActor = await getSessionActor();
+      void insertAuditLog({
+        user_name: archiveActor.user_name,
+        user_role: archiveActor.user_role,
+        action: archive ? 'mesa.request.archived' : 'mesa.request.unarchived',
+        resource: TABLE,
+        resource_id: id,
+        details: {
+          request_type: existing.request_type,
+          status: existing.status,
+          dispatched: Boolean(existing.dispatched_at),
+        },
+      });
+      return NextResponse.json({ success: true });
+    }
+
+    // An archived row is a closed record: it is unarchived before anything on it
+    // changes. The database refuses a revoke on it too
+    // (mesa_requests_archive_only_completed_chk); this says why in words.
+    if (isMesaRequestArchived(existing)) {
+      return NextResponse.json(
+        { error: 'This request is archived. Unarchive it before changing it.' },
+        { status: 409 },
+      );
+    }
 
     // The column is single-purpose; nothing else carries an effective date.
     if (editsEffective && existing.request_type !== 'opt_out') {
@@ -133,11 +205,23 @@ export async function DELETE(
     const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
     if (!supabase) return NextResponse.json({ error: 'DB unavailable' }, { status: 500 });
 
-    const { data: existing } = await supabase
-      .from(TABLE)
-      .select('request_type, status, dispatched_at, work_email')
-      .eq('id', id)
-      .single();
+    // `*` so `archived_at` is read when it exists and simply absent before the
+    // archive migration runs.
+    const { data: existingRow } = await supabase.from(TABLE).select('*').eq('id', id).single();
+    const existing = existingRow as {
+      request_type: string;
+      status: string;
+      dispatched_at: string | null;
+      work_email: string;
+      archived_at?: string | null;
+    } | null;
+
+    if (existing && isMesaRequestArchived(existing)) {
+      return NextResponse.json(
+        { error: 'This request is archived. Unarchive it before deleting it.' },
+        { status: 409 },
+      );
+    }
 
     if (existing?.dispatched_at) {
       return NextResponse.json(
