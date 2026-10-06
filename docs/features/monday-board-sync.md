@@ -2585,3 +2585,41 @@ closed *Tickets board notifies the requester* (12881288126) by hand on 2026-10-0
 and `ticket_moved` are still `active=false` with an EMPTY url (re-measured 23:0xZ 10-04; config last
 saved 09-12). He either keeps it Done, on the in-app leg, which makes the plan `done: true`, or it goes
 back to Pending Deploy. Item 341.
+
+### Pass 40 — 2026-10-06 — Oct 5's commits, staged and waiting for the 20:00 EDT reset
+
+Kane: *"check our github commits yesterday and lets push it to monday close it with the completion
+date"*. Session `adf12936`.
+
+**The range** is `4aa73d38..a1a9860d`: 28 commits, all authored 2026-10-05 (inside Sprint 30, Sep 29-Oct
+9), all on `origin/main`. Clustered by file overlap they make **16 rows / 69 SP**. The cluster note is
+in `hris-plan.ts` and the per-row basis is in `pass.mts`. `selfcheck()` PASS, and the plan diff is 31
+insertions with 0 deletions.
+
+- **15 Done / 66 SP** on Kane's word. Each Completed Date is 2026-10-05, the last sha's commit date.
+- **1 Pending Deploy:** *Accounting can archive a completed MESA request*. `d2115d23` carries three
+  things, so it is split. The n8n email and the return amount are live. The archive waits on its
+  migration.
+- **No row:** `53a0dec5` and `efa568af` (the Monday triage line and a pronoun fix), `a1a9860d` (item 358,
+  a finding with no fix yet) and `3db9748d` (a 7-line header trim).
+
+**Every external step was measured read-only, not taken from a doc:**
+- **COE email:** live. `coe_request_notify` is active with an n8n URL, and a real send at 10-05 20:05Z
+  returned 200.
+- **MESA email:** imported. `mesa_request_notify` is active with no sends yet, because nobody has filed.
+- **MESA archive migration:** NOT applied. `--verify` passes 0 of 4, and PostgREST returns 42703 with a
+  negative control. The pushed code tolerates the missing columns.
+- **Item 343 no-show rerun:** its dry run plans 0 inserts.
+- **Item 344 start-date restore:** its dry run plans 0 writes.
+
+**Not written.** `review.mts` died on its first call, `boardGroups`, with `DAILY_LIMIT_EXCEEDED` at
+11:40:26Z (`retry_in_seconds` 44,372, so the reset is 00:00Z 10-07). No HRIS pass had run that UTC
+day, so the budget was spent elsewhere, as on 08-13 and 09-29. At the reset:
+1. `review.mts`
+2. Kane's go on that hash. Approval of this exact shape (16 created, 15 Done) counts, the pass 36
+   precedent.
+3. `apply.mts --apply --only-new --approve <hash>`
+4. `verify-one` per row
+
+**Also off the board:** `9d6225b6` and `9129b1d0` (HRIS vs NPD, items 337 and 339, 2026-10-02) have no
+row. Adding them is Kane's call. Open item 359.

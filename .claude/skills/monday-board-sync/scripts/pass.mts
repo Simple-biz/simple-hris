@@ -779,15 +779,35 @@
  * Three rows / 14 SP, all Pending Deploy (see the cluster note in hris-plan.ts). No new blocker: no
  * .sql, no apply script, no n8n workflow in the range. This needs ITS OWN review hash; pass 36's
  * approval does not cover it.
+ *
+ * ── PASS 40 · 2026-10-06 — Oct 5's commits, closed on Kane's word with their completion date ─────
+ * Kane: "check our github commits yesterday and lets push it to monday close it with the completion
+ * date". 4aa73d38..a1a9860d, 28 commits, all authored 2026-10-05 (inside S30, Sep 29-Oct 9), all
+ * ancestors of origin/main (pushed through a1a9860d). 16 rows / 69 SP (cluster note in hris-plan.ts).
+ * Pass 39 was applied and read back 2026-10-04, so its rows leave this array (git history keeps them).
+ *
+ * Kane's word closes every row with no MEASURED open step outside git. Every external step in the
+ * range was measured read-only on 2026-10-06, not taken from the docs:
+ *   • COE email (item 347): webhooks.config coe_request_notify is active with an n8n cloud URL, and a
+ *     real send at 2026-10-05 20:05Z returned 200 to jakec@ (audit webhook.coe_request_notify). CLEAR.
+ *   • MESA email (item 350/352): mesa_request_notify is active with an n8n cloud URL (config saved
+ *     2026-10-05 18:21Z). No member has filed since, so 0 sends. Imported, so CLEAR.
+ *   • MESA archive migration (item 350): --verify FAILS 4/4, and PostgREST answers 42703 for
+ *     archived_at (negative control 42703, positive control ok). OPEN, so that row stays Pending Deploy.
+ *   • No-show backfill (item 343): applied 55/55 on 10-05; the owed post-deploy rerun was dry-run on
+ *     10-06 and plans 0 inserts. CLEAR.
+ *   • Start-date restore (item 344): dry run on 10-06 plans 0 DB rows and 0 Sheet cells. CLEAR.
+ * Not clicked through by any session (Kane's word is the evidence): the login loader, the picker
+ * sweep, PAB bulk Ignore, Profile cold load, MESA (items 357, 351, 345, 350).
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
-export const PASS_DATE = '2026-10-03';
-export const AUDIT_RANGE = '31fd9c0a..89b4347f';
-export const AUDIT_COMMITS = 52;
+export const PASS_DATE = '2026-10-06';
+export const AUDIT_RANGE = '4aa73d38..a1a9860d';
+export const AUDIT_COMMITS = 28;
 
 /** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
 const ON_MAIN =
@@ -811,6 +831,13 @@ const KANE_LIVE =
   '0 behind after a fetch on 2026-10-02), no external step is open, and the Completed Date is the last ' +
   'sha\'s commit date.';
 const live = (what: string) => `${KANE_LIVE} ${what}`;
+/** Kane's word on Oct 5's commits, 2026-10-06 — the basis for every pass 40 row that goes Done. */
+const KANE_CLOSE_1006 =
+  'DONE ON KANE\'S WORD. Kane, 2026-10-06: "check our github commits yesterday and lets push it to ' +
+  'monday close it with the completion date". Every sha is on origin/main (pushed through a1a9860d), ' +
+  'no external step is open (each was measured read-only on 2026-10-06), and the Completed Date is the ' +
+  'last sha\'s commit date.';
+const closed = (what: string) => `${KANE_CLOSE_1006} ${what}`;
 /** Dev tooling has no prod surface, so it goes Done on USE (the pass 17 precedent). */
 const used = (what: string) =>
   `DONE ON USE. Dev tooling with no prod surface (the pass 17 precedent): selfcheck() runs it over the ` +
@@ -841,116 +868,120 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 39 · staged 2026-10-03 00:58Z · 9 rows Kane closed by name, all Sprint 30 ──────────────
-  // Pass 38 (83 rows, hash cdc14833d185) was APPLIED 2026-10-03 00:18Z and the 10 S29 → S30 moves at
-  // ~00:50Z; those rows leave this array and their ids are in tmp-verify-pass38.ids.json for
-  // verify-one. The budget then died in Gridline's audit (reset 00:00Z 10-04, 20:00 EDT 10-03).
-  //
-  // SPRINT 30 ANYWAY (Kane's ruling, item 300 option b, on the record 2026-10-02: "I want all unfinished
-  // tasks from 29 to be at sprint 30"). Seven of these were coded in S29 or earlier and rolled to S30
-  // open, so their last sha predates S30. They close with dateBasis 'external' on the day Kane
-  // confirmed them, 2026-10-02, inside S30. rob@ and the CEO Overview landed 2026-10-02 and close on
-  // their commit date. NOT closed, because Kane did not name them and each has an open step outside
-  // git: Tickets emails, deletion cron, NPD, NPD Save, Missing Bank Info n8n, Send to OMS, HSL
-  // scheduling, the null-preferred spike, and the BL rate-override row.
+  // —── PASS 40 · staged 2026-10-06 · Oct 5's commits, 16 rows / 69 SP, all Sprint 30 ─────────────────
+  // 15 Done (66 SP) on Kane's word, with the last sha's commit date (2026-10-05). 1 Pending Deploy:
+  // the MESA archive, whose migration is measured NOT applied.
   {
-    name: "Employee Support live chat — the queue, the on-queue agents, and the ticket a chat becomes whether nobody answers or an agent addresses it",
+    name: 'The Employee Dashboard shows a Loading your Employee Dashboard card on every cold load until the Overview is on screen',
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["00faf88f", "e59a16ea", "d5ad2d72", "a9b291f7", "b0c8df48", "26292c44"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. employee_support grants measured 0 on 2026-10-02 (admins hold the board without one); Kane confirmed it live regardless. Code last landed 2026-09-21 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['cd7fb08a', '9762b30f', 'f8f91c29'],
+    basis: closed("cd7fb08a keyed the card on the post-login baton, which almost nobody hits; 9762b30f shows it on every cold mount of the employee shell. f8f91c29 is its design-hook entry. Verified by tsc + tests in the session; no session clicked it through, so Kane's word is the evidence."),
   },
   {
-    name: "Employee Support reaches the employee — a Help button with two doors, and the ticket they file, track and reopen behind one of them",
+    name: 'Orientation no-shows go on the Offboarded list, and the 55 missing since the sheet era are backfilled',
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["386c5c10", "b5f82467"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. The employee side needs no grant. Kane confirmed it live. Code last landed 2026-09-21 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['118c6b9b', '0bb8dae4', '20ac1b6d'],
+    basis: closed('Item 343. The Did not attend route now writes an offboarded_sheet row (0bb8dae4). The backfill is APPLIED: 55 of 55 inserted ids measured present on 2026-10-05 (20ac1b6d). The owed post-deploy rerun was dry-run on 2026-10-06 and plans 0 inserts, so nothing is left for it to do.'),
   },
   {
-    name: "The Employee Support staff board’s read and triage API — two stages, and every claim, rank and reassign a compare-and-set",
+    name: 'Employee Profile cold load skeletons only the pane - the hero and tabs render for real, and the ID card forms in',
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["26292c44"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. employee_support grants measured 0 on 2026-10-02; Kane confirmed it live. Code last landed 2026-09-21 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['2af89fb6'],
+    basis: closed('Item 345, which also fixes the false bank dot (item 57 of the 09-12 log).'),
   },
   {
-    name: "The Support Tickets staff board renders its own queue, and staff can reply to a ticket",
+    name: 'The HR Global Master List reads as a formal ledger - no gradient hero, Sync in the roster toolbar, 20 rows a page',
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["240192e2"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. employee_support grants measured 0 on 2026-10-02; Kane confirmed it live. Code last landed 2026-09-21 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['b46bb9f2', '7667670a'],
+    basis: closed('Two commits on HrGlobalMasterList.tsx and its doc.'),
   },
   {
-    name: "Closing a Support ticket notifies the employee",
+    name: "A work email that has ever been on anyone's record is never re-issued - set-work-email and the pending-hire edit both refuse it",
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["e686963e"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. Its blocker, the support.closed CHECK widen, was measured APPLIED on 2026-10-01 (item 302). Kane confirmed it live. Code last landed 2026-09-25 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['7d46dd1a', '80405fcd', '51bb1d1b'],
+    basis: closed("Item 344, Kane's C1 ruling: an address ever on anyone's record is never re-issued (work-email-reservations.ts reads six sources; the PATCH had no check). 7d46dd1a is the finding. 51bb1d1b records that the five hires keep their addresses and the previous holders were re-keyed; the session log records the re-key batches as applied."),
   },
   {
-    name: "Lead Gen’s QC first pass never reached the applied rows — the gap is measured and the restore is built behind an apply gate",
+    name: "An orientation mark re-dates only the hire's own master and Sheet row, and the 5 overwritten Start Dates are restored",
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["b6711973", "89f2d0e6", "8307df6e"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. The row is the measured gap plus the restore BUILT behind an apply gate; whether the restore has been run was not re-measured. Kane confirmed it done. Code last landed 2026-09-14 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['3aa7a3e6'],
+    basis: closed("Item 344 C3. The restore was recorded APPLIED 2026-10-05 17:29Z (5 DB rows + 3 Sheet cells). Re-measured 2026-10-06: the restore script's dry run plans 0 DB rows and 0 Sheet cells."),
   },
   {
-    name: "Google Sheet sync crons (master / rates / HSL / offboarded) — split of legacy Csv Imports",
+    name: "The KPI Calculator's QC first-pass rail and departed set paint from the KPI cache",
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["d96e77d", "28cb65d"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. The sync routes exist (app/api/cron/sync-{master,rates,hsl,offboarded,screening}-from-sheet) and run from the in-app button; vercel.json schedules none of them, and the rates sync is disabled by design (2026-06-16). Kane confirmed it done as it stands. Code last landed 2026-08-07 (every sha on origin/main); the Completed Date is the day Kane confirmed it, inside Sprint 30, per his Sprint 30 ruling.",
+    completed: '2026-10-05',
+    shas: ['d2b93c08'],
+    basis: closed('Item 346. The HSL Branches Bonus Library read stays uncached on purpose (a money input, still open as its own item); it is not part of this row.'),
   },
   {
-    name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache",
+    name: 'An employee-filed COE request emails its handler via n8n, with the recipient editable in Admin',
     status: 'Done',
-    completed: '2026-10-02',
-    shas: ["89b4347f"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. Every sha is on origin/main; the Completed Date is the commit date.",
+    completed: '2026-10-05',
+    shas: ['c7c9f8a7'],
+    basis: closed('Item 347. Its n8n step is MEASURED done: webhooks.config coe_request_notify is active with an n8n cloud URL, and a real send at 2026-10-05 20:05Z returned 200 to jakec@ (audit webhook.coe_request_notify, source config).'),
   },
   {
-    name: "rob@ keeps View on People but never sees or files Pay",
+    name: "NPD shows a loading card per tab and week fed by the read's real steps, keeps a read left mid-load, and reads the other tab ahead",
     status: 'Done',
-    completed: '2026-10-02',
-    shas: ["7c7f7046"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:55 EDT, after pass 38 was applied: \"I want them closed!\" then \"Close all the employee support ticket its all done live chat, LEADgen QC pass, google sheet crons, CEO Overview is done and robs, and etc\". He confirmed these live and done by name. Every sha is on origin/main; the Completed Date is the commit date.",
+    completed: '2026-10-05',
+    shas: ['da77be2b'],
+    basis: closed('Item 348.'),
   },
   {
-    name: "Deletion cron never re-checks the live roster, so 22 current employees are still queued for deletion",
+    name: 'Every member-filed MESA request emails Accounting via n8n, and the recipients edited in Admin are the ones mailed',
     status: 'Done',
-    completed: '2026-10-01',
-    shas: ["a2e091f3", "5025844b"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:40 EDT: \"Deletion Cron - is already redeployed! close it\". Its one blocker was CRON_SECRET; Kane set it in Vercel Production and redeployed (his word; Vercel env is not readable from here). The hold that is this row shipped in 5025844b. MEASURED 2026-10-03 00:41Z: 0 hr.employee.scheduled_deletion audit rows, so the cron has not run yet, and 83 rows are due. Its first run sends offboarding_delete for every due row the hold does not catch (3 were held on 10-01). Every sha is on origin/main; the Completed Date is the last sha's commit date.",
+    completed: '2026-10-05',
+    shas: ['d2115d23', 'c78f8c5b'],
+    basis: closed('Items 350 + 352. Its n8n step is MEASURED done: webhooks.config mesa_request_notify is active with an n8n cloud URL (config saved 2026-10-05 18:21Z). No member has filed since, so there are 0 sends to read back. c78f8c5b makes Admin-edited recipients the ones mailed (no env fallback for this slug).'),
   },
   {
-    name: "NPD, the New Payroll Dashboard - a paste-in sheet under Accounting with All Departments and HSL tabs, saved per pay week",
-    status: 'Done',
-    completed: '2026-10-01',
-    shas: ["f92527b3"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~20:40 EDT: \"NPD - Done!\". Its blocker is MEASURED cleared: 2 active npd grants (Edit), read 2026-10-03 00:41Z, where there were 0 on 10-02. Base migration applied. Confirmed live by Kane. Every sha is on origin/main; the Completed Date is the commit date.",
+    name: 'Accounting can archive a completed MESA request - Active and Archived views, row and bulk Archive',
+    status: 'Pending Deploy',
+    shas: ['d2115d23'],
+    basis: "PENDING DEPLOY. Item 350. The code is on origin/main and tolerates the missing columns, so Archive is dormant rather than broken. Its migration is MEASURED NOT applied on 2026-10-06: apply-mesa-request-archive-migration.mts --verify fails 4 of 4 checks, and PostgREST answers 42703 for mesa_requests.archived_at (negative control 42703, positive control ok). Kane's word on 2026-10-06 cannot run a migration.",
+    blockers: ['Run node --import tsx scripts/apply-mesa-request-archive-migration.mts --apply (rehearsed 15/15 on 2026-10-05, rolled back), then --verify'],
   },
   {
-    name: "The Missing Bank Info email carries the same card-safety warning — the live n8n workflow takes the new Build Recipients code",
+    name: 'A MESA return carries its amount, and Review shows the balance after it',
     status: 'Done',
-    completed: '2026-10-02',
-    dateBasis: 'external',
-    shas: ["87c407ff"],
-    basis: "DONE on Kane's word. Kane, 2026-10-02 ~21:20 EDT, on the live n8n workflow: \"it already existed\", then \"udpated!\". He confirmed the Build Recipients node now runs the code with the card-safety trust note (n8n is not readable from here). The code last landed 2026-09-25 (87c407ff, on origin/main); the row is the live paste, so the Completed Date is the day Kane confirmed it, inside Sprint 30. Closes item 207.",
+    completed: '2026-10-05',
+    shas: ['d2115d23'],
+    basis: closed('Item 350, the live third of d2115d23 (return-amount.ts, the employee form and the Review modal). It needs no new column.'),
   },
   {
-    name: "HRIS vs NPD Save output - an append-only saved version per pay week",
+    name: 'Payroll Wizard PAB step - bulk Ignore on Needs review, and /api/pab-exclusions writes by compare-and-swap',
     status: 'Done',
-    completed: '2026-10-01',
-    shas: ["ee8e5a8b"],
-    basis: "DONE on Kane's word plus MEASUREMENT. Kane, 2026-10-02 ~21:45 EDT: \"NPD Saved done applying the migration\". Its one blocker, the migration, is measured APPLIED: --verify straight to Postgres passes every check (both tables, the save function, the no-UPDATE trigger, the APPEND-ONLY comment, RLS on, zero policies, no anon/authenticated privileges), and both tables read through PostgREST (0 rows). Every sha is on origin/main; the Completed Date is the commit date.",
+    completed: '2026-10-05',
+    shas: ['3c9b2f47'],
+    basis: closed('Item 351. Also closes the 2026-09-01 no-CAS race on /api/pab-exclusions.'),
+  },
+  {
+    name: "Every table's Refresh keeps its rows and opens a progress modal with one line per real read - 48 buttons",
+    status: 'Done',
+    completed: '2026-10-05',
+    shas: ['7d04a364'],
+    basis: closed("Item 354, 48 buttons across 68 files. The Payroll Wizard Step 2 Refresh rates button is NOT part of this row: it waits on Kane's ruling (item 355)."),
+  },
+  {
+    name: "Payment Dispatch never pays one person through another person's bank row, and promote never overwrites someone else's payout row",
+    status: 'Done',
+    completed: '2026-10-05',
+    shas: ['c9ecec7d', '932942d9'],
+    basis: closed('Item 353. c9ecec7d is the finding (54 of 1,261 active people share a bank or rate row with a different personal email); 932942d9 is the bank-owner hold and the promote guard.'),
+  },
+  {
+    name: 'No native dropdown or date input is left, and a picker popup a container would clip now escapes it',
+    status: 'Done',
+    completed: '2026-10-05',
+    shas: ['501e6cde', '09618ab3'],
+    basis: closed("Item 357: 30 native selects in 21 files and 7 native date inputs in 5 files replaced, with an escaping popup layer (18 tests). 09618ab3 is the Admin Roles accent-border hook entry Kane ruled on during the sweep. No session clicked it through, so Kane's word is the evidence."),
   },
 ];
 

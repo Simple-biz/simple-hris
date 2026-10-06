@@ -2319,4 +2319,35 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-23', name: 'rob@ keeps View on People but never sees or files Pay', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-15', name: 'Story points start at 2 - the Monday skill retires 1 SP and makes 3 the default', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
   { epic: 'HRIS-11', name: "The CEO Overview loads like Accounting's - no full-page skeleton, and Payments to send paints from the cache", type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+
+  // —── PASS 40 · 2026-10-06 · Oct 5, 16 rows, 69 SP, all Sprint 30 ──────────────────────────────────
+  // Kane: "check our github commits yesterday and lets push it to monday close it with the completion
+  // date". Range 4aa73d38..a1a9860d, 28 commits, all authored 2026-10-05 (inside S30's Sep 29-Oct 9) and
+  // all ancestors of origin/main. Clustered by FILE OVERLAP, not by message. Evidence-only commits:
+  // 118c6b9b + 20ac1b6d (the no-show finding and its backfill measurement), 7d46dd1a (the recycled-email
+  // finding), c9ecec7d (the shared-bank-row finding), f8f91c29 (the employee-shell design-hook entry),
+  // 09618ab3 (the Admin Roles accent-border hook entry, from the picker sweep). No row: 53a0dec5 +
+  // efa568af (the Monday backlog triage line and a pronoun fix), a1a9860d (item 358, a finding with no
+  // fix yet), 3db9748d (a 7-line header trim). d2115d23 carries three things, so it is split: the n8n
+  // email and the return amount are live, and the archive waits on its migration (measured missing
+  // 2026-10-06). Names are plain ASCII, the pass 38 precedent.
+  { epic: 'HRIS-09', name: 'The Employee Dashboard shows a Loading your Employee Dashboard card on every cold load until the Overview is on screen', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-01a', name: 'Orientation no-shows go on the Offboarded list, and the 55 missing since the sheet era are backfilled', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-09', name: 'Employee Profile cold load skeletons only the pane - the hero and tabs render for real, and the ID card forms in', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-12', name: 'The HR Global Master List reads as a formal ledger - no gradient hero, Sync in the roster toolbar, 20 rows a page', type: 'Chore', sp: 3, done: true, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-01a', name: 'A work email that has ever been on anyone\'s record is never re-issued - set-work-email and the pending-hire edit both refuse it', type: 'Bug', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-01a', name: "An orientation mark re-dates only the hire's own master and Sheet row, and the 5 overwritten Start Dates are restored", type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: "The KPI Calculator's QC first-pass rail and departed set paint from the KPI cache", type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-18', name: 'An employee-filed COE request emails its handler via n8n, with the recipient editable in Admin', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: "NPD shows a loading card per tab and week fed by the read's real steps, keeps a read left mid-load, and reads the other tab ahead", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-07', name: 'Every member-filed MESA request emails Accounting via n8n, and the recipients edited in Admin are the ones mailed', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  // NOT done: scripts/apply-mesa-request-archive-migration.mts --verify FAILS 4/4 on 2026-10-06, and
+  // PostgREST answers 42703 for archived_at (negative control 42703, positive control ok). The pushed
+  // code tolerates the missing columns, so the button is dormant, not broken.
+  { epic: 'HRIS-07', name: 'Accounting can archive a completed MESA request - Active and Archived views, row and bulk Archive', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-07', name: 'A MESA return carries its amount, and Review shows the balance after it', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'Payroll Wizard PAB step - bulk Ignore on Needs review, and /api/pab-exclusions writes by compare-and-swap', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-15', name: "Every table's Refresh keeps its rows and opens a progress modal with one line per real read - 48 buttons", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-03a', name: "Payment Dispatch never pays one person through another person's bank row, and promote never overwrites someone else's payout row", type: 'Bug', sp: 5, done: true, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-15', name: 'No native dropdown or date input is left, and a picker popup a container would clip now escapes it', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
 ];
