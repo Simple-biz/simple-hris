@@ -40,7 +40,12 @@ import type { MesaMemberSummary } from '@/lib/mesa/ledger';
 export interface MesaMembershipFacts {
   /** `employee_hourly_rates.mesa_member` — the ONLY thing the pay path reads. */
   readonly mesaMember: boolean;
-  readonly ledger: Pick<MesaMemberSummary, 'depositCount' | 'lastEventOptedOut'> | null;
+  /**
+   * `accountNumber` is set by `summarizeMembers` ONLY when the member holds an
+   * OPEN `mesa_accounts` row (alias-resolved). Null = no open account: they
+   * never had one, or their stint was closed by an opt-out.
+   */
+  readonly ledger: Pick<MesaMemberSummary, 'depositCount' | 'lastEventOptedOut' | 'accountNumber'> | null;
 }
 
 /**
@@ -75,13 +80,24 @@ export function mesaPayrollWillCharge(f: MesaMembershipFacts): boolean {
 }
 
 /**
- * What the ledger says: contributions PROVE membership. A member with at least
- * one weekly deposit and no trailing opt-out is saving — this is the same rule
- * `isActiveMember` uses on the Accounting tab, which is why these people appear
- * there at all.
+ * What the MESA records say: this person is saving NOW — at least one weekly
+ * deposit, no trailing opt-out on the ledger, AND an OPEN account. The same
+ * rule `isActiveMember` uses on the Accounting tab.
+ *
+ * The open account is not optional (2026-10-06). An app opt-out (Opt Out, or an
+ * approved opt-out request) CLOSES the account, clears the flag and raises the
+ * `offboard_payout` — and writes NO ledger row (memory
+ * mesa-optout-releases-balance: the ledger row belongs at settlement). So the
+ * ledger alone never learns that the member left, and "deposits + no trailing
+ * opt-out" read eight people Accounting had opted out as saving-but-not-charged.
+ * The banner told Accounting to repair them with the alias script, which would
+ * have RE-ENROLLED people who left and started taking ₱100 from them again.
+ * Measured 2026-10-06: all 8 had a closed account and an offboard_payout; 0 were
+ * alias cases. The alias case this exists for still trips it: dales@ held an
+ * OPEN account (under dale@, alias-resolved) with the flag false.
  */
 export function mesaLedgerSaysSaving(f: MesaMembershipFacts): boolean {
-  return (f.ledger?.depositCount ?? 0) > 0 && !optedOut(f);
+  return (f.ledger?.depositCount ?? 0) > 0 && !optedOut(f) && !!f.ledger?.accountNumber;
 }
 
 /** Which way the two sources disagree, if they do. */

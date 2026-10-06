@@ -27,8 +27,10 @@ const facts = (over: Partial<MesaMembershipFacts> = {}): MesaMembershipFacts => 
   ...over,
 });
 
-/** Saving: deposits on the ledger, no trailing opt-out. */
-const saving = (depositCount = 9) => ({ depositCount, lastEventOptedOut: false });
+/** Saving: deposits on the ledger, no trailing opt-out, an OPEN account. */
+const saving = (depositCount = 9) => ({ depositCount, lastEventOptedOut: false, accountNumber: '26-06-00027' });
+/** Left through the app: Opt Out closed the account and wrote NO ledger row. */
+const leftViaOptOut = (depositCount = 46) => ({ depositCount, lastEventOptedOut: false, accountNumber: null });
 
 // ── mesaPayrollWillCharge — a restatement of mesa.md:165 ───────────────────
 
@@ -71,6 +73,13 @@ test('a trailing opt-out ends the saving, whatever the deposit count', () => {
   assert.equal(mesaLedgerSaysSaving(facts({ ledger: { depositCount: 72, lastEventOptedOut: true } })), false);
 });
 
+test('a CLOSED account ends the saving even though the ledger never recorded the opt-out', () => {
+  // jerryp@ (2026-10-06): 46 deposits, no ledger opt-out row, account closed 09-22 by Opt Out,
+  // offboard_payout raised. Not saving — and not a drift.
+  assert.equal(mesaLedgerSaysSaving(facts({ ledger: leftViaOptOut(46) })), false);
+  assert.equal(mesaLedgerSaysSaving(facts({ ledger: { depositCount: 46, lastEventOptedOut: false } })), false);
+});
+
 // ── the drift itself ───────────────────────────────────────────────────────
 
 test('dales@: 9 deposits on the ledger, flag false — never_charged', () => {
@@ -103,9 +112,23 @@ test('an ex-member, unflagged and opted out, is not a drift', () => {
   assert.equal(mesaMembershipDrift(f), 'none');
 });
 
+test('the 2026-10-06 false alarm: opted out through the app is NOT never_charged', () => {
+  // Eight people Accounting had opted out (account closed, flag cleared, payout raised, no
+  // ledger row) were reported as "saving but not being deducted", with the alias script named
+  // as the repair — which would have re-enrolled them. They are correctly not charged.
+  const left = facts({ mesaMember: false, ledger: leftViaOptOut() });
+  assert.equal(mesaMembershipDrift(left), 'none');
+  assert.equal(isMesaNeverCharged(left), false);
+});
+
+test('the alias case still trips it: an OPEN account, flag false', () => {
+  const dale = facts({ mesaMember: false, ledger: saving(9) });
+  assert.equal(isMesaNeverCharged(dale), true);
+});
+
 test('INVARIANT: never_charged ⇔ the ledger says saving and payroll will not charge', () => {
   for (const mesaMember of [true, false]) {
-    for (const ledger of [null, saving(0), saving(9), { depositCount: 9, lastEventOptedOut: true }]) {
+    for (const ledger of [null, saving(0), saving(9), leftViaOptOut(9), { depositCount: 9, lastEventOptedOut: true }]) {
       const f = facts({ mesaMember, ledger });
       assert.equal(
         isMesaNeverCharged(f),
@@ -120,7 +143,7 @@ test('INVARIANT: never_charged ⇔ the ledger says saving and payroll will not c
 
 const row = (mesaMember: boolean, depositCount: number) => ({
   mesaMember,
-  ledger: { depositCount, lastEventOptedOut: false },
+  ledger: { depositCount, lastEventOptedOut: false, accountNumber: '26-06-00027' },
 });
 const asFacts = (r: ReturnType<typeof row>): MesaMembershipFacts => r;
 

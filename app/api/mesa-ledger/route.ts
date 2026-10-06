@@ -13,7 +13,7 @@ import {
   summarizeMembers,
   type MesaLedgerEvent,
 } from '@/lib/mesa/ledger';
-import { getOpenMesaAccount, listOpenMesaAccounts } from '@/lib/supabase/mesa-accounts';
+import { getOpenMesaAccount, readOpenMesaAccounts } from '@/lib/supabase/mesa-accounts';
 import { mesaEmailAliasesFor } from '@/lib/mesa/email-aliases';
 
 export const dynamic = 'force-dynamic';
@@ -94,10 +94,17 @@ export async function GET(request: Request) {
     // the 2026-07-16_mesa_accounts migration runs → full-history fallback).
     const [{ rows, error }, openAccounts] = await Promise.all([
       fetchAllEvents(supabase),
-      listOpenMesaAccounts(),
+      readOpenMesaAccounts(),
     ]);
     if (error) return NextResponse.json({ error }, { status: 500 });
-    const members = summarizeMembers(rows, openAccounts);
+    // The open accounts are what separate a current saver from someone Opt Out
+    // closed (Opt Out writes no ledger row), and they scope every balance. An
+    // unreadable registry fails the whole read — callers already treat a failed
+    // ledger as "not measured" — rather than returning unscoped figures.
+    if (!openAccounts.ok) {
+      return NextResponse.json({ error: `Could not read MESA accounts: ${openAccounts.error}` }, { status: 500 });
+    }
+    const members = summarizeMembers(rows, openAccounts.accounts);
     return NextResponse.json({ members });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

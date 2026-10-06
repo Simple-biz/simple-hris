@@ -56,6 +56,39 @@ export async function listOpenMesaAccounts(): Promise<Map<string, MesaAccount> |
   return out;
 }
 
+export type OpenAccountsRead =
+  | { ok: true; accounts: Map<string, MesaAccount> | null }
+  | { ok: false; error: string };
+
+/**
+ * `listOpenMesaAccounts`, but a read failure is REPORTED, never returned as a
+ * short or empty map. `accounts: null` still means the table is missing.
+ *
+ * For the program-wide `/api/mesa-ledger`, where an open account is what tells
+ * a current saver from someone Opt Out closed (Opt Out writes no ledger row).
+ * An empty map there would move every unflagged saver to Non Members and make
+ * the "not being deducted" check report an all-clear it never measured.
+ */
+export async function readOpenMesaAccounts(): Promise<OpenAccountsRead> {
+  const supabase = db();
+  if (!supabase) return { ok: false, error: "Supabase client not initialized" };
+  const out = new Map<string, MesaAccount>();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select(ACCOUNT_SELECT)
+      .is("closed_on", null)
+      .order("account_number", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return isMissingSchema(error.message) ? { ok: true, accounts: null } : { ok: false, error: error.message };
+    const batch = (data ?? []) as MesaAccount[];
+    for (const a of batch) out.set(a.email.toLowerCase(), a);
+    if (batch.length < PAGE) break;
+  }
+  return { ok: true, accounts: out };
+}
+
 /** The member's open account, or null (also null if the table is missing). */
 export async function getOpenMesaAccount(email: string): Promise<MesaAccount | null> {
   const supabase = db();

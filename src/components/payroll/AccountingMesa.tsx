@@ -2678,20 +2678,26 @@ const BALANCES_PAGE_SIZE = 20;
 const hasContributions = (r: MesaRosterRow): boolean => (r.ledger?.depositCount ?? 0) > 0;
 /** Their most recent ledger entry is an opt-out/termination — they left. */
 const ledgerOptedOut = (r: MesaRosterRow): boolean => r.ledger?.lastEventOptedOut === true;
+/** Holds an OPEN mesa_accounts row (alias-resolved) — `summarizeMembers` sets the
+ *  ledger rollup's accountNumber only then. */
+const hasOpenAccount = (r: MesaRosterRow): boolean => !!r.ledger?.accountNumber;
 /**
- * Currently in MESA. Contributions PROVE membership on their own: a member who
- * is actively saving (has deposits) and has NOT opted out is active even if the
- * mesa_member flag drifted false. A freshly-flagged member with no deposits yet
- * also counts. The only thing that removes an active saver is a trailing opt-out
- * in the ledger.
+ * Currently in MESA: flagged, OR saving on an OPEN account (deposits, no
+ * trailing opt-out) even though the flag drifted false — the alias case.
+ *
+ * Contributions alone are NOT enough (2026-10-06). Opt Out closes the account
+ * and clears the flag but writes no ledger row, so a contributions-only test
+ * kept every app opt-out on this tab, showing the balance that was already
+ * released, and counted them as "saving but not being deducted" — 8 people that
+ * day, all of them deliberately opted out by Accounting.
  */
 const isActiveMember = (r: MesaRosterRow): boolean =>
-  !ledgerOptedOut(r) && (r.mesaMember || hasContributions(r));
-/** Left the program — a trailing opt-out in the ledger, or the flag was cleared
- *  with a lingering start date. Only meaningful for non-active (Non Members)
- *  rows; a contributor can only be here if they opted out. */
+  !ledgerOptedOut(r) && (r.mesaMember || (hasContributions(r) && hasOpenAccount(r)));
+/** Left the program — a trailing opt-out in the ledger, the flag cleared with a
+ *  lingering start date, or contributions on a stint that is now CLOSED. Only
+ *  meaningful for non-active (Non Members) rows. */
 const isOptedOut = (r: MesaRosterRow): boolean =>
-  ledgerOptedOut(r) || (!r.mesaMember && !!r.mesaMemberSince);
+  ledgerOptedOut(r) || (!r.mesaMember && !!r.mesaMemberSince) || (!r.mesaMember && hasContributions(r) && !hasOpenAccount(r));
 /** Not currently enrolled — the complement of active. */
 const isNonMember = (r: MesaRosterRow): boolean => !isActiveMember(r);
 
