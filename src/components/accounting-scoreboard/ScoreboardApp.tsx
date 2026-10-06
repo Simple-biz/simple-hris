@@ -10,9 +10,16 @@
  * on focus, but NEVER while a cell is being edited (the editing counter), so someone else's save
  * cannot overwrite what you are typing. A failed refresh keeps the last good board on screen and
  * says so. It never blanks to zeros.
+ *
+ * Browser cache (Kane, 2026-10-06: "i dont wanna see loading every switch of tab"): the board for a
+ * week PAINTS from sessionStorage before the first paint of the page or of a week change
+ * (`tab-cache.ts`), and is then fetched anyway, silently. Only a week with nothing of it on screen
+ * shows a spinner. The cache is bound to the viewer the server page resolved, and the viewer (a
+ * permission) is never read from it. The seed runs in a layout effect, never in the first render: the
+ * page is server-rendered, and the first client render must match it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
 import { AlertTriangle, Archive, ChevronLeft, ChevronRight, LayoutGrid, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
@@ -27,7 +34,8 @@ import {
   type BoardSection,
   type Slot,
 } from '@/lib/accounting-scoreboard/sections';
-import { addDays, datesFor, formatEasternDateTime, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
+import { addDays, datesFor, formatEasternDateTime, todayEastern, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
+import { bindScoreboardCache, readCachedBoard, writeCachedBoard } from '@/lib/accounting-scoreboard/tab-cache';
 import { amPmSectionStats, buildLookup, entryKey, type ProblemEntry, type StoredEntry } from '@/lib/accounting-scoreboard/scoring';
 import { summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
 import { cycleWeek } from '@/lib/accounting-scoreboard/payroll-cycle';
@@ -54,15 +62,22 @@ const PANEL_VARIANTS = {
   exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -28 : 28, transition: { duration: 0.14, ease: EASE_TAB } }),
 };
 
-export default function ScoreboardApp() {
+/** Runs before paint in the browser; a plain effect on the server, where there is nothing to seed. */
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+/** The Sunday key of the week a request without `?week=` gets (US Eastern), for the cache key. */
+const thisWeekStart = () => weekStartOf(todayEastern());
+
+export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer'] }) {
   const reduce = useReducedMotion() ?? false;
   const [dir, setDir] = useState(1);
   const [week, setWeek] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [fatal, setFatal] = useState<{ message: string; code: string } | null>(null);
   const [stale, setStale] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  // A fetch for a week with NOTHING of it on screen. Only this shows a spinner: revalidating a board
+  // that is already painted (from the cache, the 45 s timer or a focus) is silent.
+  const [fetching, setFetching] = useState(true);
   const [tab, setTab] = useState<Tab>('overview');
   const [menuOpen, setMenuOpen] = useState(false);
   const burgerRef = useRef<HTMLButtonElement>(null);
@@ -70,6 +85,36 @@ export default function ScoreboardApp() {
   const editing = useRef(0);
   const seq = useRef(0);
   const hasBoard = useRef(false);
+  /** The week whose board is on screen (cached or fetched). */
+  const shownWeek = useRef<string | null>(null);
+  /** The week the server last answered for. Only a board of THAT week is written back to the cache. */
+  const liveWeek = useRef<string | null>(null);
+
+  // Bind the cache to the viewer the server page resolved, then paint the week from it, both before
+  // the browser paints. Every week change seeds again, so stepping back to a week shows it at once.
+  useIsoLayoutEffect(() => {
+    bindScoreboardCache(viewer.email);
+  }, [viewer.email]);
+  useIsoLayoutEffect(() => {
+    const key = week ?? thisWeekStart();
+    const cached = readCachedBoard(key);
+    if (!cached) return;
+    setBoard({ ...cached, viewer });
+    hasBoard.current = true;
+    shownWeek.current = key;
+    setFatal(null);
+    // The week is on screen, so its fetch is a silent revalidation: no loader, no spinner. (`fetching`
+    // starts true for the cold load, which would otherwise spin over a painted board.)
+    setFetching(false);
+    // `viewer` is deliberately not a dependency: a role change arrives with the page, and re-seeding on
+    // it would repaint the cached week over a fresher one.
+  }, [week]);
+
+  // Write back only what the server answered for this week (and edits made on top of it), never the
+  // cached seed itself: re-writing a seed would restamp stale data as fresh.
+  useEffect(() => {
+    if (board && board.weekStart === liveWeek.current) writeCachedBoard(board);
+  }, [board]);
 
   // Below md the tabs live in the burger menu. Escape closes it, and so does growing past md: the menu
   // is md:hidden, and one left open while hidden would leave the page behind it inert.
@@ -96,13 +141,15 @@ export default function ScoreboardApp() {
     menuWasOpen.current = menuOpen;
   }, [menuOpen]);
 
-  const load = useCallback(async (w: string | null, quiet: boolean) => {
+  /** `silent`: the week is already on screen, so no spinner. The fetch itself always runs. */
+  const load = useCallback(async (w: string | null, silent: boolean) => {
     const id = ++seq.current;
-    if (quiet) setRefreshing(true);
-    else setLoading(true);
+    if (!silent) setFetching(true);
     const res = await api<BoardPayload>(`/api/accounting-scoreboard${w ? `?week=${w}` : ''}`);
     if (id !== seq.current) return;
     if (res.ok) {
+      liveWeek.current = res.data.weekStart;
+      shownWeek.current = res.data.weekStart;
       setBoard(res.data);
       hasBoard.current = true;
       setFatal(null);
@@ -113,12 +160,12 @@ export default function ScoreboardApp() {
     } else {
       setFatal({ message: res.error, code: res.code });
     }
-    setLoading(false);
-    setRefreshing(false);
+    setFetching(false);
   }, []);
 
   useEffect(() => {
-    void load(week, false);
+    // Silent when the week was just painted from the cache (the seed above ran first).
+    void load(week, shownWeek.current === (week ?? thisWeekStart()));
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible' && editing.current === 0) void load(week, true);
     }, REFRESH_MS);
@@ -263,7 +310,7 @@ export default function ScoreboardApp() {
     [load, week],
   );
 
-  if (loading && !board) {
+  if (fetching && !board) {
     return (
       <Shell>
         <div className="flex flex-1 items-center justify-center gap-2 text-zinc-400">
@@ -406,14 +453,14 @@ export default function ScoreboardApp() {
             ) : null}
             <span className="ml-1 flex w-4 justify-center" aria-live="polite">
               <AnimatePresence>
-                {refreshing || loading ? (
+                {fetching ? (
                   <motion.span
                     key="spin"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.15 }}
-                    aria-label="Refreshing"
+                    aria-label="Loading this week"
                   >
                     <Loader2 className="size-3.5 animate-spin text-zinc-400" />
                   </motion.span>

@@ -26,7 +26,9 @@ export default async function AccountingScoreboardPage() {
     if (access.status === 401) redirect(`/login?callbackUrl=${encodeURIComponent(SCOREBOARD_PAGE)}`);
     return <Refusal code={access.code} message={access.message} />;
   }
-  return <ScoreboardApp />;
+  // The viewer is resolved here, on every request, and handed down: the board's browser cache binds to
+  // this email before it paints anything, and `isManager` (a permission) is never read from the cache.
+  return <ScoreboardApp viewer={{ email: access.value.email, isManager: access.value.isManager }} />;
 }
 
 function Refusal({ code, message }: { code: string; message: string }) {

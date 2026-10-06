@@ -30,6 +30,7 @@ every payroll problem, and custom sections.
 | Host rule for the domain | `src/lib/accounting-scoreboard/host.ts`, called from `proxy.ts` |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
 | Member check, reads and writes | `src/lib/accounting-scoreboard/server.ts` (server-only) |
+| Browser cache (board per week, Setup's roster) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
 | Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
@@ -442,11 +443,50 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   areas, no page-wide horizontal scroll, and no console errors. A separate check confirmed "Your own sections"
   sits on top. **Not clicked through signed in.**
 
+## Browser cache
+
+Kane, 2026-10-06: *"Lets add caching to this whole thing all the tabs should be stored in browser cache i dont
+wanna see loading every switch of tab"*. Measured first: a tab switch inside the board fetched nothing (every tab
+renders from the one board payload). The loading people saw was the full-page "Loading the scoreboard" on every
+page load, a week change waiting on the network, Setup → Rows re-reading the roster on every visit, and the
+header spinner on every 45 s and focus refresh.
+
+- **The board is cached per week** in `sessionStorage` (`acct-sb:board:<Sunday>`, the shared envelope:
+  `create-tab-cache.ts`, governed by `qc-contractor-tickets-cache.md`). A page load or a week change **paints the
+  cached week before the first paint**, and then fetches it anyway. Only the **4** most recently written weeks are
+  kept (one board measured ~150k characters on 2026-10-06; on the HRIS domain this origin's storage is shared with
+  People and NPD). Setup's roster picker is cached too (`acct-sb:roster`).
+- **A cached value PAINTS, it never DECIDES.** Nothing can skip a fetch: every page load, week change, 45 s tick
+  and focus still reads the board, and the fetched copy replaces the cached one. A number that moved meanwhile
+  sweeps orange (§ Motion), which is how a teammate's typing shows up.
+- **The viewer is never cached.** `viewer.isManager` shows Setup and the delete buttons, so it is a permission,
+  and a cached permission is a cached value deciding (the Tickets `access` rule). The page server component
+  resolves the viewer on every request and passes it to `ScoreboardApp`, which binds the cache to that email
+  (a different viewer on the same tab purges it first) and lays it over a cached board.
+- **Only the server's answer is written back**, plus edits made on top of it. The seed itself is never re-written,
+  which would restamp stale data as fresh and stretch the 12 h ceiling.
+- **The seed runs in a layout effect, never in the first render.** The page is server-rendered, and the first
+  client render must match the server's (the loader). The layout effect lands before the browser paints, so the
+  loader frame is never seen when there is a cache.
+- **Spinners:** the full-page loader shows only when there is nothing to paint (the first visit in a browser tab,
+  or after the 12 h ceiling). The header spinner shows only for a week with nothing of it on screen. Revalidating
+  a painted board is silent.
+- `sessionStorage` is **per browser tab** (never `localStorage`, which outlives the browser on a shared machine):
+  a new browser tab loads once, then everything in it is instant. A phone may keep it for weeks; the 12 h ceiling
+  still applies.
+- The board has **no sign-out control** to purge on (the HRIS sidebars purge their own stores). A different viewer
+  binding purges, and a removed member never reaches `ScoreboardApp` (the page refuses first).
+- The archive page is server-rendered and is not cached.
+- Verified 2026-10-06 in headless Chromium against a 1.5 s API, 16 checks. The first visit shows the loader once.
+  A reload paints within 400 ms with no loader or spinner and still fetches. Five tab switches make no fetch.
+  An uncached week spins, stepping back to a cached week is instant, and the second Setup visit has no roster
+  loader. A focus refresh is silent. The cached blob carries no viewer. **Not clicked through signed in.**
+
 ## Live refresh
 
-- A background refresh runs every 45 s while the tab is visible, and on focus. It **never runs while a
-  cell is being edited** (an editing counter). A focused cell also keeps its own draft, so someone
-  else's save can never overwrite what you are typing.
+- A background refresh runs every 45 s while the tab is visible, and on focus, **silently** (the board is on
+  screen; § Browser cache). It **never runs while a cell is being edited** (an editing counter). A focused cell
+  also keeps its own draft, so someone else's save can never overwrite what you are typing.
 - A failed refresh keeps the last good board on screen under a "Couldn't refresh" bar. It never blanks
   the board or shows zeros. There is no realtime: the tables are service-role only.
 

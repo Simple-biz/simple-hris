@@ -34,6 +34,7 @@ import {
 } from '@/lib/accounting-scoreboard/sections';
 import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import { shortNameFromRoster } from '@/lib/accounting-scoreboard/names';
+import { readCachedRoster, writeCachedRoster } from '@/lib/accounting-scoreboard/tab-cache';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BoardPayload, BoardRow, RosterPerson } from '@/lib/accounting-scoreboard/types';
 import { api, EASE_SETTLE, EASE_TAB, handle, SlidingPill, TINY_CAPS } from './shared';
@@ -733,7 +734,9 @@ function RosterPicker({
   taken: Set<string>;
   onPick: (p: RosterPerson) => void;
 }) {
-  const [people, setPeople] = useState<RosterPerson[] | null>(null);
+  // Paints from the browser cache (tab-cache.ts), then reads the roster again anyway. Setup only ever
+  // renders after a click, never on the server, so reading the cache in the initialiser is safe.
+  const [people, setPeople] = useState<RosterPerson[] | null>(() => readCachedRoster() ?? null);
   const [error, setError] = useState<string | null>(null);
   const [dept, setDept] = useState('Accounting Team');
   const [query, setQuery] = useState('');
@@ -742,8 +745,11 @@ function RosterPicker({
     let alive = true;
     void api<{ people: RosterPerson[] }>('/api/accounting-scoreboard/roster').then((res) => {
       if (!alive) return;
-      if (res.ok) setPeople(res.data.people);
-      else setError(res.error);
+      if (res.ok) {
+        setPeople(res.data.people);
+        setError(null);
+        writeCachedRoster(res.data.people);
+      } else setError(res.error);
     });
     return () => {
       alive = false;

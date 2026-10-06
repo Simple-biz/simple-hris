@@ -14,6 +14,7 @@ Key files:
 | The three stores | `src/lib/qc/tab-cache.ts` · `src/lib/contractor/tab-cache.ts` · `src/lib/tickets/tab-cache.ts` |
 | Wired surfaces | `QCApp.tsx` · `ContractorOverview.tsx` · `TicketsBoard.tsx` |
 | Purge on sign-out | `QCSidebar.tsx` · `ContractorSidebar.tsx` · `TicketsSidebar.tsx` |
+| A fourth store on the envelope (2026-10-06) | `src/lib/accounting-scoreboard/tab-cache.ts`, governed by `accounting-scoreboard.md` § Browser cache |
 
 ## Why there is a factory, and what it deliberately does not touch
 
@@ -102,6 +103,14 @@ point.**
 
 What is left is the Overview's invoice list — numbers, dates, totals, currency, status — which
 is the landing surface a dashboard switch actually hits.
+
+### Accounting Scoreboard (`acct-sb:`), added 2026-10-06
+
+A fourth store built on the envelope, not a migration: `board:<Sunday>` (the board payload minus `viewer`, 4
+weeks kept), `board:weeks` and `roster`. It follows the Tickets rule exactly: **`viewer.isManager` is a
+permission and is never cached**, so the server page passes the viewer down. Its seed runs in a layout effect,
+because unlike these three shells the page is server-rendered with the viewer already known, and seeding in the
+first render would not match the server's HTML. The rules live in `accounting-scoreboard.md` § Browser cache.
 
 ## Sign-out
 

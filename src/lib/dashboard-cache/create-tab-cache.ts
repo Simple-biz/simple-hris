@@ -19,7 +19,9 @@
  * suites. What it does is keep the count at seven instead of ten: QC, Contractor
  * and Tickets needed a store each, and three more hand-copies of an envelope
  * whose duplication is already the recorded debt would have made the eventual
- * migration half again as large for three small surfaces.
+ * migration half again as large for three small surfaces. The Accounting
+ * Scoreboard (`accounting-scoreboard/tab-cache.ts`, 2026-10-06) is a fourth store
+ * built on it.
  *
  * ## Which shape this is
  *
