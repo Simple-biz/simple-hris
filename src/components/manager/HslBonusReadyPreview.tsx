@@ -14,7 +14,6 @@ import {
   DeptConfig,
   formatPeso,
   type KpiData,
-  type SubTeamName,
 } from '@/lib/hsl-bonus/schema';
 
 interface PreviewEntry {
@@ -36,15 +35,6 @@ interface HslBonusReadyPreviewProps {
   onReopen?: () => void;
   onClose: () => void;
 }
-
-const SUB_TEAM_DOT: Record<SubTeamName, string> = {
-  BLUE: 'bg-blue-500',
-  GREEN: 'bg-emerald-500',
-  YELLOW: 'bg-yellow-500',
-  ORANGE: 'bg-orange-500',
-  PURPLE: 'bg-violet-500',
-  RED: 'bg-red-500',
-};
 
 const STATUS_PALETTE: Record<
   'ready' | 'locked',
@@ -74,7 +64,6 @@ export default function HslBonusReadyPreview({
   onReopen,
   onClose,
 }: HslBonusReadyPreviewProps) {
-  const isSsd = dept?.key === 'ssd_medical_records';
   const total = entries.reduce((s, e) => s + e.calculated_bonus, 0);
   const palette = STATUS_PALETTE[status];
   const StatusIcon = palette.icon;
@@ -134,11 +123,6 @@ export default function HslBonusReadyPreview({
                         <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">
                           Employee
                         </th>
-                        {isSsd && (
-                          <th className="px-2 py-2 text-left font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">
-                            Sub-team
-                          </th>
-                        )}
                         <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.15em] text-zinc-500">
                           Bonus
                         </th>
@@ -147,8 +131,6 @@ export default function HslBonusReadyPreview({
                     <tbody>
                       <AnimatePresence initial={false}>
                         {entries.map((e, idx) => {
-                          const subTeam =
-                            (e.kpi_data.sub_team as unknown as SubTeamName | undefined) ?? null;
                           return (
                             <motion.tr
                               key={e.employee_email}
@@ -174,25 +156,6 @@ export default function HslBonusReadyPreview({
                                   {e.employee_email}
                                 </div>
                               </td>
-                              {isSsd && (
-                                <td className="px-2 py-2">
-                                  {subTeam ? (
-                                    <span className="inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-                                      <span
-                                        className={cn(
-                                          'h-1.5 w-1.5 rounded-full',
-                                          SUB_TEAM_DOT[subTeam],
-                                        )}
-                                      />
-                                      {subTeam}
-                                    </span>
-                                  ) : (
-                                    <span className="font-mono text-[10px] text-zinc-300 dark:text-zinc-700">
-                                      —
-                                    </span>
-                                  )}
-                                </td>
-                              )}
                               <td className="px-3 py-2 text-right font-mono text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                                 {formatPeso(e.calculated_bonus)}
                               </td>
@@ -202,7 +165,7 @@ export default function HslBonusReadyPreview({
                       </AnimatePresence>
                       <tr className="border-t border-zinc-300 bg-zinc-100/70 dark:border-zinc-700 dark:bg-zinc-900/60">
                         <td
-                          colSpan={isSsd ? 2 : 1}
+                          colSpan={1}
                           className="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-zinc-500"
                         >
                           Total

@@ -37,17 +37,12 @@ export default function KpiCalculatorLoading({
   variant = 'departments',
   title = 'My Departments',
   cards = 4,
-  teamSplit = false,
   insights = false,
   calculatorSwitch,
 }: {
   variant?: Variant;
   title?: string;
   cards?: number;
-  /** The one visible HSL branch scores by sub-team (SSD Medical Records). Its
-   *  workspace is far taller than a plain roster, so the placeholder has to be
-   *  too — this is the shape the Payroll Readiness modal loads. */
-  teamSplit?: boolean;
   /** The calculator will paint the insight cards above its grid. */
   insights?: boolean;
   /** The HSL-Branches / Departments navigation, drawn REAL rather than as a
@@ -61,7 +56,6 @@ export default function KpiCalculatorLoading({
     <HslSkeleton
       title={title}
       count={count}
-      teamSplit={teamSplit}
       insights={insights}
       calculatorSwitch={calculatorSwitch}
     />
@@ -185,8 +179,8 @@ function ViewSwitchGhost() {
 }
 
 function HslSkeleton({
-  title, count, teamSplit, insights, calculatorSwitch,
-}: { title: string; count: number; teamSplit: boolean; insights: boolean; calculatorSwitch?: ReactNode }) {
+  title, count, insights, calculatorSwitch,
+}: { title: string; count: number; insights: boolean; calculatorSwitch?: ReactNode }) {
   const multi = count > 1;
   return (
     <div
@@ -251,7 +245,7 @@ function HslSkeleton({
             ))}
           </ul>
         ) : (
-          <HslBlockSkeleton delay={0} teamSplit={teamSplit} />
+          <HslBlockSkeleton delay={0} />
         )}
       </div>
     </div>
@@ -283,7 +277,7 @@ function HslBranchRowSkeleton({ delay }: { delay: number }) {
 /** Mirrors the single-branch `DeptBlock`: coloured left rule, header with the
  *  name + cadence/status chips + totals, then the action row, the search and
  *  paging toolbar, the scoring rows and the footer bar. */
-function HslBlockSkeleton({ delay, teamSplit }: { delay: number; teamSplit: boolean }) {
+function HslBlockSkeleton({ delay }: { delay: number }) {
   const at = (ms: number): CSSProperties => ({ animationDelay: `${delay + ms}ms` });
   return (
     <section className="overflow-hidden rounded-xl border border-l-[3px] border-zinc-200 border-l-zinc-300 bg-white shadow-sm dark:border-zinc-800 dark:border-l-zinc-700 dark:bg-zinc-950/60">
@@ -319,7 +313,7 @@ function HslBlockSkeleton({ delay, teamSplit }: { delay: number; teamSplit: bool
           <Skeleton className="h-3 w-24 self-end sm:self-auto" style={at(200)} />
         </div>
 
-        {teamSplit ? <SsdWorkspaceSkeleton delay={delay + 210} /> : <RosterSkeleton delay={delay + 210} />}
+        <RosterSkeleton delay={delay + 210} />
 
         {/* Footer action bar */}
         <div className="flex items-center gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800">
@@ -353,139 +347,6 @@ function RosterSkeleton({ delay }: { delay: number }) {
           <Skeleton className="h-3.5 w-16 shrink-0" style={at(90 + r * 70)} />
         </div>
       ))}
-    </div>
-  );
-}
-
-/**
- * SSD Medical Records' `SsdWorkspace`: the status strip that doubles as the team
- * tab bar, one team card beside the rules panel, then the full-width roster.
- * Reserving this shape matters more than the others — it is roughly twice the
- * height of a plain roster, so mirroring the generic one would drop the page by
- * several hundred pixels the moment the data landed.
- */
-function SsdWorkspaceSkeleton({ delay }: { delay: number }) {
-  const at = (ms: number): CSSProperties => ({ animationDelay: `${delay + ms}ms` });
-  return (
-    <div className="flex min-w-0 flex-col gap-4">
-      {/* Status strip / team tabs */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="flex flex-none items-center gap-2 whitespace-nowrap border-r border-zinc-200 pr-4 dark:border-zinc-800">
-          <Skeleton className="h-4 w-10" style={at(0)} />
-          <Skeleton className="h-2.5 w-20" style={at(30)} />
-        </div>
-        <div className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-1.5 sm:basis-0">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-6 w-[4.5rem] flex-none rounded-full" style={at(60 + i * 50)} />
-          ))}
-        </div>
-      </div>
-
-      {/* Team card + rules panel */}
-      <div className="grid min-w-0 items-stretch gap-4 lg:grid-cols-[minmax(0,620px)_minmax(230px,1fr)]">
-        <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/50">
-          <div className="h-1 w-full bg-zinc-200 dark:bg-zinc-800" aria-hidden />
-          <div className="flex items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
-            <div className="flex items-center gap-2">
-              <Skeleton className="h-2.5 w-2.5 rounded-full" style={at(360)} />
-              <Skeleton className="h-3.5 w-16" style={at(380)} />
-              <Skeleton className="h-2.5 w-20" style={at(400)} />
-            </div>
-            <Skeleton className="h-4 w-24 rounded-full" style={at(420)} />
-          </div>
-
-          {/* Three KPI fields */}
-          <div className="grid gap-x-4 gap-y-3 px-4 py-4 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="min-w-0 space-y-1.5">
-                <Skeleton className="h-2 w-16" style={at(440 + i * 50)} />
-                <Skeleton className="h-10 w-full rounded-lg" style={at(460 + i * 50)} />
-              </div>
-            ))}
-          </div>
-
-          {/* Live arithmetic for the two rules */}
-          <div className="space-y-1.5 border-t border-zinc-100 px-4 py-2.5 dark:border-zinc-800/70">
-            <div className="flex justify-between gap-3">
-              <Skeleton className="h-2.5 w-48 max-w-[60%]" style={at(610)} />
-              <Skeleton className="h-2.5 w-16" style={at(620)} />
-            </div>
-            <div className="flex justify-between gap-3">
-              <Skeleton className="h-2.5 w-40 max-w-[52%]" style={at(640)} />
-              <Skeleton className="h-2.5 w-16" style={at(650)} />
-            </div>
-          </div>
-
-          {/* Tier meter + per-member payout */}
-          <div className="mt-auto flex items-end justify-between gap-3 border-t border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1" aria-hidden>
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-1.5 w-7 rounded-full" style={at(680 + i * 40)} />
-                ))}
-              </div>
-              <Skeleton className="h-2.5 w-32" style={at(800)} />
-            </div>
-            <div className="space-y-1.5 text-right">
-              <Skeleton className="ml-auto h-5 w-28" style={at(820)} />
-              <Skeleton className="ml-auto h-2 w-16" style={at(840)} />
-            </div>
-          </div>
-        </div>
-
-        {/* Rules panel */}
-        <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/30">
-          <Skeleton className="h-2 w-32" style={at(460)} />
-          <div className="space-y-1.5">
-            <Skeleton className="h-2.5 w-36" style={at(490)} />
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-2 w-full max-w-[13rem]" style={at(520 + i * 40)} />
-            ))}
-          </div>
-          <div className="space-y-1.5 border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-            <Skeleton className="h-2.5 w-24" style={at(650)} />
-            <Skeleton className="h-2 w-full max-w-[15rem]" style={at(680)} />
-            <Skeleton className="h-2 w-full max-w-[11rem]" style={at(700)} />
-          </div>
-          <div className="mt-auto border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-            <Skeleton className="h-2.5 w-44 max-w-full" style={at(730)} />
-          </div>
-        </div>
-      </div>
-
-      {/* Roster */}
-      <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/40">
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-          <Skeleton className="mr-1 h-2 w-12" style={at(860)} />
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-6 w-20 rounded-full" style={at(880 + i * 40)} />
-          ))}
-        </div>
-        <div className="flex items-center gap-3 border-b border-zinc-200 bg-zinc-50/70 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-          <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-sm" style={at(1200)} />
-          <Skeleton className="h-2 w-20" style={at(1210)} />
-          <Skeleton className="ml-auto h-2 w-16" style={at(1220)} />
-          <Skeleton className="h-2 w-10" style={at(1230)} />
-        </div>
-        {Array.from({ length: 6 }).map((_, r) => (
-          <div
-            key={r}
-            className="flex items-center gap-3 border-b border-zinc-100 px-3 py-2.5 last:border-0 dark:border-zinc-800/60"
-          >
-            <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-sm" style={at(1250 + r * 70)} />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <Skeleton className="h-3 w-44 max-w-full" style={at(1265 + r * 70)} />
-              <Skeleton className="h-2.5 w-32 max-w-full" style={at(1280 + r * 70)} />
-            </div>
-            <Skeleton className="h-6 w-[150px] shrink-0 rounded-full" style={at(1295 + r * 70)} />
-            <Skeleton className="h-3 w-16 shrink-0" style={at(1310 + r * 70)} />
-          </div>
-        ))}
-        <div className="flex items-center justify-between gap-2 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
-          <Skeleton className="h-2.5 w-24" />
-          <Skeleton className="h-7 w-24 rounded-md" />
-        </div>
-      </div>
     </div>
   );
 }

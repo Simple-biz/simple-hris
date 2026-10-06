@@ -66,7 +66,7 @@ has **weekly** rows carrying **at least one KPI item**. Measured through the rea
 | Callback Team | 42 ranked, 4 KPIs | |
 | Post-Hearing Prep | 36 ranked, 4 KPIs | |
 | Care Team | 4 ranked, *Church Attendees* | |
-| SSD Medical Records | none | rows store only `sub_team`: the team inputs are never persisted |
+| SSD Medical Records | none | MONTHLY branch. Rows through 2026-09-27 store only `sub_team` (colour-team inputs were never persisted); since 2026-10-06 it is scored from its Library formula per person |
 | Managers Weekly (`hsl_managers`) | none | bespoke per-manager checklists and bands, no team KPI |
 | Collections · Healthcare Team Lead | none | MONTHLY branches |
 | Simple Texting · Mail Sorting | none | placement-only: scored under Callback / Post-Hearing |

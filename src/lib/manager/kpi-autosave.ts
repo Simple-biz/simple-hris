@@ -157,26 +157,3 @@ export function isUnsavedLocalWork(s: {
   if (s.saving) return true;
   return s.dirty && !s.seeded;
 }
-
-/**
- * SSD Medical Records only: whether a sub-team has NO team-level input at all.
- *
- * `ssd_medical_records` scores from team-level accuracy %, record count and RFC
- * count that live in component state and are deliberately NOT persisted (see
- * memory `ssd-medical-records-rfc-pool` and `recomputeSsdEntries`) — only the
- * per-employee share they derive is saved. After a reload those three fields are
- * blank while the saved shares are not, so any recompute triggered before the
- * manager re-enters them recomputes every member of the team to ₱0.
- *
- * Under a manual Save that needed a deliberate click. Under autosave it would
- * land by itself, so `recomputeSsdEntries` refuses to overwrite an existing
- * non-zero share when the team it belongs to has no inputs on screen. A typed
- * `0` is an input — only an untouched field counts as blank.
- */
-export function subTeamInputsBlank(st: {
-  pct: string;
-  records: string;
-  rfc: string;
-}): boolean {
-  return !st.pct.trim() && !st.records.trim() && !st.rfc.trim();
-}

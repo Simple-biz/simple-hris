@@ -19,6 +19,7 @@ import {
   catalogOnKey,
   catalogVarKey,
   hslCatalogBonusesFor,
+  hslCatalogBonusesHeldThisWeek,
   isScoreableOnHsl,
   withoutCatalogKeys,
 } from './catalog-bonus';
@@ -133,6 +134,41 @@ test('monthly bonuses appear only in the final payroll week', () => {
     periodStart: '2026-09-06',
   });
   assert.equal(inFinal.length + notFinal.length, 1, 'exactly one of the two weeks may show it');
+});
+
+test('a monthly bonus the week does not offer is REPORTED as held, never just absent (SSD, 2026-10-06)', () => {
+  // SSD Medical Records is MONTHLY and scored from the Library alone. Kane kept
+  // the final-payroll-week gate (2026-10-06, (a)), so in any other week its only
+  // bonus is withheld — the card must say so, not show an empty roster.
+  const bonuses = [
+    formula({ id: 'b_ssd', name: 'Medical Records - Monthly', cadence: 'monthly' }),
+    formula({ id: 'b_wk', cadence: 'weekly' }),
+    flat({ id: 'b_other', cadence: 'monthly' }),
+  ];
+  const assignments = [
+    deptAssign('b_ssd', 'hsl:ssd_medical_records'),
+    deptAssign('b_wk', 'hsl:ssd_medical_records'),
+    deptAssign('b_other', 'hsl:intake_specialist'),
+    { id: 'a_emp', bonusId: 'b_ssd', scope: 'employee', departmentKey: 'hsl:ssd_medical_records', employeeEmail: 'x@simple.biz' } as BonusAssignment,
+  ];
+  const held = (periodStart: string) =>
+    hslCatalogBonusesHeldThisWeek({ subLabel: 'hsl:ssd_medical_records', assignments, bonuses, periodStart }).map((b) => b.id);
+  // 2026-11-01 is the first week of November — how Carla usually runs SSD.
+  assert.deepEqual(held('2026-11-01'), ['b_ssd'], 'held once, whatever the scope; weekly and other-branch bonuses are not');
+  // 2026-09-27 is September's final payroll week: nothing is held, and the offer matches.
+  assert.deepEqual(held('2026-09-27'), []);
+  assert.equal(
+    hslCatalogBonusesFor({ subLabel: 'hsl:ssd_medical_records', employeeEmail: 'a@simple.biz', assignments, bonuses, periodStart: '2026-09-27' })
+      .some((c) => c.bonus.id === 'b_ssd'),
+    true,
+  );
+  // Held and offered are complements for every week of a month.
+  for (const wk of ['2026-11-01', '2026-11-08', '2026-11-15', '2026-11-22', '2026-11-29']) {
+    const offered = hslCatalogBonusesFor({ subLabel: 'hsl:ssd_medical_records', employeeEmail: 'a@simple.biz', assignments, bonuses, periodStart: wk })
+      .some((c) => c.bonus.id === 'b_ssd');
+    assert.notEqual(offered, held(wk).includes('b_ssd'), wk);
+  }
+  assert.deepEqual(hslCatalogBonusesHeldThisWeek({ subLabel: 'hogan_smith_law', assignments, bonuses, periodStart: '2026-11-01' }), []);
 });
 
 test('amounts: flat pays when ticked, formula reads its namespaced vars', () => {

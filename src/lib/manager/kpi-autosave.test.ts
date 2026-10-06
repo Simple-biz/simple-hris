@@ -4,7 +4,6 @@ import {
   isUnsavedLocalWork,
   kpiAutosaveGate,
   shouldRearmAutosave,
-  subTeamInputsBlank,
   KPI_AUTOSAVE_DEBOUNCE_MS,
   type KpiAutosaveInput,
 } from './kpi-autosave';
@@ -152,25 +151,6 @@ test('equal-looking but distinct state objects count as a change', () => {
   // Identity, not deep equality — every mutator replaces the object, so this is
   // exactly the signal "the manager typed something".
   assert.equal(shouldRearmAutosave({ n: 1 }, { n: 1 }, true), true);
-});
-
-// ── SSD sub-team blankness (stops an automatic ₱0 overwrite) ─────────────────
-
-test('an untouched sub-team is blank', () => {
-  assert.equal(subTeamInputsBlank({ pct: '', records: '', rfc: '' }), true);
-  assert.equal(subTeamInputsBlank({ pct: '  ', records: '\t', rfc: ' ' }), true);
-});
-
-test('a typed zero is an input, NOT blank — a real zero score must still save', () => {
-  assert.equal(subTeamInputsBlank({ pct: '0', records: '', rfc: '' }), false);
-  assert.equal(subTeamInputsBlank({ pct: '', records: '0', rfc: '' }), false);
-  assert.equal(subTeamInputsBlank({ pct: '', records: '', rfc: '0' }), false);
-});
-
-test('any one field present makes the sub-team non-blank', () => {
-  assert.equal(subTeamInputsBlank({ pct: '95', records: '', rfc: '' }), false);
-  assert.equal(subTeamInputsBlank({ pct: '', records: '13', rfc: '' }), false);
-  assert.equal(subTeamInputsBlank({ pct: '', records: '', rfc: '13' }), false);
 });
 
 // ── What a load may overwrite (stops both a clobber and a stale-and-stop) ────

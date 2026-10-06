@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   matchHslSubDeptKey, calcBonus, HSL_DEPT_KEYS, HSL_DEPTS,
   HSL_MANAGERS, HSL_MANAGER_SHEET_2026_08_30, calcManagerBonus, managerSpecFor, managerCohortFor,
-  landedBand, bandValue, hslDeptAutoDispatches, type ManagerComponent, type KpiData, type DeptConfig,
+  landedBand, bandValue, hslDeptAutoDispatches, calcTeamSplitShare,
+  type ManagerComponent, type KpiData, type DeptConfig, type TeamSplitRule,
 } from './schema';
 import { calcHslCatalogBonus, catalogOnKey, catalogVarKey } from './catalog-bonus';
+import { HSL_RETIRED_RULES } from './retired-rules';
 import type { BonusDef } from '../bonus-catalog/types';
 
 test('matchHslSubDeptKey resolves every branch display name, case/whitespace-tolerant', () => {
@@ -539,6 +541,72 @@ test('callback_team / medical_records / care_team: the Library formula pays what
   assert.equal(mr(0, 1_250.5), 1_250.5);
   // Care Team: Church Attendees ₱50.
   assert.equal(payLibrary(LIBRARY_2026_09_28.care_team, { Church_Attendees: 65 }), 3_250);
+});
+
+// ── 2026-10-06: SSD Medical Records scored from the Bonus Library ────────────
+// Kane: *"make sure that the formula for this is connected to the payment
+// catalog when assigned"* … *"right now it is still hardcoded"* … *"We wont need
+// the SSD Medical Record's team color chuchu lets make this similar to everyone
+// elses"*. The colour-team workspace and BOTH team rules are gone; SSD is a
+// per-person card scored from its `hsl:ssd_medical_records` assignment.
+//
+// The literal is Carla's "Medical Records - Monthly" (v1, monthly, PHP,
+// effective 2026-09-27) AS MEASURED in production on 2026-10-06, read-only. It
+// proves the cutover moves no money for the accuracy bonus when a manager types
+// the team's figures on each member's row. It cannot stop a later edit.
+const LIBRARY_2026_10_06 = {
+  ssd_medical_records: '=IF(Head_Count > 0, (Records* IF(Accuracy>= 95, 350, IF(Accuracy>= 90, 250, 0))) / Head_Count, 0)',
+} as const;
+
+test('2026-10-06: SSD is a plain Library-only card, and no branch scores by colour team any more', () => {
+  const cfg = HSL_DEPTS.ssd_medical_records;
+  assert.deepEqual(cfg.rules, [], 'a coded rule beside the Library formula pays every record twice');
+  assert.equal(cfg.rulesFromCatalog, true);
+  assert.equal(cfg.noKpi, undefined, 'noKpi would hide the card and the Library column with it');
+  assert.equal(cfg.perEmployee, undefined);
+  for (const k of HSL_DEPT_KEYS) {
+    for (const r of HSL_DEPTS[k].rules) {
+      assert.ok(r.type !== 'team_split' && r.type !== 'team_pool', `${k}.${r.key} needs the colour-team workspace, which no longer exists`);
+    }
+  }
+});
+
+test("2026-10-06: Carla's SSD formula, typed per person, pays what the retired Team Accuracy rule paid", () => {
+  const retired = HSL_RETIRED_RULES.ssd_medical_records?.find((r): r is TeamSplitRule => r.type === 'team_split');
+  assert.ok(retired, 'the retired rule is the reference the cutover is proven against');
+  const pay = (Accuracy: number, Records: number, Head_Count: number) =>
+    payLibrary(LIBRARY_2026_10_06.ssd_medical_records, { Accuracy, Records, Head_Count });
+  const accuracies = [0, 50, 89, 89.98, 89.99, 90, 90.01, 92.5, 94.98, 94.99, 95, 95.01, 99.99, 100];
+  for (let a = 0; a <= 100; a += 0.25) accuracies.push(a);
+  for (const a of accuracies) {
+    for (const records of [0, 1, 13, 250]) {
+      for (const n of [1, 7, 10]) {
+        assert.equal(pay(a, records, n), calcTeamSplitShare(a, records, n, retired), `${a}% · ${records} records · ${n} people`);
+      }
+    }
+  }
+  // Orange Team's worked example scale: 13 records at 96%, 10 people → ₱455 each.
+  assert.equal(pay(96, 13, 10), 455);
+  // Head count blank (0) pays nothing — the formula's own guard, as the code's.
+  assert.equal(pay(96, 13, 0), 0);
+  // The ONE recorded difference, and it is the code's gap, not the formula's: a
+  // three-decimal accuracy between the coded bands (94.99 < a < 95) matched no
+  // tier and paid ₱0. Two-decimal input — what the card took — never hits it.
+  assert.equal(calcTeamSplitShare(94.995, 10, 1, retired), 0);
+  assert.equal(pay(94.995, 10, 1), 2_500);
+});
+
+test('2026-10-06: the RFC pool has no Library replacement — RFC pays ₱0 until Accounting adds it', () => {
+  // Pinned so the drop is documented behaviour, not an accident (Kane: "the
+  // colour teams … they wont be split in there anymore").
+  const pool = HSL_RETIRED_RULES.ssd_medical_records?.find((r) => r.type === 'team_pool');
+  assert.equal(pool?.type === 'team_pool' ? pool.ratePerRecord : null, 250, 'recorded as it was paid');
+  assert.equal(
+    payLibrary(LIBRARY_2026_10_06.ssd_medical_records, { Accuracy: 96, Records: 10, Head_Count: 10, RFC: 13 }),
+    350,
+    'an RFC figure scores nothing: the formula has no RFC term',
+  );
+  assert.equal(calcBonus({ rfc_pool: 13, team_split: 13 }, HSL_DEPTS.ssd_medical_records, false), 0);
 });
 
 // ── SSD Medical Records auto-dispatches in the week it is marked Ready (2026-09-08)

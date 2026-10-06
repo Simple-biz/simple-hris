@@ -58,11 +58,9 @@ import { normEmail } from '@/lib/email/norm-email';
  *    would let merely *opening* the tab autosave it — the exact failure
  *    `DeptState.seeded` exists to prevent.
  * 3. **Only raw API payloads go in.** A `Set` JSON-round-trips to `{}` and a
- *    `Date` to a string. `DeptState.rosterEmails` is a `Set` and
- *    `DeptState.subTeams` holds SSD inputs that are *deliberately* never
- *    persisted (blank-after-reload is what makes `subTeamInputsBlank` stop
- *    `recomputeSsdEntries` writing ₱0 over banked shares). Both are re-derived,
- *    by the same function the fetch path uses, from the raw rows cached here.
+ *    `Date` to a string. `DeptState.rosterEmails` is a `Set`, so it is
+ *    re-derived, by the same function the fetch path uses, from the raw rows
+ *    cached here.
  *
  * ## Identity
  *

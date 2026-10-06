@@ -12,11 +12,19 @@ test('retired rules exist only for branches that moved to the Library', () => {
   // table is quietly describing rules that still pay.
   assert.deepEqual(
     [...retiredDepts].sort(),
-    ['attestation', 'callback_team', 'care_team', 'case_managers', 'collections', 'filing_specialist', 'intake_specialist', 'medical_records', 'post_hearing_prep'],
+    ['attestation', 'callback_team', 'care_team', 'case_managers', 'collections', 'filing_specialist', 'intake_specialist', 'medical_records', 'post_hearing_prep', 'ssd_medical_records'],
   );
   for (const k of retiredDepts) {
     assert.equal(HSL_DEPTS[k].rulesFromCatalog, true, `${k} has retired rules but is not catalog-scored`);
   }
+});
+
+test('SSD (2026-10-06): BOTH colour-team rules are retired, and both read as retired', () => {
+  // The Team Accuracy Bonus moved to the Library; the RFC pool had no colour
+  // team left to pool over (Kane: "they wont be split in there anymore").
+  assert.deepEqual(HSL_RETIRED_RULES.ssd_medical_records?.map((r) => r.type), ['team_split', 'team_pool']);
+  assert.equal(hslRuleForKey('ssd_medical_records', 'team_split', HSL_DEPTS.ssd_medical_records.rules)?.retired, true);
+  assert.equal(hslRuleForKey('ssd_medical_records', 'rfc_pool', HSL_DEPTS.ssd_medical_records.rules)?.retired, true);
 });
 
 test('a retired key never shadows a live rule, and a live rule always wins the lookup', () => {

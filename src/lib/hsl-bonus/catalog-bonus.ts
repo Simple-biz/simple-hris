@@ -149,6 +149,34 @@ export function hslCatalogBonusesFor(params: {
   return out;
 }
 
+/**
+ * Monthly bonuses assigned to this branch (either scope) that `hslCatalogBonusesFor`
+ * WITHHOLDS this week, because it is not the month's final payroll week.
+ *
+ * On a weekly branch that is routine. On SSD Medical Records — a MONTHLY branch
+ * scored from the Library alone since 2026-10-06 — a monthly bonus is the whole
+ * programme, so a run scored in any other week shows no inputs and pays ₱0. Kane
+ * ruled the gate stands (2026-10-06, (a)); this exists so the card can SAY so.
+ */
+export function hslCatalogBonusesHeldThisWeek(params: {
+  subLabel: string; // `hsl:<subKey>`
+  assignments: readonly BonusAssignment[];
+  bonuses: readonly BonusDef[];
+  periodStart: string;
+}): BonusDef[] {
+  if (isFinalPayrollWeekOfMonth(params.periodStart)) return [];
+  const want = params.subLabel.trim().toLowerCase();
+  if (!want.startsWith('hsl:')) return [];
+  const byId = new Map(params.bonuses.map((b) => [b.id, b]));
+  const held = new Map<string, BonusDef>();
+  for (const a of params.assignments) {
+    if ((a.departmentKey ?? '').trim().toLowerCase() !== want) continue;
+    const bonus = byId.get(a.bonusId);
+    if (bonus?.cadence === 'monthly') held.set(bonus.id, bonus);
+  }
+  return [...held.values()];
+}
+
 /** One catalog bonus's peso amount for a person, from their `kpi_data`. */
 export function calcHslCatalogBonus(kpiData: KpiData, bonus: BonusDef): number {
   if (!isScoreableOnHsl(bonus)) return 0;

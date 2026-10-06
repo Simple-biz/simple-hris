@@ -379,9 +379,10 @@ Added 2026-09-22 for **Intake Specialist**, then **Filing Specialist** hours
 later — *"Filing Specialist the Hard coded is still in there"*. **Taken by seven
 more branches on 2026-09-28**: Medical Records, Care Team, Callback Team,
 Attestation and Case Managers, then Collections and Pre/Post-Hearing on Kane's
-ruling (b). That leaves **nine of the fourteen** scored entirely from the Payment
-Catalog, three still in code, and two roster-only. See *The second cutover*
-below. Filing had been
+ruling (b). **SSD Medical Records followed on 2026-10-06** (Kane), colour teams
+and all — see *The third cutover* below. That leaves **ten of the fourteen**
+scored entirely from the Payment Catalog, two still in code, and two
+roster-only. See *The second cutover* below. Filing had been
 ruled the OTHER way first (`b3dc6a98`: the Library formula's bands moved into
 `schema.ts`, assignment to be retired) and was reversed once Carla and Alivia
 saw the card still carrying both. The retirement script from that first ruling
@@ -487,12 +488,52 @@ number to set there now. It is no longer a code value. The calculator engine
 still implements monthly and cap-exempt flats (pinned on a fixture); no HSL dept
 uses one.
 
+**The third cutover, 2026-10-06 — SSD Medical Records, colour teams and all.**
+Kane: *"KPI Calculator - SSD Medical Records - please make sure that the formula
+for this is connected to the payment catalog when assigned"*, *"right now it is
+still hardcoded"*, *"make sure this will adapt"*, then *"We wont need the SSD
+Medical Record's team color chuchu lets make this similar to everyone elses where
+we can see everyones name and search them in a search bar and just add their bonus
+from there based on the payment catalog"*. Carla had assigned "Medical Records -
+Monthly" to `hsl:ssd_medical_records` that morning (14:04Z):
+`=IF(Head_Count > 0, (Records* IF(Accuracy>= 95, 350, IF(Accuracy>= 90, 250, 0))) / Head_Count, 0)`,
+v1, `monthly`, PHP, effective 2026-09-27. It re-expresses the coded Team Accuracy
+Bonus exactly — the §3.1 double-pay shape — and `schema.test.ts`
+(`LIBRARY_2026_10_06`) proves it pays what `team_split` paid when the team's three
+figures are typed on a member's row.
+
+| what | before | after |
+| --- | --- | --- |
+| the card | colour-team workspace (`SsdWorkspace`: team tabs, team card, roster with a sub-team picker) | the ordinary card: roster + search bar + `KpiTable` with the Library column |
+| Team Accuracy Bonus | code `team_split`, team inputs never persisted | Library formula, per-person `catalog:` inputs, autosaved |
+| RFC pool (₱250/RFC ÷ team size) | code `team_pool` | **nothing — pays ₱0 until Accounting adds RFC to the Library** |
+| `Head_Count` | the team's member count, derived | typed on each row (the formula as written) |
+
+**Three rulings, all Kane's, same session.** (1) RFC: first *"(a) Keep RFC in
+code"*, then, once the colour teams went, *"the colour teams we see on medical
+records they wont be split in there anymore"* — the pool had nothing left to
+pool over, so it went with them. (2) The final-payroll-week gate on a `monthly`
+Library bonus STANDS (ruling (a)), so SSD's bonus is offered only in the month's
+final payroll week; any other week the card shows it as held
+(`hslCatalogBonusesHeldThisWeek`). 2026-08-02's run was not a final week; under
+this rule it would have paid ₱0. (3) The live week must be Ready before the
+deploy (ruling (a)) — the cutover precondition above ("the live week stands on
+₱0 of code rules") is NOT met today:
+
+| branch | live week | reopen exposure | of which editable today |
+| --- | --- | --- | --- |
+| `ssd_medical_records` | 2026-09-27 · **₱103,449.96 / 68 rows, 43 non-zero, all from code** · no Library inputs | 2026-06-28 ₱128,049.98 · 08-02 ₱113,750.02 · 08-30 ₱97,450.00 (all `ready`) | **₱103,449.96 — 09-27 has NO status row** |
+
+**Deploy gate, PENDING until Kane confirms:** do not push until SSD's 2026-09-27
+run is marked Ready under the code it was scored with. A row on that week touched
+after the deploy reprices to its Library total (₱0 until the Library inputs are
+typed). Also stranded and still open: the 2026-06-01 Monday-keyed draft (54 rows,
+₱3,500, `hsl-catalog-migration.md`).
+
 **Still in code — nothing in the Library to replace them:**
 
-- `ssd_medical_records` · `healthcare_team_lead` · `hsl_managers` — **nothing
-  is assigned in the Payment Catalog**, so deleting their rules would pay ₱0.
-  SSD's `team_split` / `team_pool` shares depend on the whole team's inputs,
-  which a per-person Library formula cannot see. Managers Weekly's specs are
+- `healthcare_team_lead` · `hsl_managers` — **nothing is assigned in the Payment
+  Catalog**, so deleting their rules would pay ₱0. Managers Weekly's specs are
   dated per person (`HSL_MANAGERS`). They stay in code until Accounting builds
   their Library bonuses.
 

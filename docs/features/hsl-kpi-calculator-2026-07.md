@@ -10,15 +10,17 @@ Built 2026-07-17 with every HSL bonus rule hardcoded in `schema.ts`. **That is
 no longer true of half the branches.** Since 2026-09-22 a Bonus Library bonus
 assigned to a branch (`hsl:<key>`) is scored on that branch's card and folds
 into `calculated_bonus` (`src/lib/hsl-bonus/catalog-bonus.ts`; see
-`bonus-catalog.md` §3.1). **Nine branches have no code rules at all** and are
+`bonus-catalog.md` §3.1). **Ten branches have no code rules at all** and are
 scored entirely from their Library bonus (`rulesFromCatalog`,
 `hsl-subdepartments.md` §7d): Intake Specialist and Filing Specialist
 (2026-09-22), then Medical Records, Care Team, Callback Team, Attestation, Case
 Managers, Collections and Pre/Post-Hearing Prep (Kane, 2026-09-28: *"Delete the
 HARD CODED Formulas in the KPI CALCULATOR"*, then *"Both docs are stale!"* for
 the last two, whose Library bonuses dropped the ₱2,500 monthly flats and the
-₱3,500 cap). **Three are still code**, because nothing is in the Library for
-them yet: SSD Medical Records, Healthcare Team Lead and Managers Weekly. Each Library bonus on the card states its **version,
+₱3,500 cap), then **SSD Medical Records** (Kane, 2026-10-06 — its colour-team
+workspace is gone too; see *SSD Medical Records* below). **Two are still code**,
+because nothing is in the Library for them yet: Healthcare Team Lead and Managers
+Weekly. Each Library bonus on the card states its **version,
 effective date, and who last saved it, and when** (2026-09-28), because an
 accountant's edit now reprices a whole team. How that column reads: name + `flat`/`ƒ(x)` chip in the head (the clipped formula line under it was
 removed 2026-09-28, Kane: *"what is this still doing in here"*), a `Bonus Library` legend strip above the
@@ -50,16 +52,22 @@ formula text as measured on the cutover day. The wizard pays the stored
 | `case_mgmt_asst_tl` *(removed)* | — | — | was roster-only, 6 members |
 
 Notes:
-- **Medical Records vs SSD Medical Records.** The existing `ssd_medical_records`
-  (team-accuracy split: 90 % → ₱250 / 95 % → ₱350 per record) is untouched. The
-  new `medical_records` is a plain per-unit dept and lives alongside it.
-- **SSD Medical Records RFC pool (added 2026-08-03).** `ssd_medical_records`
-  gained a second rule, `team_pool` (`TeamPoolRule`/`calcTeamPoolShare` in
-  `schema.ts`): the team's RFC count × ₱250 is pooled and split evenly across
-  the sub-team's headcount — no accuracy tiering, unlike the existing
-  `team_split` rule it sits alongside. Both shares are summed per employee in
-  `recomputeSsdEntries`. e.g. Orange team logs 13 RFCs across 10 agents →
-  13 × ₱250 ÷ 10 = ₱325/agent, added on top of their accuracy-split share.
+- **Medical Records vs SSD Medical Records.** Two different branches. Both are
+  scored from their own Library bonus now: `medical_records` (weekly) since
+  2026-09-28, `ssd_medical_records` (monthly) since 2026-10-06.
+- **SSD Medical Records has no code rules and no colour teams (Kane,
+  2026-10-06).** It used to score per COLOUR TEAM (BLUE … RED): a Team Accuracy
+  Bonus (`team_split`: <90% nothing, 90–94.99% ₱250/record, 95%+ ₱350/record,
+  ÷ the team's headcount) plus, from 2026-08-03, an RFC pool (`team_pool`:
+  ₱250 per RFC ÷ headcount). Both rules are DELETED and live on only as labels in
+  `retired-rules.ts`. The branch is a plain per-person card scored from Carla's
+  "Medical Records - Monthly" assignment
+  (`=IF(Head_Count > 0, (Records* IF(Accuracy>= 95, 350, IF(Accuracy>= 90, 250, 0))) / Head_Count, 0)`,
+  v1, monthly, effective 2026-09-27), proven in `schema.test.ts` to pay what
+  `team_split` paid when a manager types the team's three figures on a member's
+  row. **RFC pays ₱0 until Accounting adds it to the Library** — the formula has
+  no RFC term and the pool had nothing left to pool over. See *SSD Medical
+  Records* below.
 - **Callback Team vs the sheet.** The pay-plan sheet attaches "Medicare Signups ×250"
   to the Care/Healthcare team, and `care_team` was modeled as the older
   "Church Attendees × ₱50". Since 2026-09-28 that rule is Accounting's
@@ -274,10 +282,9 @@ so a plain manager needs no extra permission), then a confirm step.
 - External members are tagged with an **"ext"** badge (email not in the dept's
   roster) and can be removed. Removing one that was already persisted also DELETEs
   its saved row (`DELETE /api/hsl-bonus/entries?dept&period_start&email`).
-- Works for every dept type: per-unit (`KpiTable`), team-split
-  (`SsdEmployeeTable` — assign a sub-team to give them a share), and Managers
-  (`HslManagersTable` — an external here has no incentives configured and scores
-  ₱0).
+- Works for every dept type: per-unit and Library-scored (`KpiTable`) and
+  Managers (`HslManagersTable` — an external here has no incentives configured
+  and scores ₱0).
 
 ## Data entry & motion (operator-focused redesign)
 
@@ -289,7 +296,7 @@ product register (calm, familiar, motion conveys state):
   hidden for larger touch targets; values never drop below 0. The −/＋ buttons are
   `tabIndex={-1}` so Tab still flows field-to-field for keyboard entry.
 - **Animated totals** (`AnimatedPeso`): every live figure (row bonus, subtotal,
-  dept total, grand total, SSD per-member share) gives a brief "counted" pop when
+  dept total, grand total) gives a brief "counted" pop when
   it changes, so the operator sees their entry land. CSS-only (`kpi-value-pop` in
   `src/index.css`), self-disables under `prefers-reduced-motion`.
 - **Managers checklist** rows are full-width tappable toggles; a met incentive
@@ -299,7 +306,7 @@ product register (calm, familiar, motion conveys state):
   Once `ready`/`locked` the dept is read-only (with a "Mark as Unready to edit"
   hint), so an edit or an added member can't silently fail to reach Accounting.
 
-## Branch list + overlay, SSD workspace rebuild *(2026-09-01)*
+## Branch list + overlay *(2026-09-01)*
 
 Two changes, one pass. Reference: `references/UI improvement request/design_handoff_bonus_run/`.
 
@@ -504,86 +511,68 @@ not inline objects. The first cut centred the window with
 forced a per-mode key — switching Windowed → Full screen remounted the whole
 branch and silently discarded the open team, the page and the roster selection.
 
-### SSD Medical Records workspace
+### SSD Medical Records — a plain card, scored from the Library *(2026-10-06)*
 
-`SsdSubTeamGrid` + `SsdEmployeeTable` + `SubTeamChips` are replaced by
-`SsdWorkspace`: a status strip that doubles as the team tab bar, ONE team card,
-then a full-width roster. Used by both the manager calculator and
-`HslBonusEditModal`, so an Accounting correction reads like the original entry.
+Kane: *"KPI Calculator - SSD Medical Records - please make sure that the formula
+for this is connected to the payment catalog when assigned"* … *"right now it is
+still hardcoded"* … *"make sure this will adapt"* … *"We wont need the SSD Medical
+Record's team color chuchu lets make this similar to everyone elses where we can
+see everyones name and search them in a search bar and just add their bonus from
+there based on the payment catalog"*.
 
-- **Status strip** — `N / 6 teams scored` plus six tabs, each carrying a glyph
-  (`✓` entered, `!` incomplete, `·` scored earlier, `–` not started) as well as a
-  colour, so status never rests on hue. Real `tablist` with roving arrow-key
-  focus. The unassigned count is a button that filters the roster to them.
-- **Team card** — three fields (accuracy / records / RFC), live arithmetic for
-  **both** rules shown separately (a team under 90% accuracy still earns its RFC
-  pool, and one summed figure would hide that), a three-segment tier meter, and
-  the per-member payout. Keyed by team so it replays its entrance on switch.
-- **Roster** — full width, filter chips, bulk-assign bar, and a single dropdown
-  per row instead of seven chips (a pill `SmoothSelect` tinted with the row's
-  `--team` colour since 2026-10-05 — it was a native `<select>`, whose popup ignored
-  the app theme; `ui-standards.md` § 9.5). At 60+ people the chips were the
-  loudest thing on the screen.
-- **Rules panel** — the real thresholds, read off `HSL_DEPTS` rather than
-  restated, so a schema edit can never leave the UI describing a rate that no
-  longer pays. It is an `@container`: its two-column split keys on **its own**
-  inline size, because it is ~330px wide beside the card in a half-window overlay
-  and full width when stacked. Keying it to `sm:` collided the two columns' text
-  at exactly the width the side panel produces.
+SSD is now the same card every other branch has: the roster with the search bar
+and pager, `KpiTable` with one column per Library bonus assigned to
+`hsl:ssd_medical_records`, a labelled field per formula variable on each row, and
+the row's own peso under them. It is `rules: []` + `rulesFromCatalog: true`
+(`hsl-subdepartments.md` §7d). An accountant's edit to the Library row reaches the
+card with no code change — that is the "adapt" half, and it carries the §7d trade:
+nothing red in a test stops an edit that reprices the team.
 
-Two things in the handoff are deliberately NOT followed, and both are called out
-in code comments at the site:
+**What was removed, and must not come back without a ruling:** the colour-team
+workspace built 2026-09-01 (`SsdWorkspace` — status strip / team tabs, team card,
+rules panel, roster with a sub-team picker and bulk-assign), the `restored` team
+state, the six `--ssd-*` colour tokens in `src/index.css`, the SSD skeleton
+(`KpiCalculatorLoading`'s `teamSplit`), the ready preview's Sub-team column,
+`recomputeSsdEntries`, `subTeamInputsBlank`, and the dead `HslBonusEditModal`
+(no importer since at least 2026-09-28). New rows no longer get `sub_team` copied
+into `kpi_data`; old rows keep theirs and nothing reads it.
 
-1. **Tier thresholds are the real ones** (`<90%` → nothing, `90–94.99%` →
-   ₱250/record, `95%+` → ₱350/record, plus the separate ₱250 RFC pool). The
-   handoff's `90/95/98 → 50/75/100% of pool` ladder is flagged as invented in its
-   own README.
-2. **No "✓ Saved" footer.** It would be a lie sitting under three fields that are
-   deliberately never persisted (see *SSD sub-team inputs are still NOT saved*).
+**What a manager types, today:** Carla's formula is written in team terms —
+`Records`, `Accuracy` and `Head_Count` — and the card does not know about teams
+any more, so all three are typed on each person's row. That is the formula as
+assigned, scored as written; if Accounting wants a per-person rule, it is a
+Library edit, not an engineering one.
 
-The handoff also marks unassigned rows with a 3px inset side stripe; this uses a
-dot instead (side stripes are banned by the `impeccable` skill).
+**RFC pays ₱0.** The coded pool (₱250 per RFC ÷ team size) pooled over a colour
+team. With the teams gone there was nothing to pool over, and the Library
+formula has no RFC term. Kane, asked directly: *"the colour teams we see on
+medical records they wont be split in there anymore"*. RFC returns the day
+Accounting adds it to the Library. `schema.test.ts` pins the drop, so it is
+documented behaviour, not an accident.
 
-### `restored` — the fourth team state
+**Monthly.** The branch stays `cadence: 'monthly'` + `monthlyAutoPay` (the wizard
+pays it in the week it is marked Ready). Carla's bonus is `monthly`, and a monthly
+Library bonus is only OFFERED in the month's final payroll week — Kane kept that
+gate (2026-10-06, ruling (a)). In any other week the card shows the bonus as
+**held** in the `Bonus Library` strip (amber, *"monthly · final payroll week only
+— not offered this week"*, `hslCatalogBonusesHeldThisWeek`) instead of an empty
+roster. 2026-09-27 is September's final payroll week; the first week of November
+(2026-11-01), when Carla usually runs SSD, is not.
 
-The handoff has three states (complete / partial / empty). This surface needs a
-fourth, and it is forced by the persistence rule above: after a reload the three
-inputs are blank while the per-member shares they produced are not.
-
-A team whose inputs are blank but whose members carry a non-zero
-`calculated_bonus` is `restored`, not `empty`. Calling it "Not started" would
-send the operator off to re-key numbers that are already banked — and
-`recomputeSsdEntries` refuses to overwrite those shares precisely because they
-are real.
-
-**A restored team reports the SAVED share, never a recompute.** `shareForRow`
-returns the row's `calculated_bonus` and the card takes `savedShareByTeam`.
-Without that the roster printed ₱0.00 against every member of a team the header
-was simultaneously totalling at ₱29,640 — caught in review, not in theory. A
-typed `0` still counts as entered, matching `subTeamInputsBlank`.
-
-### Sub-team colour tokens
-
-Six teams named after colours means colour is data, not decoration: one hue has
-to drive a tab dot, a card rail, a roster chip and a payout figure in both
-themes. Tailwind classes can't be handed to `color-mix()` or an inline `style`,
-so each team has four custom properties in `src/index.css`
-(`--ssd-<t>`, `-solid`, `-on`, `-text`) and every SSD surface reads them through
-one `--team*` alias set by `teamVars()`. `-solid`/`-on` are a separate pair from
-the identity hue because the identity hue does not carry label text at 4.5:1.
+**Deploy gate, PENDING until Kane confirms:** do not push this until SSD's
+2026-09-27 run is marked Ready. Measured read-only 2026-10-06: 68 rows,
+₱103,449.96, scored by the deleted code rules, **no status row** (editable).
+Touching one of those rows after the deploy reprices it to its Library total —
+₱0 until the Library inputs are typed (Kane's ruling (a): Ready 09-27 first, the
+Library takes over from October's run).
 
 ### First-load skeleton
 
 `KpiCalculatorLoading`'s `hsl` variant mirrors the same split: several branches
-paint as a list of rows, a single branch paints as the scoring block. It also
-takes `teamSplit`, set when the one visible branch scores by sub-team, and then
-paints the SSD workspace shape (status strip, team card beside the rules panel,
-full-width roster) instead of a plain roster.
-
-That flag is not cosmetic. The SSD workspace is roughly twice the height of a
-plain roster, so the generic placeholder would drop the page several hundred
-pixels the moment data landed — and the single-branch path is exactly what the
-Payroll Readiness modal loads. The view switch is drawn as real chrome rather
+paint as a list of rows, a single branch paints as the scoring block — the
+single-branch path is exactly what the Payroll Readiness modal loads. Every
+branch, SSD included since 2026-10-06, paints the plain roster shape. The view
+switch is drawn as real chrome rather
 than a shimmer block, because it has nothing to load and is usable the instant
 the calculator mounts.
 
@@ -708,20 +697,16 @@ Accounting opens from Payroll Readiness (`PayrollWizardNotesFab.tsx`) autosaves
 identically, and closing that dialog now flushes pending edits instead of
 dropping them.
 
-### SSD sub-team inputs are still NOT saved
+### SSD inputs are saved like everyone else's *(since 2026-10-06)*
 
-`ssd_medical_records` scores from team-level accuracy %, record count and RFC
-count that live in component state and are deliberately not persisted (only the
-per-employee share they derive is). Kane confirmed 2026-08-17 that this stands —
-autosave covers every field that HAS a persistence home, and these three keep
-their in-memory behaviour plus the amber re-enter warning.
-
-That made an existing latent bug reachable without a click, so it is now closed:
-after a reload those fields are blank while the saved shares are not, and any
-recompute would have written **₱0 to every member of the team**.
-`recomputeSsdEntries` now refuses to overwrite a non-zero share when the
-sub-team it belongs to has no inputs on screen (`subTeamInputsBlank`). A typed
-`0` counts as entered, so a genuine zero score still saves.
+Until 2026-10-06 SSD scored from team-level accuracy %, record count and RFC
+count that lived in component state and were deliberately not persisted (Kane,
+2026-08-17), with a guard (`subTeamInputsBlank`) that held a banked share rather
+than recompute it to ₱0 from blank inputs after a reload. That rule's subject is
+gone: SSD has no team inputs any more (Kane, 2026-10-06 — see *SSD Medical
+Records* above). Its Library inputs are ordinary per-person `catalog:` keys in
+`kpi_data`, autosaved with the row, so the guard and the `restored` state were
+removed with the workspace.
 
 ## Scoring the upcoming week *(2026-09-10)*
 
@@ -867,7 +852,12 @@ Now (`src/components/PayrollWizard.tsx`):
   dropped the same day — Carla processes it "in the first week of the month", and
   this month a week late, so a calendar rule would have fought her). A person in
   both SSD and Medical Records gets one summed amount (₱475 + ₱1,625 = ₱2,100 in the
-  2026-08-30 week that surfaced this).
+  2026-08-30 week that surfaced this). **Since 2026-10-06 that calendar rule is back
+  for the BONUS, though not for the dispatch:** SSD is scored from a `monthly`
+  Library bonus, which the card offers only in the month's final payroll week, and
+  Kane kept that gate when asked (ruling (a)). A first-week-of-the-month run (as
+  2026-08-02 was) shows the bonus as held and pays ₱0 from it. Carla either scores
+  SSD in the month's final payroll week or makes the bonus weekly in the Library.
 - **Managers-dept amounts are recomputed from `kpi_data`** against the spec DATED to
   that week (`calcManagerBonus(..., { periodStart: info.period_start })`); monthly
   components (Gyd's ₱25k; Jazz Redulla's ₱2,500; Ems's/Star's through 2026-08-23)
@@ -1022,10 +1012,7 @@ Three consequences, none of which may be undone:
    both re-derived through the one merge each surface has (`mergeHslBranchPayload`
    / `applyDeptPayload`). Never `DeptState`: it holds a `Set` (`rosterEmails`),
    which `JSON.stringify` turns into `{}` — an empty roster reads as "everyone is
-   an external member" and paints a removable ✕ against every real member. And
-   `subTeams` is **never** cached: blank-after-remount is exactly what makes
-   `subTeamInputsBlank` hold a banked SSD share instead of zeroing it, and what
-   produces the `restored` team state.
+   an external member" and paints a removable ✕ against every real member.
 
 ### Scoring is held until every write input is confirmed live
 
@@ -1151,7 +1138,6 @@ and predate this change.
   at save time, and unlike the catalog it has a documented fallback that a cached
   copy would silently displace. One small request, and `fxSettled` already holds
   scoring until it answers.
-- **SSD sub-team inputs** (above).
 - **Settlement-currency markers** (`POST /api/payroll/settlement-currency`). They decide
   which currency a person's figure is shown and settled in, and they are fetched in
   batches as members appear.

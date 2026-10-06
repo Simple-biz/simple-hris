@@ -55,13 +55,15 @@ test('code vs data is decidable, and a data key can never shadow a code team', (
   assert.equal(configs.intake_specialist, HSL_DEPTS.intake_specialist, 'the code config survives, by identity');
   assert.equal(configs.intake_specialist!.rulesFromCatalog, true);
   // And a code team that DOES carry rules still keeps them.
-  // ssd_medical_records, not attestation: attestation joined the catalog-scored
-  // shape on 2026-09-28 (filing did on 2026-09-22), which is exactly how this
-  // witness went vacuous twice. SSD's team_split / team_pool can't be written as
-  // a per-person Library formula, so it is the branch least likely to go next.
-  const withRules = hslBranchConfigs([{ key: 'ssd_medical_records', name: 'Hijack' }, SUB]);
-  assert.equal(withRules.ssd_medical_records, HSL_DEPTS.ssd_medical_records);
-  assert.equal(withRules.ssd_medical_records!.rules.length > 0, true, 'the code rules survive');
+  // healthcare_team_lead: this witness went vacuous THREE times as branches moved
+  // to the Library — filing (2026-09-22), attestation (2026-09-28), then SSD
+  // (2026-10-06), which this comment had called the branch least likely to go
+  // next. The guard below fails loudly the day Healthcare TL goes too, instead
+  // of quietly passing over an empty rules array.
+  assert.equal(HSL_DEPTS.healthcare_team_lead.rules.length > 0, true, 'pick a branch that still has code rules');
+  const withRules = hslBranchConfigs([{ key: 'healthcare_team_lead', name: 'Hijack' }, SUB]);
+  assert.equal(withRules.healthcare_team_lead, HSL_DEPTS.healthcare_team_lead);
+  assert.equal(withRules.healthcare_team_lead!.rules.length > 0, true, 'the code rules survive');
   assert.equal(configs.healthcare_specialist!.name, 'Healthcare Specialist');
 });
 

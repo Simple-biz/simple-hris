@@ -87,6 +87,33 @@ export const HSL_RETIRED_RULES: Partial<Record<HslDeptKey, readonly BonusRule[]>
     { type: 'per_unit', key: 'portal_login', label: 'Portal Login', rate: 100 },
     { type: 'flat', key: 'monthly_bonus', label: 'Monthly Bonus', amount: 2500, cadence: 'monthly', exemptFromMonthlyMax: true },
   ],
+  // 2026-10-06 (Kane: "right now it is still hardcoded" … "lets make this
+  // similar to everyone elses"): the colour-team workspace is gone and the
+  // branch is scored from its Library formula per person. Last code-scored
+  // month: the 2026-09-27 run. SSD rows never stored these keys (`kpi_data`
+  // held only `sub_team`), so this is the record of the rules as paid — for
+  // Penny and the parity test — not a label any saved row looks up. The RFC
+  // pool has NO Library replacement yet: it pays ₱0 until Accounting adds one.
+  ssd_medical_records: [
+    {
+      type: 'team_split',
+      key: 'team_split',
+      label: 'Team Accuracy Bonus',
+      thresholds: [
+        { minPct: 0, maxPct: 89.99, ratePerRecord: 0 },
+        { minPct: 90, maxPct: 94.99, ratePerRecord: 250 },
+        { minPct: 95, maxPct: null, ratePerRecord: 350 },
+      ],
+      subTeams: ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'],
+    },
+    {
+      type: 'team_pool',
+      key: 'rfc_pool',
+      label: 'RFC',
+      ratePerRecord: 250,
+      subTeams: ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'],
+    },
+  ],
   case_managers: [
     { type: 'per_unit', key: 'reviews', label: 'Reviews', rate: 250 },
     { type: 'per_unit', key: 'rfc', label: 'RFC', rate: 250 },

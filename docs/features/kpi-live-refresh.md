@@ -22,7 +22,7 @@ So the route that just wrote the row announces it on its own Broadcast topic,
 | Route | Write | Announces |
 |---|---|---|
 | `POST /api/hsl-bonus/period-status` | Mark Ready / Lock / reopen (upsert) | always — status from the row the DB wrote, never the unvalidated body |
-| `DELETE /api/hsl-bonus/period` | `HslBonusEditModal` **Delete week** (entries AND status row) | always, `status: null` |
+| `DELETE /api/hsl-bonus/period` | entries AND status row. **No UI caller:** its only caller, `HslBonusEditModal`, had no importer and was deleted 2026-10-06. The handler is kept | always, `status: null` |
 | `POST /api/bonus-catalog-applied` | Departments calculator autosave | only if the week is `ready`/`locked` |
 | `DELETE /api/bonus-catalog-applied` | catalog dept-week delete. **No UI caller since Bonus History was retired on 2026-09-29.** The handler is kept (Open item 284) | only if the week is `ready`/`locked` |
 | `POST /api/hsl-bonus/entries` | HSL calculator autosave | per dept-week in the batch, only if `ready`/`locked` |

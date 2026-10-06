@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle, AppWindow, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Download, Eye, History, Loader2, Lock, Maximize2, Minus, PanelRight, Plus,
+  Download, Eye, Loader2, Lock, Maximize2, Minus, PanelRight, Plus,
   RefreshCw, RotateCcw, Search, Trash2, UserPlus, Users, X, Zap,
 } from 'lucide-react';
 
@@ -21,8 +21,8 @@ import { normEmail } from '@/lib/email/norm-email';
 import {
   BonusStatus, DeptConfig, HslDeptKey, HSL_DEPTS, HSL_DEPT_KEYS,
   KpiData, ManagerComponent, bandValue, landedBand, managerCohortFor, managerSpecFor,
-  SubTeamName, TeamPoolRule, TeamSplitRule, TieredRule,
-  calcBonus, calcManagerBonus, calcTeamPoolShare, calcTeamSplitShare, canAccessHslDept, formatPeso,
+  TieredRule,
+  calcBonus, calcManagerBonus, canAccessHslDept, formatPeso,
 } from '@/lib/hsl-bonus/schema';
 import { parseDateRangeFromFilename } from '@/lib/hubstaff/calendar-column-dedupe';
 import {
@@ -62,7 +62,6 @@ import {
   KPI_AUTOSAVE_DEBOUNCE_MS,
   kpiAutosaveGate,
   shouldRearmAutosave,
-  subTeamInputsBlank,
 } from '@/lib/manager/kpi-autosave';
 
 import { formatDeptLabel, hslSubDeptLabel } from '@/lib/departments/hsl-subdept';
@@ -78,6 +77,7 @@ import {
   catalogOnKey,
   catalogVarKey,
   hslCatalogBonusesFor,
+  hslCatalogBonusesHeldThisWeek,
   type HslCatalogBonus,
 } from '@/lib/hsl-bonus/catalog-bonus';
 import { isFinalPayrollWeekOfMonth } from '@/lib/payroll/bonus-cadence';
@@ -92,18 +92,9 @@ export interface EntryRow {
   calculated_bonus: number;
 }
 
-export interface SubTeamState {
-  pct: string;
-  records: string;
-  /** RFC count for the team_pool rule — pooled at ratePerRecord and split evenly
-   *  across the sub-team's headcount, independent of the accuracy % tiering. */
-  rfc: string;
-}
-
 interface DeptState {
   entries: EntryRow[];
   status: BonusStatus;
-  subTeams: Record<SubTeamName, SubTeamState>;
   dirty: boolean;
   saving: boolean;
   /** Emails belonging to the dept's true roster (hsl_team_members, or HSL_MANAGERS
@@ -113,36 +104,6 @@ interface DeptState {
 }
 
 type AllDeptState = Record<HslDeptKey, DeptState>;
-
-export const DEFAULT_SUB_TEAMS: Record<SubTeamName, SubTeamState> = {
-  BLUE: { pct: '', records: '', rfc: '' },
-  GREEN: { pct: '', records: '', rfc: '' },
-  YELLOW: { pct: '', records: '', rfc: '' },
-  ORANGE: { pct: '', records: '', rfc: '' },
-  PURPLE: { pct: '', records: '', rfc: '' },
-  RED: { pct: '', records: '', rfc: '' },
-};
-
-/** Each sub-team's colours live in CSS (see the `--ssd-*` block in index.css)
- *  rather than as Tailwind classes, because the same hue has to reach places a
- *  class cannot go: `color-mix()`, inline `style`, and an arbitrary-value
- *  utility. `varName` is the stem those four custom properties share. */
-export interface SubTeamPalette {
-  varName: string;
-}
-
-export const SUB_TEAM_PALETTE: Record<SubTeamName, SubTeamPalette> = {
-  BLUE:   { varName: 'blue' },
-  GREEN:  { varName: 'green' },
-  YELLOW: { varName: 'yellow' },
-  ORANGE: { varName: 'orange' },
-  PURPLE: { varName: 'purple' },
-  RED:    { varName: 'red' },
-};
-
-/** Active sub-team filter for the SSD roster: a specific team, every member
- *  ('ALL'), or only the still-unassigned ('NONE'). */
-export type SubTeamFilter = SubTeamName | 'ALL' | 'NONE';
 
 // ── Branch overlay presentation ───────────────────────────────────────────────
 
@@ -249,56 +210,6 @@ function periodEnd(_dept: DeptConfig, start: string): string {
 }
 
 /**
- * Per-employee bonus recompute for SSD Medical Records (team_split + team_pool
- * rules). `calcBonus` skips both rule types because their shares depend on
- * team-level pct/records/rfc held in `subTeams` state, not on `kpi_data`. This
- * computes the combined share and writes it into each entry's
- * `calculated_bonus` so dept totals, the View modal, and persisted
- * `hsl_bonus_entries.calculated_bonus` (read by PayrollWizard) all reflect
- * reality.
- *
- * Returns a new entries array; pass-through if not SSD.
- */
-export function recomputeSsdEntries(
-  deptKey: HslDeptKey,
-  entries: EntryRow[],
-  subTeams: Record<SubTeamName, SubTeamState>,
-): EntryRow[] {
-  if (deptKey !== 'ssd_medical_records') return entries;
-  const splitRule = HSL_DEPTS.ssd_medical_records.rules.find(
-    (r): r is TeamSplitRule => r.type === 'team_split',
-  );
-  const poolRule = HSL_DEPTS.ssd_medical_records.rules.find(
-    (r): r is TeamPoolRule => r.type === 'team_pool',
-  );
-  const memberCounts: Record<string, number> = {};
-  for (const e of entries) {
-    const st = String(e.kpi_data.sub_team ?? '');
-    if (st) memberCounts[st] = (memberCounts[st] ?? 0) + 1;
-  }
-  return entries.map((e) => {
-    const st = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
-    if (!st) return e.calculated_bonus === 0 ? e : { ...e, calculated_bonus: 0 };
-    const sub = subTeams[st];
-    // The team-level inputs are NOT persisted, so after a reload they are blank
-    // while the saved shares are not. Recomputing then would zero every member
-    // of the team on the strength of inputs nobody re-entered — under the Save
-    // button that needed a click, under autosave it would land by itself. Hold
-    // the existing share until the manager re-enters the team's numbers (a typed
-    // 0 counts as entered, so a genuine zero score still writes).
-    if (subTeamInputsBlank(sub) && e.calculated_bonus !== 0) return e;
-    const memberCount = memberCounts[st] ?? 0;
-    const pct = parseFloat(sub.pct) || 0;
-    const records = parseInt(sub.records, 10) || 0;
-    const rfc = parseInt(sub.rfc, 10) || 0;
-    const splitShare = splitRule ? calcTeamSplitShare(pct, records, memberCount, splitRule) : 0;
-    const poolShare = poolRule ? calcTeamPoolShare(rfc, memberCount, poolRule) : 0;
-    const share = splitShare + poolShare;
-    return e.calculated_bonus === share ? e : { ...e, calculated_bonus: share };
-  });
-}
-
-/**
  * Per-employee bonus recompute for the Managers Weekly dept (perEmployee).
  * Each manager's `calculated_bonus` is the sum of their ticked incentive
  * components (calcManagerBonus). `calcBonus` returns 0 for this dept because it
@@ -337,7 +248,9 @@ interface HslMember {
   full_name: string | null;
   hsl_name: string | null;
   is_manager: boolean;
-  sub_team: SubTeamName | null;
+  /** The old SSD colour team, still on the roster rows. Not read: SSD stopped
+   *  scoring by colour team on 2026-10-06 (Kane). */
+  sub_team: string | null;
 }
 
 // ── One branch's raw server payload, and the single way it becomes state ──────
@@ -373,17 +286,10 @@ export interface HslBranchPayload {
  * Pure and module-scope on purpose: it is called once by the live load and once
  * by the cache seed, and if those two ever produced different shapes the cached
  * paint would be a quiet lie rather than a head start.
- *
- * Note what it does NOT take: the SSD team-level inputs. Those are deliberately
- * never persisted (`docs/features/hsl-kpi-calculator-2026-07.md` → *SSD sub-team
- * inputs are still NOT saved*), so both paths recompute against blank inputs,
- * where `recomputeSsdEntries` holds each saved share rather than zeroing it —
- * which is what produces the `restored` team state.
  */
 export function mergeHslBranchPayload(
   key: HslDeptKey,
   payload: HslBranchPayload,
-  subTeams: Record<SubTeamName, SubTeamState>,
   periodStart: string,
   /** The branch config. Passed rather than looked up: a DATA sub-team
    *  (2026-09-22) has no `HSL_DEPTS` entry. */
@@ -405,22 +311,21 @@ export function mergeHslBranchPayload(
   });
 
   // Seed any roster members from hsl_team_members who aren't in entries yet.
-  // Pre-fill kpi_data.sub_team for SSD so the dropdown reflects the seeded
-  // assignment. rosterEmails tracks the true roster so manually-added external
-  // members (email not in the roster) can be tagged + removed.
+  // rosterEmails tracks the true roster so manually-added external members
+  // (email not in the roster) can be tagged + removed. SSD's colour team is no
+  // longer copied into `kpi_data.sub_team`: nothing scores by it since
+  // 2026-10-06, and a seeded key nobody reads would ride into every saved row.
   const rosterEmails = new Set<string>();
   (payload.members ?? []).forEach((m) => {
     const email = m.email.toLowerCase();
     if (!email) return;
     rosterEmails.add(email);
     if (byEmail.has(email)) return;
-    const kpi: KpiData = {};
-    if (m.sub_team) (kpi as unknown as Record<string, string>).sub_team = m.sub_team;
     byEmail.set(email, {
       employee_email: email,
       employee_name: m.full_name ?? m.hsl_name ?? email,
       is_manager: m.is_manager,
-      kpi_data: kpi,
+      kpi_data: {},
       calculated_bonus: 0,
     });
   });
@@ -447,11 +352,10 @@ export function mergeHslBranchPayload(
   const sorted = Array.from(byEmail.values()).sort((a, b) =>
     a.employee_name.localeCompare(b.employee_name),
   );
-  // Recompute per-employee amounts (SSD team-split shares and Managers Weekly
-  // component sums) so the dept total + table read the right values (the DB
-  // persists 0 for legacy/unscored entries).
-  let entries = recomputeSsdEntries(key, sorted, subTeams);
-  entries = recomputeManagerEntries(key, entries, periodStart);
+  // Recompute Managers Weekly component sums so the dept total + table read the
+  // right values (the DB persists 0 for legacy/unscored entries). Every other
+  // branch shows its SAVED amount until a row is edited.
+  const entries = recomputeManagerEntries(key, sorted, periodStart);
 
   return {
     entries,
@@ -771,6 +675,20 @@ function HslBonusCalculatorForWeek({
     [catalogAssignments, catalogBonuses, weekStart],
   );
 
+  /** Monthly Library bonuses assigned to a branch that this week does not offer
+   *  (`hslCatalogBonusesFor` drops them), so the card can say why they are absent. */
+  const catalogHeldFor = useCallback(
+    (deptKey: HslDeptKey): BonusDef[] =>
+      hslCatalogBonusesHeldThisWeek({
+        subLabel: hslSubDeptLabel(deptKey),
+        assignments: catalogAssignments,
+        bonuses: catalogBonuses,
+        periodStart: periodStart(cfgOf(deptKey)),
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- periodStart is stable per week
+    [catalogAssignments, catalogBonuses, weekStart],
+  );
+
   /**
    * `calcBonus` + the catalog side. EVERY place that recomputes a person's
    * `calculated_bonus` must go through this, or a catalog bonus would be
@@ -834,10 +752,7 @@ function HslBonusCalculatorForWeek({
     for (const k of hslBranchKeys(hslDataSubs) as HslDeptKey[]) {
       // Seeded from the last visit's raw payload for THIS branch and THIS week,
       // so the numbers are on screen before the three fetches below have even
-      // been sent. Three things this deliberately does not do:
-      //   - it never seeds `subTeams`: the SSD team inputs have no persistence
-      //     home by ruling, and blank-after-remount is what stops a recompute
-      //     zeroing banked shares (`subTeamInputsBlank`);
+      // been sent. Two things this deliberately does not do:
       //   - it never sets `dirty`: this payload came out of the database, and a
       //     dirty seed would let merely opening the tab autosave it;
       //   - it never touches `weekResolved`, so nothing here unlocks a write.
@@ -845,13 +760,12 @@ function HslBonusCalculatorForWeek({
         ? getKpiCache<HslBranchPayload>(KPI_CACHE_KEYS.hslBranch(k, cachedWeek))
         : undefined;
       const seeded = cached && cachedWeek
-        ? mergeHslBranchPayload(k, cached, DEFAULT_SUB_TEAMS, cachedWeek)
+        ? mergeHslBranchPayload(k, cached, cachedWeek)
         : null;
       if (seeded) seededFromCache.current = true;
       init[k] = {
         entries: seeded?.entries ?? [],
         status: seeded?.status ?? 'draft',
-        subTeams: { ...DEFAULT_SUB_TEAMS },
         dirty: false,
         saving: false,
         rosterEmails: seeded?.rosterEmails ?? new Set(),
@@ -882,7 +796,7 @@ function HslBonusCalculatorForWeek({
   //  - `autosaveTimers` so each dept debounces independently;
   //  - `autosaveFailedRef` so a failed write is not re-sent until the manager
   //    changes something (a failure leaves the dept dirty, which would otherwise
-  //    re-arm the debounce forever). Identity of the entries/subTeams objects is
+  //    re-arm the debounce forever). Identity of the entries object is
   //    the token — every mutation replaces them, so `!==` means "edited since".
   const deptStateRef = useRef<AllDeptState>(deptState);
   deptStateRef.current = deptState;
@@ -890,7 +804,7 @@ function HslBonusCalculatorForWeek({
   /** The dept state each pending timer was armed for, so the debounce resets only
    *  when THAT dept changed — not whenever any other dept does. */
   const autosaveArmedRef = useRef<Partial<Record<HslDeptKey, DeptState>>>({});
-  const autosaveFailedRef = useRef<Partial<Record<HslDeptKey, { entries: EntryRow[]; subTeams: Record<SubTeamName, SubTeamState> }>>>({});
+  const autosaveFailedRef = useRef<Partial<Record<HslDeptKey, { entries: EntryRow[] }>>>({});
   /** Last successful autosave per dept, for the inline "Saved HH:MM" status. */
   const [savedAt, setSavedAt] = useState<Partial<Record<HslDeptKey, number>>>({});
   /** Depts whose last autosave failed — the footer says so instead of a toast
@@ -1151,10 +1065,9 @@ function HslBonusCalculatorForWeek({
         // added a member (parent re-renders also re-run the boot effect). Guard
         // at write time so unsaved entries survive any reload path.
         if (cur.dirty || cur.saving) return prev;
-        // Same merge the cache seed runs, against the sub-team inputs currently
-        // on screen — one derivation, so a seeded branch and a fetched branch
-        // can never disagree about what a row is worth.
-        const merged = mergeHslBranchPayload(key, payload, cur.subTeams, start);
+        // Same merge the cache seed runs — one derivation, so a seeded branch and
+        // a fetched branch can never disagree about what a row is worth.
+        const merged = mergeHslBranchPayload(key, payload, start);
         return {
           ...prev,
           [key]: {
@@ -1382,7 +1295,7 @@ function HslBonusCalculatorForWeek({
     const start = periodStart(dept);
     const end = periodEnd(dept, start);
     // Token for the retry hold: whatever we are about to send.
-    const attempted = { entries: d.entries, subTeams: d.subTeams };
+    const attempted = { entries: d.entries };
 
     setDept(key, { saving: true });
     let wrote = false;
@@ -1412,7 +1325,7 @@ function HslBonusCalculatorForWeek({
       // flight — otherwise the newer keystrokes would look persisted and both
       // the Mark Ready gate and the next autosave would skip them.
       const latest = deptStateRef.current[key]!;
-      const superseded = latest.entries !== attempted.entries || latest.subTeams !== attempted.subTeams;
+      const superseded = latest.entries !== attempted.entries;
       if (!superseded) setDept(key, { dirty: false });
       delete autosaveFailedRef.current[key];
       setAutosaveError((prev) => {
@@ -1465,7 +1378,7 @@ function HslBonusCalculatorForWeek({
         // `dirty: false`, so anything dirty here was entered by a person.
         seededOnly: false,
         failedUnchanged:
-          !!failed && failed.entries === d.entries && failed.subTeams === d.subTeams,
+          !!failed && failed.entries === d.entries,
       });
       if (!gate.save) {
         const existing = timers[key];
@@ -1646,23 +1559,6 @@ function HslBonusCalculatorForWeek({
     }
   }
 
-  function ssdShareForTeam(subTeam: SubTeamName, memberCount: number): number {
-    const d = deptState.ssd_medical_records!;
-    const st = d.subTeams[subTeam];
-    const pct = parseFloat(st.pct) || 0;
-    const records = parseInt(st.records, 10) || 0;
-    const rfc = parseInt(st.rfc, 10) || 0;
-    const splitRule = HSL_DEPTS.ssd_medical_records.rules.find(
-      (r): r is TeamSplitRule => r.type === 'team_split',
-    )!;
-    const poolRule = HSL_DEPTS.ssd_medical_records.rules.find(
-      (r): r is TeamPoolRule => r.type === 'team_pool',
-    );
-    const splitShare = calcTeamSplitShare(pct, records, memberCount, splitRule);
-    const poolShare = poolRule ? calcTeamPoolShare(rfc, memberCount, poolRule) : 0;
-    return splitShare + poolShare;
-  }
-
   function exportCsv() {
     const headers = ['Department', 'Period', 'Employee', 'Email', 'Bonus (PHP)', 'Status'];
     const rows: string[] = [];
@@ -1775,6 +1671,7 @@ function HslBonusCalculatorForWeek({
             searchSeed={personSearch}
             periodStartStr={periodStart(cfgOf(key))}
             catalogFor={(email) => catalogFor(key, email)}
+            catalogHeld={catalogHeldFor(key)}
             cfgOf={cfgOf}
             onKpiChange={(email, kpiKey, val) => {
               setDeptState((prev) => {
@@ -1790,10 +1687,7 @@ function HslBonusCalculatorForWeek({
                     calculated_bonus: scoreEntry(key, email, newKpi, e.is_manager),
                   };
                 });
-                // For SSD, sub_team changes affect every team member's share —
-                // the per-member denominator just changed. Recompute the whole list.
-                const finalEntries = recomputeSsdEntries(key, next, d.subTeams);
-                return { ...prev, [key]: { ...d, entries: finalEntries, dirty: true } };
+                return { ...prev, [key]: { ...d, entries: next, dirty: true } };
               });
             }}
             rosterEmails={deptState[key]!.rosterEmails}
@@ -1831,28 +1725,6 @@ function HslBonusCalculatorForWeek({
             payrollLocked={payrollLocked}
             weekPending={!weekResolved && !weekError}
             markUnreadySubmitting={reopenSubmitting}
-            onSubTeamChange={(subTeam, field, val) => {
-              setDeptState((prev) => {
-                const d = prev[key]!;
-                const newSubTeams = {
-                  ...d.subTeams,
-                  [subTeam]: { ...d.subTeams[subTeam], [field]: val },
-                };
-                // Pct/records changed → recompute per-employee shares so dept
-                // total and the persisted `calculated_bonus` reflect the new score.
-                const newEntries = recomputeSsdEntries(key, d.entries, newSubTeams);
-                return {
-                  ...prev,
-                  [key]: {
-                    ...d,
-                    dirty: true,
-                    subTeams: newSubTeams,
-                    entries: newEntries,
-                  },
-                };
-              });
-            }}
-            ssdShareForTeam={key === 'ssd_medical_records' ? ssdShareForTeam : undefined}
           />
     );
   }
@@ -1887,13 +1759,6 @@ function HslBonusCalculatorForWeek({
               : 'My Departments'
         }
         cards={visibleDepts.length}
-        // A lone sub-team-scored branch (SSD) renders a workspace about twice
-        // the height of a plain roster; the placeholder has to reserve that or
-        // the page drops several hundred pixels when the data lands.
-        teamSplit={
-          visibleDepts.length === 1 &&
-          cfgOf(visibleDepts[0]!).rules[0]?.type === 'team_split'
-        }
         // The insight row's own gate, minus the Sunday check: before the week
         // resolves `weekStart` is the Monday-anchored seed, and `booted` waits
         // on the resolved week anyway.
@@ -2446,6 +2311,9 @@ interface DeptBlockProps {
   /** Bonus Library bonuses assigned to THIS branch, per person (2026-09-22).
    *  Threaded from the calculator so the table and the scorer read one source. */
   catalogFor?: (email: string) => HslCatalogBonus[];
+  /** Monthly Library bonuses assigned here that this week does not offer (not
+   *  the month's final payroll week) — said on the card, never silently absent. */
+  catalogHeld?: readonly BonusDef[];
   /** Branch config resolver — code teams AND data sub-teams. */
   cfgOf: (key: string) => DeptConfig;
   onKpiChange: (email: string, key: string, val: number | boolean) => void;
@@ -2457,8 +2325,6 @@ interface DeptBlockProps {
   onMarkReady: () => void;
   onMarkUnready: () => void;
   onView: () => void;
-  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
-  ssdShareForTeam?: (subTeam: SubTeamName, memberCount: number) => number;
   payrollLocked: boolean;
   /**
    * The payroll week has not been confirmed live yet on this mount.
@@ -2494,17 +2360,17 @@ const DEPT_PAGE_SIZE = 10;
 
 function DeptBlock({
   catalogFor,
+  catalogHeld,
   cfgOf,
   deptKey, state, loading, searchSeed, sectionClassName,
   chromeless, onOpen, periodStartStr,
   onKpiChange,
-  savedAtMs, autosaveError, onMarkReady, onMarkUnready, onView, onSubTeamChange, ssdShareForTeam,
+  savedAtMs, autosaveError, onMarkReady, onMarkUnready, onView,
   payrollLocked, weekPending, markUnreadySubmitting,
   rosterEmails, offboardedEmails, onAddMember, offboardedSuggestions, onQuickAddOffboarded, onRemoveMember,
 }: DeptBlockProps) {
   const dept = cfgOf(deptKey);
   const deptTotal = state.entries.reduce((s, e) => s + e.calculated_bonus, 0);
-  const isTeamSplit = dept.rules[0]?.type === 'team_split';
   const tieredRule = dept.rules.find((r): r is TieredRule => r.type === 'tiered');
   const isLocked = state.status === 'locked';
   // Scoring is editable only in draft. Once a period is 'ready' (sent to
@@ -2512,10 +2378,6 @@ function DeptBlock({
   // silent edits that never get saved to the DB Accounting actually reads.
   // Also held while the payroll week is still being confirmed — see `weekPending`.
   const readOnly = state.status !== 'draft' || payrollLocked || weekPending;
-
-  function subTeamMemberCount(subTeam: SubTeamName): number {
-    return state.entries.filter((e) => (e.kpi_data.sub_team as unknown as string) === subTeam).length;
-  }
 
   // Per-dept search + pagination
   const [search, setSearch] = useState(searchSeed ?? '');
@@ -2527,38 +2389,23 @@ function DeptBlock({
     if (searchSeed !== undefined) setSearch(searchSeed);
   }, [searchSeed]);
 
-  // SSD sub-team filter — shared between the colored scoring boxes (left) and the
-  // employee table (right) so clicking either surface filters the roster live.
-  // 'ALL' shows everyone, 'NONE' shows only the unassigned.
-  const [subTeamFilter, setSubTeamFilter] = useState<SubTeamFilter>('ALL');
-
   const filteredEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
-    let list = state.entries;
-    if (q) {
-      list = list.filter((e) =>
-        e.employee_name.toLowerCase().includes(q) || e.employee_email.toLowerCase().includes(q),
-      );
-    }
-    if (isTeamSplit && subTeamFilter !== 'ALL') {
-      list = list.filter((e) => {
-        const st = String(e.kpi_data.sub_team ?? '');
-        return subTeamFilter === 'NONE' ? !st : st === subTeamFilter;
-      });
-    }
-    return list;
-  }, [state.entries, search, subTeamFilter, isTeamSplit]);
+    if (!q) return state.entries;
+    return state.entries.filter((e) =>
+      e.employee_name.toLowerCase().includes(q) || e.employee_email.toLowerCase().includes(q),
+    );
+  }, [state.entries, search]);
 
   const totalPages = Math.max(1, Math.ceil(filteredEntries.length / DEPT_PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * DEPT_PAGE_SIZE;
   const pagedEntries = filteredEntries.slice(pageStart, pageStart + DEPT_PAGE_SIZE);
 
-  // Reset to page 1 whenever the search or sub-team filter changes
-  useEffect(() => { setPage(1); }, [search, subTeamFilter]);
+  // Reset to page 1 whenever the search changes
+  useEffect(() => { setPage(1); }, [search]);
 
-  /** Page stepper. Rendered in the toolbar for most departments; SSD instead
-   *  hands it to the roster footer, where it sits with the rows it pages. */
+  /** Page stepper, rendered in the toolbar. */
   const pagerControls = (
     <div
       data-readonly-allow
@@ -2712,8 +2559,7 @@ function DeptBlock({
                   <span className="text-zinc-400"> · filtered from {state.entries.length}</span>
                 )}
               </span>
-              {/* SSD renders this in the roster footer instead — see `pagerControls`. */}
-              {!isTeamSplit && pagerControls}
+              {pagerControls}
             </div>
           </div>
         )}
@@ -2758,7 +2604,7 @@ function DeptBlock({
           </div>
         )}
 
-        {!dept.noKpi && !isTeamSplit && !dept.perEmployee && (
+        {!dept.noKpi && !dept.perEmployee && (
           <KpiTable
             dept={dept}
             entries={pagedEntries}
@@ -2766,6 +2612,7 @@ function DeptBlock({
             isLocked={readOnly}
             periodStart={periodStartStr}
             catalogFor={catalogFor}
+            catalogHeld={catalogHeld}
             onKpiChange={onKpiChange}
             rosterEmails={rosterEmails}
             offboardedEmails={offboardedEmails}
@@ -2784,30 +2631,6 @@ function DeptBlock({
             rosterEmails={rosterEmails}
             offboardedEmails={offboardedEmails}
             onRemoveMember={onRemoveMember}
-          />
-        )}
-
-        {/* SSD: status strip + one team card + full-width roster. The roster
-            filter is lifted to this block because `filteredEntries` above pages
-            against it — the workspace must not hold a second copy. */}
-        {isTeamSplit && ssdShareForTeam && (
-          <SsdWorkspace
-            subTeams={state.subTeams}
-            isLocked={readOnly}
-            onSubTeamChange={onSubTeamChange}
-            ssdShareForTeam={ssdShareForTeam}
-            subTeamMemberCount={subTeamMemberCount}
-            entries={pagedEntries}
-            allEntries={state.entries}
-            onSubTeamAssign={(email, subTeam) =>
-              onKpiChange(email, 'sub_team', subTeam as unknown as number)
-            }
-            activeFilter={subTeamFilter}
-            onFilterChange={setSubTeamFilter}
-            rosterEmails={rosterEmails}
-            offboardedEmails={offboardedEmails}
-            onRemoveMember={onRemoveMember}
-            pager={pagerControls}
           />
         )}
 
@@ -2919,6 +2742,8 @@ interface KpiTableProps {
    *  Rendered as extra columns after the schema rules; a non-PHP one is shown
    *  but not priced, because this card has no FX. */
   catalogFor?: (email: string) => HslCatalogBonus[];
+  /** Monthly Library bonuses assigned here that this week does not offer. */
+  catalogHeld?: readonly BonusDef[];
   /** ISO period_start of the week on screen — a `cadence: 'monthly'` flat rule
    *  is only tickable in the final payroll week of its month. */
   periodStart: string;
@@ -3074,12 +2899,35 @@ function whoShort(email: string | null): string | null {
   return at > 0 ? email.slice(0, at) : email;
 }
 
-function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
+function BonusLibraryLegend({
+  cols,
+  held = [],
+}: {
+  cols: readonly HslCatalogBonus[];
+  /** Monthly bonuses assigned to the branch that this week does not offer. On a
+   *  Library-only branch (SSD Medical Records is MONTHLY) they are the whole
+   *  programme, so their absence must read as "not this week", never as an
+   *  empty card. Kane, 2026-10-06: the final-payroll-week gate stands. */
+  held?: readonly BonusDef[];
+}) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-sky-200/80 bg-sky-50/60 px-3 py-2 dark:border-sky-900/50 dark:bg-sky-950/20">
       <span className="font-mono text-[9px] uppercase tracking-[0.15em] text-sky-700 dark:text-sky-400">
         Bonus Library
       </span>
+      {held.map((bonus) => (
+        <span
+          key={`held-${bonus.id}`}
+          title={`${bonus.name} is a MONTHLY Library bonus. It is offered only in the month's final payroll week, and this week is not one, so it pays ₱0 here. Score it in the final payroll week, or ask Accounting to make it weekly.`}
+          className="inline-flex flex-wrap items-center gap-1.5 rounded border border-amber-300/80 bg-amber-50 px-1.5 py-0.5 dark:border-amber-800/60 dark:bg-amber-950/40"
+        >
+          <AlertTriangle className="h-3 w-3 flex-none text-amber-600 dark:text-amber-400" aria-hidden />
+          <span className="text-[11px] font-medium text-zinc-800 dark:text-zinc-100">{bonus.name}</span>
+          <span className="font-mono text-[9px] text-amber-800 dark:text-amber-300">
+            monthly · final payroll week only — not offered this week
+          </span>
+        </span>
+      ))}
       {cols.map(({ bonus, scoreable, individual }) => {
         const vars = catalogBonusVariables(bonus);
         // Kane, 2026-09-28: once a branch's pay lives in the Library, the card
@@ -3143,7 +2991,7 @@ function BonusLibraryLegend({ cols }: { cols: readonly HslCatalogBonus[] }) {
   );
 }
 
-export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catalogFor, onKpiChange, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
+export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catalogFor, catalogHeld = [], onKpiChange, rosterEmails, offboardedEmails, onRemoveMember }: KpiTableProps) {
   const rules = dept.rules.filter((r) => r.type !== 'team_split');
   // The catalog columns are the UNION across everyone on the page: a bonus
   // assigned per-employee reaches one person, and the column still has to exist
@@ -3164,7 +3012,9 @@ export function KpiTable({ dept, entries, subtotal, isLocked, periodStart, catal
     <div className="space-y-2">
       {/* What the Library bonuses on this branch ARE, said once and in full —
           the column heads below only have room for a name and a clipped rule. */}
-      {catalogCols.length > 0 && <BonusLibraryLegend cols={catalogCols} />}
+      {(catalogCols.length > 0 || catalogHeld.length > 0) && (
+        <BonusLibraryLegend cols={catalogCols} held={catalogHeld} />
+      )}
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table className="table-keep w-full min-w-[600px] text-xs">
           <thead>
@@ -3604,1094 +3454,6 @@ export function HslManagersTable({
     </div>
   );
 }
-// ── SSD Medical Records workspace ─────────────────────────────────────────────
-//
-// Structure comes from the Bonus Run design handoff
-// (references/UI improvement request/design_handoff_bonus_run/): a status strip
-// that doubles as the team tab bar, ONE team card at a time, then a full-width
-// roster. Three places deliberately depart from it, because the handoff was
-// written against sample data and says so itself:
-//
-//  1. Tier thresholds are the REAL ones from schema.ts — below 90% earns
-//     nothing, 90–94.99% pays ₱250/record, 95%+ pays ₱350/record — plus the
-//     SEPARATE RFC pool (₱250 per RFC, split by headcount) that stacks on top.
-//     The handoff's 90/95/98 → 50/75/100%-of-pool ladder is flagged as invented
-//     in its own README.
-//  2. Its "✓ Saved 2 min ago" footer would be a lie sitting under these three
-//     fields: accuracy / records / RFC are deliberately NOT persisted (Kane,
-//     2026-08-17 — docs/features/hsl-kpi-calculator-2026-07.md). That forces a
-//     fourth team state, `restored`, and an amber note in place of a save stamp.
-//  3. Unassigned rows carry a dot, not its 3px inset side stripe.
-
-const SSD_TEAMS: SubTeamName[] = ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'];
-
-/** Binds one team's colour tokens (index.css) to an element as `--team*`, so a
- *  single hue can drive inline styles and `color-mix()` — neither of which can
- *  take a Tailwind class. Every SSD surface reads `var(--team)` and friends. */
-function teamVars(name: SubTeamName): React.CSSProperties {
-  const v = SUB_TEAM_PALETTE[name].varName;
-  return {
-    '--team': `var(--ssd-${v})`,
-    '--team-solid': `var(--ssd-${v}-solid)`,
-    '--team-on': `var(--ssd-${v}-on)`,
-    '--team-text': `var(--ssd-${v}-text)`,
-  } as React.CSSProperties;
-}
-
-/** Completeness of one sub-team, derived every render and never stored.
- *
- *  `restored` is the state the handoff could not have known about: after a
- *  reload the three inputs are blank while the per-member shares they produced
- *  are not. Reporting that as "Not started" would send the operator off to
- *  re-key numbers that are already banked — and `recomputeSsdEntries` refuses to
- *  overwrite those shares precisely because they are real. A typed `0` counts as
- *  entered, matching `subTeamInputsBlank`. */
-type SsdTeamStatus = 'entered' | 'partial' | 'restored' | 'empty';
-
-function ssdTeamStatus(st: SubTeamState, hasSavedShare: boolean): SsdTeamStatus {
-  const filled = [st.pct, st.records, st.rfc].filter((v) => v.trim() !== '').length;
-  if (filled === 3) return 'entered';
-  if (filled > 0) return 'partial';
-  return hasSavedShare ? 'restored' : 'empty';
-}
-
-const SSD_STATUS_MARK: Record<SsdTeamStatus, string> = {
-  entered: '✓',
-  partial: '!',
-  restored: '·',
-  empty: '–',
-};
-
-const SSD_STATUS_LABEL: Record<SsdTeamStatus, string> = {
-  entered: 'Entered',
-  partial: 'Incomplete',
-  restored: 'Scored earlier',
-  empty: 'Not started',
-};
-
-/** Which threshold a team's accuracy lands in, and how far along the tier meter
- *  that is. Reads the live rule rather than restating it, so a schema edit can
- *  never leave the meter describing a rate that no longer pays. */
-function ssdTier(pct: number, rule: TeamSplitRule | undefined) {
-  const sorted = [...(rule?.thresholds ?? [])].sort((a, b) => a.minPct - b.minPct);
-  const idx = sorted.findIndex(
-    (t) => pct >= t.minPct && (t.maxPct === null || pct <= t.maxPct),
-  );
-  const hit = idx >= 0 ? sorted[idx] : undefined;
-  const firstPaying = sorted.find((t) => t.ratePerRecord > 0);
-  return {
-    step: idx >= 0 ? idx + 1 : 0,
-    steps: Math.max(1, sorted.length),
-    rate: hit?.ratePerRecord ?? 0,
-    label: !hit
-      ? 'No matching tier'
-      : hit.ratePerRecord === 0
-        ? `Below ${firstPaying?.minPct ?? 90}% · no accuracy bonus`
-        : `${hit.minPct}%${hit.maxPct === null ? '+' : `–${hit.maxPct}%`} · ${formatPeso(hit.ratePerRecord)}/record`,
-  };
-}
-
-// ── Status strip / team tab bar ───────────────────────────────────────────────
-
-interface SsdTeamTabsProps {
-  statuses: Record<SubTeamName, SsdTeamStatus>;
-  memberCount: (t: SubTeamName) => number;
-  activeTeam: SubTeamName;
-  onSelect: (t: SubTeamName) => void;
-  unassignedCount: number;
-  onShowUnassigned: () => void;
-}
-
-/** The completion overview AND the tab control. Answers "which teams are done?"
- *  without opening any of them — every tab carries a glyph as well as a colour,
- *  so status never rests on hue alone. */
-function SsdTeamTabs({
-  statuses, memberCount, activeTeam, onSelect, unassignedCount, onShowUnassigned,
-}: SsdTeamTabsProps) {
-  const scored = SSD_TEAMS.filter(
-    (t) => statuses[t] === 'entered' || statuses[t] === 'restored',
-  ).length;
-  const tabsRef = useRef<(HTMLButtonElement | null)[]>([]);
-
-  // Roving focus: the tablist is a single tab stop and arrows move between teams.
-  function onKeyDown(e: React.KeyboardEvent, i: number) {
-    const last = SSD_TEAMS.length - 1;
-    let next = -1;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = i === last ? 0 : i + 1;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = i === 0 ? last : i - 1;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = last;
-    if (next < 0) return;
-    e.preventDefault();
-    onSelect(SSD_TEAMS[next]!);
-    tabsRef.current[next]?.focus();
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-      {/* Held at its natural size — without `flex-none` and `nowrap` this block
-          collapses into a vertical stack the moment the tabs need to wrap. */}
-      <div className="flex-none whitespace-nowrap border-r border-zinc-200 pr-4 dark:border-zinc-800">
-        <span className="font-mono text-base font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
-          {scored} / {SSD_TEAMS.length}
-        </span>
-        <span className="ml-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-zinc-500">
-          teams scored
-        </span>
-      </div>
-
-      <div
-        role="tablist"
-        aria-label="Sub-teams"
-        className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-1.5 sm:basis-0"
-      >
-        {SSD_TEAMS.map((name, i) => {
-          const status = statuses[name];
-          const active = activeTeam === name;
-          const touched = status !== 'empty';
-          const members = memberCount(name);
-          return (
-            <button
-              key={name}
-              ref={(el) => { tabsRef.current[i] = el; }}
-              type="button"
-              role="tab"
-              id={`ssd-tab-${name}`}
-              aria-selected={active}
-              aria-controls={`ssd-card-${name}`}
-              tabIndex={active ? 0 : -1}
-              onClick={() => onSelect(name)}
-              onKeyDown={(e) => onKeyDown(e, i)}
-              style={teamVars(name)}
-              title={`${name} — ${SSD_STATUS_LABEL[status]}, ${members} ${members === 1 ? 'member' : 'members'}`}
-              className={cn(
-                'inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1',
-                'font-mono text-[10px] font-semibold uppercase tracking-[0.12em] outline-none',
-                'transition-[background-color,border-color,box-shadow,color] duration-200 ease-[cubic-bezier(0.2,0.7,0.3,1)]',
-                'focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-950',
-                active
-                  ? 'border-[var(--team)] bg-[color-mix(in_srgb,var(--team)_18%,transparent)] text-zinc-900 shadow-[inset_0_0_0_1px_var(--team)] dark:text-zinc-50'
-                  : touched
-                    ? 'border-zinc-200 bg-white text-zinc-700 hover:border-[var(--team)] dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-300'
-                    : 'border-zinc-200 bg-white text-zinc-400 hover:border-zinc-300 hover:text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-500 dark:hover:text-zinc-400',
-              )}
-            >
-              <span
-                aria-hidden
-                className={cn(
-                  'h-2 w-2 flex-none rounded-full transition-colors duration-200',
-                  !touched && !active && 'bg-zinc-300 dark:bg-zinc-700',
-                )}
-                style={touched || active ? { backgroundColor: 'var(--team)' } : undefined}
-              />
-              {name}
-              <span
-                aria-hidden
-                className={cn(
-                  'w-2 text-center',
-                  status === 'entered' && 'text-emerald-600 dark:text-emerald-400',
-                  status === 'partial' && 'text-amber-600 dark:text-amber-400',
-                  status === 'restored' && 'text-zinc-500',
-                  status === 'empty' && 'text-zinc-300 dark:text-zinc-600',
-                )}
-              >
-                {SSD_STATUS_MARK[status]}
-              </span>
-              <span className="sr-only">{SSD_STATUS_LABEL[status]}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {unassignedCount > 0 && (
-        <button
-          type="button"
-          onClick={onShowUnassigned}
-          className="inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-amber-700 outline-none transition-colors hover:bg-amber-100 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400 dark:hover:bg-amber-950/40"
-          title="Show only the people with no sub-team"
-        >
-          <span aria-hidden className="h-2 w-2 rounded-full bg-amber-500" />
-          {unassignedCount} unassigned
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ── Team card ─────────────────────────────────────────────────────────────────
-
-interface SsdTeamCardProps {
-  name: SubTeamName;
-  state: SubTeamState;
-  status: SsdTeamStatus;
-  members: number;
-  /** Per-member payout. For a `restored` team this is the SAVED share, not a
-   *  recompute — the three inputs are blank, so recomputing would report ₱0 for
-   *  a team that has already been scored and will be paid. */
-  share: number;
-  splitRule: TeamSplitRule | undefined;
-  poolRule: TeamPoolRule | undefined;
-  isLocked: boolean;
-  onChange: (field: 'pct' | 'records' | 'rfc', val: string) => void;
-}
-
-const SSD_FIELD_LABEL =
-  'mb-1 block font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400';
-const SSD_FIELD_SHELL =
-  'flex items-center rounded-lg border border-zinc-300 bg-zinc-50 transition-colors duration-[180ms] focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/25 dark:border-zinc-700 dark:bg-zinc-900';
-const SSD_FIELD_INPUT =
-  'h-10 w-full min-w-0 bg-transparent px-2.5 font-mono text-[15px] font-semibold tabular-nums text-zinc-900 outline-none placeholder:font-normal placeholder:text-zinc-400 disabled:cursor-not-allowed disabled:opacity-55 dark:text-zinc-100 dark:placeholder:text-zinc-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
-
-function SsdTeamCard({
-  name, state, status, members, share, splitRule, poolRule, isLocked, onChange,
-}: SsdTeamCardProps) {
-  const pct = parseFloat(state.pct) || 0;
-  const records = parseFloat(state.records) || 0;
-  const rfc = parseFloat(state.rfc) || 0;
-  const tier = ssdTier(pct, splitRule);
-  const rfcRate = poolRule?.ratePerRecord ?? 0;
-  const denom = members || 1;
-
-  // The two rules are independent and SUM. Showing only the total would hide
-  // that a team under 90% accuracy still earns its RFC pool.
-  const accuracyShare = (records * tier.rate) / denom;
-  const rfcShare = (rfc * rfcRate) / denom;
-  const typed = status === 'entered' || status === 'partial';
-
-  return (
-    <div
-      id={`ssd-card-${name}`}
-      role="tabpanel"
-      aria-labelledby={`ssd-tab-${name}`}
-      tabIndex={0}
-      style={teamVars(name)}
-      className={cn(
-        'ssd-card-in flex min-w-0 flex-col overflow-hidden rounded-xl border bg-white outline-none',
-        'transition-[border-color,box-shadow] duration-[260ms] ease-[cubic-bezier(0.2,0.7,0.3,1)]',
-        'focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:bg-zinc-950/50 dark:focus-visible:ring-offset-zinc-950',
-        status === 'empty'
-          ? 'border-zinc-200 dark:border-zinc-800'
-          : 'border-[color-mix(in_srgb,var(--team)_50%,#e4e4e7)] shadow-[0_1px_2px_rgba(0,0,0,0.05),0_8px_20px_-12px_rgba(0,0,0,0.18)] dark:border-[color-mix(in_srgb,var(--team)_45%,#27272a)]',
-      )}
-    >
-      <div
-        aria-hidden
-        className="h-1 w-full flex-none transition-colors duration-[260ms]"
-        style={{
-          backgroundColor:
-            status === 'empty' ? 'color-mix(in srgb, var(--team) 22%, transparent)' : 'var(--team)',
-        }}
-      />
-
-      {/* Identity left, a text badge right — the card's state is never carried
-          by colour alone. */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
-        <div className="flex min-w-0 items-center gap-2">
-          <span
-            aria-hidden
-            className="h-2.5 w-2.5 flex-none rounded-full"
-            style={{ backgroundColor: 'var(--team)' }}
-          />
-          <h4 className="font-mono text-[13px] font-bold uppercase tracking-[0.16em] text-zinc-900 dark:text-zinc-100">
-            {name}
-          </h4>
-          <span className="font-mono text-[11px] text-zinc-500">
-            {members} {members === 1 ? 'member' : 'members'}
-          </span>
-        </div>
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em]',
-            status === 'entered' && 'text-[var(--team-on)]',
-            status === 'partial' && 'border border-amber-500 text-amber-700 dark:text-amber-400',
-            status === 'restored' && 'border border-zinc-300 text-zinc-600 dark:border-zinc-700 dark:text-zinc-400',
-            status === 'empty' && 'border border-zinc-200 text-zinc-500 dark:border-zinc-800 dark:text-zinc-500',
-          )}
-          style={status === 'entered' ? { backgroundColor: 'var(--team-solid)' } : undefined}
-        >
-          {status === 'entered' && <Check className="h-2.5 w-2.5" aria-hidden />}
-          {status === 'restored' && <History className="h-2.5 w-2.5" aria-hidden />}
-          {SSD_STATUS_LABEL[status]}
-        </span>
-      </div>
-
-      {/* Fields stay strings end to end: the operator types "96." on the way to
-          "96.2", and coercing on every keystroke fights the input. */}
-      <div className="grid gap-x-4 gap-y-3 px-4 py-4 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
-        <div className="min-w-0">
-          <label className={SSD_FIELD_LABEL} htmlFor={`ssd-pct-${name}`}>Accuracy</label>
-          <div className={SSD_FIELD_SHELL}>
-            <input
-              id={`ssd-pct-${name}`}
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min={0}
-              max={100}
-              className={cn(SSD_FIELD_INPUT, 'min-w-[56px] pr-0')}
-              value={state.pct}
-              disabled={isLocked}
-              placeholder="0.00"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => onChange('pct', e.target.value)}
-            />
-            <span aria-hidden className="pr-2.5 font-mono text-[11px] text-zinc-500">%</span>
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          <label className={SSD_FIELD_LABEL} htmlFor={`ssd-rec-${name}`}>Records</label>
-          <div className={SSD_FIELD_SHELL}>
-            <input
-              id={`ssd-rec-${name}`}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              className={SSD_FIELD_INPUT}
-              value={state.records}
-              disabled={isLocked}
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => onChange('records', e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="min-w-0">
-          <label className={SSD_FIELD_LABEL} htmlFor={`ssd-rfc-${name}`}>RFC · pooled</label>
-          <div className={SSD_FIELD_SHELL}>
-            <input
-              id={`ssd-rfc-${name}`}
-              type="number"
-              inputMode="numeric"
-              min={0}
-              className={SSD_FIELD_INPUT}
-              value={state.rfc}
-              disabled={isLocked}
-              placeholder="0"
-              onFocus={(e) => e.currentTarget.select()}
-              onChange={(e) => onChange('rfc', e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Live arithmetic for both rules, so the payout below is never a number
-          the operator has to take on faith. A restored team has no arithmetic to
-          show — its inputs are gone and only the result survived. */}
-      {status === 'restored' ? (
-        <p className="border-t border-zinc-100 px-4 py-2.5 font-mono text-[11px] leading-relaxed text-zinc-600 dark:border-zinc-800/70 dark:text-zinc-400">
-          Scored in an earlier session. Accuracy, records and RFC aren&rsquo;t saved between
-          sessions, so only the share below survived. Re-enter all three to change it.
-        </p>
-      ) : (
-      <dl className="grid gap-1 border-t border-zinc-100 px-4 py-2.5 font-mono text-[11px] dark:border-zinc-800/70">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <dt className="min-w-0 text-zinc-500">
-            {records > 0 && tier.rate > 0
-              ? `${records.toLocaleString('en-PH')} records × ${formatPeso(tier.rate)} ÷ ${denom}`
-              : state.pct.trim() && tier.rate === 0
-                ? 'Accuracy below the paying tier'
-                : 'Accuracy sets the per-record rate'}
-          </dt>
-          <dd className="tabular-nums text-zinc-700 dark:text-zinc-300">
-            {records > 0 && tier.rate > 0 ? formatPeso(accuracyShare) : '—'}
-          </dd>
-        </div>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <dt className="min-w-0 text-zinc-500">
-            {rfc > 0
-              ? `${rfc.toLocaleString('en-PH')} RFC × ${formatPeso(rfcRate)} ÷ ${denom}`
-              : `RFC pools at ${formatPeso(rfcRate)} each, split evenly`}
-          </dt>
-          <dd className="tabular-nums text-zinc-700 dark:text-zinc-300">
-            {rfc > 0 ? formatPeso(rfcShare) : '—'}
-          </dd>
-        </div>
-      </dl>
-      )}
-
-      {/* Tier meter left, per-member payout right. */}
-      <div className="mt-auto flex flex-wrap items-end justify-between gap-3 border-t border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex items-center gap-1" aria-hidden>
-            {Array.from({ length: tier.steps }, (_, i) => {
-              const lit = !!state.pct.trim() && i < tier.step;
-              return (
-                <span
-                  key={i}
-                  className={cn(
-                    'h-1.5 w-7 rounded-full transition-colors duration-[240ms]',
-                    !lit && 'bg-zinc-200 dark:bg-zinc-800',
-                  )}
-                  style={lit ? { backgroundColor: 'var(--team)' } : undefined}
-                />
-              );
-            })}
-          </div>
-          <span
-            className={cn(
-              'font-mono text-[11px] font-medium',
-              state.pct.trim() ? 'text-[var(--team-text)]' : 'text-zinc-500',
-            )}
-          >
-            {state.pct.trim()
-              ? tier.label
-              : status === 'restored'
-                ? 'Accuracy not on screen'
-                : 'Awaiting accuracy'}
-          </span>
-        </div>
-        <div className="text-right">
-          <div
-            className={cn(
-              'font-mono text-xl font-bold tabular-nums leading-none',
-              typed || share !== 0 ? 'text-[var(--team-text)]' : 'text-zinc-400 dark:text-zinc-600',
-            )}
-          >
-            {typed || status === 'restored' || share !== 0 ? <AnimatedPeso amount={share} /> : '—'}
-          </div>
-          <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-            per member
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Sub-team picker (one roster row) ──────────────────────────────────────────
-
-/** SmoothSelect options for a roster row: "Unassigned", then the seven teams. */
-const SUB_TEAM_OPTIONS: { value: SubTeamName | ''; label: string }[] = [
-  { value: '', label: 'Unassigned' },
-  ...SSD_TEAMS.map((t) => ({ value: t, label: t.charAt(0) + t.slice(1).toLowerCase() })),
-];
-
-/** One control per row instead of seven chips, which is what keeps a 60-person
- *  roster readable. A pill-shaped `SmoothSelect` tinted with the row's `--team`
- *  colour; the menu is the themed one (sentence case), never the browser's popup. */
-function SubTeamSelect({
-  value, onChange, isLocked, employeeName,
-}: {
-  value: SubTeamName | '';
-  onChange: (v: SubTeamName | '') => void;
-  isLocked: boolean;
-  employeeName: string;
-}) {
-  return (
-    <SmoothSelect<SubTeamName | ''>
-      aria-label={`Sub-team for ${employeeName}`}
-      value={value}
-      disabled={isLocked}
-      onChange={onChange}
-      options={SUB_TEAM_OPTIONS}
-      accent="blue"
-      size="sm"
-      className="min-w-0 flex-1"
-      triggerClassName={cn(
-        'h-auto rounded-full py-1.5 pl-3 pr-2.5 shadow-none hover:shadow-none hover:brightness-[1.04]',
-        'font-mono text-[10px] font-semibold uppercase tracking-[0.1em]',
-        'disabled:opacity-60',
-        value
-          ? 'border-[color-mix(in_srgb,var(--team)_60%,transparent)] bg-[color-mix(in_srgb,var(--team)_16%,transparent)] text-zinc-900 dark:bg-[color-mix(in_srgb,var(--team)_16%,transparent)] dark:text-zinc-100'
-          : 'text-zinc-500 dark:bg-zinc-950/60 dark:text-zinc-400',
-      )}
-    />
-  );
-}
-
-// ── Roster ────────────────────────────────────────────────────────────────────
-
-interface SsdRosterProps {
-  entries: EntryRow[];
-  allEntries: EntryRow[];
-  isLocked: boolean;
-  /** Per-row payout. Not `ssdShareForTeam` directly: a team scored in an earlier
-   *  session has blank inputs, and recomputing from those would print ₱0.00 next
-   *  to a share that is banked and about to be paid. */
-  shareForRow: (entry: EntryRow, subTeam: SubTeamName, memberCount: number) => number;
-  onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
-  activeFilter: SubTeamFilter;
-  onFilterChange: (f: SubTeamFilter) => void;
-  rosterEmails?: Set<string>;
-  offboardedEmails?: Set<string>;
-  onRemoveMember?: (email: string) => void;
-  /** Page controls owned by the parent block, dropped into the roster footer. */
-  pager?: React.ReactNode;
-}
-
-function SsdRoster({
-  entries, allEntries, isLocked, shareForRow, onSubTeamAssign,
-  activeFilter, onFilterChange, rosterEmails, offboardedEmails, onRemoveMember, pager,
-}: SsdRosterProps) {
-  // Counts must reflect the whole department, never just the visible page.
-  const memberCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const e of allEntries) {
-      const st = String(e.kpi_data.sub_team ?? '');
-      if (st) counts[st] = (counts[st] ?? 0) + 1;
-    }
-    return counts;
-  }, [allEntries]);
-
-  const unassignedCount = useMemo(
-    () => allEntries.filter((e) => !String(e.kpi_data.sub_team ?? '')).length,
-    [allEntries],
-  );
-
-  // Selection is keyed by email so it survives paging and filtering; checkboxes
-  // only render for the rows currently on screen.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  // Drop selected emails that no longer exist (the roster changed under us).
-  useEffect(() => {
-    setSelected((prev) => {
-      if (prev.size === 0) return prev;
-      const valid = new Set(allEntries.map((e) => e.employee_email));
-      let changed = false;
-      const next = new Set<string>();
-      for (const em of prev) {
-        if (valid.has(em)) next.add(em);
-        else changed = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [allEntries]);
-
-  const pageEmails = entries.map((e) => e.employee_email);
-  const allPageSelected = pageEmails.length > 0 && pageEmails.every((em) => selected.has(em));
-  const somePageSelected = pageEmails.some((em) => selected.has(em));
-
-  const selectAllRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = somePageSelected && !allPageSelected;
-    }
-  }, [somePageSelected, allPageSelected]);
-
-  function toggleOne(email: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(email)) next.delete(email);
-      else next.add(email);
-      return next;
-    });
-  }
-
-  function toggleAllOnPage() {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (allPageSelected) pageEmails.forEach((em) => next.delete(em));
-      else pageEmails.forEach((em) => next.add(em));
-      return next;
-    });
-  }
-
-  function bulkAssign(target: SubTeamName | '') {
-    if (selected.size === 0) return;
-    // Each call composes via functional setState in the parent, so looping is safe.
-    selected.forEach((em) => onSubTeamAssign(em, target));
-    setSelected(new Set());
-  }
-
-  const chipBase =
-    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] outline-none transition-[background-color,border-color,color] duration-200 ease-[cubic-bezier(0.2,0.7,0.3,1)] focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-950';
-  const chipIdle =
-    'border-zinc-200 bg-white text-zinc-600 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400 dark:hover:text-zinc-200';
-
-  return (
-    <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950/40">
-      {/* Filter bar. Independent of the open team card, so you can score BLUE
-          while looking at who is still unassigned. */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-200 px-3 py-2.5 dark:border-zinc-800">
-        <span className="mr-1 font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-          Roster
-        </span>
-        <button
-          type="button"
-          onClick={() => onFilterChange('ALL')}
-          aria-pressed={activeFilter === 'ALL'}
-          className={cn(
-            chipBase,
-            activeFilter === 'ALL'
-              ? 'border-transparent bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-              : chipIdle,
-          )}
-        >
-          All
-          <span className="tabular-nums opacity-65">{allEntries.length}</span>
-        </button>
-        {SSD_TEAMS.map((name) => {
-          const active = activeFilter === name;
-          return (
-            <button
-              key={name}
-              type="button"
-              style={teamVars(name)}
-              onClick={() => onFilterChange(active ? 'ALL' : name)}
-              aria-pressed={active}
-              title={active ? `Showing ${name} only — click to show everyone` : `Show ${name} only`}
-              className={cn(
-                chipBase,
-                active ? 'border-transparent bg-[var(--team-solid)] text-[var(--team-on)]' : chipIdle,
-              )}
-            >
-              <span
-                aria-hidden
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ backgroundColor: active ? 'var(--team-on)' : 'var(--team)' }}
-              />
-              {name}
-              <span className="tabular-nums opacity-65">{memberCounts[name] ?? 0}</span>
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => onFilterChange(activeFilter === 'NONE' ? 'ALL' : 'NONE')}
-          aria-pressed={activeFilter === 'NONE'}
-          title={
-            activeFilter === 'NONE'
-              ? 'Showing unassigned only — click to show everyone'
-              : 'Show only people with no sub-team'
-          }
-          className={cn(
-            chipBase,
-            activeFilter === 'NONE'
-              ? 'border-transparent bg-amber-700 text-white dark:bg-amber-400 dark:text-amber-950'
-              : chipIdle,
-          )}
-        >
-          <span
-            aria-hidden
-            className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              activeFilter === 'NONE' ? 'bg-white dark:bg-amber-950' : 'bg-amber-500',
-            )}
-          />
-          Unassigned
-          <span className="tabular-nums opacity-65">{unassignedCount}</span>
-        </button>
-        {activeFilter !== 'ALL' && (
-          <button
-            type="button"
-            onClick={() => onFilterChange('ALL')}
-            className="ml-auto inline-flex items-center gap-1 rounded font-mono text-[10px] text-zinc-500 underline-offset-2 outline-none transition-colors hover:text-zinc-900 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-zinc-200"
-          >
-            <X className="h-3 w-3" aria-hidden /> Clear
-          </button>
-        )}
-      </div>
-
-      {/* Bulk-assign bar — present only when there is something to assign. */}
-      <AnimatePresence initial={false}>
-        {selected.size > 0 && (
-          <motion.div
-            key="ssd-bulk"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{
-              height: { duration: 0.24, ease: COLLAPSE_EASE },
-              opacity: { duration: 0.16 },
-            }}
-            className="overflow-hidden border-b border-zinc-200 bg-blue-50/80 dark:border-zinc-800 dark:bg-blue-950/25"
-          >
-            <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-blue-800 dark:text-blue-300">
-                <span className="font-bold tabular-nums">{selected.size}</span> selected · assign to
-              </span>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={isLocked}
-                  onClick={() => bulkAssign('')}
-                  className={cn(chipBase, chipIdle, isLocked && 'cursor-not-allowed opacity-50')}
-                >
-                  Unassigned
-                </button>
-                {SSD_TEAMS.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    style={teamVars(name)}
-                    disabled={isLocked}
-                    onClick={() => bulkAssign(name)}
-                    title={`Move ${selected.size} ${selected.size === 1 ? 'person' : 'people'} to ${name}`}
-                    className={cn(
-                      chipBase,
-                      'border-[color-mix(in_srgb,var(--team)_60%,transparent)] bg-white text-[var(--team-text)] hover:bg-[color-mix(in_srgb,var(--team)_12%,transparent)] dark:bg-zinc-950/60',
-                      isLocked && 'cursor-not-allowed opacity-50',
-                    )}
-                  >
-                    <span
-                      aria-hidden
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: 'var(--team)' }}
-                    />
-                    {name}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelected(new Set())}
-                className="ml-auto rounded font-mono text-[10px] text-zinc-600 underline-offset-2 outline-none transition-colors hover:text-zinc-900 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-zinc-400 dark:hover:text-zinc-200"
-              >
-                Clear
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="min-h-0 flex-1 overflow-x-auto">
-        <table className="table-keep w-full min-w-[560px] text-xs">
-          <thead>
-            <tr className="border-b border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <th scope="col" className="w-9 px-2 py-2 text-center">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  className="accent-blue-600"
-                  checked={allPageSelected}
-                  disabled={isLocked || pageEmails.length === 0}
-                  onChange={toggleAllOnPage}
-                  aria-label="Select every person shown"
-                />
-              </th>
-              <th scope="col" className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                Employee
-              </th>
-              <th scope="col" className="w-[190px] px-2 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                Sub-team
-              </th>
-              <th scope="col" className="w-[110px] px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-                Share
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-3 py-10 text-center font-mono text-[11px] text-zinc-500">
-                  {activeFilter === 'NONE'
-                    ? 'Everyone has a sub-team.'
-                    : activeFilter !== 'ALL'
-                      ? `No ${activeFilter} members on this page.`
-                      : 'No employees on this page.'}
-                </td>
-              </tr>
-            )}
-            {entries.map((e, i) => {
-              const subTeam = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
-              const memberCount = subTeam ? (memberCounts[subTeam] ?? 0) : 0;
-              const share = subTeam ? shareForRow(e, subTeam, memberCount) : 0;
-              const isSel = selected.has(e.employee_email);
-              const isExternal = !!rosterEmails && !rosterEmails.has(e.employee_email);
-              return (
-                <tr
-                  // The filter is part of the key so rows remount and replay the
-                  // cascade every time the roster is re-sliced.
-                  key={`${activeFilter}-${e.employee_email}`}
-                  // `--team*` is set on the row, not the cells, so the picker and
-                  // the share figure below it read the same hue from one place.
-                  style={{
-                    animation: `ssd-row-in 0.28s cubic-bezier(0.2,0.7,0.3,1) ${Math.min(i * 26, 260)}ms both`,
-                    ...(subTeam ? teamVars(subTeam) : {}),
-                  }}
-                  className={cn(
-                    'ssd-roster-row border-b border-zinc-100 transition-colors duration-150 last:border-b-0 dark:border-zinc-800/60',
-                    isSel
-                      ? 'bg-blue-50/80 dark:bg-blue-950/30'
-                      : 'hover:bg-zinc-50 dark:hover:bg-zinc-900/50',
-                  )}
-                >
-                  <td className="px-2 py-2 text-center">
-                    <input
-                      type="checkbox"
-                      className="accent-blue-600"
-                      checked={isSel}
-                      disabled={isLocked}
-                      onChange={() => toggleOne(e.employee_email)}
-                      aria-label={`Select ${e.employee_name}`}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1.5">
-                      {/* The slot is always here, filled only when unassigned —
-                          rendering it conditionally indented every flagged name
-                          out of the column. */}
-                      <span className="flex h-1.5 w-1.5 flex-none items-center justify-center">
-                        {!subTeam && (
-                          <span
-                            aria-hidden
-                            title="No sub-team — this person earns nothing until assigned"
-                            className="h-1.5 w-1.5 rounded-full bg-amber-500"
-                          />
-                        )}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 font-medium text-zinc-900 dark:text-zinc-100">
-                          <span className="truncate">{e.employee_name}</span>
-                          {isExternal && (
-                            <ExtChip email={e.employee_email} offboardedEmails={offboardedEmails} />
-                          )}
-                        </div>
-                        <div className="truncate font-mono text-[10px] text-zinc-500">
-                          {e.employee_email}
-                        </div>
-                      </div>
-                      {isExternal && onRemoveMember && !isLocked && (
-                        <button
-                          type="button"
-                          onClick={() => onRemoveMember(e.employee_email)}
-                          title="Remove external member"
-                          aria-label={`Remove ${e.employee_name}`}
-                          className="ml-auto shrink-0 rounded p-1 text-zinc-500 outline-none transition-colors hover:bg-red-50 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-red-950/30 dark:hover:text-red-400"
-                        >
-                          <Trash2 className="h-3 w-3" aria-hidden />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-2 py-2">
-                    <div className="flex">
-                      <SubTeamSelect
-                        value={subTeam}
-                        isLocked={isLocked}
-                        employeeName={e.employee_name}
-                        onChange={(v) => onSubTeamAssign(e.employee_email, v)}
-                      />
-                    </div>
-                  </td>
-                  <td
-                    className={cn(
-                      'px-3 py-2 text-right font-mono font-bold tabular-nums',
-                      subTeam ? 'text-[var(--team-text)]' : 'text-zinc-400 dark:text-zinc-600',
-                    )}
-                  >
-                    {subTeam ? <AnimatedPeso amount={share} /> : '—'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-3 py-2 dark:border-zinc-800">
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-zinc-500">
-          {entries.length} of {allEntries.length} shown
-        </span>
-        {pager}
-      </div>
-    </div>
-  );
-}
-
-// ── Workspace ─────────────────────────────────────────────────────────────────
-
-interface SsdWorkspaceProps {
-  subTeams: Record<SubTeamName, SubTeamState>;
-  isLocked: boolean;
-  onSubTeamChange: (subTeam: SubTeamName, field: 'pct' | 'records' | 'rfc', val: string) => void;
-  ssdShareForTeam: (subTeam: SubTeamName, memberCount: number) => number;
-  subTeamMemberCount: (subTeam: SubTeamName) => number;
-  /** Rows currently on screen (already searched, filtered and paged). */
-  entries: EntryRow[];
-  /** Every row in the department — counts and totals must not follow the page. */
-  allEntries: EntryRow[];
-  onSubTeamAssign: (email: string, subTeam: SubTeamName | '') => void;
-  /** Controlled roster filter. Omit to let the workspace own it (edit modal). */
-  activeFilter?: SubTeamFilter;
-  onFilterChange?: (f: SubTeamFilter) => void;
-  rosterEmails?: Set<string>;
-  offboardedEmails?: Set<string>;
-  onRemoveMember?: (email: string) => void;
-  pager?: React.ReactNode;
-}
-
-/** The whole SSD scoring surface: status strip, one team card, full-width
- *  roster. Owns which team is open; the roster filter is either controlled by
- *  the parent (so its search and paging can honour the same slice) or local. */
-export function SsdWorkspace({
-  subTeams, isLocked, onSubTeamChange, ssdShareForTeam, subTeamMemberCount,
-  entries, allEntries, onSubTeamAssign, activeFilter, onFilterChange,
-  rosterEmails, offboardedEmails, onRemoveMember, pager,
-}: SsdWorkspaceProps) {
-  const [activeTeam, setActiveTeam] = useState<SubTeamName>('BLUE');
-  const [ownFilter, setOwnFilter] = useState<SubTeamFilter>('ALL');
-  const filter = activeFilter ?? ownFilter;
-  const setFilter = onFilterChange ?? setOwnFilter;
-
-  const splitRule = HSL_DEPTS.ssd_medical_records.rules.find(
-    (r): r is TeamSplitRule => r.type === 'team_split',
-  );
-  const poolRule = HSL_DEPTS.ssd_medical_records.rules.find(
-    (r): r is TeamPoolRule => r.type === 'team_pool',
-  );
-
-  // A team whose inputs are blank but whose members carry a non-zero saved share
-  // was scored in an earlier session — see `ssdTeamStatus`.
-  const statuses = useMemo(() => {
-    const savedByTeam: Record<string, boolean> = {};
-    for (const e of allEntries) {
-      const st = String(e.kpi_data.sub_team ?? '');
-      if (st && e.calculated_bonus !== 0) savedByTeam[st] = true;
-    }
-    return Object.fromEntries(
-      SSD_TEAMS.map((t) => [t, ssdTeamStatus(subTeams[t], !!savedByTeam[t])]),
-    ) as Record<SubTeamName, SsdTeamStatus>;
-  }, [subTeams, allEntries]);
-
-  const unassignedCount = useMemo(
-    () => allEntries.filter((e) => !String(e.kpi_data.sub_team ?? '')).length,
-    [allEntries],
-  );
-
-  /** The banked per-member share for a team whose inputs are no longer on
-   *  screen. Every member of a team gets the same share by construction, so the
-   *  first non-zero one is the team's figure. */
-  const savedShareByTeam = useMemo(() => {
-    const byTeam: Partial<Record<SubTeamName, number>> = {};
-    for (const e of allEntries) {
-      const t = String(e.kpi_data.sub_team ?? '') as SubTeamName | '';
-      if (t && byTeam[t] === undefined && e.calculated_bonus !== 0) byTeam[t] = e.calculated_bonus;
-    }
-    return byTeam;
-  }, [allEntries]);
-
-  const shareForRow = useCallback(
-    (e: EntryRow, team: SubTeamName, memberCount: number) =>
-      statuses[team] === 'restored' ? e.calculated_bonus : ssdShareForTeam(team, memberCount),
-    [statuses, ssdShareForTeam],
-  );
-
-  const blanks = SSD_TEAMS.filter((t) => statuses[t] === 'empty');
-  const partials = SSD_TEAMS.filter((t) => statuses[t] === 'partial');
-  const members = subTeamMemberCount(activeTeam);
-  const activeShare =
-    statuses[activeTeam] === 'restored'
-      ? (savedShareByTeam[activeTeam] ?? 0)
-      : ssdShareForTeam(activeTeam, members || 1);
-
-  return (
-    <div className="flex min-w-0 flex-col gap-4">
-      <SsdTeamTabs
-        statuses={statuses}
-        memberCount={subTeamMemberCount}
-        activeTeam={activeTeam}
-        onSelect={setActiveTeam}
-        unassignedCount={unassignedCount}
-        onShowUnassigned={() => setFilter('NONE')}
-      />
-
-      <div className="grid min-w-0 items-stretch gap-4 lg:grid-cols-[minmax(0,620px)_minmax(230px,1fr)]">
-        {/* Keyed by team so the card remounts and replays its entrance — two
-            teams can score identically and the switch still reads. */}
-        <SsdTeamCard
-          key={activeTeam}
-          name={activeTeam}
-          state={subTeams[activeTeam]}
-          status={statuses[activeTeam]}
-          members={members}
-          share={activeShare}
-          splitRule={splitRule}
-          poolRule={poolRule}
-          isLocked={isLocked}
-          onChange={(field, val) => onSubTeamChange(activeTeam, field, val)}
-        />
-
-        {/* The rules, stated once, read off the live schema. The handoff left
-            these as invented placeholders and asked for the real ones. */}
-        {/* A container, not a viewport consumer: this panel is ~330px wide beside
-            the card in a half-window overlay and full width when stacked, so its
-            own inline size decides the split. Keying it to `sm:` collided the two
-            columns' text at exactly the width the side panel produces. */}
-        <aside className="@container flex min-w-0 flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-50/60 px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900/30">
-          <h4 className="font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
-            How a share is built
-          </h4>
-          {/* Two columns only once the panel itself can carry them. */}
-          <div className="grid gap-x-6 gap-y-3 @md:grid-cols-2">
-            <div className="min-w-0">
-              <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-                {splitRule?.label ?? 'Team Accuracy Bonus'}
-              </p>
-              <ul className="mt-1 space-y-0.5">
-                {(splitRule?.thresholds ?? []).map((t) => (
-                  <li
-                    key={t.minPct}
-                    className="flex gap-2 font-mono text-[10px] text-zinc-600 dark:text-zinc-400"
-                  >
-                    <span className="w-[5.5rem] flex-none tabular-nums">
-                      {t.minPct}%{t.maxPct === null ? '+' : `–${t.maxPct}%`}
-                    </span>
-                    <span className="tabular-nums">
-                      {t.ratePerRecord === 0 ? 'no bonus' : `${formatPeso(t.ratePerRecord)}/record`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-1 font-mono text-[10px] text-zinc-500">records × rate ÷ headcount</p>
-            </div>
-            <div className="min-w-0 border-t border-zinc-200 pt-3 dark:border-zinc-800 @md:border-l @md:border-t-0 @md:pl-6 @md:pt-0">
-              <p className="font-mono text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
-                {poolRule?.label ?? 'RFC'} pool
-              </p>
-              <p className="mt-1 max-w-[42ch] font-mono text-[10px] leading-relaxed text-zinc-600 dark:text-zinc-400">
-                {formatPeso(poolRule?.ratePerRecord ?? 0)} per RFC, pooled and split evenly. No
-                accuracy tiering — it stacks on top of the bonus above.
-              </p>
-            </div>
-          </div>
-
-          {/* Why the run is not finished, stated plainly rather than left for the
-              operator to infer from six tab glyphs. */}
-          <div className="mt-auto border-t border-zinc-200 pt-2.5 dark:border-zinc-800">
-            {blanks.length === 0 && partials.length === 0 && unassignedCount === 0 ? (
-              <p className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-emerald-700 dark:text-emerald-400">
-                <CheckCircle2 className="h-3 w-3 flex-none" aria-hidden /> All teams scored ·
-                everyone assigned
-              </p>
-            ) : (
-              <p className="inline-flex items-start gap-1.5 font-mono text-[10px] uppercase leading-relaxed tracking-[0.1em] text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="mt-px h-3 w-3 flex-none" aria-hidden />
-                <span>
-                  {[
-                    blanks.length > 0 &&
-                      `${blanks.length} ${blanks.length === 1 ? 'team' : 'teams'} not started`,
-                    partials.length > 0 && `${partials.length} incomplete`,
-                    unassignedCount > 0 && `${unassignedCount} unassigned`,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-              </p>
-            )}
-          </div>
-        </aside>
-      </div>
-
-      <SsdRoster
-        entries={entries}
-        allEntries={allEntries}
-        isLocked={isLocked}
-        shareForRow={shareForRow}
-        onSubTeamAssign={onSubTeamAssign}
-        activeFilter={filter}
-        onFilterChange={setFilter}
-        rosterEmails={rosterEmails}
-        offboardedEmails={offboardedEmails}
-        onRemoveMember={onRemoveMember}
-        pager={pager}
-      />
-    </div>
-  );
-}
-
 // ── Add External Member modal ─────────────────────────────────────────────────
 
 interface ExternalCandidate {

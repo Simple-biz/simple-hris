@@ -128,8 +128,11 @@ Its loop handles `per_unit` / `tiered` / `flat` / `manual` and **skips `team_spl
 calculated at the sub-team level, not per-employee here."* `hsl_managers` additionally has
 an empty `rules[]`.
 
-So for `ssd_medical_records` and `hsl_managers`, `calcBonus` returns **0**, and the stored
-`calculated_bonus` comes from `recomputeSsdEntries` / `calcManagerBonus` instead.
+So for `ssd_medical_records` (through its 2026-09-27 run) and `hsl_managers`, `calcBonus`
+returns **0**, and the stored `calculated_bonus` came from `recomputeSsdEntries` /
+`calcManagerBonus` instead. Since 2026-10-06 SSD is §7d — scored from its Library formula
+per person (`calcBonus` + `calcHslCatalogTotal`, like the other Library branches) — and
+`recomputeSsdEntries` is deleted; its stored rows are unchanged.
 
 **`calculated_bonus` is therefore NOT uniformly "what `calcBonus` would return".** Any
 future parity harness, replay, or "recompute and compare" tool that assumes one scoring
@@ -245,8 +248,10 @@ this direction **nothing moves**, which is the strongest form of not losing it.
       up is §4's invariant. There is no seed or fallback: an empty or broken Library
       row pays ₱0, and no unit test can reach it. Two of the nine (`collections`,
       `post_hearing_prep`) went on Kane's ruling (b) even though their Library bonus
-      pays LESS: no ₱2,500 monthly flats, no ₱3,500 cap. Still in code:
-      `ssd_medical_records`, `healthcare_team_lead`, `hsl_managers` (audit item 246).
+      pays LESS: no ₱2,500 monthly flats, no ₱3,500 cap. `ssd_medical_records`
+      followed on 2026-10-06 (Kane; its colour-team workspace and the RFC pool went
+      with it — `hsl-subdepartments.md` §7d *The third cutover*). Still in code:
+      `healthcare_team_lead`, `hsl_managers` (audit item 246).
 - [x] `filing_specialist` no longer carries Attested Cases bands **in code at all**
       (2026-09-22). Kane ruled twice the same day: first that the Library formula's
       20/30/40 should move into `schema.ts`, then — after Carla and Alivia saw the card

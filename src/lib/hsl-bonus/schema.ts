@@ -182,26 +182,32 @@ export const HSL_DEPTS: Record<HslDeptKey, DeptConfig> = {
     color: '#10b981',
     headerBg: 'bg-emerald-950/40',
     badgeCls: 'bg-emerald-900/60 text-emerald-300',
-    rules: [
-      {
-        type: 'team_split',
-        key: 'team_split',
-        label: 'Team Accuracy Bonus',
-        thresholds: [
-          { minPct: 0,   maxPct: 89.99, ratePerRecord: 0 },
-          { minPct: 90,  maxPct: 94.99, ratePerRecord: 250 },
-          { minPct: 95,  maxPct: null,  ratePerRecord: 350 },
-        ],
-        subTeams: ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'],
-      },
-      {
-        type: 'team_pool',
-        key: 'rfc_pool',
-        label: 'RFC',
-        ratePerRecord: 250,
-        subTeams: ['BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'PURPLE', 'RED'],
-      },
-    ],
+    // Kane, 2026-10-06: *"make sure that the formula for this is connected to
+    // the payment catalog when assigned"* … *"right now it is still hardcoded"*
+    // … *"make sure this will adapt"* … *"We wont need the SSD Medical Record's
+    // team color chuchu lets make this similar to everyone elses where we can see
+    // everyones name and search them in a search bar and just add their bonus
+    // from there based on the payment catalog"*. §7d, like the nine before it:
+    // no code rules, a plain per-person card scored from the branch's
+    // `hsl:ssd_medical_records` Library assignment ("Medical Records - Monthly",
+    // Carla 2026-10-06), so an accountant's edit reaches the card with no code
+    // change. The colour-team workspace (BLUE…RED) is GONE.
+    //
+    // BOTH coded team rules are deleted. The Team Accuracy Bonus (90–94.99% →
+    // ₱250/record, 95%+ → ₱350/record, ÷ headcount) is what Carla's formula
+    // re-expresses — keeping both would pay every record twice. The RFC pool
+    // (₱250 per RFC, ÷ team size) pooled over a COLOUR TEAM; with the teams gone
+    // it has nothing to pool over, and the Library formula has no RFC term, so
+    // RFC PAYS ₱0 until Accounting adds it to the Library. Kane, asked that
+    // directly: *"the colour teams we see on medical records they wont be split
+    // in there anymore"*. Both rules keep their labels in `retired-rules.ts`.
+    //
+    // Still MONTHLY + `monthlyAutoPay`: the wizard pays it in the week it is
+    // marked Ready. A `monthly` Library bonus is only OFFERED in the month's final
+    // payroll week (`hslCatalogBonusesFor`) — Kane kept that gate (2026-10-06, (a))
+    // — so a run scored in any other week shows the bonus as held, not inputs.
+    rules: [],
+    rulesFromCatalog: true,
   },
 
   medical_records: {
