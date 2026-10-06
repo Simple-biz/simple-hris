@@ -6,6 +6,11 @@
 export type PabDisputeReasonCode = {
   code: string;
   label: string;
+  /**
+   * NOT read by any verdict. Whether an approved issue forgives its day is ONE rule for
+   * every reason — `approvedIssueForgivesDay` (src/lib/payroll/pab-forgiveness.ts): no
+   * hours set = forgiven outright, an explicit SET at >= 4h (Kane 2026-10-06).
+   */
   min_hours: number;
 };
 
@@ -27,7 +32,8 @@ export const DEFAULT_DISPUTE_REASON_CODES: PabDisputeReasonCode[] = [
 /**
  * Reasons that follow the Orphanage approval flow:
  *  - Two-stage gate (Orphanage Manager → Accounting)
- *  - Day flips green without hours added (4h floor bypassed)
+ *  - Day flips green without hours added (always `override_hours` null — forgiven
+ *    outright, the rule every no-hours approval follows since 2026-10-06)
  *  - Manager-submitted, never employee-filed
  *  - Note flows from manager to Accounting reviewer
  */

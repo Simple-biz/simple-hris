@@ -43,9 +43,9 @@ import {
 import {
   disputeGrantsPabForgiveness,
   disputeIsAwaitingResolution,
-  isOrphanageStyleReason,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
+import { approvedIssueForgivesDay } from '@/lib/payroll/pab-forgiveness';
 import {
   buildOrphanageHoursIndex,
   orphanageHoursByCoveredDate,
@@ -652,7 +652,7 @@ export default function EmployeePabCalendar({
       hoursByDateKey.set(key, Math.max(hoursByDateKey.get(key) ?? 0, maxS));
     }
     // Raw CSV hours, before any forgiveness — the eligibility engine applies
-    // its own adjustments (dispute ≥4h→7h bump, orphanage, holidays) to THIS
+    // its own adjustments (forgiven issue → pass, orphanage, holidays) to THIS
     // map so the verdict matches dispatch-bonuses/Payroll Wizard exactly.
     const rawHours = new Map(hoursByDateKey);
     const forgivenDates = new Map<string, number | null>();
@@ -716,8 +716,8 @@ export default function EmployeePabCalendar({
       if (existing < 7 * 3600) hoursByDateKey.set(key, 7 * 3600);
     }
 
-    // Engine-parity effective hours: raw + forgiven (≥4h → 7h) + holiday +
-    // orphanage — byte-identical semantics to the server's applyPabAdjustments.
+    // Engine-parity effective hours: raw + forgiven issues (approvedIssueForgivesDay) +
+    // holiday + orphanage — it IS the server's applyPabAdjustments.
     const effectiveHours = applyPabAdjustments(
       rawHours,
       forgivenDates.size ? forgivenDates : undefined,
@@ -1063,7 +1063,11 @@ export default function EmployeePabCalendar({
                       (!!dispute &&
                         disputeGrantsPabForgiveness(dispute) &&
                         !day.passes &&
-                        (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600));
+                        // The verdict's own rule (Kane 2026-10-06, item 363): no hours set =
+                        // forgiven outright, a SET at >= 4h. It used to bypass the 4h floor
+                        // for orphanage rows HERE only, while this calendar's verdict
+                        // (applyPabAdjustments) and dispatch applied it.
+                        approvedIssueForgivesDay(dispute.override_hours));
                     const canDispute =
                       day.hasData && !day.passes && !hslOvernight && !hslReconciled && !isWeekendCell &&
                       !dispute && !forgiven && !isFutureOrToday && !isCurrentWeek;

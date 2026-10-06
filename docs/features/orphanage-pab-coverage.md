@@ -25,7 +25,8 @@ tracked seconds + orphanage hours × 3600  ≥  7 h   ⇒   the weekday counts a
   excuse record is required (in practice none exist).
 - **Additive-only** — the rule can only rescue a failing day; it never fails a passing
   one, and it never changes **pay** (only PAB eligibility). The pre-existing approved-
-  dispute forgiveness (≥ 4 h floor) keeps working independently.
+  issue forgiveness (`approvedIssueForgivesDay` — no hours set = outright, since
+  2026-10-06; it was a ≥ 4 h floor) keeps working independently.
 - **Weekdays only** — the standard PAB rule only checks Mon–Fri, and covering weekends
   would hand HSL's 5-of-7 weekly quota free passing days.
 
@@ -125,5 +126,6 @@ forgiveness decision via the wizard's PAB calendar if warranted.
    `app/api/employee/orphanage-hours/route.ts`, `listAllOrphanagePayHours`.
 2. Grep for `orphanage-pab-coverage` / `orphanageCoveredKeys` / `orphanageHoursIndex` /
    `orphanageHoursByEmailIso` — every hit is part of this rule.
-3. Keep: the Orphanage **pay** step itself, `orphanage_pay`, the ≥4h dispute-floor
-   forgiveness, and the `override_hours = null` guard (independently correct).
+3. Keep: the Orphanage **pay** step itself, `orphanage_pay`, approved-issue
+   forgiveness (`approvedIssueForgivesDay`), and the `override_hours = null` guard
+   (independently correct).

@@ -35,21 +35,19 @@ export const runtime = 'nodejs';
  *
  * "Whole month, not per-day" is a statement about the button, not about the store.
  *
- * ## Why override_hours is 7
+ * ## Why override_hours is null — forgiveness adds no hours
  *
- * Server-side, 7 is indistinguishable from the `null` this route's per-day sibling
- * writes: `applyPabAdjustments` bumps any forgiven day with ≥4h effective to a full
- * 7h either way. But `EmployeeDashboard.tsx` applies the override as a plain SET and
- * skips `null` entirely, so a `null` (or the 5h the modal writes for near-empty days)
- * leaves the day below the 7h bar, `pabViolations` still counts it, and the employee
- * is told "No longer Eligible for PAB — violated on <the days just forgiven>" while
- * being paid the bonus. Writing 7 is what makes the dashboard agree with the money
- * without touching the dashboard.
+ * Kane, 2026-10-06 (session log item 363, ruling (b)): a forgiven date keeps its
+ * original hours and simply counts as forgiven. `null` is "an approved issue with no
+ * hours set", and `approvedIssueForgivesDay` (pab-forgiveness.ts) — the one rule
+ * dispatch, member-monthly-pay, the wizard, the Employee Dashboard, My Hours and
+ * EmployeePabCalendar all read — passes such a day outright, whatever was tracked.
  *
- * The visible trade: the forgiven cell reads 7:00 with a "Forgiven" chip rather than
- * the real tracked hours. That is deliberate and is the opposite of the choice
- * orphanage coverage made (`docs/features/orphanage-pab-coverage.md`) — there the
- * calendar keeps real hours because the top-up is additive and needs no SET.
+ * From 2026-08-28 until that ruling this route wrote a flat 7: `null` then meant a 4h
+ * floor (a forgiven 0–3h day stayed failed), and `EmployeeDashboard` skipped `null`
+ * entirely, so a forgiven person read "No longer Eligible — violated on <the days just
+ * forgiven>" while being paid. Both are gone; the 7 also hid every forgiven day in the
+ * PAB Calendar as an ordinary 7:00 pass. Never go back to writing hours here.
  *
  * ## All-or-nothing
  *
@@ -219,8 +217,8 @@ export async function POST(req: Request) {
       status: 'approved',
       decided_by: actor.user_name,
       decision_note: note,
-      // See the header: 7, not null — this is what reaches the employee.
-      override_hours: 7,
+      // See the header: null — forgiven outright, the day keeps its tracked hours.
+      override_hours: null,
     });
     if (decided.error) {
       outcomes.push({ iso, ok: false, state: 'failed', error: decided.error });
@@ -241,9 +239,8 @@ export async function POST(req: Request) {
     to: days[days.length - 1],
     limit: MAX_DAYS * 2,
   });
-  const forgivenNow = new Set(
-    after.rows.filter((r) => disputeGrantsPabForgiveness(r)).map((r) => r.dispute_date),
-  );
+  const forgivingRows = after.rows.filter((r) => disputeGrantsPabForgiveness(r));
+  const forgivenNow = new Set(forgivingRows.map((r) => r.dispute_date));
   const stillFailing = days.filter((d) => !forgivenNow.has(d));
 
   // ONE audit row for the decision, on top of the per-day pab_dispute.approved
@@ -287,6 +284,14 @@ export async function POST(req: Request) {
     email,
     monthKey,
     forgiven: [...forgivenNow].sort(),
+    // The re-read rows themselves, so the wizard can patch the issue ids too — without
+    // them the PAB Calendar offered no Revoke on a just-forgiven month until a reload.
+    // `override_hours` is what is STORED: null for this write, the old 7 for a day an
+    // earlier run had already forgiven.
+    days: forgivingRows
+      .filter((r) => days.includes(r.dispute_date))
+      .map((r) => ({ iso: r.dispute_date, id: r.id, override_hours: r.override_hours }))
+      .sort((a, b) => a.iso.localeCompare(b.iso)),
     outcomes,
   });
 }

@@ -182,7 +182,11 @@ async function main() {
       const iso = isoDateFromColumnGroup(group);
       const override = iso ? fdates?.get(iso) : undefined;
       const seconds = override != null ? override * 3600 : rawSec;
-      const disputeForgiven = !!(iso && fdates?.has(iso) && seconds >= 4 * 3600 && seconds < H7);
+      // Mirrors approvedIssueForgivesDay (pab-forgiveness.ts, Kane 2026-10-06): an issue
+      // with no hours set (null) forgives outright; an explicit SET at >= 4h.
+      const disputeForgiven = !!(
+        iso && override !== undefined && (override === null || override >= 4) && seconds < H7
+      );
       return { iso, seconds, passes: seconds >= H7 || disputeForgiven, disputeForgiven };
     });
     if (breakdown.length === 0) { noCells++; continue; }

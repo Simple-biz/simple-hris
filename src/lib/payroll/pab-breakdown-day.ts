@@ -6,27 +6,31 @@
  * ## Why this exists (Kane, 2026-10-06)
  *
  * The breakdown used to call a day "forgiven by issue" only when its post-override
- * hours sat between 4h and 7h. Both wizard forgive paths write `override_hours: 7`
- * (payroll-wizard-pab-step.md), which lands the day AT 7h — so every day the PAB step
- * or the PAB Calendar forgave read as an ordinary pass: green, `7:00`, missing from
- * the calendar's "Forgiven days" list, and with no Revoke anywhere. The forgiveness
- * was real and paid; it was just invisible and impossible to retract.
+ * hours sat between 4h and 7h. Until 2026-10-06 both wizard forgive paths wrote
+ * `override_hours: 7`, which lands the day AT 7h — so every day the PAB step or the
+ * PAB Calendar forgave read as an ordinary pass: green, `7:00`, missing from the
+ * calendar's "Forgiven days" list, and with no Revoke anywhere. The forgiveness was
+ * real and paid; it was just invisible and impossible to retract. Those paths now
+ * write `null`; the 19 legacy numeric rows still read correctly through this.
  *
  * ## The contract
  *
- * - `seconds` and `passes` are EXACTLY what the breakdown computed before. They feed
- *   the verdict (`pabStatusByEmail`, the PAB step's severity, the HSL week walk), and
- *   `pab-breakdown-day.test.ts` pins them against the old formula over a grid of
- *   inputs. Nothing here moves PAB money.
- * - `forgivenByDispute` additionally recognises a day an approved ISSUE forgave whose
- *   own tracked time was under 7h — the 7h-override case above.
+ * - `seconds` is the post-override verdict input, unchanged: an override SETs the day.
+ * - `passes` follows `approvedIssueForgivesDay` (pab-forgiveness.ts), the same rule as
+ *   `applyPabAdjustments`: a `null` entry is forgiven OUTRIGHT whatever was tracked
+ *   (Kane 2026-10-06, item 363 ruling (b) — it used to be a 4h floor); a number passes
+ *   at ≥ 4h. `pab-breakdown-day.test.ts` pins `passes` to the pre-ruling formula on
+ *   every input EXCEPT a null entry under 4h, which is the ruling.
+ * - `forgivenByDispute` marks a day forgiveness passed that did not pass on its own —
+ *   including a day an approved ISSUE forgave at a 7h override (the legacy rows).
  * - `displaySeconds` is what a calendar cell shows: an issue-forgiven day shows its
  *   OWN tracked time, never the override (Kane: forgiven dates "retain their original
  *   hours"). Every other day shows `seconds`, as before.
  */
 
+import { approvedIssueForgivesDay } from './pab-forgiveness';
+
 const SEVEN_HOURS_SEC = 7 * 3600;
-const FOUR_HOURS_SEC = 4 * 3600;
 
 export type PabBreakdownDay = {
   /** Post-override seconds — the verdict input. Unchanged from the pre-2026-10-06 formula. */
@@ -43,7 +47,7 @@ export function classifyPabBreakdownDay(args: {
   rawSeconds: number;
   /**
    * The forgiveness map's value for this day: `undefined` = no entry; `null` = an
-   * entry with no hours (floor-drop); a number = SET hours.
+   * approved issue with no hours set (forgiven outright); a number = SET hours.
    */
   override: number | null | undefined;
   /**
@@ -55,17 +59,16 @@ export function classifyPabBreakdownDay(args: {
   isHoliday: boolean;
 }): PabBreakdownDay {
   const { rawSeconds, override, fromIssue, isHoliday } = args;
-  const hasEntry = override !== undefined;
   const seconds = override != null ? override * 3600 : rawSeconds;
 
-  // Pre-2026-10-06: an entry whose post-override hours sit in [4h, 7h).
-  // Added: an issue whose override reaches 7h on a day the person did NOT work 7h —
-  // the forgiveness is what passes it, so it must read as forgiven. This branch can
-  // only fire when `seconds >= 7h`, where `passes` is already true, so it changes
-  // the label and never the verdict.
+  // Forgiveness passes the day (null = outright; a number at >= 4h), AND the day did not
+  // pass on its own: either its post-override hours are under 7h, or an issue's override
+  // reached 7h on a day the person did NOT work 7h (the legacy 7h rows — the forgiveness
+  // is what passes them, so they must read as forgiven; that second branch only fires
+  // when `seconds >= 7h`, where `passes` is already true, so it changes the label only).
   const disputeForgiven =
-    hasEntry &&
-    seconds >= FOUR_HOURS_SEC &&
+    override !== undefined &&
+    approvedIssueForgivesDay(override) &&
     (seconds < SEVEN_HOURS_SEC || (fromIssue && rawSeconds < SEVEN_HOURS_SEC));
   // Holidays take precedence over dispute classification — a holiday passes regardless.
   const holidayForgiven = isHoliday && seconds < SEVEN_HOURS_SEC;

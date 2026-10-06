@@ -11,8 +11,8 @@
  *        worked seconds + orphanage hours × 3600  ≥  7 × 3600   ⇒  day passes
  *
  *   No dispute/excuse record is required (none exist in practice). The rule is
- *   ADDITIVE — it never lowers eligibility, and the existing ≥4h approved-
- *   dispute floor keeps working independently.
+ *   ADDITIVE — it never lowers eligibility, and approved-issue forgiveness
+ *   (`approvedIssueForgivesDay`, pab-forgiveness.ts) keeps working independently.
  *
  * Coverage WINDOW: the hours' pay-week file **plus the week before it**.
  * Orphanage attendance results only come in over the following weekend, so the

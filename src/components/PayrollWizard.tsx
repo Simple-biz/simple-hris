@@ -417,6 +417,7 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
 import { classifyPabBreakdownDay } from '@/lib/payroll/pab-breakdown-day';
+import { approvedIssueForgivesDay } from '@/lib/payroll/pab-forgiveness';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 import PabDoneTable, { type PabDoneRow } from '@/components/payroll/PabDoneTable';
 import PabDecisionConfirmDialog, { type PabDecisionTarget } from '@/components/payroll/PabDecisionConfirmDialog';
@@ -6250,7 +6251,7 @@ export default function PayrollWizard({
           kind?: string;
           email?: string;
           monthKey?: string;
-          days?: { iso: string; id?: string }[];
+          days?: { iso: string; id?: string; override?: number | null }[];
           iso?: string;
           override?: number | null;
         };
@@ -6272,8 +6273,11 @@ export default function PayrollWizard({
           setApprovedDisputeDates((prev) => {
             const next = new Map(prev);
             const dates = new Map(next.get(email) ?? new Map<string, number | null>());
+            // Per-day value first (Forgive month mixes new null rows with days an
+            // earlier run stored at 7), then the payload's, then null — "forgiven, no
+            // hours set" (Kane 2026-10-06). An old tab still sending 7 keeps working.
             for (const d of p.days!) {
-              if (d?.iso) dates.set(d.iso, p.override ?? 7);
+              if (d?.iso) dates.set(d.iso, d.override !== undefined ? d.override : (p.override ?? null));
             }
             next.set(email, dates);
             return next;
@@ -6602,7 +6606,7 @@ export default function PayrollWizard({
    * + orphanage hours reach 7 h is SET to 7 h, so every PAB path below counts
    * it as a full pass. No dispute/excuse record needed. Only fills a date that
    * has no explicit override yet; never overrides an explicit SET, never
-   * lowers a day. Additive to the existing ≥4h floor. Feeds ONLY the PAB
+   * lowers a day. Additive to issue forgiveness (approvedIssueForgivesDay). Feeds ONLY the PAB
    * memos — pay is untouched (coverage never contributes to pay).
    */
   const effectiveOverridesForPab = useMemo<Map<string, Map<string, number | null>>>(() => {
@@ -6735,7 +6739,7 @@ export default function PayrollWizard({
 
       if (isHsl) {
         // HSL rule: Mon–Sun weeks, ≥5 days at ≥7 h per week.
-        // Approved disputes with ≥4 h effective floor are treated as a passing day.
+        // Forgiven days pass (approvedIssueForgivesDay: null = outright, a SET at ≥4 h).
         const hoursByDateKey = new Map<string, number>();
         for (const group of allDaysColumnGroups) {
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
@@ -6744,7 +6748,7 @@ export default function PayrollWizard({
           const overrideHours = forgivenDates?.get(groupDate);
           const effectiveSeconds = overrideHours != null ? overrideHours * 3600 : rawSeconds;
           // Force-pass forgiven days so they count toward the 5-day quota
-          const isForgiven = !!(forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
+          const isForgiven = overrideHours !== undefined && approvedIssueForgivesDay(overrideHours);
           const isHoliday = usHolidayDates.has(groupDate);
           const recordedSeconds = (isForgiven || isHoliday) ? 7 * 3600 : effectiveSeconds;
           const [y, m, d] = groupDate.split('-').map(Number);
@@ -6762,13 +6766,14 @@ export default function PayrollWizard({
           // US holidays auto-pass — no override hours needed, the day just doesn't count against PAB.
           if (groupDate && usHolidayDates.has(groupDate)) continue;
           const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-          // SET semantics: override_hours replaces Hubstaff hours for the day. `null` means the
-          // dispute floor-drops without changing hours (e.g. orphanage visit); `0` intentionally
-          // zeros out the day. Only `undefined` (no dispute on this date) falls back to Hubstaff.
+          // SET semantics: override_hours replaces Hubstaff hours for the day. `null` = an
+          // approved issue with no hours set — forgiven outright, hours untouched (Kane
+          // 2026-10-06, item 363; was a 4h floor); `0` intentionally zeros out the day.
+          // Only `undefined` (no dispute on this date) falls back to Hubstaff.
           const effectiveSeconds =
             overrideHours != null ? overrideHours * 3600 : rawSeconds;
           if (effectiveSeconds < 7 * 3600) {
-            const forgiven = !!(groupDate && forgivenDates?.has(groupDate) && effectiveSeconds >= 4 * 3600);
+            const forgiven = overrideHours !== undefined && approvedIssueForgivesDay(overrideHours);
             if (!forgiven) {
               perfect = false;
               break;
@@ -6833,7 +6838,8 @@ export default function PayrollWizard({
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
           // SET semantics: override_hours replaces Hubstaff hours for the day. `null` dispute
-          // falls through to Hubstaff hours (floor-drop marker); `0` zeros the day out.
+          // keeps Hubstaff hours and is forgiven outright (approvedIssueForgivesDay);
+          // `0` zeros the day out.
           const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
           const holidayName = groupDate ? (usHolidayDates.get(groupDate) ?? null) : null;
           const day = classifyPabBreakdownDay({
@@ -19767,12 +19773,24 @@ export default function PayrollWizard({
 
             // Patch the local forgiveness map rather than refetching: this is the
             // same map `effectiveOverridesForPab` feeds, so the verdict, the pill
-            // and this row all move on the next render from one write.
+            // and this row all move on the next render from one write. The route's
+            // re-read carries each day's issue id (so the PAB Calendar can revoke it
+            // without a reload) and its STORED value — null since 2026-10-06, the old
+            // 7 for a day an earlier run forgave.
+            const forgivenDays: { iso: string; id: string; override_hours: number | null }[] =
+              Array.isArray(json.days) ? json.days : [];
             setApprovedDisputeDates((prev) => {
               const next = new Map(prev);
               const existing = new Map(next.get(row.email) ?? new Map<string, number | null>());
-              for (const iso of json.forgiven ?? []) existing.set(iso, 7);
+              for (const d of forgivenDays) existing.set(d.iso, d.override_hours);
               next.set(row.email, existing);
+              return next;
+            });
+            setApprovedDisputeIds((prev) => {
+              const next = new Map(prev);
+              const ids = new Map(next.get(row.email) ?? new Map<string, string>());
+              for (const d of forgivenDays) ids.set(d.iso, d.id);
+              next.set(row.email, ids);
               return next;
             });
             // Converge the other open wizards — several accountants work this
@@ -19781,8 +19799,8 @@ export default function PayrollWizard({
               kind: 'days_forgiven',
               email: row.email,
               monthKey: pabMonthKey,
-              days: (json.forgiven ?? []).map((iso: string) => ({ iso })),
-              override: 7,
+              days: forgivenDays.map((d) => ({ iso: d.iso, id: d.id, override: d.override_hours })),
+              override: null,
             });
             toast.success(`${row.name} — PAB restored for ${monthLabelPab}`, {
               description: `${dayCount} day${dayCount === 1 ? '' : 's'} forgiven.`,
@@ -24282,18 +24300,12 @@ export default function PayrollWizard({
               }
               if (!issueId) throw new Error(createData.error ?? 'Failed to create issue');
               const approvedId: string = issueId;
-              // A flat 7h SET, matching the PAB step's "Forgive month" batch so the two
-              // forgive paths write indistinguishable rows.
-              //
-              // Server-side this is identical to the old `null` / 5h pair —
-              // applyPabAdjustments bumps any forgiven day with ≥4h effective to a
-              // full 7h regardless. What changes is the EMPLOYEE's view:
-              // EmployeeDashboard applies override_hours as a plain SET and skips
-              // null entirely, so null (and 5h) left the day under the 7h bar,
-              // pabViolations kept counting it, and a forgiven person was still told
-              // "No longer Eligible for PAB — violated on <the forgiven days>" while
-              // being paid the bonus. 7 is the value that makes the dashboard agree.
-              const overrideHours = 7;
+              // No hours: forgiveness keeps the day's tracked time and passes it outright
+              // (Kane 2026-10-06, item 363 — `approvedIssueForgivesDay`). Same value the
+              // PAB step's "Forgive month" batch writes, so the two paths write
+              // indistinguishable rows. Until that ruling this was a flat 7h SET, which
+              // read 7:00 everywhere and hid the day from this calendar's Forgiven list.
+              const overrideHours: number | null = null;
               void rawSeconds;
               const approveRes = await fetch(`/api/pab-disputes/${approvedId}`, {
                 method: 'PATCH',

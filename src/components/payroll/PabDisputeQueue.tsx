@@ -1319,7 +1319,7 @@ export default function PabDisputeQueue() {
                     </div>
                   </div>
                     <p className="text-[10px] text-zinc-500">
-                    Replaces Hubstaff hours for this day. E.g. set 7h to make the PAB calendar show 7h for this date, regardless of what Hubstaff logged. Original Hubstaff data stays untouched.
+                    Leave both blank to forgive the day as it is — it keeps its tracked hours and counts toward PAB. Entering hours replaces Hubstaff for this day instead; under 4h the day still fails. Original Hubstaff data stays untouched.
                   </p>
                 </div>
               )}

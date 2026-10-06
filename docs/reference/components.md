@@ -607,7 +607,7 @@ The **unassigned count** badge in the header shows how many Hubstaff employees h
 - If **all** weekday values ≥ 25,200 seconds (7 hours), the employee is added to the eligible set.
 
 **Per-employee breakdown** (`employeeWeekdayHours` useMemo):
-- Maps each employee's normalized email to an array of `{ col, seconds, passes, forgivenByDispute }` for each weekday column in the PAB range.
+- Maps each employee's normalized email to an array of `{ col, iso, seconds, displaySeconds, passes, forgivenByDispute, forgivenByHoliday, holidayName }` for each weekday column in the PAB range, built per day by `classifyPabBreakdownDay` (`src/lib/payroll/pab-breakdown-day.ts`): `seconds` is the post-override verdict input, `displaySeconds` the hours a calendar cell shows (an issue-forgiven day shows its own tracked time, 2026-10-06).
 - Used by the PAB cell pill and by the **PAB Calendar modal** (clickable from any cell in the Additions table) to render a full month view with per-day ✓/✗/★ states.
 
 **Tri-state PAB pill** (`pabStatusByEmail` useMemo): the Additions table pill and the calendar-modal badge display **Eligible** / **Ineligible** / **In Progress** based on:

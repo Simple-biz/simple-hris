@@ -109,10 +109,8 @@ import {
   resolvePabMonthFromColumns,
   resolvePabRangeForMonth,
 } from '@/lib/pab-period-settings';
-import {
-  disputeGrantsPabForgiveness,
-  isOrphanageStyleReason,
-} from '@/lib/supabase/pab-day-disputes';
+import { disputeGrantsPabForgiveness } from '@/lib/supabase/pab-day-disputes';
+import { approvedIssueForgivesDay } from '@/lib/payroll/pab-forgiveness';
 import { parseUsHolidaysList, getEnabledHolidayMap } from '@/lib/us-holidays';
 import HiddenValue from './HiddenValue';
 import GiftShippingCard, { type GiftShippingState } from './GiftShippingCard';
@@ -1789,7 +1787,9 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
     }
 
     // Apply approved dispute override_hours as a SET (replaces Hubstaff hours for that day).
-    // `null` override = floor-drop only (no hour change). `0` = intentional zero-out. `>0` = replace.
+    // `null` override = forgiven outright with NO hour change — the day keeps its tracked
+    // time and is force-passed below (Kane 2026-10-06, item 363). `0` = intentional
+    // zero-out. `>0` = replace.
     // Override writes apply to the exact dispute_date only; day-after forgiveness for orphanage
     // visits happens via the synthetic disputesByDate entry below (no hours change on day+1).
     // Note: dispute_date is ISO "YYYY-MM-DD" but hoursByDateKey uses pabDateKey ("YYYY-M-D", no
@@ -1815,13 +1815,25 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
       holidayKeySet.add(`${y}-${m}-${d}`);
     }
 
+    // Days an approved issue forgives — the ONE rule dispatch pays on
+    // (`approvedIssueForgivesDay`: no hours set = outright, a SET at >= 4h). Until
+    // 2026-10-06 this screen skipped a `null` override entirely, so a forgiven person read
+    // "No longer Eligible — violated on <the forgiven days>" while being paid.
+    const forgivenKeySet = new Set<string>();
+    for (const d of myDisputes) {
+      if (!disputeGrantsPabForgiveness(d) || !approvedIssueForgivesDay(d.override_hours)) continue;
+      const [y, m, day] = d.dispute_date.split('-').map(Number);
+      if (!y || !m || !day) continue;
+      forgivenKeySet.add(`${y}-${m}-${day}`);
+    }
+
     const rawWeeks = buildWeeks(hoursByDateKey);
-    // Apply holiday forgiveness: preserve actual seconds but force passes=true.
+    // Apply holiday + issue forgiveness: preserve actual seconds but force passes=true.
     // Never on a non-scoring cell — a display-only weekend must not read as a pass.
     const weeks = rawWeeks.map(week =>
       week.map(day => {
         const key = pabDateKey(day.date);
-        if (!day.scoring || !holidayKeySet.has(key)) return day;
+        if (!day.scoring || !(holidayKeySet.has(key) || forgivenKeySet.has(key))) return day;
         return { ...day, passes: true };
       }),
     );
@@ -3735,11 +3747,15 @@ export default function EmployeeDashboard({ employeeEmail, needsPhoto = false, n
                             // `forgiven` below). Only holidays remain clickable (details modal).
                             const cellClickable = isHoliday;
 
+                            // Forgiven by an approved issue, on a day that did not make 7h on
+                            // its own. `day.passes` is already forced true for it (pabCalendar),
+                            // so the label keys on the tracked hours, which the cell shows
+                            // unchanged (Kane 2026-10-06: forgiveness adds no hours).
                             const disputeForgiven =
                               !!dispute &&
                               disputeGrantsPabForgiveness(dispute) &&
-                              !day.passes &&
-                              (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
+                              approvedIssueForgivesDay(dispute.override_hours) &&
+                              day.seconds < 7 * 3600;
                             // TEMPORARY orphanage → PAB coverage: tracked time + the orphanage
                             // hours Accounting recorded in the Payroll Wizard reach 7h — the day
                             // keeps its REAL hours but renders forgiven. See orphanage-pab-coverage.ts.

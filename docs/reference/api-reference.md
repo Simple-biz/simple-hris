@@ -1002,11 +1002,11 @@ List disputes, optionally filtered.
 ```
 
 `override_hours` uses **tri-state SET semantics**:
-- `null` — no override; Hubstaff hours stand; 4h floor-drop applies on `dispute_date`.
+- `null` — no hours set; Hubstaff hours stand and the day is **forgiven outright** whatever was tracked (`approvedIssueForgivesDay`; since 2026-10-06 — it was a 4h floor before).
 - `0` — intentional zero-out; day counts as 0h (fails PAB).
-- `> 0` — replaces Hubstaff hours for `dispute_date`.
+- `> 0` — replaces Hubstaff hours for `dispute_date`; forgives the day at ≥ 4 h, fails it below.
 
-For `reason === 'orphanage_visit'`, the 4h floor also applies on `dispute_date + 1` via a synthesized forgiveness map entry in the PAB calculators (no second DB row is written).
+Forgiveness applies to the exact `dispute_date` only (the synthesized `dispute_date + 1` entry for orphanage visits was removed 2026-05-01).
 
 **Error Response** `500`:
 ```json
@@ -1318,7 +1318,7 @@ Admin inserts (or upserts) an orphanage-visit record. Performs atomic `.upsert({
 }
 ```
 
-- No `override_hours` is written; the row is a floor-drop marker only. The PAB calculators extend the 4h floor to `visit_date + 1` as well (synthetic forgiveness map entry).
+- No `override_hours` is written (null), so the visit date is forgiven outright whatever was tracked. Only `visit_date` itself — the `visit_date + 1` synthetic entry was removed 2026-05-01.
 - `admin_name` is currently trusted from the client body (auth gap — see note at top of section).
 
 **Response** `200`:

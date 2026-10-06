@@ -305,8 +305,10 @@ it matches what dispatch actually pays — never against raw Hubstaff hours alon
   (`time_adjustment_requests.status = 'approved'`, time adjustments win on a same
   day), flattened across the alias set into one `ISO date → override_hours|null` map.
 - `applyPabAdjustments()` (exported from `dispatch-bonuses.ts`, the same helper the
-  dispatch path uses) bumps a forgiven sub-7h weekday with ≥ 4 h effective hours up
-  to 7 h and auto-passes US holidays, producing `eligibilityHours`.
+  dispatch path uses) passes every day an approved issue forgives — by the one rule
+  `approvedIssueForgivesDay` (see *PAB eligibility impact* below: no hours set =
+  forgiven outright, an explicit SET at ≥ 4 h) — and auto-passes US holidays,
+  producing `eligibilityHours`.
 - Eligibility (both HSL and non-HSL) reads `eligibilityHours`; **paid** hours
   (`hoursByDateKey`) are untouched — forgiveness never adds payable time.
 
@@ -743,7 +745,7 @@ HSL employees use a different Perfect Attendance rule from all other departments
 
 Both the start day (D) and the tail day (D₊₁) earn independent passing-day credits from the same overnight pair. A worker clocking in at 11 PM Monday and out at 6 AM Tuesday earns a qualifying credit for **both** Monday and Tuesday.
 
-**Approved disputes.** A forgiven dispute with ≥ 4 h effective hours forces the day to 7 h in the eligibility map so it counts toward the 5-day quota without needing the overnight combination.
+**Approved disputes.** A day an approved issue forgives (`approvedIssueForgivesDay`: no hours set = outright, an explicit SET at ≥ 4 h — see *PAB eligibility impact*) is forced to 7 h in the eligibility map so it counts toward the 5-day quota without needing the overnight combination.
 
 **Implementation.** `checkHslPabEligibility()` in `src/lib/hubstaff/calendar-column-dedupe.ts` is the single authoritative source. Called by:
 - `computePabEligibleEmails()` in `dispatch-bonuses.ts` — payroll dispatch
@@ -842,25 +844,22 @@ Calendar and Payroll use `disputeGrantsPabForgiveness(row)` in `pab-day-disputes
 
 Statuses that are not yet final (`pending`, `pending_orphanage_manager`, `orphanage_manager_approved`) and all denied statuses do **not** grant forgiveness.
 
-**4h-floor bypass for orphanage-style reasons (2026-05-01):** historically, even an approved dispute only forgave a day if the employee logged ≥ 4h of Hubstaff time. That 4h floor was a sanity-check against employee-filed forgiveness on no-show days. Manager-submitted orphanage_visit + ceo_visitation rows now bypass the 4h floor — a 0h day is the *exact* case the dispute is for (employee was at the orphanage / on a CEO trip, no Hubstaff time logged). The check in the calendar cells (`EmployeeMyHours.tsx`, `EmployeeDashboard.tsx`, `EmployeePabCalendar.tsx`) is:
+**An approved issue with no hours set forgives its day OUTRIGHT — for every reason (Kane, 2026-10-06, session log item 363, ruling (b)).** One rule, `approvedIssueForgivesDay(override_hours)` in `src/lib/payroll/pab-forgiveness.ts`, read by `applyPabAdjustments` (dispatch, member-monthly-pay, Overview, `EmployeePabCalendar`'s verdict), the Payroll Wizard's verdicts and breakdown, the Employee Dashboard, My Hours and every calendar cell:
 
-```ts
-const forgiven =
-  !!dispute &&
-  disputeGrantsPabForgiveness(dispute) &&
-  !day.passes &&
-  (isOrphanageStyleReason(dispute.reason) || day.seconds >= 4 * 3600);
-```
+- `override_hours` **null** → forgiven: the day keeps its tracked hours (nothing is added) and counts as a passing day, whatever was tracked — 0 h included.
+- a **number** → an explicit hours SET (below). It forgives at **≥ 4 h**; under 4 h the approver has said the day failed.
 
-Other reasons still observe the 4h floor (employee-filed disputes pass through the same review without the bypass).
+Forgiveness adds no hours: both Payroll Wizard forgive paths (PAB step *Forgive month*, PAB Calendar per-day *Forgive*), the Additions *Attendance Issues* Forgive, and an Issues-queue approval with the hours left blank all write `null`.
+
+**History — the 4h floor, retired 2026-10-06.** Until then a `null` override forgave a day only if the employee logged ≥ 4 h of Hubstaff time — a sanity check against employee-FILED forgiveness on no-show days. Employees have not been able to file since 2026-07-20 (`employee-pab-dispute-removed`), so every approval is Accounting's own decision. Orphanage-style reasons were documented to bypass the floor (2026-05-01), but only the employee calendars' CELL check did so; `applyPabAdjustments` and the wizard were reason-blind and applied it — so a 0–3 h visit day read "Forgiven" on a calendar whose own verdict, and dispatch, failed it. Retiring the floor closed that. **Measured 2026-10-06:** 78 approved `null` rows (77 orphanage visits + 1 `other`), 29 of them on days under 4 h across 13 people (Jun 7 · Jul 13 · Aug 9), none inside the open September window (Aug 30 – Oct 3). Those past months now recompute without the floor; what was dispatched for them does not change. From 2026-08-28 to the ruling the wizard stored a flat `7` instead of `null` (to dodge the floor and the Dashboard's skip-`null`); `scripts/backfill-pab-forgive-no-hours.mts` clears those 19 rows to `null` — verdict-neutral, PENDING Kane's `--apply`.
 
 **`override_hours` contract — tri-state SET semantics** (finalised 2026-04-21):
 
 | Stored value | Meaning on `dispute_date` |
 |---|---|
-| `NULL` | Floor-drop only — Hubstaff hours are used as-is; the 7h threshold is replaced by a 4h floor (or bypassed entirely for orphanage-style reasons). |
+| `NULL` | Forgiven outright — Hubstaff hours are kept as-is and the day passes PAB whatever was tracked (since 2026-10-06; it was a 4h floor before, bypassed only for orphanage-style reasons). |
 | `0` | Intentional zero-out — the day counts as 0h total (fails PAB; used for e.g. unpaid leave). |
-| `> 0` | SET — replaces Hubstaff hours for that day. Example: Hubstaff logged 3h, approver sets 7h → day reads 7h, passes PAB. |
+| `> 0` | SET — replaces Hubstaff hours for that day; passes PAB at ≥ 4 h. Example: Hubstaff logged 3h, approver sets 5h → day reads 5h, passes; sets 3h → fails. To forgive without changing hours, leave it blank (`NULL`). |
 
 The override applies to the **exact** `dispute_date` only. **Manager-submitted orphanage-style rows always store `override_hours = null`** — the manager-submit endpoint never accepts a value. Employee-filed disputes can still receive an override at Accounting decision time.
 
@@ -917,7 +916,7 @@ This path coexists with the new manager-submitted flow and is **separate from th
 
 Forgiveness semantics for orphanage-style reasons:
 
-- **Visit date**: 7h threshold is dropped — orphanage-style approvals bypass the 4h floor (see the bypass note above). Any Hubstaff-logged hours are kept as-is. `override_hours` is null.
+- **Visit date**: forgiven outright — `override_hours` is null, which forgives the day whatever was tracked (the rule every approved issue follows since 2026-10-06; see *PAB eligibility impact*). Any Hubstaff-logged hours are kept as-is.
 - **Visit date + 1**: ~~The forgiveness-map builders synthesise a second entry~~ — **removed 2026-05-01.** Forgiveness applies only to the exact dates listed.
 
 Employees see their own visits in a read-only panel (`My Orphanage Visits` in the employee sidebar). Admins can remove a visit via the trash button; removal reverts forgiveness for that visit day only.

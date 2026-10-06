@@ -46,6 +46,7 @@ import {
   type ApprovedAdjustmentFacts,
 } from "@/lib/payroll/approved-adjustment-hours";
 import { orphanageCoversDay } from "@/lib/payroll/orphanage-pab-coverage";
+import { approvedIssueForgivesDay } from "@/lib/payroll/pab-forgiveness";
 import {
   formatIsoFromLocalDate,
   parseLocalDateFromIso,
@@ -122,10 +123,14 @@ function rowSelfReportsHsl(row: RawRow): boolean {
  * Applies approved dispute overrides and US-holiday auto-passes to a
  * per-date seconds map before the PAB eligibility check runs.
  *
- * Dispute SET semantics (mirrors PayrollWizard.tsx):
- *   override_hours != null  ->  effective = override_hours * 3600
- *   override_hours == null  ->  effective = raw Hubstaff seconds
- *   If effective < 7 h AND a dispute exists AND effective >= 4 h -> forgiven (pass)
+ * Forgiveness (one rule, `approvedIssueForgivesDay` in pab-forgiveness.ts; mirrored by
+ * the wizard, the Employee Dashboard, My Hours and EmployeePabCalendar):
+ *   override == null  ->  forgiven outright: the day passes whatever was tracked
+ *                         (Kane 2026-10-06, item 363 — was a 4h floor)
+ *   override != null  ->  an explicit SET: effective = override * 3600, a pass at >= 4 h,
+ *                         otherwise the SET value stands (0 = intentional zero-out)
+ * Time adjustments merged into the same map are always numbers (real hours), so they
+ * keep the >= 4 h rule; the wizard's orphanage-coverage overlay writes 7.
  *
  * US holidays set the day to 7 h so the >= 7 h gate auto-passes without
  * requiring Hubstaff data (same as the wizard's `continue` on holiday dates).
@@ -157,8 +162,7 @@ export function applyPabAdjustments(
       const key = pabDateKey(d);
       const rawSec = hoursByDateKey.get(key) ?? 0;
       const effectiveSec = overrideHours != null ? overrideHours * 3600 : rawSec;
-      // Forgiven when dispute exists and effective hours >= 4 h
-      effective.set(key, effectiveSec >= 4 * 3600 ? 7 * 3600 : effectiveSec);
+      effective.set(key, approvedIssueForgivesDay(overrideHours) ? 7 * 3600 : effectiveSec);
     }
   }
 
@@ -212,8 +216,9 @@ export function computePabEligibleEmails(args: {
   pabRangeSunSat?: { start: Date; end: Date };
   /**
    * Approved PAB disputes for the period, keyed by lowercased work email then
-   * by ISO dispute_date. Value is override_hours (null = no explicit override;
-   * effective hours fall back to the raw Hubstaff value for that day).
+   * by ISO dispute_date. Value is override_hours: null = forgiven outright, the
+   * day keeps its raw Hubstaff hours and passes; a number = an explicit SET
+   * (see applyPabAdjustments).
    */
   approvedDisputeDates?: Map<string, Map<string, number | null>>;
   /**

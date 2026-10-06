@@ -310,7 +310,8 @@ export async function decideDispute(
 
   const nowIso = new Date().toISOString();
   // 0 is a valid SET override (zero-out the day). Only null/negative/undefined means "no override".
-  // Orphanage-style reasons are floor-drop ONLY (never an explicit hours SET): the orphanage→PAB
+  // Orphanage-style reasons are no-hours ONLY (null = forgiven outright, never an explicit hours
+  // SET — approvedIssueForgivesDay): the orphanage→PAB
   // top-up bases coverage on RAW worked hours, so forcing null here keeps every eligibility site
   // (wizard, Payment Dispatch, employee views) computing the same base. See orphanage-pab-coverage.ts.
   const proposedOverride = isOrphanageStyleReason(row.reason)
@@ -388,7 +389,7 @@ export async function editDisputeDecision(
   const nowIso = new Date().toISOString();
   const editor = params.decided_by.trim();
   // 0 is a valid SET override (zero-out the day). Only null/negative/undefined means "no override".
-  // Orphanage-style reasons are floor-drop ONLY (see decideDispute) — force null so the orphanage
+  // Orphanage-style reasons are no-hours ONLY (see decideDispute) — force null so the orphanage
   // top-up always bases on raw worked hours consistently across every eligibility site.
   const newOverride =
     !isOrphanageStyleReason(row.reason) &&

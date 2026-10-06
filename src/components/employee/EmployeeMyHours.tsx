@@ -72,6 +72,7 @@ import {
   disputeGrantsPabForgiveness,
   type PabDayDisputeRow,
 } from '@/lib/supabase/pab-day-disputes';
+import { approvedIssueForgivesDay } from '@/lib/payroll/pab-forgiveness';
 import {
   US_HOLIDAYS_ENABLED_KEY,
   US_HOLIDAYS_LIST_KEY,
@@ -1255,7 +1256,11 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       const weekend = day.date.getDay() === 0 || day.date.getDay() === 6;
       const cellMid = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate());
       const dispute = inMonth ? disputesByDate.get(iso) : undefined;
-      const forgiven = !!dispute && disputeGrantsPabForgiveness(dispute) && !day.passes;
+      const forgiven =
+        !!dispute &&
+        disputeGrantsPabForgiveness(dispute) &&
+        approvedIssueForgivesDay(dispute.override_hours) &&
+        !day.passes;
       const orphanageForgiven =
         inMonth && !weekend && !day.passes && orphanageCoveredKeys.has(pabDateKey(day.date));
       const hslOvernight = isHsl && inMonth && hslOvernightIsos.has(iso);
@@ -1506,7 +1511,7 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
       const dispute = disputesByDate.get(iso);
       return (
         usHolidayDates.has(iso) ||
-        (!!dispute && disputeGrantsPabForgiveness(dispute)) ||
+        (!!dispute && disputeGrantsPabForgiveness(dispute) && approvedIssueForgivesDay(dispute.override_hours)) ||
         orphanageCoveredKeys.has(pabDateKey(d)) // TEMP orphanage coverage
       );
     };
@@ -1941,11 +1946,14 @@ export default function EmployeeMyHours({ employeeEmail }: EmployeeMyHoursProps)
                           }
                         };
 
-                        // Accounting's explicit approval is the definitive signal — no hour floor.
-                        // The old 4h floor only applied to the implicit day-after orphanage rule (removed 2026-05-01).
+                        // Accounting's explicit approval is the definitive signal — no hour floor
+                        // when no hours were set. An explicit hours SET under 4h is the approver
+                        // saying the day failed. One rule with dispatch: approvedIssueForgivesDay
+                        // (Kane 2026-10-06, item 363).
                         const forgiven =
                           !!dispute &&
                           disputeGrantsPabForgiveness(dispute) &&
+                          approvedIssueForgivesDay(dispute.override_hours) &&
                           !day.passes;
                         // TEMPORARY orphanage → PAB coverage: tracked time + the orphanage
                         // hours Accounting recorded in the Payroll Wizard reach 7h — the day
