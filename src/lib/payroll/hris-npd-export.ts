@@ -27,6 +27,15 @@
  * **A refused NPD line is never hidden** (§ Two steps): the skipped lines are listed under the
  * totals, with their reason and text.
  *
+ * **The Notes column reads the person's PAYSTUB** (Kane, 2026-10-06: "make it match the paystub
+ * if there are issues, like no bonus no kpi and any of that"). On a row with an issue (Mismatch,
+ * Not in NPD) it lists that paystub's lines, with the statement's own labels and in its order,
+ * from the SAME `PayStubView` the Step-8 preview, the in-app modal and the email render
+ * (`mapPayloadToPayStub` over the staged payload). It is never a re-computation. A bonus line
+ * on ₱0.00 reads "No Tech Allowance" / "No Attendance Incentive" / "No Performance Bonus (KPI)".
+ * The hold is what makes a ₱0.00 safe to call "No": a file is only made once every Net input
+ * has landed.
+ *
  * Deliberately pure: comparison in, CSV text out. No fetch, no DOM, no Supabase.
  */
 
@@ -39,7 +48,15 @@ import {
   type NpdPasteParse,
 } from './hris-npd-compare';
 import { heldSaveReason } from './hris-npd-snapshot';
+import {
+  formatPhp,
+  salaryLineLabel,
+  showsOrphanageLine,
+  showsTimeAdjustmentLine,
+  type PayStubView,
+} from './paystub-view';
 import { NPD_SHEETS, NPD_SHEET_LABELS, type NpdSheetKind } from '@/lib/npd/columns';
+import { normEmail } from '@/lib/email/norm-email';
 
 /** Where the NPD side came from: NPD's locked sheets (2026-10-02), or a paste on step 1. */
 export type HrisNpdExportSource =
@@ -149,20 +166,86 @@ export const HRIS_NPD_EXPORT_HEADER = [
   'Notes',
 ] as const;
 
-function comparedNotes(r: HrisNpdRow, fxRate: number): string {
+/** The staged paystubs by normalized work email: one per payable Validation row (normally one). */
+export type HrisNpdPaystubs = ReadonlyMap<string, readonly PayStubView[]>;
+
+/** Signed pesos as the statement prints them: `₱1,234.00`, `-₱100.00`. */
+function signedPhp(n: number): string {
+  return n < 0 ? `-${formatPhp(-n)}` : formatPhp(n);
+}
+
+const hrs = (h: number) => `${h.toFixed(2)}h`;
+/** The statement prints amounts at 2dp; anything under half a centavo is ₱0.00 on the paystub. */
+const isZero = (n: number) => Math.abs(n) < 0.005;
+
+/**
+ * One paystub as a note: `Paystub: Regular Hours ₱10,600.00 (40.00h) · No Tech Allowance · …
+ * · Net ₱12,095.00`. The statement's labels and order (`PayStubStatement.tsx`). Hours lines and
+ * extras appear only when they carry money; the three bonus lines always appear, as the amount
+ * or as "No <line>", because a missing bonus or KPI is what the note is for.
+ */
+export function paystubNote(v: PayStubView): string {
+  const parts: string[] = [];
+  if (v.salary) {
+    parts.push(`${salaryLineLabel(v.salary)} ${formatPhp(v.mfPay)}`);
+  } else {
+    const regHours = v.weekdayHours ?? v.mfHours;
+    const regPay = v.weekdayPay ?? v.mfPay;
+    const otHours = v.weekdayOtHours ?? v.mfOtHours;
+    const otPay = v.weekdayOtPay ?? v.otPay;
+    if (!isZero(regPay) || regHours > 0) {
+      parts.push(`${v.otIsDifferential ? 'M-F Hours' : 'Regular Hours'} ${signedPhp(regPay)} (${hrs(regHours)})`);
+    }
+    if (!isZero(otPay) || otHours > 0) {
+      parts.push(`${v.otIsDifferential ? 'OT Differential' : 'Overtime'} ${signedPhp(otPay)} (${hrs(otHours)})`);
+    }
+    if (v.hasWeekend && (!isZero(v.weekendPay) || v.weekendHours > 0)) {
+      parts.push(`Weekend Hours ${signedPhp(v.weekendPay)} (${hrs(v.weekendHours)})`);
+    }
+  }
+  if (showsTimeAdjustmentLine(v)) parts.push(`Time Adjustment ${signedPhp(v.timeAdjustment?.payPhp ?? 0)}`);
+  parts.push(isZero(v.techBonus) ? 'No Tech Allowance' : `Tech Allowance ${signedPhp(v.techBonus)}`);
+  parts.push(isZero(v.attendanceBonus) ? 'No Attendance Incentive' : `Attendance Incentive ${signedPhp(v.attendanceBonus)}`);
+  parts.push(
+    isZero(v.performanceBonus) ? 'No Performance Bonus (KPI)' : `Performance Bonus (KPI) ${signedPhp(v.performanceBonus)}`,
+  );
+  if (!isZero(v.adjustment)) {
+    parts.push(`Adjustment ${signedPhp(v.adjustment)}${v.adjustmentNote ? ` (${v.adjustmentNote})` : ''}`);
+  }
+  if (showsOrphanageLine(v)) parts.push(`Orphanage +${formatPhp(v.orphanagePay)}`);
+  if (!isZero(v.mesaDisbursement)) parts.push(`MESA Reimbursement +${formatPhp(v.mesaDisbursement)}`);
+  if (!isZero(v.mesaDeduction)) parts.push(`MESA Deduction -${formatPhp(Math.abs(v.mesaDeduction))}`);
+  parts.push(`Net ${signedPhp(v.totalPayPhp)}`);
+  return `Paystub: ${parts.join(' · ')}`;
+}
+
+/**
+ * The Notes cell. What explains HRIS's figure comes first (no payout, an excluded row beside a
+ * payable one). Then, on a row with an issue, the paystub. A Match carries no paystub: it has
+ * no issue to explain.
+ */
+function comparedNotes(r: HrisNpdRow, paystubs: HrisNpdPaystubs): string {
   const notes: string[] = [];
-  if (r.noPayoutRowCount > 0) notes.push('No payout this week (no payout address on file; HRIS figure is Gross)');
+  if (r.noPayoutRowCount > 0) {
+    notes.push("No paystub: no payout address on file, so HRIS's figure is the Validation step's Gross");
+  }
   if (r.excludedRowCount > 0) {
     notes.push(`${r.excludedRowCount} excluded row${r.excludedRowCount === 1 ? '' : 's'} not counted`);
   }
-  if (r.status === 'match' && r.deltaCents) notes.push('Within the off-by setting, so counted as a match');
-  if (r.status === 'mismatch' && r.impliedNpdRate != null) {
-    notes.push(`NPD's figure implies PHP ${r.impliedNpdRate.toFixed(2)} per $1 (this cycle: PHP ${fxRate.toFixed(2)})`);
+  if (r.status === 'not_in_hris') notes.push('No HRIS paystub this week');
+  if (r.status === 'mismatch' || r.status === 'not_in_npd') {
+    const stubs = paystubs.get(normEmail(r.workEmail) ?? '') ?? [];
+    stubs.forEach((v, i) =>
+      notes.push(stubs.length > 1 ? `${i + 1} of ${stubs.length} - ${paystubNote(v)}` : paystubNote(v)),
+    );
+    // A payable row with a payout address always stages a paystub. One that has none is said,
+    // never left blank.
+    if (stubs.length < r.hrisRowCount - r.noPayoutRowCount) notes.push('Paystub not found for this row');
   }
-  return notes.join('; ');
+  return notes.join(' | ');
 }
 
-function comparedRow(r: HrisNpdRow, fxRate: number): string {
+function comparedRow(r: HrisNpdRow, paystubs: HrisNpdPaystubs): string {
   return [
     textCell(r.workEmail),
     textCell(r.name),
@@ -174,7 +257,7 @@ function comparedRow(r: HrisNpdRow, fxRate: number): string {
     pesoCell(r.hrisPhp),
     intCell(r.hrisRowCount),
     intCell(r.npdLines.length),
-    textCell(comparedNotes(r, fxRate)),
+    textCell(comparedNotes(r, paystubs)),
   ].join(',');
 }
 
@@ -198,9 +281,11 @@ export function buildHrisNpdCsv(input: {
   /** The wizard's week key (the Hubstaff filename). */
   periodLabel: string | null;
   source: HrisNpdExportSource;
+  /** The staged paystubs the Notes column reads (`mapPayloadToPayStub`, as Step 8 renders them). */
+  paystubs: HrisNpdPaystubs;
   now: Date;
 }): { ok: true; csv: string } | { ok: false; reason: string } {
-  const { comparison, parse, fxRate, periodLabel, source, now } = input;
+  const { comparison, parse, fxRate, periodLabel, source, paystubs, now } = input;
   const blocked = hrisNpdExportBlockedReason(comparison);
   if (blocked) return { ok: false, reason: blocked };
   const counts = comparison.counts!;
@@ -216,6 +301,7 @@ export function buildHrisNpdCsv(input: {
     `Match: HRIS and NPD off by at most ${toleranceCents} cent${toleranceCents === 1 ? '' : 's'} (the output's "off by" setting). A match inside that still shows its Difference.`,
     'Difference = NPD - HRIS.',
     'Every row of the output is here. The search and the chips on screen do not narrow this file.',
+    'Notes: on a Mismatch or Not in NPD row, the person\'s paystub as Step 8 shows it, line by line. "No Tech Allowance", "No Attendance Incentive" and "No Performance Bonus (KPI)" mean that line is PHP 0.00 on the paystub.',
     left.total > 0
       ? `Left out, not paid this week: ${left.total} (${hrisNpdLeftOutWhy(left)}).${left.inNpd > 0 ? ` NPD lists ${left.inNpd} of them.` : ''} They are not in this file, not compared and not in the counts or totals.`
       : 'Nobody is configured not to be paid this week.',
@@ -235,7 +321,7 @@ export function buildHrisNpdCsv(input: {
     ...notes.map(textCell),
     '',
     HRIS_NPD_EXPORT_HEADER.join(','),
-    ...comparison.rows.map((r) => comparedRow(r, fxRate)),
+    ...comparison.rows.map((r) => comparedRow(r, paystubs)),
     [
       textCell(`TOTAL - ${totals.people} ${totals.people === 1 ? 'person' : 'people'}`),
       '',

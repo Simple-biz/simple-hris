@@ -161,6 +161,7 @@ import {
 } from '@/lib/payroll/hogan-week-pay';
 import {
   mapPayloadToPayStub,
+  type PayStubView,
   type ProrationBlockRaw,
 } from '@/lib/payroll/paystub-view';
 import {
@@ -10705,6 +10706,26 @@ export default function PayrollWizard({
     [validationBreakdowns],
   );
 
+  /**
+   * HRIS vs NPD → Export CSV's Notes column (Kane, 2026-10-06: "make it match the paystub if
+   * there are issues, like no bonus no kpi"). Each payable row's staged payload through
+   * `mapPayloadToPayStub`, the SAME call the Step-8 preview renders the statement with, keyed by
+   * normalized work email (the comparison's key). A getter, so ~1,200 payloads are mapped only
+   * when Export is clicked. `dispatchData.rows` holds the payable rows only (excluded ones are in
+   * `excludedRows`), matching the rows HRIS vs NPD compares.
+   */
+  const getHrisNpdPaystubs = useCallback(() => {
+    const out = new Map<string, PayStubView[]>();
+    for (const e of dispatchData.rows) {
+      const k = normEmail(e.email);
+      if (!k) continue;
+      const list = out.get(k) ?? [];
+      list.push(mapPayloadToPayStub(e as unknown as Record<string, unknown>));
+      out.set(k, list);
+    }
+    return out;
+  }, [dispatchData.rows]);
+
   /** People in a department paused this week — the same predicate `effectiveCalcResults`
    *  filters them out with — so NPD listing one reads "paused", not a bare "Not in HRIS". */
   const npdPausedEmails = useMemo(() => {
@@ -20313,6 +20334,7 @@ export default function PayrollWizard({
           filter: hrisNpdFilter,
           onFilterChange: setHrisNpdFilter,
           save: hrisNpdSaveProps,
+          getPaystubs: getHrisNpdPaystubs,
         };
 
         return (

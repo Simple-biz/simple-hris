@@ -440,6 +440,7 @@ function renderFeed(text: string, feedProps: HrisNpdFeedProps, step: HrisNpdStep
       filter: 'all',
       onFilterChange: () => {},
       save: NOT_SAVED,
+      getPaystubs: () => new Map(),
     }),
   );
 }

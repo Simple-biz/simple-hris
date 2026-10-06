@@ -47,6 +47,7 @@ commit: `git log -- docs/features/payroll-wizard-hris-vs-npd.md`. Plan:
 | Locked NPD feed: the save-side proof (`proveNpdSource`) | `app/api/payroll-wizard/npd-comparison/route.ts` |
 | Export CSV: the builder, the filename, why it is off (pure) + its tests | `src/lib/payroll/hris-npd-export.ts` · `hris-npd-export.test.ts` |
 | Export CSV: the button and the download (BOM) | `src/components/payroll/HrisNpdComparison.tsx` (`exportCsv`, `downloadCsv`) |
+| Export CSV: the paystubs the Notes column reads (`getHrisNpdPaystubs`, a getter run on the click) | `src/components/PayrollWizard.tsx` |
 
 ## Where it lives
 
@@ -379,7 +380,11 @@ and in the overlay, and only on step 2: step 1 has no output.
 | **People configured not to be paid this week are not in the file** (Kane, 2026-10-06), as they are not rows on screen. A note says `Left out, not paid this week: N (X excluded on Final Pay · Y in a department paused …). NPD lists Z of them.` and the counts block ends `Left out - not paid this week,N` | § People configured not to be paid. The count is the screen's own (`summarizeHrisNpdLeftOut`) |
 | **The skipped NPD lines are listed at the bottom** (line, reason, text), and a note at the top says how many | Hiding the input must never hide a refused line (§ Two steps). A file with no refusals has no such block |
 | **Notes above the header row**: the week key, when it was exported (UTC), the NPD source (`NPD's locked sheets for week … (All Departments vN, HSL vN)`, or the paste), the FX divisor, the "off by" N in use, Difference = NPD − HRIS, the "every row" rule, the left-out count, and the Total Pay US Workers note when NPD has such rows | The screen's legend doesn't travel with the file. The tolerance and the rate are what the verdicts mean |
-| **Columns**: Work Email, Name, Match, HRIS USD, NPD USD, Difference USD (NPD − HRIS), HRIS PHP (final pay), HRIS rows added, NPD lines added, Notes. Notes carry what the screen tags: *No payout this week*, *N excluded rows not counted*, *within the off-by setting*, and on a mismatch the PHP rate NPD's figure implies | One column per thing the screen shows, so nothing on screen is missing from the file |
+| **Columns**: Work Email, Name, Match, HRIS USD, NPD USD, Difference USD (NPD − HRIS), HRIS PHP (final pay), HRIS rows added, NPD lines added, Notes | One column per thing the screen shows, so nothing on screen is missing from the file |
+| **Notes = the person's paystub, on a row with an issue** (Kane, 2026-10-06: *"Change the note and make it match the paystub if there are issues, like no bonus no kpi and any of that"*). A **Mismatch** or **Not in NPD** row gets `Paystub: Regular Hours ₱10,600.00 (40.00h) · No Tech Allowance · Attendance Incentive ₱1,000.00 · No Performance Bonus (KPI) · Adjustment -₱500.00 (its note) · MESA Deduction -₱100.00 · Net ₱…`: the statement's labels, in its order (`PayStubStatement.tsx`). Hours lines (Regular / M-F, Overtime / OT Differential, Weekend, or the Salary line) and the extras (Time Adjustment, Adjustment, Orphanage, MESA) appear only when they carry money. **The three bonus lines always appear**, as the amount or as **`No Tech Allowance` / `No Attendance Incentive` / `No Performance Bonus (KPI)`**, because a missing bonus or KPI is what the note is for. Performance Bonus is `other_bonuses`, the KPI and department bonuses (`paystub-dispatch.md:500`). A **Match** carries no note. **Not in HRIS** reads `No HRIS paystub this week` | Accounting reads the file to find why HRIS and NPD differ, and the paystub is HRIS's side of that line by line. Kane's ruling replaced the first build's notes, which gave the implied FX rate and "within the off-by setting" (the screen's ✗ tooltip still gives the rate) |
+| **The note is the SAME paystub Step 8 renders, never a re-computation.** The wizard maps each payable staged payload (`dispatchData.rows`, which holds no excluded row) through `mapPayloadToPayStub`, the call the Step-8 preview, the in-app modal and the email use, keyed by normalized work email (source-guarded). It is a getter run on the click, so ~1,200 payloads are not mapped on every render | Two descriptions of one paystub that could disagree is the defect this avoids (the preview's own reason for rendering the shared statement) |
+| **A ₱0.00 bonus is safe to call "No …" only because the file waits for the hold.** No file is made while any Net input is still loading or failed (§ No verdict before the figures can be judged), so every line is settled. Never let the export run while held to "get the notes out" | An unloaded bonus prints ₱0.00 and is indistinguishable from a real one ([[paystub-preview-pending-fields]]). "No Performance Bonus (KPI)" over an unread KPI would be a false claim on a pay record |
+| Two payable rows on one work email: both paystubs, `1 of 2 - Paystub: … \| 2 of 2 - Paystub: …`. A payable row with a payout address but no staged paystub reads `Paystub not found for this row`, never blank. A row with no payout address reads `No paystub: no payout address on file, so HRIS's figure is the Validation step's Gross` (any status), and an excluded row beside a payable one adds `N excluded rows not counted` | A blank note on an issue row would read as "nothing to explain" |
 | **Money is written from integer cents** (`centsCell`: `-2.68`, ungrouped), never through `cents / 100`. Pesos are 2dp | The comparison's cents ARE the figure |
 | **Text cells are formula-neutralised** (`=`, `+`, `-`, `@` → a leading `'`). Number cells are not | A pasted NPD address or a refused line is free text that Excel would run. A negative Difference legitimately starts with `-`. Same split as `cycle-processor-export.ts` |
 | CRLF line endings. The download prepends a UTF-8 BOM, written as the escape `'﻿'` and never as a literal character | Excel reads `·` and `₱` as mojibake without it. An invisible literal is the character a later edit deletes by accident |
@@ -505,6 +510,13 @@ skipped lines all came out as above. **Not clicked through signed in, and no fil
 in Excel or Sheets.** The button's states are pinned by markup tests only. **`next build` not
 run**: a dev server was live on :3000.
 
+*Notes read the paystub (2026-10-06, third commit):* `hris-npd-export.test.ts` now builds paystubs
+through the real `mapPayloadToPayStub` and pins the exact note strings (all-zero bonuses, paid bonuses
++ adjustment note + orphanage + MESA, salary, two paystubs, a missing paystub, which statuses carry
+it), plus a source guard on the wizard's getter. The five HRIS-vs-NPD files: **197/197**. `npm test`
+**6,014/6,014**. tsc clean apart from the stale `.next/types` errors. **No real file has been opened,
+and it is not clicked through signed in.**
+
 *People configured not to be paid are not rows (2026-10-06, second commit):* the tests that pinned
 10-02's rows-with-the-reason were rewritten to pin the opposite, at least as tightly: no excluded or
 paused address anywhere in the output markup under any chip, search or hold; no false Not in HRIS;
@@ -517,6 +529,9 @@ through signed in.** `next build` not run (dev server on :3000).
 
 **People configured not to be paid are not rows (2026-10-06): nothing to apply.** No migration, no
 route change: Save output's payload is unchanged. It needs the push.
+
+**Export CSV's paystub notes (2026-10-06): nothing to apply.** Client-side, from payloads the wizard
+already stages. It needs the push.
 
 **Export CSV (2026-10-06): nothing to apply.** No migration, no env var, no n8n, no route. It
 needs the push.

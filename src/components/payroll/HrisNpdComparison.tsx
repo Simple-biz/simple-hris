@@ -84,6 +84,7 @@ import {
   hrisNpdExportBlockedReason,
   hrisNpdExportFilename,
   type HrisNpdExportSource,
+  type HrisNpdPaystubs,
 } from '@/lib/payroll/hris-npd-export';
 import type { NpdFeedTabStatus } from '@/lib/payroll/hris-npd-feed';
 import type { NpdSheetKind } from '@/lib/npd/columns';
@@ -196,6 +197,12 @@ export type HrisNpdPanelProps = {
   onFilterChange: (next: HrisNpdFilter) => void;
   /** Save output and the week's last save. */
   save: HrisNpdSaveProps;
+  /**
+   * The week's staged paystubs by normalized work email, for Export CSV's Notes column (Kane,
+   * 2026-10-06: "make it match the paystub"). A getter so the mapping runs on the click, not on
+   * every render. The WIZARD builds them with `mapPayloadToPayStub`, the Step-8 preview's call.
+   */
+  getPaystubs: () => HrisNpdPaystubs;
 };
 
 type Props = HrisNpdPanelProps & {
@@ -635,6 +642,7 @@ export default function HrisNpdComparison({
   filter,
   onFilterChange,
   save,
+  getPaystubs,
   fillHeight = false,
   onOpenFullScreen,
 }: Props) {
@@ -684,7 +692,15 @@ export default function HrisNpdComparison({
   const exportBlocked = hrisNpdExportBlockedReason(comparison);
   const exportCsv = () => {
     const now = new Date();
-    const out = buildHrisNpdCsv({ comparison, parse, fxRate, periodLabel, source: exportSource(npdFeed.view), now });
+    const out = buildHrisNpdCsv({
+      comparison,
+      parse,
+      fxRate,
+      periodLabel,
+      source: exportSource(npdFeed.view),
+      paystubs: getPaystubs(),
+      now,
+    });
     if (out.ok) downloadCsv(hrisNpdExportFilename(periodLabel, now), out.csv);
   };
 

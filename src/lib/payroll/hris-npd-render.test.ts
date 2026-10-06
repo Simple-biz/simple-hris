@@ -104,6 +104,7 @@ function render(paste: string, over: Partial<CompareHrisNpdInput> = {}, mount: M
       filter: mount.filter ?? 'all',
       onFilterChange: () => {},
       save: { ...NOT_SAVED, ...mount.save },
+      getPaystubs: () => new Map(),
       fillHeight: mount.fillHeight,
       onOpenFullScreen: mount.onOpenFullScreen,
     }),
