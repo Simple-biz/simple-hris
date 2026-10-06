@@ -170,6 +170,15 @@
         ],
         "createdAt": "2026-10-05T19:30:10.837Z",
         "reason": "Kane (user confirmed 2026-10-05): the left-4 accent on the Admin -> Roles cards (L1466, L1797) is kept as designed"
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/accounting-scoreboard/ScoreboardApp.tsx"
+        ],
+        "createdAt": "2026-10-06T18:18:56.267Z",
+        "reason": "Claude (session 48c8828b): L428 archive icon link is zinc-500 only at rest on the neutral white header; the orange-50 background exists only on hover, where the text switches to orange-800. No gray-on-color state renders."
       }
     ]
   }
