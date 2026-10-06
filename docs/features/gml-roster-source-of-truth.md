@@ -183,6 +183,35 @@ people and the 41 unclassified) disappears from every surface again.
 and on no HR screen. Actionable today, independent of every other step — HR re-adds them to the
 sheet, or they are re-onboarded in the HRIS.
 
+### Name-in-email ghost rows: the reconcile cannot see them
+
+A master row whose only "email" is a **name** belongs to nobody. No stamp, no departure record
+and no sibling row can be matched to it, so the reconcile put it in *needs HR review* (no write)
+and `/api/hr/offboard`, keyed by work email, never reaches it. It stays on `active_employees` and
+is dealt a QC slot every week. When a manager queues it, the HR queue correctly refuses: no work
+email, *"can't be auto-offboarded"*. **That banner is right. Do not loosen it.** HR should Dismiss
+the request, and the row is then retired by a guarded script.
+
+The case that found this: Mark Arriola, 327a7857 (`MASTERLIST.csv` batch 1), the ghost of
+5dba371f (`marka@`), who left 2026-07-16. Item 364, `scripts/stamp-arriola-ghost-row.mts`.
+
+Three rules for any script that retires one of these rows:
+
+- **Stamp `duplicate_cleanup`, dated the real person's departure, never today.** `listOffboardedSince`
+  (`src/lib/supabase/qc-db.ts`) re-deals any row stamped on or after a week's start, whatever the
+  reason, so a today stamp still deals the ghost a slot for the current week. `duplicate_cleanup` is
+  outside `DEPARTURE_REASONS`, so the person's departure stays on their real row only. Slots
+  already dealt are sticky and stay where they are.
+- **Prove the person is gone before writing**: the real row is stamped, no other active row is
+  theirs, nothing has been paid on any of their keys since, and they have no hours in the current
+  cycle. A failed read refuses `--apply`.
+- **Never put a name key inside `.in()`.** Its quotes and comma silently match nothing: measured
+  2026-10-06, `bonus_catalog_applied` returned 0 rows for the Arriola key through `.in()` and 2
+  through `.eq()`. A zero from that filter proves nothing.
+
+The ghost-row script is **PENDING Kane's `--apply`**. Undo: `--revert`, which clears only what that
+script's actor stamped.
+
 ---
 
 ## What did NOT change
