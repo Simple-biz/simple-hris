@@ -484,6 +484,58 @@ describe('HRIS vs NPD — full screen', () => {
   });
 });
 
+// ── Export CSV (Kane, 2026-10-06) ─────────────────────────────────────────────
+// The file is every row of the output, whatever the search or chip shows, and there is no file
+// while the verdicts are held. The builder's rules are in hris-npd-export.test.ts; these pin the
+// button the panel renders.
+
+/** The Export CSV button's markup. */
+function exportButton(html: string): string {
+  const at = html.indexOf('Export CSV');
+  assert.ok(at > 0, 'no Export CSV button');
+  const start = html.lastIndexOf('<button', at);
+  return html.slice(start, html.indexOf('</button>', at) + '</button>'.length);
+}
+
+describe('HRIS vs NPD — Export CSV', () => {
+  it('is live on a judged output, on the step and in full screen', () => {
+    for (const mount of [{ onOpenFullScreen: () => {} }, { fillHeight: true }]) {
+      const btn = exportButton(render(PASTE, {}, mount));
+      assert.doesNotMatch(btn, /disabled=""/);
+      assert.match(btn, /title="Download every row of this output as CSV \(4\)/);
+    }
+  });
+
+  it('is off while the verdicts are held, with the reason as its title', () => {
+    const loading = exportButton(render(PASTE, { hrisState: 'pending' }));
+    assert.match(loading, /disabled=""/);
+    assert.match(loading, /title="Rows are not marked yet: this week’s pay is still loading\."/);
+    const noFx = exportButton(render(PASTE, { fxRate: 0 }));
+    assert.match(noFx, /disabled=""/);
+    assert.match(noFx, /USD→PHP rate is still 0/);
+  });
+
+  it('says "all N" when the search or a chip narrows the table, because the file never narrows', () => {
+    assert.doesNotMatch(exportButton(render(PASTE)), /· all/);
+    assert.match(exportButton(render(PASTE, {}, { filter: 'mismatch' })), /· all 4<\/span>/);
+    assert.match(exportButton(render(PASTE, {}, { search: 'npdonly' })), /· all 4<\/span>/);
+  });
+
+  it('is not on step 1 — there is no output to export there', () => {
+    assert.doesNotMatch(render(PASTE, {}, { step: 'input' }), /Export CSV/);
+  });
+
+  it('the panel builds the file from its own comparison, never the filtered rows (source guard)', () => {
+    const src = fs
+      .readFileSync(path.join(process.cwd(), 'src/components/payroll/HrisNpdComparison.tsx'), 'utf8')
+      .replace(/\r\n/g, '\n');
+    const call = /buildHrisNpdCsv\(\{([^}]*)\}\)/.exec(src);
+    assert.ok(call, 'buildHrisNpdCsv call not found');
+    assert.match(call![1], /\bcomparison\b/);
+    assert.doesNotMatch(call![1], /visible|search|filter|lines/);
+  });
+});
+
 describe('HRIS vs NPD — the wizard mounts ONE overlay for both sections (source guard)', () => {
   const src = fs
     .readFileSync(path.join(process.cwd(), 'src/components/PayrollWizard.tsx'), 'utf8')

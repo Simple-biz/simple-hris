@@ -10,7 +10,8 @@ side has nobody at that address. Nobody on either side is ever dropped. People c
 be paid this week are rows too, with the reason in the Match column, but they are never compared
 and never counted (§ People configured not to be paid). The comparison itself writes nothing. The
 one write is **Save output** (2026-10-01), which appends the output on screen as the week's next
-saved version (§ Saving the output).
+saved version (§ Saving the output). **Export CSV** (2026-10-06) downloads the whole output as a
+file and writes nothing (§ Export CSV).
 
 **Since 2026-10-02 the NPD figures load on their own once NPD is locked in.** When Accounting →
 NPD has **both** tabs (All Departments and HSL) locked for the wizard's week, step 1 reads them
@@ -43,6 +44,8 @@ commit: `git log -- docs/features/payroll-wizard-hris-vs-npd.md`. Plan:
 | Locked NPD feed: tests (rules, reply, route + wizard source guards, rendered step 1) | `src/lib/payroll/hris-npd-feed.test.ts` |
 | Locked NPD feed: the read-only route | `app/api/payroll-wizard/npd-feed/route.ts` |
 | Locked NPD feed: the save-side proof (`proveNpdSource`) | `app/api/payroll-wizard/npd-comparison/route.ts` |
+| Export CSV: the builder, the filename, why it is off (pure) + its tests | `src/lib/payroll/hris-npd-export.ts` · `hris-npd-export.test.ts` |
+| Export CSV: the button and the download (BOM) | `src/components/payroll/HrisNpdComparison.tsx` (`exportCsv`, `downloadCsv`) |
 
 ## Where it lives
 
@@ -348,6 +351,31 @@ step. As this paragraph required, the read goes through the paste contract uncha
 Replays can paste too, and nothing is saved from a replay. The HRIS side is the Validation step's
 rows for the replayed week.
 
+## Export CSV (2026-10-06)
+
+Kane: *"Payroll Wizard - Validation - Payroll Wizard vs HRIS - add an export CSV please"*. Built
+via `blueprint` (CHOSEN 1–7, no NEEDS). Plan:
+`docs/superpowers/plans/2026-10-06-payroll-wizard-hris-vs-npd-export.md`. Precedent:
+`src/lib/admin/cycle-processor-export.ts`.
+
+**Export CSV** is in the output table's header bar, before **Full screen**. It shows on the step
+and in the overlay, and only on step 2: step 1 has no output.
+
+| Rule | Why |
+|---|---|
+| **The file is every row of the output: compared rows and Not paid rows, sorted by work email** (`hrisNpdDisplayRows`). The search and the chip never narrow it. `buildHrisNpdCsv` takes **no** filter input (test-pinned), and the panel hands it `comparison`, never `visible` (source-guarded). When the table is narrowed, the button reads **Export CSV · all N** | The wizard's money exports ignore the search permanently (Reports, 2026-09-09, [[wizard-reports-search-display-only]]). A filtered file can't be told apart from a short week once it is downloaded. The spreadsheet can filter it |
+| **No file while the verdicts are held** (loading, a failed source, FX 0, nothing read). The button is disabled and its title gives the reason, in Save output's words (`heldSaveReason`). The builder refuses too | A file travels and the hold banner does not. An HRIS figure that hasn't landed must never leave as a figure (§ No verdict before the figures can be judged) |
+| **Everything is copied from `compareHrisNpd`, never recomputed**: verdicts, Difference (NPD − HRIS), counts, totals. The TOTAL row is a row, not a `SUM()` | A formula would recompute from whatever the reader has since edited, and stop matching the screen it came from |
+| **Not paid rows**: Match is `Not paid · Excluded on Final Pay` / `Not paid · Department paused this week`, HRIS is blank, NPD is its figure as listed, and there is no Difference. They are **not** in the TOTAL row, which says `N not paid (not counted)` | § People configured not to be paid. Same as the screen's footer |
+| **The skipped NPD lines are listed at the bottom** (line, reason, text), and a note at the top says how many | Hiding the input must never hide a refused line (§ Two steps). A file with no refusals has no such block |
+| **Notes above the header row**: the week key, when it was exported (UTC), the NPD source (`NPD's locked sheets for week … (All Departments vN, HSL vN)`, or the paste), the FX divisor, the "off by" N in use, Difference = NPD − HRIS, the "every row" rule, the Not paid rule, and the Total Pay US Workers note when NPD has such rows | The screen's legend doesn't travel with the file. The tolerance and the rate are what the verdicts mean |
+| **Columns**: Work Email, Name, Match, HRIS USD, NPD USD, Difference USD (NPD − HRIS), HRIS PHP (final pay), HRIS rows added, NPD lines added, Notes. Notes carry what the screen tags: *No payout this week*, *N excluded rows not counted*, *within the off-by setting*, and on a mismatch the PHP rate NPD's figure implies | One column per thing the screen shows, so nothing on screen is missing from the file |
+| **Money is written from integer cents** (`centsCell`: `-2.68`, ungrouped), never through `cents / 100`. Pesos are 2dp | The comparison's cents ARE the figure |
+| **Text cells are formula-neutralised** (`=`, `+`, `-`, `@` → a leading `'`). Number cells are not | A pasted NPD address or a refused line is free text that Excel would run. A negative Difference legitimately starts with `-`. Same split as `cycle-processor-export.ts` |
+| CRLF line endings. The download prepends a UTF-8 BOM, written as the escape `'﻿'` and never as a literal character | Excel reads `·` and `₱` as mojibake without it. An invisible literal is the character a later edit deletes by accident |
+| Filename `hris-vs-npd_<from>_to_<to>_<local timestamp>.csv`, taken from the week key's date range. A key with no range uses the key itself, slugged | Two weeks' files must never be confusable in Downloads |
+| **Client-side only.** No route, no audit row, no write. Live week and replay alike | Anyone who can open the tab already sees every figure on it, the same as the Reports XLSX/PDF and the processor CSV. A replay's output is a real view of that week. Nothing is saved from it |
+
 ## The search and the chips never narrow the totals
 
 `filterHrisNpdRows` is display only. The search text and the chip are **wizard state**
@@ -460,7 +488,18 @@ The render test that pinned "not rows" was rewritten to pin the new rule: a row 
 neutral, no verdict, not in counts or totals, a Not paid chip that holds while verdicts are held.
 **Not clicked through signed in.**
 
+*Export CSV (2026-10-06):* `hris-npd-export.test.ts` (new, 17) plus the four existing files:
+**190/190**. `npm test` **6,007/6,007**. tsc clean apart from the stale `.next/types` errors. A
+sample file was built from fixtures and read: notes, every row, the TOTAL row, the counts and the
+skipped lines all came out as above. **Not clicked through signed in, and no file has been opened
+in Excel or Sheets.** The button's states are pinned by markup tests only. **`next build` not
+run**: a dev server was live on :3000.
+
 ## Deploy notes
+
+**Export CSV (2026-10-06): nothing to apply.** No migration, no env var, no n8n, no route. It
+needs the push.
+
 
 **Save output's migration: APPLIED 2026-10-02 by Kane** (*"NPD Saved done applying the migration"*). Measured the same night: `--verify` straight to Postgres passes every check (both tables, the save function, the no-UPDATE trigger, the APPEND-ONLY comment, RLS on, zero policies, no anon/authenticated privileges), and both tables read through PostgREST (0 rows). An earlier run that night had been the rolled-back rehearsal, which is why a 00:41Z check found nothing.
 `references/sql/create/2026-10-01_payroll_wizard_npd_comparisons.sql`, applied with

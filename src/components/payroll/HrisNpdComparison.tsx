@@ -18,6 +18,9 @@
  *     comparison this panel renders and POSTs it to /api/payroll-wizard/npd-comparison
  *     (append-only, service-role tables). Saving restores nothing: the paste still lives in
  *     the wizard's state for the week on screen and is gone on reload.
+ *   - **Export CSV** (Kane, 2026-10-06) downloads the output from the same comparison
+ *     (`buildHrisNpdCsv`): every row, never the search or chip's slice, and nothing while the
+ *     verdicts are held. Client-side only; it writes nothing either.
  *   - Every row, count, total and verdict comes from `compareHrisNpd` — this file never
  *     decides a match. The search and the status chips are `filterHrisNpdDisplay`, and they
  *     never narrow the totals.
@@ -40,6 +43,7 @@ import {
   AlertTriangle,
   Check,
   ClipboardPaste,
+  Download,
   Loader2,
   Lock,
   Maximize2,
@@ -74,6 +78,12 @@ import {
   type NpdPasteParse,
 } from '@/lib/payroll/hris-npd-compare';
 import type { HrisNpdSaveMeta } from '@/lib/payroll/hris-npd-snapshot';
+import {
+  buildHrisNpdCsv,
+  hrisNpdExportBlockedReason,
+  hrisNpdExportFilename,
+  type HrisNpdExportSource,
+} from '@/lib/payroll/hris-npd-export';
 import type { NpdFeedTabStatus } from '@/lib/payroll/hris-npd-feed';
 import type { NpdSheetKind } from '@/lib/npd/columns';
 
@@ -239,6 +249,32 @@ function signedUsd(cents: number): string {
 function listWords(items: readonly string[]): string {
   if (items.length <= 1) return items[0] ?? '';
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/** Where the NPD side came from, as the export's notes name it. */
+function exportSource(view: HrisNpdFeedView): HrisNpdExportSource {
+  return view.state === 'ready' && view.feed
+    ? { kind: 'locked_sheets', week: view.week, versions: view.feed.versions, usWorkersRows: view.feed.usWorkersRows }
+    : { kind: 'paste' };
+}
+
+/**
+ * Hand the browser the file. A UTF-8 BOM, written as an ESCAPE and never as a literal: Excel
+ * needs it to read the ₱ and "·" in the file as UTF-8, and an invisible U+FEFF in the source
+ * is exactly the character a later edit deletes without anyone seeing it go
+ * (`PayrollCyclePerformance.tsx`, the precedent).
+ */
+function downloadCsv(filename: string, csv: string): void {
+  const blob = new Blob(['﻿', csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Deferred revoke: the click needs the URL alive.
+  setTimeout(() => URL.revokeObjectURL(url), 200);
 }
 
 // ─── Row ───────────────────────────────────────────────────────────────────────
@@ -712,6 +748,16 @@ export default function HrisNpdComparison({
 
   const chips: HrisNpdFilter[] = ['all', ...HRIS_NPD_STATUSES, ...(notPaid > 0 ? (['not_paid'] as const) : [])];
 
+  // Export CSV (Kane, 2026-10-06). Every row of the output, never the search or chip's slice
+  // (the wizard's money exports ignore the search), and off while verdicts are held: a file
+  // travels and the hold banner does not.
+  const exportBlocked = hrisNpdExportBlockedReason(comparison);
+  const exportCsv = () => {
+    const now = new Date();
+    const out = buildHrisNpdCsv({ comparison, parse, fxRate, periodLabel, source: exportSource(npdFeed.view), now });
+    if (out.ok) downloadCsv(hrisNpdExportFilename(periodLabel, now), out.csv);
+  };
+
   return (
     // `fillHeight` (the full-screen overlay): the column fills its box and only the table
     // (or step 1's paste box) grows — everything above it keeps its natural height.
@@ -936,6 +982,22 @@ export default function HrisNpdComparison({
                 {periodLabel && !fillHeight && (
                   <span className="max-w-full truncate font-mono text-[10px] text-zinc-500 dark:text-zinc-400">{periodLabel}</span>
                 )}
+                {/* Export CSV: every row, whatever the search or chip shows, so a narrowed
+                    table says "all N" on the button. Off while verdicts are held. */}
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  disabled={exportBlocked != null}
+                  title={
+                    exportBlocked ??
+                    `Download every row of this output as CSV (${lines.length}), whatever the search or filter shows`
+                  }
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-600 transition-colors enabled:hover:bg-zinc-50 enabled:hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-45 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300 dark:enabled:hover:bg-zinc-800 dark:enabled:hover:text-zinc-100"
+                >
+                  <Download className="h-3 w-3" aria-hidden />
+                  Export CSV
+                  {narrowed && <span className="text-zinc-500 dark:text-zinc-400">· all {lines.length}</span>}
+                </button>
                 {/* The same button, in the same place, as the Final Pay table's. */}
                 {onOpenFullScreen && (
                   <button
