@@ -9,6 +9,7 @@ Key files:
 - `src/components/manager/ManagerApp.tsx` — the roster shell (cards, medal context, Active-now).
 - `src/components/manager/ManagerMemberDialog.tsx` — the per-member detail modal.
 - `src/components/manager/ManagerMemberHoursMini.tsx` — the attendance/PAB mini-calendar inside the modal.
+- `src/components/manager/TeamRosterSkeleton.tsx` — the cold-load placeholders (§ *Loading*).
 
 ## Managers do not see rates or pay (anywhere)
 
@@ -269,6 +270,45 @@ Reactivation* for why they stay in lockstep.
 **The search box, the count and Export CSV belong to the People view only.** They
 describe the roster list; on Scheduling or Rankings they would act on nothing, and a
 search box that silently does nothing is worse than no search box.
+
+## Loading — the frame paints, the data skeletons
+
+Kane, 2026-10-06: *"Lets improve the skeleton on here where only the table is being skeletoned
+while the rest is already loaded"*. Before this, a cold load swapped the **whole panel** (header,
+inner tabs, rail, toolbar) for one "Loading roster…" spinner card. None of that frame depends on
+the roster read, so it now paints at once and only what `/api/manager/department-members` fills in
+is a placeholder (`src/components/manager/TeamRosterSkeleton.tsx`):
+
+| Region | While the roster is out |
+| --- | --- |
+| Header, the three inner tabs, Cards/List, the 🏅 button, the search box, Export CSV (disabled) | real, interactive |
+| Roster tab count · Departments count · the department heading · the "N people" count | shimmer bars |
+| Department rail (and the phone picker) | the rail's real frame and title, with skeleton entries |
+| Roster | the real table header + rows shaped like a member row (List), or card outlines at the card's height (Cards) |
+| New Hire Check List · Orientation | a pane skeleton; the panel itself does **not** mount yet |
+
+- **Shown only when there is nothing to paint.** `rosterLoading` is `teamGate.kind === 'loading'`,
+  which is derived from the cached roster payload being `null`
+  ([manager-dashboard-cache.md](./manager-dashboard-cache.md) § *Loading flags*). A cached roster
+  paints straight away and its revalidation never re-skeletons.
+- **The hire panes wait for the roster.** Both scope their rows through the rail
+  (`scopeRowsToDept`), and an **empty rail scopes nothing away**, so mounting either one before the
+  roster answers would show every department's hires for a moment (and the Orientation PDF label
+  would read "Your departments"). The old full-panel spinner hid that path, so it never mounted
+  early. Keep the hold if this is ever reworked.
+- **The rail paints as a skeleton even though it may not exist.** A cold load cannot know yet
+  whether the manager has one department (no rail, § *The department rail*) or several. Most have
+  several, so the skeleton assumes a rail, and a single-department manager sees it fold away once the
+  roster arrives.
+- **The error state is unchanged**: a failed read still replaces the panel with the *Could not load
+  roster* card. A previous team is never left on screen under it.
+- Typing in the search box while the roster is still loading is kept. The filter applies when the
+  rows land. The CallTools column is not in the skeleton header, because whether it shows depends on
+  the department.
+
+Not verified in a browser (session `bac6cd3f`): `/manager` needs Google SSO. Checked by `tsc` (clean
+apart from two stale `.next/types` entries for `bank-preferred-requests`) and `npm test`
+(6006/6006).
 
 ## Motion — one idea, four selectors
 

@@ -45,6 +45,12 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { departmentHasScheduling } from '@/lib/manager/scheduling-rows';
 import { RankingsPane } from '@/components/team/RankingsPane';
 import { RankingsSkeleton } from '@/components/team/RankingsSkeleton';
+import {
+  TeamPaneSkeleton,
+  TeamRailSkeleton,
+  TeamRosterCardsSkeleton,
+  TeamRosterTableSkeleton,
+} from '@/components/manager/TeamRosterSkeleton';
 import { workEmailIndex } from '@/lib/manager/rankings-search';
 import type { TeamRankingWeek } from '@/lib/supabase/team-rankings';
 import {
@@ -2326,6 +2332,11 @@ function TeamPanelInner({
   const [innerTab, setInnerTab] = useState<'roster' | 'newly-hired' | 'orientation'>('roster');
   const unassigned = teamGate.kind === 'department' && teamGate.departments.length === 0;
   const scoped = teamGate.kind === 'department' && teamGate.departments.length > 0;
+  // Nothing to paint yet: no cached roster and no answer. The FRAME (header, inner
+  // tabs, rail, toolbar) still renders; only what the roster read fills in becomes a
+  // skeleton (Kane, 2026-10-06). Derived from the gate, so a revalidation over a
+  // cached roster never re-skeletons (manager-dashboard-cache.md § Loading flags).
+  const rosterLoading = teamGate.kind === 'loading';
   // Live presence — drives the green "online" dots on roster rows and the
   // "Active now" panel. Sourced from the app-wide PresenceProvider so it
   // reflects everyone signed in to the HRIS, same as the employee My Team tab.
@@ -3364,24 +3375,8 @@ function TeamPanelInner({
     if (activeDept && activeDept !== selectedDept) setSelectedDept(activeDept);
   }, [activeDept, selectedDept, setSelectedDept]);
 
-  if (teamGate.kind === 'loading') {
-    return (
-      <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <header className="flex flex-col gap-1">
-          <h2 className="bg-gradient-to-r from-blue-700 via-zinc-900 to-zinc-900 bg-clip-text text-xl font-bold tracking-tight text-transparent dark:from-blue-400 dark:via-white dark:to-white">
-            My team
-          </h2>
-        </header>
-        <Card className="border-blue-100/70 bg-gradient-to-br from-white to-blue-50/40 ring-1 ring-blue-500/10 dark:border-blue-950/50 dark:from-zinc-950 dark:to-blue-950/15 dark:ring-blue-400/10">
-          <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading roster…</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
+  // No early return while the roster loads: the frame below paints and only the data
+  // regions skeleton (`rosterLoading`). The error card still replaces the panel.
   if (teamGate.kind === 'error') {
     return (
       <div className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
@@ -3437,9 +3432,13 @@ function TeamPanelInner({
               reduceMotion={reduceMotion}
             >
               Roster
-              <span className="rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                {members.length}
-              </span>
+              {rosterLoading ? (
+                <span aria-hidden className="skeleton-shimmer h-3.5 w-5 rounded" />
+              ) : (
+                <span className="rounded bg-zinc-200 px-1 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                  {members.length}
+                </span>
+              )}
             </SlidingTab>
             <SlidingTab
               group="myTeamInnerTab"
@@ -3460,7 +3459,7 @@ function TeamPanelInner({
               Orientation
             </SlidingTab>
           </div>
-          {innerTab === 'roster' && !unassigned && members.length > 0 && (
+          {innerTab === 'roster' && !unassigned && (rosterLoading || members.length > 0) && (
             <div role="tablist" aria-label="Roster layout" className="flex items-center gap-0.5 rounded-lg border border-blue-100/80 bg-blue-50/50 p-0.5 dark:border-blue-950/50 dark:bg-blue-950/20">
               <SlidingTab
                 group="myTeamViewMode"
@@ -3484,7 +3483,7 @@ function TeamPanelInner({
               </SlidingTab>
             </div>
           )}
-          {!unassigned && members.length > 0 && (
+          {!unassigned && (rosterLoading || members.length > 0) && (
             <button
               type="button"
               onClick={() => setMedalOpen((v) => !v)}
@@ -3509,7 +3508,10 @@ function TeamPanelInner({
           cannot disagree about who is in a department — the same reasoning that
           makes the Orientation cards and its tally read one week key. */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:gap-6">
-        {showRail && (
+        {/* While the roster is out the rail's frame paints with skeleton entries: a
+            cold load cannot know yet whether this manager has one department (no
+            rail) or several, and most have several. */}
+        {(showRail || rosterLoading) && (
           <aside
             aria-label="Departments"
             className="hidden w-56 shrink-0 flex-col self-stretch rounded-lg border border-blue-100/70 bg-white lg:sticky lg:top-6 lg:flex lg:max-h-[calc(100vh-7rem)] dark:border-blue-950/50 dark:bg-zinc-950"
@@ -3518,9 +3520,13 @@ function TeamPanelInner({
               <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                 Departments
               </h3>
-              <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-                {railEntries.length}
-              </span>
+              {rosterLoading ? (
+                <span aria-hidden className="skeleton-shimmer h-3 w-4 self-center rounded" />
+              ) : (
+                <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                  {railEntries.length}
+                </span>
+              )}
             </div>
             {railEntries.length > 8 && (
               <div className="border-b border-blue-100/70 p-2 dark:border-blue-950/50">
@@ -3537,8 +3543,16 @@ function TeamPanelInner({
                 </div>
               </div>
             )}
-            <div role="tablist" aria-orientation="vertical" aria-label="Select a department" className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              {filteredRail.length === 0 ? (
+            <div
+              role="tablist"
+              aria-orientation="vertical"
+              aria-label="Select a department"
+              aria-busy={rosterLoading || undefined}
+              className="min-h-0 flex-1 overflow-y-auto p-1.5"
+            >
+              {rosterLoading ? (
+                <TeamRailSkeleton />
+              ) : filteredRail.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs text-zinc-500 dark:text-zinc-400">
                   No department matches “{deptSearch.trim()}”.
                 </p>
@@ -3614,7 +3628,7 @@ function TeamPanelInner({
         )}
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-        {showRail && (
+        {(showRail || rosterLoading) && (
           <div className="lg:hidden">
             <label
               htmlFor="team-dept-mobile"
@@ -3622,6 +3636,9 @@ function TeamPanelInner({
             >
               Department
             </label>
+            {rosterLoading ? (
+              <div aria-hidden className="skeleton-shimmer h-9 w-full rounded-lg" />
+            ) : (
             <SmoothSelect
               aria-label="Department"
               value={activeDept}
@@ -3641,6 +3658,7 @@ function TeamPanelInner({
                 })),
               ])}
             />
+            )}
           </div>
         )}
 
@@ -3649,7 +3667,11 @@ function TeamPanelInner({
             surface people work in rather than look at. The key covers BOTH axes —
             which tab, and which department — so switching either explains itself.
             Nothing here changes the mounting model: these panes were already
-            conditionally rendered, so no fetch runs a second time. */}
+            conditionally rendered, so no fetch runs a second time.
+
+            Neither hire pane mounts before the roster answers. Both scope their rows
+            through the rail, and an EMPTY rail scopes nothing away, so mounting early
+            would paint every department's hires for a moment. They hold on a skeleton. */}
         {innerTab === 'newly-hired' && (
           <motion.div
             key={`hires:${activeDept}`}
@@ -3657,12 +3679,16 @@ function TeamPanelInner({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
           >
-            <NewlyHiredPanel
-              viewerEmail={viewerEmail}
-              teamGate={teamGate}
-              rail={rail}
-              activeDept={activeDept}
-            />
+            {rosterLoading ? (
+              <TeamPaneSkeleton />
+            ) : (
+              <NewlyHiredPanel
+                viewerEmail={viewerEmail}
+                teamGate={teamGate}
+                rail={rail}
+                activeDept={activeDept}
+              />
+            )}
           </motion.div>
         )}
 
@@ -3673,12 +3699,16 @@ function TeamPanelInner({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: TEAM_EASE }}
           >
-            <OrientationAttendancePanel
-              teamGate={teamGate}
-              rail={rail}
-              activeDept={activeDept}
-              deptLabel={activeEntry?.name ?? null}
-            />
+            {rosterLoading ? (
+              <TeamPaneSkeleton />
+            ) : (
+              <OrientationAttendancePanel
+                teamGate={teamGate}
+                rail={rail}
+                activeDept={activeDept}
+                deptLabel={activeEntry?.name ?? null}
+              />
+            )}
           </motion.div>
         )}
 
@@ -3686,7 +3716,9 @@ function TeamPanelInner({
         <>
         {!unassigned && (
         <div className="flex flex-wrap items-center gap-2">
-          {activeEntry && (
+          {rosterLoading ? (
+            <span aria-hidden className="skeleton-shimmer mr-1 h-4 w-32 rounded" />
+          ) : activeEntry && (
             <h3 className="mr-1 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {activeEntry.name}
             </h3>
@@ -3782,11 +3814,15 @@ function TeamPanelInner({
           )}
           {activeDeptView === 'roster' && (
           <div className="ml-auto flex items-center gap-3">
-            <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
-              {searchQuery.trim() === ''
-                ? `${filteredMembers.length} ${filteredMembers.length === 1 ? 'person' : 'people'}`
-                : `${filteredMembers.length} of ${deptCounts.get(activeDept) ?? 0}`}
-            </span>
+            {rosterLoading ? (
+              <span aria-hidden className="skeleton-shimmer h-3 w-14 rounded" />
+            ) : (
+              <span className="font-mono text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                {searchQuery.trim() === ''
+                  ? `${filteredMembers.length} ${filteredMembers.length === 1 ? 'person' : 'people'}`
+                  : `${filteredMembers.length} of ${deptCounts.get(activeDept) ?? 0}`}
+              </span>
+            )}
             <button
               type="button"
               onClick={exportRosterCsv}
@@ -3986,6 +4022,8 @@ function TeamPanelInner({
                 permissions (Department managers).
               </p>
             </div>
+          ) : rosterLoading ? (
+            viewMode === 'list' ? <TeamRosterTableSkeleton /> : <TeamRosterCardsSkeleton />
           ) : filteredMembers.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-700 text-white shadow-md shadow-blue-500/25">
