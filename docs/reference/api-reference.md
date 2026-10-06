@@ -3360,7 +3360,10 @@ Every `*_by` is the session email. Nothing here writes pay.
 
 ### `GET /api/accounting-scoreboard?week=<Sunday>`
 
-Members. The board for one week (default: this week, US Eastern): rows (live, plus archived rows that have numbers in the
+Members. `&stream=1` answers the same board as NDJSON for the loading modal (`load-progress.ts`): a `line` `{ line, detail }` the
+moment each group of reads answers, then `board` `{ board }`, or `error` `{ error, code, line }`. The member check and `week` are
+settled before the stream starts (401 / 403 / 400 stay plain JSON). Without it, plain JSON as below.
+The board for one week (default: this week, US Eastern): rows (live, plus archived rows that have numbers in the
 two weeks shown), this and last week's entries and collections, all-time points per rep and the record week, section
 switches, `customSections`, `problems` (this and last week's live Payroll Problems lines) and `problemTypes` (archived ones too, so an old line keeps its type), `lastMeetingDate` (the latest day any PM meeting was ticked, ever), each collection's `verified` (`{ by, name, at }` or null), each row's `customSectionId`, `bucketDay` and `dueSoon`, the Dancing Queen preview candidate, and `payrollEvents` (the Payroll Wizard's Start Processing stamps, `dispatch.lock_acquired` with
 the cycle it was on, plus pay-cycle closes/reopens, from `audit_log` starting three weeks before the week with no upper bound;

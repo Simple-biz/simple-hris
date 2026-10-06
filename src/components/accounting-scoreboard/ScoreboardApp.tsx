@@ -36,6 +36,23 @@ import {
 } from '@/lib/accounting-scoreboard/sections';
 import { addDays, datesFor, formatEasternDateTime, todayEastern, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
 import { bindScoreboardCache, readCachedBoard, writeCachedBoard } from '@/lib/accounting-scoreboard/tab-cache';
+import {
+  BOARD_LOAD_LINES,
+  boardLoadPlan,
+  createBoardStreamAssembler,
+  type BoardStreamEvent,
+  type ServerLine,
+} from '@/lib/accounting-scoreboard/load-progress';
+import {
+  applyRefresh,
+  beginStep,
+  completeStep,
+  failRefresh,
+  finishRefresh,
+  startRefresh,
+  type RefreshProgress,
+} from '@/lib/refresh-progress/refresh-progress';
+import { ScoreboardLoadDialog, type LoadTitles } from './ScoreboardLoadDialog';
 import { amPmSectionStats, buildLookup, entryKey, type ProblemEntry, type StoredEntry } from '@/lib/accounting-scoreboard/scoring';
 import { summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
 import { cycleWeek } from '@/lib/accounting-scoreboard/payroll-cycle';
@@ -61,6 +78,55 @@ const PANEL_VARIANTS = {
   center: { opacity: 1, x: 0 },
   exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -28 : 28, transition: { duration: 0.14, ease: EASE_TAB } }),
 };
+
+/** How long "Scoreboard ready" stays before the loading modal closes itself (the refresh modal's hold). */
+const LOAD_DONE_HOLD_MS = 650;
+
+const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+const SERVER_LINES = BOARD_LOAD_LINES.filter((l): l is ServerLine => l !== 'access');
+
+/**
+ * Read the board as a stream (GET ?stream=1, load-progress.ts), reporting `opened` when the route
+ * answered and each `line` as it arrives. Fail-closed: anything short of a whole, valid board is a
+ * failure with the reason (and, when the server said, whose read failed).
+ */
+async function streamBoard(
+  week: string | null,
+  signal: AbortSignal,
+  on: (event: { kind: 'opened' } | BoardStreamEvent) => void,
+): Promise<{ ok: true; board: BoardPayload } | { ok: false; error: string; code: string; line: ServerLine | null }> {
+  try {
+    const res = await fetch(`/api/accounting-scoreboard?stream=1${week ? `&week=${week}` : ''}`, { cache: 'no-store', signal });
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+      return { ok: false, error: body?.error ?? `The server answered ${res.status}.`, code: body?.code ?? 'http_error', line: null };
+    }
+    on({ kind: 'opened' });
+    const assembler = createBoardStreamAssembler(week);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf('\n');
+      while (nl >= 0) {
+        const event = assembler.push(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        if (event) on(event);
+        nl = buffer.indexOf('\n');
+      }
+    }
+    buffer += decoder.decode();
+    const last = assembler.push(buffer);
+    if (last) on(last);
+    return assembler.finish();
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Network error', code: 'network', line: null };
+  }
+}
 
 /** Runs before paint in the browser; a plain effect on the server, where there is nothing to seed. */
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -141,36 +207,126 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     menuWasOpen.current = menuOpen;
   }, [menuOpen]);
 
-  /** `silent`: the week is already on screen, so no spinner. The fetch itself always runs. */
+  // The loading modal (§ Loading the board): one run per foreground load. A foreground load is one for a
+  // week with nothing of it on screen; it streams, and the modal reports each part as the server sends it.
+  const [loadRun, setLoadRun] = useState<{ id: number; progress: RefreshProgress; titles: LoadTitles } | null>(null);
+  const [loadOpen, setLoadOpen] = useState(false);
+  const loadOpenRef = useRef(false);
+  loadOpenRef.current = loadOpen;
+  /** The foreground stream in flight, so a newer load can cancel it. */
+  const foreground = useRef<AbortController | null>(null);
+
+  /**
+   * `silent`: the week is already on screen (painted from the cache, or the 45 s tick, or a focus), so
+   * plain JSON and no modal. Otherwise the board streams and the modal shows what really arrived. The
+   * fetch itself always runs either way.
+   */
   const load = useCallback(async (w: string | null, silent: boolean) => {
     const id = ++seq.current;
-    if (!silent) setFetching(true);
-    const res = await api<BoardPayload>(`/api/accounting-scoreboard${w ? `?week=${w}` : ''}`);
-    if (id !== seq.current) return;
-    if (res.ok) {
-      liveWeek.current = res.data.weekStart;
-      shownWeek.current = res.data.weekStart;
-      setBoard(res.data);
+    // A newer load supersedes a foreground stream: cancel it, and its modal goes with it. (Only a
+    // superseded run's modal closes: a finished or failed one stays until it closes itself or is closed.)
+    const superseded = foreground.current;
+    superseded?.abort();
+    foreground.current = null;
+    let result: { ok: true; board: BoardPayload } | { ok: false; error: string; code: string };
+
+    if (silent) {
+      if (superseded) {
+        setLoadOpen(false);
+        setLoadRun(null);
+      }
+      const res = await api<BoardPayload>(`/api/accounting-scoreboard${w ? `?week=${w}` : ''}`);
+      if (id !== seq.current) return;
+      result = res.ok ? { ok: true, board: res.data } : { ok: false, error: res.error, code: res.code };
+    } else {
+      setFetching(true);
+      const ctrl = new AbortController();
+      foreground.current = ctrl;
+      const subject = w ? weekLabel(w) : 'the scoreboard';
+      const titles: LoadTitles = {
+        running: `Loading ${subject}`,
+        done: w ? `${subject} is ready` : 'Scoreboard ready',
+        failed: `Couldn't load ${subject}`,
+      };
+      setLoadRun({ id, progress: beginStep(startRefresh(boardLoadPlan(subject), clock()), 'access', clock()), titles });
+      setLoadOpen(true);
+      const update = (fn: (p: RefreshProgress) => RefreshProgress) => {
+        if (id !== seq.current) return;
+        setLoadRun((prev) => (prev && prev.id === id ? { ...prev, progress: fn(prev.progress) } : prev));
+      };
+      const streamed = await streamBoard(w, ctrl.signal, (event) => {
+        // The route answered: the member check passed and every read has been sent.
+        if (event.kind === 'opened') {
+          update((p) => SERVER_LINES.reduce((q, line) => beginStep(q, line, clock()), completeStep(p, 'access', null, clock())));
+        } else if (event.kind === 'line') {
+          update((p) => completeStep(p, event.line, event.detail, clock()));
+        }
+      });
+      if (id !== seq.current) return;
+      foreground.current = null;
+      if (streamed.ok) {
+        result = { ok: true, board: streamed.board };
+        // Every part answered and the board goes on screen in this same render; the effect below
+        // fills the bar only once it has been painted.
+        update((p) => applyRefresh(p, clock()));
+      } else {
+        result = { ok: false, error: streamed.error, code: streamed.code };
+        update((p) => failRefresh(p, streamed.error, clock(), streamed.line ?? undefined));
+        // Hidden by the viewer: nothing on screen would say it failed except the bar below the header.
+        if (!loadOpenRef.current) toast.error(`${titles.failed}: ${streamed.error}`);
+      }
+    }
+
+    if (result.ok) {
+      liveWeek.current = result.board.weekStart;
+      shownWeek.current = result.board.weekStart;
+      setBoard(result.board);
       hasBoard.current = true;
       setFatal(null);
       setStale(null);
     } else if (hasBoard.current) {
       // A failed refresh OR a failed week change keeps the last good board and says so.
-      setStale(res.error);
+      setStale(result.error);
     } else {
-      setFatal({ message: res.error, code: res.code });
+      setFatal({ message: result.error, code: result.code });
     }
     setFetching(false);
   }, []);
 
+  // The board from a foreground load has been committed: one painted frame later it is on screen, and
+  // only then is the bar full and green. "Ready" holds long enough to read, then the modal closes.
+  const applyingId = loadRun?.progress.phase === 'applying' ? loadRun.id : null;
+  useEffect(() => {
+    if (applyingId === null) return;
+    let raf = 0;
+    let timer = 0;
+    const finish = () => setLoadRun((prev) => (prev && prev.id === applyingId ? { ...prev, progress: finishRefresh(prev.progress, clock()) } : prev));
+    // A hidden browser tab paints no frames, so it gets a timer instead.
+    if (document.hidden) timer = window.setTimeout(finish, 0);
+    else raf = window.requestAnimationFrame(() => {
+      raf = window.requestAnimationFrame(finish);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [applyingId]);
+  const doneId = loadRun?.progress.phase === 'done' ? loadRun.id : null;
+  useEffect(() => {
+    if (doneId === null) return;
+    const t = window.setTimeout(() => setLoadOpen(false), LOAD_DONE_HOLD_MS);
+    return () => window.clearTimeout(t);
+  }, [doneId]);
+
   useEffect(() => {
     // Silent when the week was just painted from the cache (the seed above ran first).
     void load(week, shownWeek.current === (week ?? thisWeekStart()));
+    // The tick and a focus never interrupt a foreground load: they wait for the next turn.
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && editing.current === 0) void load(week, true);
+      if (document.visibilityState === 'visible' && editing.current === 0 && !foreground.current) void load(week, true);
     }, REFRESH_MS);
     const onFocus = () => {
-      if (editing.current === 0) void load(week, true);
+      if (editing.current === 0 && !foreground.current) void load(week, true);
     };
     window.addEventListener('focus', onFocus);
     return () => {
@@ -310,13 +466,26 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     [load, week],
   );
 
+  // Rendered in every state below: the first load has nothing else on screen, and a failure keeps it open.
+  const loadDialog = (
+    <ScoreboardLoadDialog
+      progress={loadRun?.progress ?? null}
+      titles={loadRun?.titles ?? { running: 'Loading the scoreboard', done: 'Scoreboard ready', failed: "Couldn't load the scoreboard" }}
+      open={loadOpen && loadRun !== null}
+      onOpenChange={setLoadOpen}
+      onRetry={() => void load(week, false)}
+    />
+  );
+
   if (fetching && !board) {
     return (
       <Shell>
+        {/* Under the loading modal; it is what stays if the modal is closed while the board loads. */}
         <div className="flex flex-1 items-center justify-center gap-2 text-zinc-400">
           <Loader2 className="size-4 animate-spin" />
           <span className="text-[10px] uppercase tracking-[0.22em]">Loading the scoreboard</span>
         </div>
+        {loadDialog}
       </Shell>
     );
   }
@@ -334,6 +503,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
             <RefreshCw /> Try again
           </Button>
         </div>
+        {loadDialog}
       </Shell>
     );
   }
@@ -578,6 +748,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
         }}
         onClose={() => setMenuOpen(false)}
       />
+      {loadDialog}
     </Shell>
   );
 }

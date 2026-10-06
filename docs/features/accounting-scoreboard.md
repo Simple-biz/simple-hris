@@ -31,8 +31,9 @@ every payroll problem, and custom sections.
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
 | Member check, reads and writes | `src/lib/accounting-scoreboard/server.ts` (server-only) |
 | Browser cache (board per week, Setup's roster) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
+| Loading modal: lines ↔ reads, the stream, the fail-closed assembler | `src/lib/accounting-scoreboard/load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the dialog `src/components/accounting-scoreboard/ScoreboardLoadDialog.tsx` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
-| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
+| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
 | UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `ProblemsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
 | Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring with Carla's reference code as the oracle, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
@@ -468,9 +469,9 @@ header spinner on every 45 s and focus refresh.
 - **The seed runs in a layout effect, never in the first render.** The page is server-rendered, and the first
   client render must match the server's (the loader). The layout effect lands before the browser paints, so the
   loader frame is never seen when there is a cache.
-- **Spinners:** the full-page loader shows only when there is nothing to paint (the first visit in a browser tab,
-  or after the 12 h ceiling). The header spinner shows only for a week with nothing of it on screen. Revalidating
-  a painted board is silent.
+- **Loading indicators:** the loading modal (§ Loading the board) shows only when there is nothing to paint (the
+  first visit in a browser tab, a week never opened, or after the 12 h ceiling). Revalidating a painted board is
+  silent.
 - `sessionStorage` is **per browser tab** (never `localStorage`, which outlives the browser on a shared machine):
   a new browser tab loads once, then everything in it is instant. A phone may keep it for weeks; the 12 h ceiling
   still applies.
@@ -481,6 +482,65 @@ header spinner on every 45 s and focus refresh.
   A reload paints within 400 ms with no loader or spinner and still fetches. Five tab switches make no fetch.
   An uncached week spins, stepping back to a cached week is instant, and the second Setup visit has no roster
   loader. A focus refresh is silent. The cached blob carries no viewer. **Not clicked through signed in.**
+
+## Loading the board: a progress modal that is accurate
+
+Kane, 2026-10-06: *"Onloading the dashboard lets add a progress bar modal that has appropriate texts inside it please
+like collecting buckets and etc"*, then *"make sure the progress bar is accurate"*.
+
+- **When:** a load with **nothing of the week on screen**: the first visit in a browser tab, a week never opened,
+  after the 12 h cache ceiling, and *Try again* after a failed load. A board painted from the browser cache, the
+  45 s tick and a focus stay silent (§ Browser cache; background work never reports, `table-refresh-progress.md`).
+  The tick and a focus wait while a modal load is running; a newer load cancels it, and its modal closes with it.
+- **What it says:** *Loading the scoreboard* (or *Loading Sep 28 – Oct 2, 2026* for another week), one bar, and a
+  checklist. Each done line says what came back. Example from production, 2026-10-06:
+
+  | Line, while it runs | Done, it says | What really happened |
+  | --- | --- | --- |
+  | Checking you're on the scoreboard | You're on the scoreboard | the route's member check (before it answers at all) |
+  | Gathering the buckets, inboxes and people | Found 99 lines on the board (+ 3 removed lines with numbers) | the live rows, then the removed rows that still hold numbers |
+  | Collecting the bucket, inbox and PM counts | Collected 866 numbers this week and last | the entries read |
+  | Collecting the collections log | Collected 165 collections this week and last | the log and the all-time weekly view |
+  | Collecting payroll problems | No payroll problems logged this week or last | the problem log and its types |
+  | Checking Payroll Wizard starts and closes | Found 9 Payroll Wizard starts and closes | the audit events and the first close-out |
+  | Reading goals, sections and the bonus formula | Read the goals, sections and the bonus formula | switches, custom sections, the catalog, the last PM meeting, the members (a manager's) |
+  | Laying out the board | Board ready | the page putting the board on screen, then one painted frame |
+
+- **Accurate means** the NPD card's rules (`npd-dashboard.md:470-476`) and `ui-standards.md` § 10.1, on the shared
+  step model (`refresh-progress.ts`):
+  - **Every line is real work, reported when it happened.** `GET /api/accounting-scoreboard?stream=1` answers NDJSON:
+    a `line` the moment the LAST read of that group answers (`BOARD_READS` in `load-progress.ts`; a test reads
+    `server.ts` and pins the reads ↔ lines both ways), then the `board`, or an `error` naming whose read failed. A
+    read that failed is never reported as answered. The member check and the week are settled **before** the stream
+    starts, so a refusal is still a plain 401 / 403 / 400.
+  - Reads run side by side, so the lines tick in the order they really answer (production, a manager, 2026-10-06:
+    payroll 481 ms, collections 526, problems 636, counts 688, lines 1054, setup 1378, the board at 1379).
+  - **No percentage is printed.** Inside a line the fill is an estimate (a decelerating glide toward a ceiling it
+    never passes); a line crosses its share only when it ticks. The bar **never moves backwards**, and it is **full
+    and green only once the board has been committed and painted** (two animation frames; a timer in a hidden tab).
+    *Scoreboard ready* holds 650 ms, then it closes itself.
+  - **The board is assembled fail-closed** (`createBoardStreamAssembler`): a stream that stops early, a line it
+    cannot read, an unknown line, a board missing a list, a board for another week, or anything after the board is
+    a failed load, never a partial board.
+  - A **tolerated** failure is said, never hidden: the board shows a failed Payment Catalog read in the bonus card,
+    so the setup line stays done but says *the bonus formula could not be read*.
+- **Failure:** the bar turns red where it stopped, **only the failed read's line** is marked (a line still in
+  flight beside it is not blamed), and the modal stays open with the server's own sentence, **Close** and **Try
+  again** (§ 10.1, § 12.4). The board's own failure handling is unchanged: the "Couldn't refresh" bar over the last
+  good board, or the error card when there is none. A failure after the modal was closed is also said in a toast.
+- **It never traps anyone:** ✕ and Escape close it, the load keeps going, and the board still appears.
+- **It is the scoreboard's own dialog** (`ScoreboardLoadDialog`), in the board's orange, on the shared step model
+  and the refresh modal's Web Animations fill. It is **not** `useTableRefresh`: that modal belongs to a table's
+  Refresh button and nothing else (`table-refresh-progress.md` § Only the click reports).
+- Verified 2026-10-06: 10 tests in `load-progress.test.ts`, the real `readBoard()` against production with the line
+  tracker (read-only, manager and member), and 22 headless-Chromium checks replaying production's timings:
+  - the opening line; the order the lines tick in; each done line's detail; no `%` anywhere;
+  - the fill and the value never going backwards; never full before *done*; *Laying out the board* between the
+    last read and done; the modal closing itself;
+  - a cached reload opening no modal and making no streamed read; a week's own title;
+  - a failed read blaming only its line, with its sentence and *Try again* kept on screen; Escape; closing it
+    mid-load.
+  The cache (16) and round-3 (69) suites re-passed. **Not clicked through signed in.**
 
 ## Live refresh
 

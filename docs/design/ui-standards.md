@@ -1230,6 +1230,11 @@ moves backwards and is green only once the rows are on screen. The pure models a
 `src/lib/npd/load-progress.ts` and `src/lib/refresh-progress/refresh-progress.ts`; the second reuses
 the first one's curve maths.
 
+Fifth user (2026-10-06): the Accounting Scoreboard's loading modal (`ScoreboardLoadDialog.tsx`,
+[accounting-scoreboard](../features/accounting-scoreboard.md) § Loading the board). It is a first-load modal, not a
+Refresh click, so it is its own dialog on the refresh model, never `useTableRefresh`. Its lines are groups of real
+reads that the GET streams as they answer (`load-progress.ts`).
+
 ### 10.2 Full-screen viewer (2026-09-26, used by `ProofLightbox`)
 
 `ProofLightbox` (`TimeAdjustmentIssueRows.tsx:248-473`, 2aebfde3), the Accounting → Issues

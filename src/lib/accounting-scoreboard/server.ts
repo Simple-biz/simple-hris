@@ -47,6 +47,7 @@ import {
 import { collectionsHistory, type CollectionEntry, type ProblemEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
 import type { BoardMember, BoardPayload, BoardRow, ProblemType, RosterPerson } from './types';
+import type { BoardRead, BoardReadProgress } from './load-progress';
 import {
   customGoal,
   entryAllowed,
@@ -329,8 +330,33 @@ async function readBonusCandidates(): Promise<PreviewVerdict> {
   return pickPreviewBonus(candidates);
 }
 
-export async function readBoard(viewer: Viewer, weekStart: string): Promise<Result<BoardPayload>> {
+/**
+ * The board for one week. `progress` (the loading modal's stream, load-progress.ts) hears each read
+ * the moment it answers, with how many records came back, and `failed` hears the read that failed.
+ * A read that failed is never reported as answered. Without `progress` this is exactly the plain read.
+ */
+export async function readBoard(
+  viewer: Viewer,
+  weekStart: string,
+  progress?: BoardReadProgress & { failed?(read: BoardRead): void },
+): Promise<Result<BoardPayload>> {
   const sb = client();
+  /** A paged read: answered with its row count, or failed. */
+  const paged = <T,>(read: BoardRead, p: Promise<{ rows: T[]; error: string | null }>) =>
+    p.then((r) => {
+      if (r.error) progress?.failed?.(read);
+      else progress?.done(read, r.rows.length);
+      return r;
+    });
+  /** A single PostgREST read: answered with `count(data)`, or failed. */
+  const single = <R extends { data: unknown; error: unknown }>(read: BoardRead, p: PromiseLike<R>, count: (data: R['data']) => number) =>
+    Promise.resolve(p).then((r) => {
+      if (r.error) progress?.failed?.(read);
+      else progress?.done(read, count(r.data));
+      return r;
+    });
+  // Only a manager's board reads the member list; a member's is decided here, with nothing to read.
+  if (!viewer.isManager) progress?.done('members', 0);
   const today = todayEastern();
   const lastWeekStart = addDays(weekStart, -7);
   const weekEnd = addDays(weekStart, 6);
@@ -340,10 +366,10 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
   const eventsFrom = easternToUtc(addDays(weekStart, -21), 0).toISOString();
 
   const [liveRows, entries, collections, history, settings, bonus, payroll, closes, problems, problemTypes, customs, lastMeeting] = await Promise.all([
-    selectAllPaged<RowRecord>((from, to) =>
+    paged('rows', selectAllPaged<RowRecord>((from, to) =>
       sb.from(ROWS).select(ROW_COLS).is('archived_at', null).order('id').range(from, to),
-    ),
-    selectAllPaged<EntryRecord>((from, to) =>
+    )),
+    paged('entries', selectAllPaged<EntryRecord>((from, to) =>
       sb
         .from(ENTRIES)
         .select('row_id, entry_date, slot, value')
@@ -353,8 +379,8 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .order('entry_date')
         .order('slot')
         .range(from, to),
-    ),
-    selectAllPaged<CollectionRecord>((from, to) =>
+    )),
+    paged('collections', selectAllPaged<CollectionRecord>((from, to) =>
       sb
         .from(COLLECTIONS)
         .select(COLLECTION_WITH_VERIFIED)
@@ -364,23 +390,28 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .lte('entry_date', weekEnd)
         .order('id')
         .range(from, to),
-    ),
+    )),
     // All Time and the record come from one row per (rep row, week), never from every log line: the
     // sheet's history (~10k lines, backfilled 2026-10-01) would be 10+ pages on every 45 s refresh.
-    selectAllPaged<{ row_id: string; week_start: string; points: number | string; first_date: string }>((from, to) =>
+    paged('collectionWeeks', selectAllPaged<{ row_id: string; week_start: string; points: number | string; first_date: string }>((from, to) =>
       sb
         .from(COLLECTION_WEEKS)
         .select('row_id, week_start, points, first_date')
         .order('row_id')
         .order('week_start')
         .range(from, to),
-    ),
-    sb.from(SECTIONS_TABLE).select('section_key, enabled, goal'),
-    readBonusCandidates(),
+    )),
+    single('settings', sb.from(SECTIONS_TABLE).select('section_key, enabled, goal'), (d) => (Array.isArray(d) ? d.length : 0)),
+    // The board TOLERATES a failed catalog read (the preview card says so), so its line stays done,
+    // but it is told, and never claims the formula was read.
+    readBonusCandidates().then((v) => {
+      progress?.done('bonus', 1, !v.ok && v.reason.startsWith('Could not read') ? 'the bonus formula could not be read' : undefined);
+      return v;
+    }),
     // Payroll Timing: the Wizard's own Start Processing stamps (each names the cycle it was on) and
     // the pay-cycle closes/reopens. Only the action, the time and the cycle's file and period are
     // read; the close-out record (which holds unpaid payees) is never touched.
-    selectAllPaged<PayrollAuditRow>((from, to) =>
+    paged('payrollEvents', selectAllPaged<PayrollAuditRow>((from, to) =>
       sb
         .from('audit_log')
         .select(
@@ -391,9 +422,9 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .order('created_at')
         .order('id')
         .range(from, to),
-    ),
+    )),
     // Every close ever filed, for the boundary before which Close Pay Cycle did not exist.
-    selectAllPaged<Pick<PayrollAuditRow, 'src' | 'resource_id'>>((from, to) =>
+    paged('closes', selectAllPaged<Pick<PayrollAuditRow, 'src' | 'resource_id'>>((from, to) =>
       sb
         .from('audit_log')
         .select('resource_id, src:details->>source_file')
@@ -401,9 +432,9 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .order('created_at')
         .order('id')
         .range(from, to),
-    ),
+    )),
     // Payroll Problems: this week's and last week's live log lines.
-    selectAllPaged<ProblemRecord>((from, to) =>
+    paged('problems', selectAllPaged<ProblemRecord>((from, to) =>
       sb
         .from(PROBLEMS)
         .select(PROBLEM_COLS)
@@ -412,24 +443,28 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .lte('entry_date', weekEnd)
         .order('id')
         .range(from, to),
-    ),
+    )),
     // Every problem type: archived ones too, so an old line still prints its type.
-    selectAllPaged<ProblemTypeRecord>((from, to) =>
+    paged('problemTypes', selectAllPaged<ProblemTypeRecord>((from, to) =>
       sb.from(PROBLEM_TYPES).select('id, label, sort_order, archived_at').order('id').range(from, to),
-    ),
-    selectAllPaged<CustomSectionRecord>((from, to) =>
+    )),
+    paged('customSections', selectAllPaged<CustomSectionRecord>((from, to) =>
       sb.from(CUSTOM_SECTIONS).select(CUSTOM_COLS).is('archived_at', null).order('id').range(from, to),
-    ),
+    )),
     // PM Buckets' No Meeting Streak: the latest day any PM meeting was ticked, ever (archived PM
     // rows included: the meeting happened). One row, through the row's section, no id list.
-    sb
-      .from(ENTRIES)
-      .select('entry_date, row:accounting_scoreboard_rows!inner(section_key)')
-      .eq('slot', 'mtg')
-      .eq('value', 1)
-      .eq('row.section_key', 'pm_buckets')
-      .order('entry_date', { ascending: false })
-      .limit(1),
+    single(
+      'lastMeeting',
+      sb
+        .from(ENTRIES)
+        .select('entry_date, row:accounting_scoreboard_rows!inner(section_key)')
+        .eq('slot', 'mtg')
+        .eq('value', 1)
+        .eq('row.section_key', 'pm_buckets')
+        .order('entry_date', { ascending: false })
+        .limit(1),
+      (d) => (Array.isArray(d) ? d.length : 0),
+    ),
   ]);
 
   for (const r of [liveRows, entries, collections, history, payroll, closes, problems, problemTypes, customs]) {
@@ -453,11 +488,17 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
   const missing = [...referenced].filter((id) => !rows.has(id));
   if (missing.length) {
     const { data, error } = await sb.from(ROWS).select(ROW_COLS).in('id', missing.slice(0, 200));
-    if (error) return dbFailure(error, 'Could not read the scoreboard');
+    if (error) {
+      progress?.failed?.('removedRows');
+      return dbFailure(error, 'Could not read the scoreboard');
+    }
     for (const r of (data ?? []) as RowRecord[]) {
       const m = mapRow(r);
       if (m) rows.set(m.id, m);
     }
+    progress?.done('removedRows', (data ?? []).length);
+  } else {
+    progress?.done('removedRows', 0);
   }
 
   // A week's Sunday key is a date in that week, so the week rows give the same totals and record.
@@ -479,8 +520,12 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .order('work_email')
         .range(from, to),
     );
-    if (m.error) return dbFailure({ message: m.error }, 'Could not read the members');
+    if (m.error) {
+      progress?.failed?.('members');
+      return dbFailure({ message: m.error }, 'Could not read the members');
+    }
     members = m.rows.map((r) => ({ workEmail: r.work_email, addedAt: r.added_at, addedBy: r.added_by }));
+    progress?.done('members', members.length);
   }
 
   return {
