@@ -620,7 +620,7 @@ scope / unconfigured / unavailable / rate_limited / bad_request / column_not_gra
 rate-limit meter**: the route counts a client's rows with `status <> 429` over the last 60 s before answering
 (index `(client_id, created_at desc)`). Code: `src/lib/supabase/external-api-db.ts`.
 
-## 19. `mesa_suspensions` *(added 2026-10-06 — migration PENDING)*
+## 19. `mesa_suspensions` *(added 2026-10-06 — migration APPLIED 2026-10-06)*
 
 Governing doc: [mesa-suspension.md](../features/mesa-suspension.md). One row = one contribution suspension WINDOW on
 one MESA account. A pay week whose Friday deposit date `d` has `suspended_from <= d < resumed_on` (NULL = open) is

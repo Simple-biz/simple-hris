@@ -1208,8 +1208,6 @@ export default function AccountingMesa() {
                               : r.dispatched_at
                                 ? 'Already paid out — cannot delete'
                                 : null;
-                            const iconBtn =
-                              'inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700';
                             return (
                               <div className="flex flex-nowrap items-center justify-end gap-1.5">
                                 <Button
@@ -1222,36 +1220,33 @@ export default function AccountingMesa() {
                                 >
                                   Review
                                 </Button>
-                                <button
-                                  type="button"
+                                <RowIconButton
+                                  label={archived ? 'Unarchive' : 'Archive'}
                                   title={archiveTitle}
-                                  aria-label={archived ? 'Unarchive' : 'Archive'}
+                                  tone="teal"
                                   disabled={busy || (!archived && !completion.complete)}
                                   onClick={() => setArchived(r, !archived)}
-                                  className={cn(iconBtn, 'hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400')}
                                 >
-                                  {archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
-                                </button>
-                                <button
-                                  type="button"
+                                {archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
+                                </RowIconButton>
+                                <RowIconButton
+                                  label="Revoke decision"
                                   title={revokeBlocked ?? 'Revoke decision (back to pending)'}
-                                  aria-label="Revoke decision"
+                                  tone="amber"
                                   disabled={busy || !!revokeBlocked}
                                   onClick={() => revokeRequest(r)}
-                                  className={cn(iconBtn, 'hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-400')}
                                 >
-                                  <Undo2 className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
+                                <Undo2 className="h-3.5 w-3.5" />
+                                </RowIconButton>
+                                <RowIconButton
+                                  label="Delete request"
                                   title={deleteBlocked ?? 'Delete request'}
-                                  aria-label="Delete request"
+                                  tone="rose"
                                   disabled={busy || !!deleteBlocked}
                                   onClick={() => setDeleteTarget(r)}
-                                  className={cn(iconBtn, 'hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:hover:border-rose-700/50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400')}
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
+                                <Trash2 className="h-3.5 w-3.5" />
+                                </RowIconButton>
                               </div>
                             );
                           })()}
@@ -1510,6 +1505,54 @@ export default function AccountingMesa() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * One icon button in a table's Action column (Kane, 2026-10-06: the same
+ * buttons on every row). ENABLED is tinted at rest, so a button that works
+ * never reads as greyed out; DISABLED is faded grey. The reason rides on a
+ * wrapping span, because a disabled <button> does not raise its own tooltip in
+ * every browser — and "why can't I click this" is the whole point of keeping it.
+ */
+const ROW_ICON_TONES = {
+  teal: 'border-teal-200 bg-teal-50/60 text-teal-600 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60',
+  slate: 'border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800/40 dark:text-slate-200 dark:hover:bg-slate-800/70',
+  amber: 'border-amber-200 bg-amber-50/60 text-amber-600 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60',
+  rose: 'border-rose-200 bg-rose-50/60 text-rose-600 hover:bg-rose-100 dark:border-rose-700/50 dark:bg-rose-950/30 dark:text-rose-300 dark:hover:bg-rose-950/60',
+} as const;
+
+function RowIconButton({
+  label,
+  title,
+  tone,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  title: string;
+  tone: keyof typeof ROW_ICON_TONES;
+  disabled: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <span title={title} className={cn('inline-flex', disabled && 'cursor-not-allowed')}>
+      <button
+        type="button"
+        aria-label={label}
+        disabled={disabled}
+        onClick={onClick}
+        className={cn(
+          'inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors',
+          ROW_ICON_TONES[tone],
+          'disabled:pointer-events-none disabled:border-zinc-200 disabled:bg-transparent disabled:text-zinc-300 dark:disabled:border-zinc-800 dark:disabled:bg-transparent dark:disabled:text-zinc-600',
+        )}
+      >
+        {children}
+      </button>
+    </span>
   );
 }
 
@@ -3990,8 +4033,6 @@ function MesaActiveMembers() {
                             suspendBlockedReason ??
                             (open ? `Already suspended from ${formatDateOnly(open.suspendedFrom)} — use Resume` : null);
                           const resumeBlocked = suspendBlockedReason ?? (open ? null : 'Not suspended — nothing to resume');
-                          const iconBtn =
-                            'inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700';
                           return (
                             <div className="flex flex-nowrap items-center justify-end gap-1.5">
                               <Button
@@ -4004,36 +4045,33 @@ function MesaActiveMembers() {
                                 <Eye className="h-3 w-3" />
                                 View
                               </Button>
-                              <button
-                                type="button"
+                              <RowIconButton
+                                label={`Suspend ${r.name}'s MESA contribution`}
                                 title={suspendBlocked ?? 'Suspend MESA contribution — stops the ₱100 and the ₱300 match from a date; stays a member'}
-                                aria-label={`Suspend ${r.name}'s MESA contribution`}
+                                tone="slate"
                                 disabled={toggling || suspending || !!suspendBlocked}
                                 onClick={() => openSuspend([r])}
-                                className={cn(iconBtn, 'hover:border-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:border-slate-500 dark:hover:bg-slate-800/60 dark:hover:text-slate-200')}
                               >
-                                <PauseCircle className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
+                              <PauseCircle className="h-3.5 w-3.5" />
+                              </RowIconButton>
+                              <RowIconButton
+                                label={`Resume ${r.name}'s MESA contribution`}
                                 title={resumeBlocked ?? 'Resume MESA contribution from a date'}
-                                aria-label={`Resume ${r.name}'s MESA contribution`}
+                                tone="teal"
                                 disabled={toggling || suspending || !!resumeBlocked}
                                 onClick={() => open && setResumeTarget({ row: r, suspension: open })}
-                                className={cn(iconBtn, 'hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400')}
                               >
-                                <PlayCircle className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
+                              <PlayCircle className="h-3.5 w-3.5" />
+                              </RowIconButton>
+                              <RowIconButton
+                                label={`Opt ${r.name} out of MESA`}
                                 title="Opt Out of MESA — closes the account and releases the balance"
-                                aria-label={`Opt ${r.name} out of MESA`}
+                                tone="amber"
                                 disabled={toggling || suspending}
                                 onClick={() => setOptOutTargets([r])}
-                                className={cn(iconBtn, 'hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-400')}
                               >
-                                <UserMinus className="h-3.5 w-3.5" />
-                              </button>
+                              <UserMinus className="h-3.5 w-3.5" />
+                              </RowIconButton>
                             </div>
                           );
                         })()}

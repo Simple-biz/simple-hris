@@ -6,8 +6,8 @@ date falls inside the suspension are **neither charged the ₱100 deduction nor 
 ₱300**. The member stays enrolled: same account, same account number, balance untouched, nothing
 released or paid out. Kane, 2026-10-06: *"Accounting - MESA - Lets add a suspend button with an
 efffectivity date picker that would suspend the mesa contribution without having to opt-out to remove
-the -100"*. Built 2026-10-06 (session `d1583b1c`, blueprint, no NEEDS); the migration is **PENDING**
-(see Deploy notes). Parent doc: [mesa.md](mesa.md).
+the -100"*. Built 2026-10-06 (session `d1583b1c`, blueprint, no NEEDS); the migration is **APPLIED** (Kane, 2026-10-06,
+verified the same day — see Deploy notes). Parent doc: [mesa.md](mesa.md).
 
 ## Key files
 
@@ -118,6 +118,11 @@ Active Members rows all carry **View · Suspend · Resume · Opt Out**, in that 
 then icon buttons. A button that does not apply (Resume on a member who is not suspended, Suspend on one
 who is) is **disabled with the reason on hover, never removed**, so columns line up and nothing appears
 or vanishes between rows. The Requests tab follows the same rule — see [mesa.md](mesa.md) § Accounting tab.
+The icon buttons are one component, `RowIconButton`: **enabled is tinted at rest** (an untinted grey icon
+read as "greyed out" — Kane, 2026-10-06, *"button is still greyed out"*), **disabled is faded grey**, and the
+reason sits on a wrapping span because a disabled `<button>` does not raise its own tooltip in every browser.
+The Suspend state is read when the tab LOADS: a page left open across the migration keeps saying "not set up"
+until Refresh or a reload.
 Bulk **Suspend** applies one date to every selected member and leaves out (and counts) anyone already
 suspended. There is no bulk Resume.
 
@@ -145,13 +150,14 @@ body. The table has RLS on and no grants to `anon` / `authenticated` — service
 
 ## Deploy notes
 
-- **PENDING (Kane):** `node --import tsx scripts/apply-mesa-suspensions-migration.mts --apply`. No flag
+- **APPLIED 2026-10-06 (Kane ran it).** `node --import tsx scripts/apply-mesa-suspensions-migration.mts --apply`. No flag
   rehearses inside a rolled-back transaction; `--verify` checks only. Needs `DATABASE_URL` (session
   pooler). It creates `mesa_suspensions`, its four CHECKs, the one-open-window index, the FK to
   `mesa_accounts`, RLS on + revoke, and runs 5 positive and 7 negative controls inside savepoints.
   **Rehearsed against production 2026-10-06: 24/24 PASS (12 object checks, 5 positive, 7 negative
-  controls), rolled back.** Kane asked for it to be run; the `--apply` call was blocked by the session's
-  auto-mode permission classifier, so it has **not** been applied.
-- Safe in either order. Until it runs: every engine reads "no suspensions" (today's behaviour), Suspend /
+  controls), rolled back.** The session's own `--apply` was blocked by the auto-mode permission classifier;
+  Kane applied it himself. **`--verify` against production 2026-10-06: 24/24 PASS**, and PostgREST reads the
+  table (service role, 0 rows).
+- Was safe in either order. Before it ran: every engine reads "no suspensions" (today's behaviour), Suspend /
   Resume are disabled with *"MESA suspensions are not set up yet"*, and both write routes answer 503.
 - No env var, no n8n import.
