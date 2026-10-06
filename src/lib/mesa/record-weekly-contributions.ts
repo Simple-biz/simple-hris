@@ -12,6 +12,8 @@ import {
   mesaDepositDatesToReverse,
   mesaWeekStartFor,
 } from "@/lib/mesa/deposit-date";
+import { mesaSuspensionsFor } from "@/lib/mesa/suspension";
+import { loadMesaSuspensionIndexOrThrow } from "@/lib/supabase/mesa-suspensions";
 
 // Weekly MESA contribution — ₱100 from the employee, matched 3× (₱300) by
 // Simple.biz for a ₱400 total deposit. Mirrors the Payroll Wizard's ₱100 MESA
@@ -103,6 +105,12 @@ export async function recordMesaWeeklyContributions(opts: {
   // ── 2. Opted-in members in the batch (same match as the Wizard's deduction) ─
   const { rows: rateRows } = await getEmployeeHourlyRatesRows();
   const ratesByEmail = indexHourlyRatesByEmail(rateRows);
+  // Suspended weeks get no deposit — the Wizard takes no ₱100 for them either
+  // (same predicate, docs/features/mesa-suspension.md). A failed read THROWS:
+  // no deposit for anyone this run beats ₱400 for a member whose suspension
+  // could not be read. The writer is idempotent per (member, week), so a re-sync
+  // fills the week in once the read succeeds.
+  const suspensionIndex = await loadMesaSuspensionIndexOrThrow();
 
   type Member = { email: string; name: string | null; department: string | null };
   const members = new Map<string, Member>(); // keyed by normalized ledger identity (Work Email)
@@ -112,7 +120,12 @@ export async function recordMesaWeeklyContributions(opts: {
     // Enrolled after this week's Friday deposit date → not yet contributing.
     // The deposit would be dated BEFORE the account opened and never show in
     // the balance; the Wizard does not charge that week either (same predicate).
-    if (!mesaContributesForWeek(rate.mesa_member_since, weekEnd)) continue;
+    // A suspension covering that Friday → no deposit, for the same reason.
+    const suspensions = mesaSuspensionsFor(suspensionIndex, {
+      emails: [email, rate.work_email, rate.personal_email],
+      accountNumber: rate.mesa_account_number,
+    });
+    if (!mesaContributesForWeek(rate.mesa_member_since, weekEnd, suspensions)) continue;
     // Ground the deposit on the member's Work Email so it groups with their
     // existing ledger history (summarizeMembers keys on lowercased email).
     const ledgerEmail = rate.work_email ?? rate.personal_email ?? email;

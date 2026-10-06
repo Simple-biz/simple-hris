@@ -44,7 +44,9 @@ import {
 } from "@/lib/payroll/money-php";
 import { buildFxRates, USD_TO_COP_SETTINGS_KEY, type FxRates } from "@/lib/fx/currency-fx";
 import { normEmail } from "@/lib/email/norm-email";
-import { mesaContributesForWeek } from "@/lib/mesa/deposit-date";
+import { mesaContributesForWeek, type MesaSuspensionWindow } from "@/lib/mesa/deposit-date";
+import { mesaSuspensionsFor } from "@/lib/mesa/suspension";
+import { loadMesaSuspensionIndexOrThrow } from "@/lib/supabase/mesa-suspensions";
 import { applyDeptOverrideToRawRow } from "@/lib/departments/dept-email-overrides";
 import {
   getPabMonthRange,
@@ -771,6 +773,7 @@ export async function computeCurrentPay(
     deptRegistry,
     approvedAdjustmentFacts,
     salaryHistoryResult,
+    mesaSuspensionIndex,
   ] = await Promise.all([
     hubstaffPromise,
     getEmployeeHourlyRatesRows(),
@@ -812,6 +815,10 @@ export async function computeCurrentPay(
     // The dated salary timeline (salaried-pay-basis.md). Never best-effort: a failed read is
     // `unavailable`, which HOLDS every structure-salaried person instead of pricing them hourly.
     listAllSalaryHistory(),
+    // MESA contribution suspensions (mesa-suspension.md). Never best-effort either: a failed
+    // read THROWS rather than charging ₱100 to someone Accounting suspended. Missing table
+    // (migration pending) = nobody suspended.
+    loadMesaSuspensionIndexOrThrow(),
   ]);
 
   // Deferred: the full-table Hubstaff scan (every row, every upload) is ONLY
@@ -865,6 +872,9 @@ export async function computeCurrentPay(
   // MESA members: email → enrollment effective date (null = legacy member,
   // always contributing). Used to skip weeks before the member joined.
   const mesaSinceByEmail = new Map<string, string | null>();
+  // MESA members: email → their suspension windows on the open account (empty =
+  // none). Same keys as mesaSinceByEmail, so the gate below reads both together.
+  const mesaSuspensionsByEmail = new Map<string, readonly MesaSuspensionWindow[]>();
   // email → department NAME, so the catalog's department-scoped pay structures
   // can be resolved for employees who have no per-person structure.
   const deptByEmail = new Map<string, string>();
@@ -884,6 +894,12 @@ export async function computeCurrentPay(
       const since = r.mesa_member_since ?? null;
       if (we) mesaSinceByEmail.set(we, since);
       if (pe) mesaSinceByEmail.set(pe, since);
+      const suspensions = mesaSuspensionsFor(mesaSuspensionIndex, {
+        emails: [we, pe],
+        accountNumber: r.mesa_account_number,
+      });
+      if (we) mesaSuspensionsByEmail.set(we, suspensions);
+      if (pe) mesaSuspensionsByEmail.set(pe, suspensions);
     }
   }
 
@@ -1354,9 +1370,11 @@ export async function computeCurrentPay(
     // shared with the Wizard and the ledger writer; null since = legacy member,
     // always contributing). Accumulate into the stash total so the dispatch
     // screen can show the pool being built.
+    // A suspension covering the week's Friday skips it too (mesa-suspension.md).
     const mesaSince = mesaSinceByEmail.has(em) ? mesaSinceByEmail.get(em) ?? null : undefined;
     const mesaEnrolledThisWeek =
-      mesaSince !== undefined && mesaContributesForWeek(mesaSince, periodEndIso);
+      mesaSince !== undefined &&
+      mesaContributesForWeek(mesaSince, periodEndIso, mesaSuspensionsByEmail.get(em) ?? []);
     const mesaDeductionPHP = hasRates && mesaEnrolledThisWeek ? 100 : 0;
     if (mesaDeductionPHP > 0) stashedMesaTotalPHP += mesaDeductionPHP;
 

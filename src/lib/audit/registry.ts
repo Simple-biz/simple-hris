@@ -234,7 +234,7 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
     match: 'employee.mesa.',
     surfaces: ['accounting', 'employee'],
     label: 'MESA membership',
-    note: 'enroll / unenroll',
+    note: 'enroll / unenroll, suspend / resume (the weekly contribution, from an effective date)',
   },
   {
     match: 'time_adjustment.',

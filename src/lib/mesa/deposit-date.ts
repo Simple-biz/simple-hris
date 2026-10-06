@@ -105,6 +105,40 @@ export function mesaWeekStartFor(weekEnd: string): string {
 }
 
 /**
+ * One MESA contribution suspension window (Accounting → MESA → Active Members →
+ * Suspend, 2026-10-06). `resumedOn` null = still suspended. Defined HERE, beside
+ * the one gate that reads it, so the gate has no import to drift from.
+ */
+export interface MesaSuspensionWindow {
+  /** YYYY-MM-DD — weeks whose Friday deposit date is on/after this are suspended. */
+  suspendedFrom: string;
+  /** YYYY-MM-DD — weeks whose Friday deposit date is on/after this contribute again. */
+  resumedOn: string | null;
+}
+
+/** No suspensions — for a caller that has already established there are none. */
+export const NO_MESA_SUSPENSIONS: readonly MesaSuspensionWindow[] = Object.freeze([]);
+
+/**
+ * Whether any window covers the deposit date `depositDate` (a Friday):
+ * `suspendedFrom <= depositDate < resumedOn`. Half-open on purpose — the
+ * resume date is the first day contributing again, exactly like an enrollment
+ * date, so `resumedOn === suspendedFrom` is an EMPTY window (a cancelled
+ * suspension skips no week). Overlapping windows simply union.
+ */
+export function mesaSuspendedOn(
+  windows: readonly MesaSuspensionWindow[],
+  depositDate: string,
+): boolean {
+  for (const w of windows) {
+    if (w.suspendedFrom <= depositDate && (w.resumedOn === null || depositDate < w.resumedOn)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Whether a member enrolled effective `since` contributes for the pay week
  * ending `weekEnd` — charged the ₱100 AND credited the ₱100 + ₱300 deposit.
  *
@@ -128,12 +162,32 @@ export function mesaWeekStartFor(weekEnd: string): string {
  * ONE definition, imported by the Wizard (every deduction site), the employee
  * live estimate, the monthly estimate and the ledger writer, so the ₱100 and
  * the ₱400 can never disagree about which week is a member's first.
+ *
+ * `suspensions` (2026-10-06, Kane: "suspend the mesa contribution without
+ * having to opt-out to remove the -100") — the member's suspension windows on
+ * their OPEN account. A week whose Friday falls inside one is neither charged
+ * nor deposited: the match is three times the contribution, so a week with no
+ * ₱100 has nothing to match, and a deposit without a deduction is money the
+ * fund never collected (the dales@ defect, docs/features/mesa.md:288).
+ *
+ * The argument is REQUIRED, not optional. Every caller must say which windows
+ * it looked up — or pass `NO_MESA_SUSPENSIONS` and own that it has none — so
+ * a new ₱100 site cannot compile while silently ignoring a suspension.
+ *
+ * `weekEnd` null keeps the pre-existing "contributing" fallback and ignores
+ * suspensions, since there is no Friday to judge them against; every money
+ * path (final-pay compute, both engines, the writer) always has a week.
  */
 export function mesaContributesForWeek(
   since: string | null | undefined,
   weekEnd: string | null | undefined,
+  suspensions: readonly MesaSuspensionWindow[],
 ): boolean {
-  if (!since) return true;
   if (!weekEnd) return true;
-  return since <= mesaDepositDateFor(weekEnd);
+  // Legacy member with nothing suspended: exactly the pre-suspension path,
+  // which never parsed `weekEnd` for them.
+  if (!since && suspensions.length === 0) return true;
+  const deposit = mesaDepositDateFor(weekEnd);
+  if (since && since > deposit) return false;
+  return !mesaSuspendedOn(suspensions, deposit);
 }

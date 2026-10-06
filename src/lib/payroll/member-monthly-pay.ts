@@ -84,6 +84,8 @@ import { buildFxRates, USD_TO_COP_SETTINGS_KEY } from '@/lib/fx/currency-fx';
 import type { PayCurrency } from '@/lib/payment-catalog/pay-structure';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { mesaContributesForWeek } from '@/lib/mesa/deposit-date';
+import { indexMesaSuspensions, mesaSuspensionsFor } from '@/lib/mesa/suspension';
+import { listMesaSuspensionsForOpenAccounts } from '@/lib/supabase/mesa-suspensions';
 
 const NON_DATE_COLS = new Set([
   'id',
@@ -564,13 +566,19 @@ export async function computeMemberMonthlyPay(args: {
   // (disputes + time adjustments) in parallel. Forgiveness is applied to the
   // PAB eligibility check only — never to paid hours — so the dashboard / My
   // Hours bonus matches what dispatch actually pays.
-  const [hsRes, forgiveness, orphanagePayRows] = await Promise.all([
+  const [hsRes, forgiveness, orphanagePayRows, mesaSuspensionList] = await Promise.all([
     fetchHubstaffRowsForEmail(aliasNorms),
     fetchForgivenDatesForEmails(aliasNorms),
     // TEMPORARY orphanage → PAB coverage (see orphanage-pab-coverage.ts).
     listAllOrphanagePayHours(aliasNorms),
+    // MESA contribution suspensions (mesa-suspension.md). A failed read is an
+    // error, never "not suspended" — that would print a ₱100 Accounting stopped.
+    listMesaSuspensionsForOpenAccounts(),
   ]);
   if (hsRes.error) return { data: null, error: hsRes.error };
+  if (!mesaSuspensionList.ok) {
+    return { data: null, error: `Could not read MESA suspensions: ${mesaSuspensionList.error}` };
+  }
 
   // AUTO mode: orphanage hours forgive short weekdays in their coverage window
   // (file week + week before) — no dispute record needed. Alias-keyed rows are
@@ -617,6 +625,13 @@ export async function computeMemberMonthlyPay(args: {
   // on/after this date. NULL = legacy member (always contributing) — mirrors
   // the Payroll Wizard dispatch gate exactly.
   const mesaSince = rateRow?.mesa_member_since ?? null;
+  // Suspension windows on the member's open account, matched on every alias
+  // and the rate row's account number — a week whose Friday falls inside one
+  // carries no ₱100 (mesa-suspension.md), same predicate as the Wizard.
+  const mesaSuspensions = mesaSuspensionsFor(indexMesaSuspensions(mesaSuspensionList.suspensions), {
+    emails: [...aliasNorms],
+    accountNumber: rateRow?.mesa_account_number ?? null,
+  });
 
   // System-bonus dept eligibility (master department wins, rate dept is fallback).
   const empDeptKey = resolveDeptKeyWithRegistry(
@@ -897,7 +912,7 @@ export async function computeMemberMonthlyPay(args: {
     // Wizard and the ledger writer, so the employee sees the same
     // contributions Accounting actually collects. `weekEnd` is Sunday for HSL
     // and Saturday otherwise; the predicate finds that week's Friday either way.
-    const enrolledForThisWeek = mesaMember && mesaContributesForWeek(mesaSince, fmtIso(weekEnd));
+    const enrolledForThisWeek = mesaMember && mesaContributesForWeek(mesaSince, fmtIso(weekEnd), mesaSuspensions);
     const mesaDeductionPHP =
       enrolledForThisWeek && hasRates && weekTotalSec > 0 ? MESA_DEDUCTION_PHP : 0;
 

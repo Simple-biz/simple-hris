@@ -620,6 +620,30 @@ scope / unconfigured / unavailable / rate_limited / bad_request / column_not_gra
 rate-limit meter**: the route counts a client's rows with `status <> 429` over the last 60 s before answering
 (index `(client_id, created_at desc)`). Code: `src/lib/supabase/external-api-db.ts`.
 
+## 19. `mesa_suspensions` *(added 2026-10-06 — migration PENDING)*
+
+Governing doc: [mesa-suspension.md](../features/mesa-suspension.md). One row = one contribution suspension WINDOW on
+one MESA account. A pay week whose Friday deposit date `d` has `suspended_from <= d < resumed_on` (NULL = open) is
+neither charged the ₱100 nor deposited the ₱100 + ₱300; the member stays enrolled.
+
+| Column | Notes |
+| --- | --- |
+| `id` | uuid PK |
+| `account_number` | FK → `mesa_accounts(account_number)` `ON DELETE RESTRICT`. Only windows on an OPEN account are read |
+| `email` | `mesa_accounts.email` at suspend time, lowercase (CHECK) |
+| `roster_email` | the roster address Accounting acted on, lowercase (CHECK) |
+| `suspended_from` | DATE, required |
+| `resumed_on` | DATE, NULL = still suspended; `>= suspended_from` (CHECK); equal = cancelled |
+| `reason` | ≤ 250 chars (CHECK) |
+| `suspended_by` / `suspended_at` | session email / timestamp |
+| `resumed_by` / `resumed_at` | set together with `resumed_on` (CHECK) |
+
+Partial unique index `mesa_suspensions_one_open_per_account` (one open window per account). RLS on, revoked from
+`anon` / `authenticated` — service role only. SQL: `references/sql/create/2026-10-06_mesa_suspensions.sql`, applied by
+`scripts/apply-mesa-suspensions-migration.mts --apply`. Code: `src/lib/supabase/mesa-suspensions.ts`.
+
+---
+
 ## `app_settings` keys (payroll)
 
 Beyond `auth.force_logout_map` (§9), the wizard/dispatch flow stores two per-pay-period JSON keys in `app_settings`:

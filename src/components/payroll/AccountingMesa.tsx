@@ -41,6 +41,8 @@ import {
   Maximize2,
   Archive,
   ArchiveRestore,
+  PauseCircle,
+  PlayCircle,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
@@ -54,6 +56,19 @@ import { DatePicker, toIso } from '@/components/ui/date-picker';
 import { parseDateOnlyLocal } from '@/lib/date-only';
 import { manilaTodayIso } from '@/lib/payroll/manila-week';
 import { isCalendarDate } from '@/lib/mesa/enrollment-date';
+import {
+  MESA_SUSPENSION_REASON_MAX,
+  MESA_SUSPENSIONS_NOT_SET_UP,
+  checkResume,
+  checkSuspensionReason,
+  firstAffectedWeek,
+  indexMesaSuspensions,
+  mesaSuspensionStatusOn,
+  mesaSuspensionsFor,
+  openMesaSuspension,
+  type MesaSuspension,
+  type MesaSuspensionStatus,
+} from '@/lib/mesa/suspension';
 import { toast } from 'sonner';
 import { clearTabCache, getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import {
@@ -1140,118 +1155,106 @@ export default function AccountingMesa() {
                         </td>
                         <td className="px-4 py-3 text-right" data-label="Status">
                           <StatusBadge status={r.status} paidAt={r.dispatched_at} />
+                          {/* Who decided, and when it was archived — here, not in
+                              the Action cell, which holds buttons only. */}
+                          {r.status !== 'pending' && r.reviewed_by && (
+                            <div className="mt-1 text-[10.5px] text-zinc-400" title={`Decided by ${r.reviewed_by}`}>
+                              by {r.reviewed_by.split('@')[0]}
+                            </div>
+                          )}
+                          {isMesaRequestArchived(r) && (
+                            <div
+                              className="mt-0.5 text-[10.5px] text-zinc-400"
+                              title={r.archived_by ? `Archived by ${r.archived_by}` : undefined}
+                            >
+                              Archived{' '}
+                              {r.archived_at
+                                ? new Date(r.archived_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                                : ''}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-500" data-label="Submitted">
                           {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                         </td>
-                        <td className="px-4 py-3 text-right" data-label="Action">
-                          {r.status === 'pending' ? (
-                            <div className="flex items-center justify-end gap-1.5">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openReview(r)}
-                                className="h-7 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
-                              >
-                                Review
-                              </Button>
-                              <button
-                                type="button"
-                                title="Delete request"
-                                disabled={busyId === r.id}
-                                onClick={() => setDeleteTarget(r)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-40 dark:border-zinc-700 dark:hover:border-rose-700/50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          ) : isMesaRequestArchived(r) ? (
-                            /* An archived row is a closed record: read it, or move
-                               it back. Revoke / delete / date edits wait until it
-                               is unarchived (the route refuses them too). */
-                            <div className="flex items-center justify-end gap-2">
-                              <span
-                                className="text-[11px] text-zinc-400"
-                                title={r.archived_by ? `Archived by ${r.archived_by}` : undefined}
-                              >
-                                Archived{' '}
-                                {r.archived_at
-                                  ? new Date(r.archived_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-                                  : ''}
-                              </span>
-                              <button
-                                type="button"
-                                title="View details"
-                                onClick={() => openReview(r)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:border-zinc-700 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400"
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                title="Unarchive — move back to Requests"
-                                disabled={busyId === r.id}
-                                onClick={() => setArchived(r, false)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 disabled:opacity-40 dark:border-zinc-700 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400"
-                              >
-                                <ArchiveRestore className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-end gap-2">
-                              <span className="text-[11px] text-zinc-400">
-                                {r.reviewed_by ? `by ${r.reviewed_by.split('@')[0]}` : '—'}
-                              </span>
-                              {/* Completed (denied, approved opt-out, PAID
-                                  disbursement) — nothing left to do, so it can
-                                  leave the main view. An approved-but-unpaid draw
-                                  or an approved return never gets the button. */}
-                              {mesaRequestCompletion(r).complete && (
-                                <button
+                        <td className="whitespace-nowrap px-4 py-3 text-right" data-label="Action">
+                          {/* The SAME four buttons on every row, in the same
+                              order (Kane, 2026-10-06): Review · Archive (or
+                              Unarchive in the Archived view) · Revoke · Delete.
+                              One that does not apply is DISABLED with the reason
+                              on hover, never removed — so the columns line up
+                              and nothing appears or vanishes between rows. Who
+                              decided / archived lives under the Status badge, not
+                              here. The route and the CHECK still refuse what a
+                              disabled button refuses (docs/features/mesa.md § Archive). */}
+                          {(() => {
+                            const archived = isMesaRequestArchived(r);
+                            const completion = mesaRequestCompletion(r);
+                            const busy = busyId === r.id;
+                            const archiveTitle = archived
+                              ? 'Unarchive — move back to Requests'
+                              : completion.complete
+                                ? 'Archive — completed, move to Archived'
+                                : `Cannot archive yet — ${completion.reason}`;
+                            const revokeBlocked = archived
+                              ? 'Archived — unarchive it before revoking'
+                              : r.status === 'pending'
+                                ? 'Nothing to revoke — not decided yet'
+                                : r.dispatched_at
+                                  ? 'Already paid out — cannot revoke'
+                                  : null;
+                            const deleteBlocked = archived
+                              ? 'Archived — unarchive it before deleting'
+                              : r.dispatched_at
+                                ? 'Already paid out — cannot delete'
+                                : null;
+                            const iconBtn =
+                              'inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700';
+                            return (
+                              <div className="flex flex-nowrap items-center justify-end gap-1.5">
+                                <Button
                                   type="button"
-                                  title="Archive — completed, move to Archived"
-                                  disabled={busyId === r.id}
-                                  onClick={() => setArchived(r, true)}
-                                  className="inline-flex h-7 items-center gap-1 rounded-md border border-zinc-200 px-2 text-[11px] font-semibold text-zinc-500 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-300"
-                                >
-                                  <Archive className="h-3.5 w-3.5" />
-                                  Archive
-                                </button>
-                              )}
-                              {/* A decided opt-out still needs its effective date
-                                  editable — the member's leaving date can move
-                                  after the decision. */}
-                              {r.request_type === 'opt_out' && (
-                                <button
-                                  type="button"
-                                  title="Edit effective date"
+                                  size="sm"
+                                  variant="outline"
                                   onClick={() => openReview(r)}
-                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:border-zinc-700 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400"
+                                  title={r.status === 'pending' ? 'Review — approve or deny' : 'Review — details, notes and dates'}
+                                  className="h-7 w-[4.25rem] justify-center border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
                                 >
-                                  <CalendarClock className="h-3.5 w-3.5" />
+                                  Review
+                                </Button>
+                                <button
+                                  type="button"
+                                  title={archiveTitle}
+                                  aria-label={archived ? 'Unarchive' : 'Archive'}
+                                  disabled={busy || (!archived && !completion.complete)}
+                                  onClick={() => setArchived(r, !archived)}
+                                  className={cn(iconBtn, 'hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400')}
+                                >
+                                  {archived ? <ArchiveRestore className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}
                                 </button>
-                              )}
-                              <button
-                                type="button"
-                                title={r.dispatched_at ? 'Already paid out — cannot revoke' : 'Revoke decision (back to pending)'}
-                                disabled={busyId === r.id || !!r.dispatched_at}
-                                onClick={() => revokeRequest(r)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-400"
-                              >
-                                <Undo2 className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                title={r.dispatched_at ? 'Already paid out — cannot delete' : 'Delete request'}
-                                disabled={busyId === r.id || !!r.dispatched_at}
-                                onClick={() => setDeleteTarget(r)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700 dark:hover:border-rose-700/50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          )}
+                                <button
+                                  type="button"
+                                  title={revokeBlocked ?? 'Revoke decision (back to pending)'}
+                                  aria-label="Revoke decision"
+                                  disabled={busy || !!revokeBlocked}
+                                  onClick={() => revokeRequest(r)}
+                                  className={cn(iconBtn, 'hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-400')}
+                                >
+                                  <Undo2 className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  title={deleteBlocked ?? 'Delete request'}
+                                  aria-label="Delete request"
+                                  disabled={busy || !!deleteBlocked}
+                                  onClick={() => setDeleteTarget(r)}
+                                  className={cn(iconBtn, 'hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600 dark:hover:border-rose-700/50 dark:hover:bg-rose-950/30 dark:hover:text-rose-400')}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
@@ -2433,6 +2436,9 @@ interface MesaRosterRow {
    *  mesa_accounts migration + seed have run (or when not enrolled). */
   accountNumber: string | null;
   ledger: MesaMemberSummary | null;
+  /** Active Members only: contribution suspension windows on the member's open
+   *  account, oldest first (docs/features/mesa-suspension.md). Absent elsewhere. */
+  suspensions?: MesaSuspension[];
 }
 
 /**
@@ -3070,6 +3076,423 @@ function MesaNonMembers() {
   );
 }
 
+// ── Contribution suspensions (docs/features/mesa-suspension.md) ─────────────
+//
+// Kane, 2026-10-06: suspend a member's MESA contribution from an effective date
+// "without having to opt-out to remove the -100". A suspended member stays on
+// this tab — same account, same number, balance untouched, nothing released —
+// and pay weeks whose FRIDAY deposit date falls inside the suspension are
+// neither charged the ₱100 nor deposited the ₱400. Which weeks is decided in
+// ONE place, `mesaContributesForWeek` (src/lib/mesa/deposit-date.ts); the rules
+// for a new suspend/resume live in src/lib/mesa/suspension.ts, which the routes
+// import too, so these dialogs cannot offer what the route refuses.
+
+/** Whether this session read the suspensions. Never cached with the rows. */
+type MesaSuspensionsRead = 'unknown' | 'ok' | 'not_set_up' | 'failed';
+
+const MESA_ACTIVE_MEMBERS_REFRESH_STEPS: readonly RefreshStepSpec[] = [
+  ...MESA_ROSTER_REFRESH_STEPS,
+  { id: 'suspensions', label: 'Reading MESA contribution suspensions' },
+];
+
+/** The suspensions read did not answer OK — the line fails, the roster still loads. */
+class MesaSuspensionsNotRead extends Error {}
+
+/**
+ * GET /api/mesa-suspensions. Best-effort for the TABLE (a failure must not
+ * blank the roster), never for the ANSWER: a failed read is `failed`, which
+ * disables Suspend / Resume and says so, rather than rendering everyone as not
+ * suspended. `settleFirst` is the roster read — the line fails only once it has
+ * settled, because a failure ends the Refresh modal's run.
+ */
+async function fetchMesaSuspensions(
+  tracker: RefreshTracker | undefined,
+  settleFirst: Promise<unknown>,
+): Promise<{ list: MesaSuspension[]; read: Exclude<MesaSuspensionsRead, 'unknown'> }> {
+  try {
+    const json = await trackRead(
+      tracker,
+      'suspensions',
+      async () => {
+        let res: Response;
+        try {
+          res = await fetch('/api/mesa-suspensions', { cache: 'no-store' });
+        } catch (e) {
+          await settleFirst.catch(() => undefined);
+          throw new MesaSuspensionsNotRead(`Couldn't read MESA suspensions: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          await settleFirst.catch(() => undefined);
+          throw new MesaSuspensionsNotRead(body?.error ?? `Couldn't read MESA suspensions (HTTP ${res.status})`);
+        }
+        return (await res.json()) as { available?: boolean; suspensions?: MesaSuspension[] };
+      },
+      (j) =>
+        j.available === false
+          ? 'MESA suspensions are not set up yet'
+          : `Read ${countOf((j.suspensions ?? []).length, 'suspension')}`,
+    );
+    return { list: json.suspensions ?? [], read: json.available === false ? 'not_set_up' : 'ok' };
+  } catch (e) {
+    if (e instanceof MesaSuspensionsNotRead) return { list: [], read: 'failed' };
+    throw e;
+  }
+}
+
+/** POST one Suspend. Throws with the server's reason. */
+async function postSuspendMesa(row: MesaRosterRow, from: string, reason: string | null): Promise<void> {
+  const res = await fetch('/api/mesa-suspensions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workEmail: row.workEmail ?? undefined,
+      personalEmail: row.workEmail ? undefined : row.personalEmail ?? undefined,
+      name: row.name,
+      from,
+      ...(reason ? { reason } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error ?? `HTTP ${res.status}`);
+  }
+}
+
+/** PATCH one Resume. Throws with the server's reason. */
+async function patchResumeMesa(suspensionId: string, resumeOn: string): Promise<void> {
+  const res = await fetch(`/api/mesa-suspensions/${encodeURIComponent(suspensionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resumeOn }),
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error ?? `HTTP ${res.status}`);
+  }
+}
+
+/** "Oct 4 – Oct 10, 2026" for a Sun–Sat pay week. */
+function formatPayWeek(w: { weekStart: string; weekEnd: string }): string {
+  const start = parseDateOnlyLocal(w.weekStart);
+  const end = parseDateOnlyLocal(w.weekEnd);
+  if (!start || !end) return `${w.weekStart} – ${w.weekEnd}`;
+  return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+/** The badge beside a member's name: in effect today, or starting later. */
+function MesaSuspensionBadge({ status }: { status: MesaSuspensionStatus<MesaSuspension> }) {
+  if (status.kind === 'none') return null;
+  const w = status.window;
+  const title =
+    `MESA contributions suspended from ${formatDateOnly(w.suspendedFrom)}, ` +
+    (w.resumedOn ? `resuming ${formatDateOnly(w.resumedOn)}` : 'until resumed') +
+    '. No ₱100 deduction and no ₱300 match for pay weeks whose Friday falls inside it; the account and balance are untouched.' +
+    (w.reason ? ` Reason: ${w.reason}.` : '') +
+    ` Set by ${w.suspendedBy}.`;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+        status.kind === 'suspended'
+          ? 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-200'
+          : 'border-dashed border-slate-300 bg-white text-slate-600 dark:border-slate-600 dark:bg-transparent dark:text-slate-300',
+      )}
+      title={title}
+    >
+      <PauseCircle className="h-3 w-3" />
+      {status.kind === 'suspended'
+        ? w.resumedOn
+          ? `Suspended · resumes ${formatDateOnly(w.resumedOn)}`
+          : 'Suspended'
+        : `Suspends ${formatDateOnly(w.suspendedFrom)}`}
+    </span>
+  );
+}
+
+/**
+ * The earliest date a new suspension may start for one row — the route's rule
+ * (not before the account opened, not inside a window that already ended),
+ * mirrored for the picker's `min`. `mesaMemberSince` equals the open account's
+ * `opened_on` (docs/features/mesa.md:159).
+ */
+function suspendMinFor(row: MesaRosterRow): { date: string; why: 'opened' | 'previous' } | null {
+  let min: { date: string; why: 'opened' | 'previous' } | null = row.mesaMemberSince
+    ? { date: row.mesaMemberSince, why: 'opened' }
+    : null;
+  for (const w of row.suspensions ?? []) {
+    if (w.resumedOn && (!min || w.resumedOn > min.date)) min = { date: w.resumedOn, why: 'previous' };
+  }
+  return min;
+}
+
+/** Shared chrome for the two dialogs — `role="dialog"` so an escaped picker popup lands inside it. */
+function MesaSuspensionDialogFrame({
+  labelledBy,
+  icon,
+  tone,
+  children,
+  footer,
+}: {
+  labelledBy: string;
+  icon: React.ReactNode;
+  tone: 'slate' | 'teal';
+  children: React.ReactNode;
+  footer: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-950 animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-200 ease-out motion-reduce:animate-none"
+      >
+        <div className="flex items-start gap-3 px-5 py-5">
+          <div
+            className={cn(
+              'flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
+              tone === 'slate'
+                ? 'bg-slate-100 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300'
+                : 'bg-teal-100 text-teal-600 dark:bg-teal-950/40 dark:text-teal-400',
+            )}
+          >
+            {icon}
+          </div>
+          <div className="min-w-0 flex-1">{children}</div>
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-5 py-4 dark:border-zinc-800">{footer}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Suspend one or many members from one effective date. The date defaults to
+ * today in Manila when the dialog MOUNTS (a click), never during the table's
+ * render. Not floored at today — Accounting back-dates corrections, as on Opt
+ * In — but a week already locked in payroll keeps its ₱100, and a past date
+ * says so.
+ */
+function MesaSuspendDialog({
+  targets,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  targets: MesaRosterRow[];
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (from: string, reason: string | null) => void;
+}) {
+  const [today] = useState(() => manilaTodayIso());
+  const [from, setFrom] = useState(today);
+  const [reason, setReason] = useState('');
+  const dateValid = isCalendarDate(from);
+  const reasonCheck = checkSuspensionReason(reason);
+  const single = targets.length === 1 ? targets[0] : null;
+  const firstWeek = dateValid ? firstAffectedWeek(from) : null;
+  const min = single ? suspendMinFor(single) : null;
+  const beforeMin = dateValid && !!min && from < min.date;
+  const canSubmit = dateValid && reasonCheck.ok && !beforeMin && !busy;
+
+  return (
+    <MesaSuspensionDialogFrame
+      labelledBy="mesa-suspend-title"
+      tone="slate"
+      icon={<PauseCircle className="h-5 w-5" />}
+      footer={
+        <>
+          <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!canSubmit}
+            onClick={() => reasonCheck.ok && onConfirm(from, reasonCheck.reason)}
+            className="bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500"
+          >
+            {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PauseCircle className="mr-1.5 h-3.5 w-3.5" />}
+            {single ? 'Suspend' : `Suspend (${targets.length})`}
+          </Button>
+        </>
+      }
+    >
+      <h3 id="mesa-suspend-title" className="text-base font-bold text-zinc-900 dark:text-white">
+        {single ? 'Suspend MESA contributions?' : `Suspend MESA contributions for ${targets.length} members?`}
+      </h3>
+      <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        Stops the ₱100 weekly deduction and the ₱300 Simple.biz match
+        {single ? (
+          <> for <span className="font-medium text-zinc-800 dark:text-zinc-200">{single.name}</span></>
+        ) : (
+          <> for the selected members</>
+        )}
+        . {single ? 'They stay a member' : 'Each stays a member'}: the account
+        {single?.accountNumber ? <> <span className="font-mono text-[12px]">{single.accountNumber}</span></> : null}, its balance
+        and any requests are untouched, and nothing is paid out. Resume restarts it.
+      </p>
+
+      <div className="mt-4">
+        <label htmlFor="mesa-suspend-effective" className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Effective date
+        </label>
+        <DatePicker
+          id="mesa-suspend-effective"
+          value={from}
+          onChange={setFrom}
+          min={min?.date}
+          disabled={busy}
+          required
+          placeholder="Pick the date the suspension starts"
+          className="mt-1 dark:bg-zinc-900"
+        />
+        <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {beforeMin && min ? (
+            <span className="text-rose-600 dark:text-rose-400">
+              Pick {formatDateOnly(min.date)} or later —{' '}
+              {min.why === 'opened' ? 'the account opened then.' : 'the previous suspension ran until then.'}
+            </span>
+          ) : firstWeek ? (
+            <>
+              First week without the ₱100:{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">{formatPayWeek(firstWeek)}</span> (its Friday
+              deposit date, {formatDateOnly(firstWeek.deposit)}, is on or after this date).
+              {from < today && (
+                <span className="mt-1 block text-amber-700 dark:text-amber-300">
+                  This date is in the past. Weeks already locked or paid keep their ₱100 — nothing is refunded.
+                </span>
+              )}
+            </>
+          ) : (
+            <>Pick the date the suspension starts.</>
+          )}
+        </p>
+      </div>
+
+      <div className="mt-4">
+        <label htmlFor="mesa-suspend-reason" className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Reason <span className="normal-case tracking-normal text-zinc-400">(optional)</span>
+        </label>
+        <Input
+          id="mesa-suspend-reason"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          maxLength={MESA_SUSPENSION_REASON_MAX}
+          disabled={busy}
+          placeholder="e.g. Temporary removal — receipts overdue"
+          className="mt-1 h-9 text-sm dark:bg-zinc-900"
+        />
+        <p className="mt-1 text-right text-[10.5px] tabular-nums text-zinc-400">
+          {reason.trim().length}/{MESA_SUSPENSION_REASON_MAX}
+        </p>
+      </div>
+    </MesaSuspensionDialogFrame>
+  );
+}
+
+/**
+ * Resume one member's open suspension from an effective date. Resuming ON the
+ * start date cancels it (no week is skipped) — how a mistaken suspension is
+ * undone; nothing is ever deleted.
+ */
+function MesaResumeDialog({
+  row,
+  suspension,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  row: MesaRosterRow;
+  suspension: MesaSuspension;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (resumeOn: string) => void;
+}) {
+  // Today in Manila at mount — or the start date when the suspension has not
+  // begun yet (an earlier date would be refused).
+  const [today] = useState(() => manilaTodayIso());
+  const [resumeOn, setResumeOn] = useState(() =>
+    today < suspension.suspendedFrom ? suspension.suspendedFrom : today,
+  );
+  const check = checkResume({ resumeOn, window: suspension });
+  const cancels = check.ok && check.resumeOn === suspension.suspendedFrom;
+  const firstWeek = check.ok ? firstAffectedWeek(check.resumeOn) : null;
+
+  return (
+    <MesaSuspensionDialogFrame
+      labelledBy="mesa-resume-title"
+      tone="teal"
+      icon={<PlayCircle className="h-5 w-5" />}
+      footer={
+        <>
+          <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!check.ok || busy}
+            onClick={() => check.ok && onConfirm(check.resumeOn)}
+            className="bg-teal-600 text-white hover:bg-teal-700 dark:bg-teal-600 dark:hover:bg-teal-500"
+          >
+            {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
+            {cancels ? 'Cancel suspension' : 'Resume'}
+          </Button>
+        </>
+      }
+    >
+      <h3 id="mesa-resume-title" className="text-base font-bold text-zinc-900 dark:text-white">
+        Resume MESA contributions?
+      </h3>
+      <p className="mt-1 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <span className="font-medium text-zinc-800 dark:text-zinc-200">{row.name}</span>
+        {suspension.suspendedFrom <= today ? ' has been suspended since ' : ' is set to be suspended from '}
+        <span className="font-medium text-zinc-800 dark:text-zinc-200">{formatDateOnly(suspension.suspendedFrom)}</span>
+        {suspension.reason ? <> ({suspension.reason})</> : null}. Resuming restarts the ₱100 weekly deduction and the ₱300
+        Simple.biz match.
+      </p>
+
+      <div className="mt-4">
+        <label htmlFor="mesa-resume-effective" className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+          Resume on
+        </label>
+        <DatePicker
+          id="mesa-resume-effective"
+          value={resumeOn}
+          onChange={setResumeOn}
+          min={suspension.suspendedFrom}
+          disabled={busy}
+          required
+          placeholder="Pick the date contributions restart"
+          className="mt-1 dark:bg-zinc-900"
+        />
+        <p className="mt-2 text-[11.5px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {!check.ok ? (
+            isCalendarDate(resumeOn) ? (
+              <span className="text-rose-600 dark:text-rose-400">{check.error}</span>
+            ) : (
+              <>Pick the date contributions restart.</>
+            )
+          ) : cancels ? (
+            <>
+              Resuming on the start date <span className="font-medium text-zinc-700 dark:text-zinc-200">cancels</span> the
+              suspension — no week is skipped.
+            </>
+          ) : firstWeek ? (
+            <>
+              First week charged again:{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">{formatPayWeek(firstWeek)}</span> (its Friday
+              deposit date, {formatDateOnly(firstWeek.deposit)}, is on or after this date).
+            </>
+          ) : null}
+        </p>
+      </div>
+    </MesaSuspensionDialogFrame>
+  );
+}
+
 // ── MESA Active Members ──────────────────────────────────────────────────────
 //
 // Employees currently enrolled: employee_hourly_rates.mesa_member = true AND no
@@ -3097,16 +3520,36 @@ function MesaActiveMembers() {
   // the rows: a repaint from cache has measured nothing yet, and 'unknown'
   // renders as silence rather than as an all-clear.
   const [ledgerRead, setLedgerRead] = useState<MesaLedgerRead>('unknown');
+  // Same rule for the suspensions read, plus the Manila day the badges are
+  // judged on — both set when a load LANDS, never during render, so a cached
+  // repaint shows no stale verdict and Suspend / Resume wait for a real read.
+  const [suspensionsRead, setSuspensionsRead] = useState<MesaSuspensionsRead>('unknown');
+  const [today, setToday] = useState('');
+  const [suspendTargets, setSuspendTargets] = useState<MesaRosterRow[] | null>(null);
+  const [resumeTarget, setResumeTarget] = useState<{ row: MesaRosterRow; suspension: MesaSuspension } | null>(null);
+  const [suspending, setSuspending] = useState(false);
 
   // `tracker` comes only from the Refresh click (docs/features/table-refresh-progress.md).
   const load = async (showSpinner = true, tracker?: RefreshTracker) => {
     if (showSpinner) setLoading(true); else setRefreshing(true);
     try {
-      const { rows: all, ledgerRead: read } = await fetchMesaRoster(tracker);
-      const data = all.filter(isActiveMember);
+      const rosterAnswer = fetchMesaRoster(tracker);
+      const [{ rows: all, ledgerRead: read }, suspensions] = await Promise.all([
+        rosterAnswer,
+        fetchMesaSuspensions(tracker, rosterAnswer),
+      ]);
+      // Each member's windows, matched on their addresses AND the open account
+      // number — the same union the Payroll Wizard uses to decide the ₱100.
+      const index = indexMesaSuspensions(suspensions.list);
+      const data = all.filter(isActiveMember).map((r) => ({
+        ...r,
+        suspensions: mesaSuspensionsFor(index, { emails: [r.workEmail, r.personalEmail], accountNumber: r.accountNumber }),
+      }));
       setTabCache(TAB_CACHE_KEYS.mesaActiveMembers, data);
       setRows(data);
       setLedgerRead(read);
+      setSuspensionsRead(suspensions.read);
+      setToday(manilaTodayIso());
     } catch (e) {
       if (!tracker) toast.error(e instanceof Error ? e.message : 'Failed to load MESA balances');
     } finally {
@@ -3162,7 +3605,7 @@ function MesaActiveMembers() {
   const sel = useRowSelection(filtered, (r) => r.key);
 
   // The modal says "Refreshed" only when it was (the old toast fired even after a failure).
-  const balancesRefresh = useTableRefresh({ subject: 'MESA balances', steps: MESA_ROSTER_REFRESH_STEPS });
+  const balancesRefresh = useTableRefresh({ subject: 'MESA balances', steps: MESA_ACTIVE_MEMBERS_REFRESH_STEPS });
   const handleRefresh = () =>
     balancesRefresh.run((t) => {
       clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
@@ -3181,6 +3624,70 @@ function MesaActiveMembers() {
     setToggling(false);
     clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
     clearTabCache(TAB_CACHE_KEYS.mesaNonMembers);
+    await load(false);
+  };
+
+  // ── Suspend / Resume (docs/features/mesa-suspension.md) ──────────────────
+  //
+  // Both need the suspensions to have been read THIS session: a failed read
+  // cannot tell a suspended member from one who is not. The route refuses the
+  // same things on its own (src/lib/mesa/suspension.ts).
+  const suspendBlockedReason: string | null =
+    suspensionsRead === 'ok'
+      ? null
+      : suspensionsRead === 'not_set_up'
+        ? MESA_SUSPENSIONS_NOT_SET_UP
+        : suspensionsRead === 'failed'
+          ? 'MESA suspensions did not load — Refresh first.'
+          : 'Loading MESA suspensions…';
+  const suspensionStatusOf = (r: MesaRosterRow): MesaSuspensionStatus<MesaSuspension> =>
+    today ? mesaSuspensionStatusOn(r.suspensions ?? [], today) : { kind: 'none' };
+
+  // Bulk Suspend skips members who already have an open suspension (the
+  // route would refuse them 409) and says how many it left out.
+  const openSuspend = (targets: MesaRosterRow[]) => {
+    const free = targets.filter((t) => !openMesaSuspension(t.suspensions ?? []));
+    const skipped = targets.length - free.length;
+    if (free.length === 0) {
+      toast.info(skipped === 1 ? 'Already suspended — use Resume.' : `All ${skipped} are already suspended.`);
+      return;
+    }
+    if (skipped > 0) toast.info(`${skipped} already suspended — left out.`);
+    setSuspendTargets(free);
+  };
+
+  const confirmSuspend = async (from: string, reason: string | null) => {
+    if (!suspendTargets || suspendTargets.length === 0) return;
+    setSuspending(true);
+    const { ok, fail, firstError } = await runBulk(suspendTargets, (t) => postSuspendMesa(t, from, reason));
+    reportBulk('Suspended', ok, fail, firstError);
+    // Nothing went through → keep the dialog open with the reason on screen.
+    if (ok > 0 || fail === 0) {
+      setSuspendTargets(null);
+      sel.clear();
+    }
+    setSuspending(false);
+    clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
+    await load(false);
+  };
+
+  const confirmResume = async (resumeOn: string) => {
+    if (!resumeTarget) return;
+    setSuspending(true);
+    try {
+      await patchResumeMesa(resumeTarget.suspension.id, resumeOn);
+      toast.success(
+        resumeOn === resumeTarget.suspension.suspendedFrom
+          ? `Suspension cancelled for ${resumeTarget.row.name}`
+          : `${resumeTarget.row.name}'s contributions resume ${formatDateOnly(resumeOn)}`,
+      );
+      setResumeTarget(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Resume failed');
+    } finally {
+      setSuspending(false);
+    }
+    clearTabCache(TAB_CACHE_KEYS.mesaActiveMembers);
     await load(false);
   };
 
@@ -3241,14 +3748,24 @@ function MesaActiveMembers() {
         r.mesaMemberSince
           ? (parseDateOnlyLocal(r.mesaMemberSince) ?? new Date(r.mesaMemberSince)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
           : '-',
-        isMesaNeverCharged({ mesaMember: r.mesaMember, ledger: r.ledger }) ? 'NO - not deducted' : 'Yes',
+        (() => {
+          if (isMesaNeverCharged({ mesaMember: r.mesaMember, ledger: r.ledger })) return 'NO - not deducted';
+          const st = today ? mesaSuspensionStatusOn(r.suspensions ?? [], today) : null;
+          if (!st) return 'Yes';
+          if (st.kind === 'suspended') {
+            return `NO - suspended from ${formatDateOnly(st.window.suspendedFrom)}${st.window.resumedOn ? `, resumes ${formatDateOnly(st.window.resumedOn)}` : ''}`;
+          }
+          if (st.kind === 'scheduled') return `Yes - suspends ${formatDateOnly(st.window.suspendedFrom)}`;
+          return 'Yes';
+        })(),
       ]),
       notes: [
         "\"Payroll deducting\" reads NO when the member's savings are recorded but no rate row carries mesa_member — the Payroll Wizard takes no PHP100 from their pay. Repair with scripts/fix-mesa-aliased-membership.mjs; do NOT use Opt In, which mints a second account and hides the balance.",
+        '"NO - suspended" is a deliberate stop set by Accounting (Suspend): no PHP100 deduction and no PHP300 match for pay weeks whose Friday falls inside the suspension. The member stays enrolled and the balance is untouched.',
         "Figures are scoped to each member's current (open) MESA account number. Opting out closes that account — its history is retained in the MESA ledger under the previous account number (nothing is deleted) — and a re-join opens a fresh account number starting from PHP 0.00.",
       ],
     };
-  }, [filtered, filterDepartment, query]);
+  }, [filtered, filterDepartment, query, today]);
 
   // ── Is payroll actually charging these people? ───────────────────────────
   //
@@ -3297,6 +3814,17 @@ function MesaActiveMembers() {
             <strong className="font-semibold">The MESA ledger did not load.</strong> Balances below are incomplete, members
             known only by their contributions are missing from this list, and no check was made for members payroll is
             failing to deduct. Refresh before acting on these figures.
+          </span>
+        </div>
+      )}
+
+      {/* A failed suspensions read is not "nobody is suspended" — say so. */}
+      {suspensionsRead === 'failed' && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
+          <span>
+            <strong className="font-semibold">MESA suspensions did not load.</strong> Suspended members show no badge below,
+            and Suspend / Resume are off until a Refresh reads them.
           </span>
         </div>
       )}
@@ -3358,6 +3886,17 @@ function MesaActiveMembers() {
         <CardContent className="p-0">
           {sel.selectedRows.length > 0 && (
             <BulkBar count={sel.selectedRows.length} onClear={sel.clear}>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={toggling || suspending || !!suspendBlockedReason}
+                title={suspendBlockedReason ?? 'Suspend the selected members\' MESA contribution from one effective date'}
+                onClick={() => openSuspend(sel.selectedRows)}
+                className="h-7 border-slate-300 bg-slate-50 text-[11px] text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800/40 dark:text-slate-200 dark:hover:bg-slate-800/70"
+              >
+                <PauseCircle className="mr-1 h-3 w-3" />Suspend
+              </Button>
               <Button type="button" size="sm" variant="outline" disabled={toggling} onClick={() => setOptOutTargets(sel.selectedRows)} className="h-7 border-amber-200 bg-amber-50 text-[11px] text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300">
                 <UserMinus className="mr-1 h-3 w-3" />Opt Out
               </Button>
@@ -3407,6 +3946,7 @@ function MesaActiveMembers() {
                               Not deducted
                             </span>
                           )}
+                          <MesaSuspensionBadge status={suspensionStatusOf(r)} />
                         </div>
                         <div className="mt-0.5 font-mono text-[11px] text-zinc-500 dark:text-zinc-500">{r.workEmail ?? r.personalEmail}</div>
                       </td>
@@ -3438,29 +3978,65 @@ function MesaActiveMembers() {
                       <td className="px-4 py-3 text-right text-zinc-500 dark:text-zinc-400" data-label="Member since">
                         {fmtSince(r.mesaMemberSince)}
                       </td>
-                      <td className="px-4 py-3 text-right" data-label="Actions">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setViewTarget(r)}
-                            className="h-7 gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
-                          >
-                            <Eye className="h-3 w-3" />
-                            View
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setOptOutTargets([r])}
-                            className="h-7 gap-1 border-amber-200 bg-amber-50/60 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/60"
-                          >
-                            <UserMinus className="h-3 w-3" />
-                            Opt Out
-                          </Button>
-                        </div>
+                      <td className="whitespace-nowrap px-4 py-3 text-right" data-label="Actions">
+                        {/* The SAME four buttons on every row, in the same order
+                            (Kane, 2026-10-06): View · Suspend · Resume · Opt Out —
+                            the Requests tab's shape, one labelled button then
+                            icon buttons. One that does not apply is DISABLED with
+                            the reason on hover, never removed. */}
+                        {(() => {
+                          const open = openMesaSuspension(r.suspensions ?? []);
+                          const suspendBlocked =
+                            suspendBlockedReason ??
+                            (open ? `Already suspended from ${formatDateOnly(open.suspendedFrom)} — use Resume` : null);
+                          const resumeBlocked = suspendBlockedReason ?? (open ? null : 'Not suspended — nothing to resume');
+                          const iconBtn =
+                            'inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-400 transition-colors disabled:cursor-not-allowed disabled:opacity-30 dark:border-zinc-700';
+                          return (
+                            <div className="flex flex-nowrap items-center justify-end gap-1.5">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setViewTarget(r)}
+                                className="h-7 w-[4.25rem] justify-center gap-1 border-teal-200 bg-teal-50/60 text-[11px] font-semibold text-teal-700 hover:bg-teal-100 dark:border-teal-700/50 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-950/60"
+                              >
+                                <Eye className="h-3 w-3" />
+                                View
+                              </Button>
+                              <button
+                                type="button"
+                                title={suspendBlocked ?? 'Suspend MESA contribution — stops the ₱100 and the ₱300 match from a date; stays a member'}
+                                aria-label={`Suspend ${r.name}'s MESA contribution`}
+                                disabled={toggling || suspending || !!suspendBlocked}
+                                onClick={() => openSuspend([r])}
+                                className={cn(iconBtn, 'hover:border-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:border-slate-500 dark:hover:bg-slate-800/60 dark:hover:text-slate-200')}
+                              >
+                                <PauseCircle className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title={resumeBlocked ?? 'Resume MESA contribution from a date'}
+                                aria-label={`Resume ${r.name}'s MESA contribution`}
+                                disabled={toggling || suspending || !!resumeBlocked}
+                                onClick={() => open && setResumeTarget({ row: r, suspension: open })}
+                                className={cn(iconBtn, 'hover:border-teal-300 hover:bg-teal-50 hover:text-teal-600 dark:hover:border-teal-700/50 dark:hover:bg-teal-950/30 dark:hover:text-teal-400')}
+                              >
+                                <PlayCircle className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Opt Out of MESA — closes the account and releases the balance"
+                                aria-label={`Opt ${r.name} out of MESA`}
+                                disabled={toggling || suspending}
+                                onClick={() => setOptOutTargets([r])}
+                                className={cn(iconBtn, 'hover:border-amber-300 hover:bg-amber-50 hover:text-amber-600 dark:hover:border-amber-700/50 dark:hover:bg-amber-950/30 dark:hover:text-amber-400')}
+                              >
+                                <UserMinus className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   ))}
@@ -3538,6 +4114,24 @@ function MesaActiveMembers() {
             </div>
           </div>
         </div>
+      )}
+
+      {suspendTargets && suspendTargets.length > 0 && (
+        <MesaSuspendDialog
+          targets={suspendTargets}
+          busy={suspending}
+          onCancel={() => setSuspendTargets(null)}
+          onConfirm={(from, reason) => void confirmSuspend(from, reason)}
+        />
+      )}
+      {resumeTarget && (
+        <MesaResumeDialog
+          row={resumeTarget.row}
+          suspension={resumeTarget.suspension}
+          busy={suspending}
+          onCancel={() => setResumeTarget(null)}
+          onConfirm={(resumeOn) => void confirmResume(resumeOn)}
+        />
       )}
     </div>
   );

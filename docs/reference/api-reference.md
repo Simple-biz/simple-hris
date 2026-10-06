@@ -1924,6 +1924,54 @@ Audit log: `mesa.request.approved` / `.denied` / `.revoked` / `.effective_date_u
 
 ---
 
+### `GET /api/mesa-suspensions` *(added 2026-10-06)*
+
+Every MESA contribution suspension window on a currently **open** account. Read by the Payroll Wizard and
+Accounting → MESA → Active Members. Auth: `requireElevatedSession` (the program-wide `/api/mesa-ledger` gate).
+Rules: [mesa-suspension.md](../features/mesa-suspension.md).
+
+**Response** `200`:
+```json
+{ "available": true, "suspensions": [{ "id": "…", "accountNumber": "26-06-00027", "email": "dale@simple.biz",
+  "rosterEmail": "dales@simple.biz", "suspendedFrom": "2026-10-05", "resumedOn": null, "reason": null,
+  "suspendedBy": "carla@simple.biz", "suspendedAt": "…", "resumedBy": null, "resumedAt": null,
+  "emails": ["dale@simple.biz", "dales@simple.biz"] }] }
+```
+`available: false` = the table does not exist yet (migration PENDING) — nobody can be suspended. **Any other read
+failure is a `500`, never an empty list.**
+
+### `POST /api/mesa-suspensions` *(added 2026-10-06)*
+
+Suspend a member's weekly contribution (no ₱100, no ₱300 match) for pay weeks whose Friday deposit date is on/after
+`from`. The member stays enrolled. Auth: `requireFeatureEditAnyView('mesa')`.
+
+```json
+{ "workEmail": "dales@simple.biz", "name": "Dale S.", "from": "2026-10-05", "reason": "optional, ≤ 250 chars" }
+```
+Resolves the member's OPEN account under the address or any MESA alias of it (never mints one).
+**Response** `200`: `{ "success": true, "suspension": { … }, "firstWeek": { "weekStart", "weekEnd", "deposit" } }`.
+
+**Errors**: `400` — no email, `from` not a real `YYYY-MM-DD`, before the account opened, reason > 250 · `409` — no
+open account, already an open suspension, or `from` inside a window that already ended · `503` — account or
+suspensions unreadable, or the table missing ("not set up yet") · `500`.
+Audit log: `employee.mesa.suspend`. **Tables**: `mesa_suspensions`, `mesa_accounts`, `audit_log`.
+
+### `PATCH /api/mesa-suspensions/[id]` *(added 2026-10-06)*
+
+Resume: weeks whose Friday is on/after `resumeOn` are charged again. `resumeOn` equal to the start date
+**cancels** the suspension (no week skipped). Auth: `requireFeatureEditAnyView('mesa')`.
+
+```json
+{ "resumeOn": "2026-11-02" }
+```
+**Response** `200`: `{ "success": true, "suspension": { … }, "firstWeek": { … }, "cancelled": false }`.
+
+**Errors**: `400` — bad date or before the start · `404` — no such suspension · `409` — already resumed (compare-and-set
+on `resumed_on IS NULL`) or the account was closed (opted out) · `503` — unreadable / table missing · `500`.
+Audit log: `employee.mesa.resume` (`cancelled` in details). **Tables**: `mesa_suspensions`, `mesa_accounts`, `audit_log`.
+
+---
+
 ## 12.12 Onboarding (public)
 
 > Added 2026-06-16. The public onboarding flow gained an **Intellectual Property Assignment, Talent Release, and Copyright Waiver** as its first step (mirroring W-8BEN). On submit the server renders a filled PDF and stores it; HR views it through the submission-detail endpoint. See [onboarding-ip-assignment.md](../features/onboarding-ip-assignment.md) for the full feature doc (form, preview mode, PDF rendering, dark-mode/animation polish).

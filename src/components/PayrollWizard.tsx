@@ -208,7 +208,14 @@ import {
   type OrphanageResolvedOk,
   type OrphanageRowTarget,
 } from '@/lib/payroll/orphanage-rows';
-import { mesaContributesForWeek } from '@/lib/mesa/deposit-date';
+import { mesaContributesForWeek, type MesaSuspensionWindow } from '@/lib/mesa/deposit-date';
+import {
+  EMPTY_MESA_SUSPENSION_INDEX,
+  indexMesaSuspensions,
+  mesaSuspensionsFor,
+  type MesaSuspension,
+  type MesaSuspensionIndex,
+} from '@/lib/mesa/suspension';
 import { TIME_ADJUSTMENT_REASONS, type TimeAdjustmentRow } from '@/lib/supabase/time-adjustments';
 import { comparePayrollToMaster } from '@/lib/payroll/compare-to-master';
 import {
@@ -4202,6 +4209,13 @@ export default function PayrollWizard({
    * never disagree. See src/lib/mesa/ledger.ts and AccountingMesa's isActiveMember.
    */
   const [mesaOptedOutEmails, setMesaOptedOutEmails] = useState<Set<string>>(new Set());
+  /**
+   * MESA contribution suspensions (Accounting → MESA → Active Members → Suspend,
+   * docs/features/mesa-suspension.md): windows on OPEN accounts during which a
+   * member is neither charged the ₱100 nor deposited the ₱400, while staying
+   * enrolled. Loaded with the opted-out set and sharing its loader state.
+   */
+  const [mesaSuspensionIndex, setMesaSuspensionIndex] = useState<MesaSuspensionIndex>(EMPTY_MESA_SUSPENSION_INDEX);
   /** Pending + approved time-adjustment requests (for the Additions review panel). */
   const [timeAdjustmentRows, setTimeAdjustmentRows] = useState<TimeAdjustmentRow[]>([]);
   const [timeAdjustmentSignedUrls, setTimeAdjustmentSignedUrls] = useState<Record<string, string>>({});
@@ -6414,9 +6428,17 @@ export default function PayrollWizard({
   // wizard suppresses their ₱100 contribution below so the deduction can't contradict that
   // list. Best-effort: a ledger failure leaves the set empty (falls back to flag-only), so
   // a transient error never re-introduces a deduction beyond what the flag alone gives.
+  //
+  // Suspensions ride on the same load and the same state (`mesaOptOut` on the stub):
+  // both answer "is this member exempt from the ₱100 this week". Each read lands on
+  // its own, so a failed suspension read never blanks the opted-out set; but the
+  // state settles only when BOTH answered — a suspended member's stub must not
+  // print a confident −₱100.00 from a read that never came back. The fallback on
+  // failure is the opt-out precedent (docs/features/mesa.md:193): no suspensions,
+  // i.e. flag-only charging, with the stub's MESA line reading `unavailable`.
   const fetchMesaOptedOut = useCallback(() => {
     setMesaOptOutState('pending');
-    fetch('/api/mesa-ledger', { cache: 'no-store' })
+    const optedOut = fetch('/api/mesa-ledger', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : { members: [] }))
       .then((json: { members?: Array<{ email?: string | null; lastEventOptedOut?: boolean }> }) => {
         const set = new Set<string>();
@@ -6426,12 +6448,22 @@ export default function PayrollWizard({
           if (em) set.add(em);
         }
         setMesaOptedOutEmails(set);
-        setMesaOptOutState('settled');
       })
       // The empty set can only mean "nobody opted out", so until this lands an
       // opted-out member's stub prints a confident −₱100.00 — a wrong NON-zero,
       // which is why the preview resolves state from the loader, never the amount.
-      .catch(() => { setMesaOptedOutEmails(new Set()); setMesaOptOutState('unavailable'); });
+      .catch((e: unknown) => { setMesaOptedOutEmails(new Set()); throw e; });
+    const suspensions = fetch('/api/mesa-suspensions', { cache: 'no-store' })
+      .then(async r => {
+        // Unlike the ledger read, a non-OK answer is a FAILURE here, never "none".
+        if (!r.ok) throw new Error(`mesa-suspensions HTTP ${r.status}`);
+        return (await r.json()) as { available?: boolean; suspensions?: MesaSuspension[] };
+      })
+      .then(json => setMesaSuspensionIndex(indexMesaSuspensions(json.suspensions ?? [])))
+      .catch((e: unknown) => { setMesaSuspensionIndex(EMPTY_MESA_SUSPENSION_INDEX); throw e; });
+    Promise.all([optedOut, suspensions])
+      .then(() => setMesaOptOutState('settled'))
+      .catch(() => setMesaOptOutState('unavailable'));
   }, []);
 
   // Keep the opted-out set fresh across navigation for the same reason as
@@ -6461,6 +6493,21 @@ export default function PayrollWizard({
   );
 
   /**
+   * This row's MESA suspension windows — matched on every address the opted-out
+   * check uses (row email + the rate row's work and personal emails) AND the rate
+   * row's open account number. Empty when none (or when the read failed — see
+   * fetchMesaOptedOut). Fed to `mesaContributesForWeek` at both gate sites.
+   */
+  const mesaSuspensionsForRow = useCallback(
+    (rowEmail: string | null | undefined, rateRow: EmployeeHourlyRateRow | undefined | null): readonly MesaSuspensionWindow[] =>
+      mesaSuspensionsFor(mesaSuspensionIndex, {
+        emails: [rowEmail, rateRow?.work_email, rateRow?.personal_email],
+        accountNumber: rateRow?.mesa_account_number ?? null,
+      }),
+    [mesaSuspensionIndex],
+  );
+
+  /**
    * The ONE answer to "is this row charged ₱100 this week" for every display
    * recompute (Additions per-row + dept summary, HSL per-row + footer,
    * Validation rows): enrolled, not opted out in the ledger, AND enrolled
@@ -6474,8 +6521,8 @@ export default function PayrollWizard({
     (rowEmail: string | null | undefined, rateRow: EmployeeHourlyRateRow | undefined | null): boolean =>
       !!rateRow?.mesa_member &&
       !isMesaOptedOut(rowEmail, rateRow) &&
-      mesaContributesForWeek(rateRow?.mesa_member_since ?? null, hubstaffWeekEnd),
-    [isMesaOptedOut, hubstaffWeekEnd],
+      mesaContributesForWeek(rateRow?.mesa_member_since ?? null, hubstaffWeekEnd, mesaSuspensionsForRow(rowEmail, rateRow)),
+    [isMesaOptedOut, hubstaffWeekEnd, mesaSuspensionsForRow],
   );
 
   /**
@@ -10314,8 +10361,12 @@ export default function PayrollWizard({
       // event is an opt-out is a Non Member (per Accounting's tab) even if
       // mesa_member drifted true, and must not be charged. See isMesaOptedOut.
       const optedOut = isMesaOptedOut(r.email, rateRowForMesa);
+      // A suspension covering this week's Friday skips it too — the member stays
+      // enrolled, nothing is charged or deposited (mesa-suspension.md).
       const enrolledForThisWeek =
-        !!rateRowForMesa?.mesa_member && !optedOut && mesaContributesForWeek(mesaSince, week?.end ?? null);
+        !!rateRowForMesa?.mesa_member &&
+        !optedOut &&
+        mesaContributesForWeek(mesaSince, week?.end ?? null, mesaSuspensionsForRow(r.email, rateRowForMesa));
       // The ₱100 contribution is charged ONLY to enrolled members (for this week).
       // A pending disbursement does NOT imply membership: an opted-out ex-member can
       // still be paid out an approved disbursement, and they must not be re-charged
@@ -10491,6 +10542,7 @@ export default function PayrollWizard({
     orphanageAmounts,
     mesaDisbursements,
     isMesaOptedOut,
+    mesaSuspensionsForRow,
     excludedEmails,
     pabMonthRange,
     calcSourceFile,
