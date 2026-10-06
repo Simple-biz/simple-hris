@@ -919,7 +919,7 @@ The Dispatch step's "Preview Paystubs" button opens a modal built from the same 
 1. **List view**: searchable (filter by name, work email, personal email, or department), one row per employee — name + department chip + **work email**, the whole row being the "View" target.
 2. **Detail view**: the shared `PayStubStatement`, the very component the employee sees in their Pay Stubs modal, rendered from `mapPayloadToPayStub(row)`. "← All recipients" returns to the list.
 
-State: `previewPaystubsOpen`, `previewSelectedEmail`, `previewSearch`, `previewTab`, `previewDept`, `previewPage`. All reset on modal close.
+State: `previewPaystubsOpen`, `previewSelectedEmail`, `previewSearch`, `previewTab`, `previewDept`, `previewPage`, `paystubRefreshRun` (§ *Refresh on an opened paystub*). All reset on modal close.
 
 ### Work email is DISPLAYED; personal email is SEARCHED — 2026-09-01
 
@@ -963,6 +963,109 @@ real **height cap** (`max-h-[calc(100dvh-1.5rem)] sm:max-h-[90dvh]`; the base pr
 has none, so a full recipient list on a short window was clipped at both ends with its
 pager unreachable). The list body is `min-h-0 flex-1 overflow-y-auto` between `shrink-0`
 chrome.
+
+### Refresh on an opened paystub — 2026-10-06
+
+Kane: *"Payroll Wizard - Dispatch - Paystubs when we open them lets add a refresh button just
+incase there is an update or changes"*. Built via `hardening` the same day.
+
+**What the user sees.** The detail view's header bar has a **Refresh** button between
+*← All recipients* and the *Not sent yet* pill. A click re-reads the statement's sources. The
+statement **stays on screen with its figures** while the reads are out: no skeleton, no
+shimmer, and no line goes back to `pending`. A strip under the header says what is happening,
+then what happened:
+
+| Result | The strip says |
+|---|---|
+| Running | *Re-reading rates, KPI bonuses, adjustments, PAB settings, MESA and the roster. The figures below stay until the new ones land.* The icon spins, except under reduced motion, where it holds still |
+| Something moved | *Re-read at 3:14 PM — 2 lines changed:*, then each line by the **statement's own label**, printed the way the statement prints it (`Performance Bonus ₱0.00 → ₱1,500.00`). Up to five lines, then *and N more*. **Total Net Pay closes the list** |
+| Nothing moved | *Re-read at 3:14 PM — nothing on this statement changed.* If a non-figure moved (hours, a note, a rate basis): *no figure changed, but the hours, a note or a rate basis did.* |
+| Some reads failed | The result above, plus *Could not re-read KPI bonuses and MESA disbursements:* and each read's own reason |
+| Every read failed | *Nothing could be re-read, so this statement is unchanged from the earlier read.* with one reason (every read failing is one cause, so it is not repeated 13 times) |
+| A read was never sent | *Not re-read: HSL KPI bonuses (they have not loaded for this week yet).* A skipped read is never counted as read |
+| The person left the batch | the dialog falls back to the list, which says *After the refresh, ‹name› is no longer among this batch's paystubs.* |
+
+The diff is computed against the statement **on screen now**, not frozen at the end of the run,
+so it keeps up while derived figures settle. The baseline is the statement as it read at the
+click. The strip is paper chrome, light in both themes like the bar above it.
+
+**Why the shared refresh modal is NOT used.** `ui-standards.md` § 17.1: this preview *"is a
+document and follows § 12.3's per-field rule, not app-table chrome"*. It is also already a
+modal. So this is not one of `table-refresh-progress.md`'s table buttons, and it does not
+decide item 355 (the Step-2 *Refresh rates* conflict).
+
+**What it re-reads** (`refreshPaystubSources` in `PayrollWizard.tsx`; the list and its labels
+are `PAYSTUB_REFRESH_READS` in `src/lib/payroll-wizard/paystub-refresh.ts`):
+
+| Read | How |
+|---|---|
+| Payment Catalog rates · hourly rates · rate history · salary history · the leavers list | the five a Set-rate save reloads (`RATES_CHANGED_EVENT`) |
+| the master roster | `reloadMasterEmployees` |
+| KPI bonuses · HSL KPI bonuses | `refreshKpiLive(null)`, the KPI live refresh's own re-read |
+| approved time adjustments | `refreshApprovedAdjustmentOverrides` |
+| Payroll Notes adjustments | `pullNotesAdjustments()`, merge-only, exactly as on step entry. A typed figure still wins |
+| PAB settings | `usePabPeriodSettings().refreshInBackground` |
+| MESA disbursements · MESA opt-outs and suspensions | `fetchMesaDisbursements`, `fetchMesaOptedOut` |
+
+Every one of them is a **background** read:
+
+- It never raises its loading flag or puts a line back to `pending`, so the Step-2 table does
+  not re-skeleton and the step rail stays still. A click the user asked for is not data first
+  arriving (`payroll-wizard-step-load.md` § *Deliberately excluded*).
+- A **non-OK or `error` answer is a failed read**. Several foreground reads parse an error body
+  as "none"; this one does not.
+- **A failed read lands nothing.** The data and the line state stay as they were, and the strip
+  names the failure. A read that lands settles its line, so a Refresh can recover a line that
+  first loaded `unavailable`.
+
+There is one exception, and it is deliberate. **Salary history and the leavers list keep their
+documented fail-closed behaviour** (`salaried-pay-basis.md`: an unreadable history or leaver
+list HOLDS salaried people). They are called exactly as the Set-rate reload calls them, so a
+failed one can hold a salaried person on the statement, and the strip says which read failed.
+Do not "soften" this into keep-on-failure: that would be a money rule weakened as cleanup.
+
+**What it does NOT re-read, on purpose** (the button's tooltip says this too):
+
+- **The additions blob** (bonus ticks, typed Adj. amounts, orphanage). It has no dirty tracking.
+  Typed edits stay local until *Lock In Progress*, and `loadAdditionsProgress` replaces three
+  maps wholesale and resets the compare-and-swap revision, so a reload would **drop unsaved
+  money** and let a later save of stale state pass the CAS. Other people's adjustments reach the
+  wizard through the Payroll Notes pull, which *is* re-read.
+- **The week's hours and the all-uploads PAB merge.** Both raise flags that re-skeleton Step 2
+  and the rail. Hours change only through a new upload in Step 1.
+- **The FX pair.** It is this tab's own Step-2 entry.
+
+`paystub-refresh.test.ts` scans the function body and fails if `loadAdditionsProgress(`,
+`loadCalcSourceFileData(` or `loadUploadedSourceFiles(` ever appears in it. It also fails if a
+flag-raising loader is called without its background mode, or if a read id in the list is never
+produced.
+
+**When it may run.** The gate is the KPI live refresh's own (`wizardKpiLiveAllowed`):
+`paystubRefreshBlockedReason` returns `null` exactly when that does, and a test checks all 16
+combinations. So Refresh is **disabled, with the reason on hover**:
+
+- in a replayed past week;
+- while Start Processing holds the payroll;
+- while the values lock is still loading;
+- while the cycle is **locked in and sent to Payment Dispatch**. The tooltip says *"Unlock
+  Payment Dispatch to pull in changes."*
+
+The final-pay publisher does not read the values lock (Open items 277). A Refresh that moved a
+figure on a locked cycle would republish the snapshot Payment Dispatch prices from. Unlock →
+change → lock again (§ *Lock / unlock*) stays the only way to change a sent cycle.
+
+**Known edge, not closed:** if another tab locks the cycle in the second the reads are out, the
+KPI half refuses to apply (it re-checks the gate when its reply lands). The rate, roster,
+adjustment, PAB and MESA halves do not re-check. The `RATES_CHANGED_EVENT` reload has the same
+window, and item 277 is the underlying gap.
+
+**A run that outlives the dialog** finishes its reads, because the wizard keeps the data, but
+reports to nobody. The run id moves on close, and a newer run also supersedes an older one.
+
+Files: `src/lib/payroll-wizard/paystub-refresh.ts` (the gate, the read list, the outcome type,
+the statement diff) + `paystub-refresh.test.ts` (19) · `PayrollWizard.tsx`
+`refreshPaystubSources` / `runPaystubRefresh` / the detail header · `src/hooks/usePabPeriodSettings.ts`
+(`refreshInBackground`).
 
 ## Statement rendering moved into the app — 2026-08-06
 

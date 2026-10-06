@@ -167,6 +167,7 @@ answer a moment before the tick's newer answer paints.
 | Button | Why it is not a table refresh |
 | --- | --- |
 | Payroll Wizard → Step 2 **Refresh rates** | **Conflict, waiting on Kane (item 355).** It swaps the calc table for an 8-row skeleton, but `ui-standards.md` § 17.1 says the wizard is *"its own deep convention — do not modify"* |
+| Payroll Wizard → Dispatch → Preview Emails → an opened paystub's **Refresh** (2026-10-06) | A document, not a table (§ 17.1: the preview *"follows § 12.3's per-field rule, not app-table chrome"*), and already inside a modal. Its figures stay and a strip under its header says what moved. See `paystub-dispatch.md` § *Refresh on an opened paystub* |
 | Employee Overview (×3), Employee My Hours, the PAB calendar | Dashboards and calendars, not tables |
 | Admin → Overview **Sync**, Diagnostics (Payroll Cycles, HR Pipeline, service maps), CEO → Financial Reports, HR → Offboarding metrics | Page-level refreshes of dashboards and reports. Diagnostics keeps its own first-load modal (`diagnostics-performance-tabs.md`) |
 | Support ticket / chat **Reload this …**, Set Work Email **Refresh compensation** (×2), Admin → Workspace licence, Termination **Reload facts** | A single record, not a table |

@@ -1907,7 +1907,9 @@ Every new surface must:
 - Notable surfaces: `Overview` (mixed densities), `PayrollWizard` (its own deep
   convention — do not modify; its
   Step-8 paystub preview is a *document* and follows § 12.3's per-field rule,
-  not app-table chrome),
+  not app-table chrome — so its **Refresh** (2026-10-06) keeps the statement's
+  figures and reports in a paper strip under its header, never the table
+  refresh modal; `paystub-dispatch.md` § *Refresh on an opened paystub*),
   `PabDisputeQueue` (table + dialog), `LeaveRequestsPanel`. (`Rates`, the editorial
   card-list this list also named, was deleted with its tab — § 1.2.)
 - Nav (2026-09-29, `Sidebar.tsx:64-75`): Overview · People · Payroll Wizard · Payment

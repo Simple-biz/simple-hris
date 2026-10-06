@@ -98,7 +98,8 @@ export function usePabPeriodSettings(options: UsePabPeriodSettingsOptions = {}) 
   /** Whether what is on screen came from a read where every key answered. */
   const healthyRef = useRef(false);
 
-  const load = useCallback(async (background: boolean) => {
+  /** Resolves with the keys that did not answer (`[]` = every key read). */
+  const load = useCallback(async (background: boolean): Promise<{ failedKeys: string[] }> => {
     const seq = ++seqRef.current;
     if (!background) {
       foregroundRef.current += 1;
@@ -115,13 +116,15 @@ export function usePabPeriodSettings(options: UsePabPeriodSettingsOptions = {}) 
         degraded,
         screenHealthy: healthyRef.current,
       });
-      if (verdict !== 'apply') return;
+      if (verdict !== 'apply') return { failedKeys };
       healthyRef.current = !degraded;
       // Same settings → same object, so no memo downstream re-runs.
       setData((prev) => (samePabPeriodSettings(prev, result) ? prev : result));
+      return { failedKeys };
     } catch {
       // fetchPabPeriodSettingsWithHealth never rejects; this is a backstop so a
       // failure can never escape as an unhandled rejection (Next dev overlay).
+      return { failedKeys: ['(the read threw)'] };
     } finally {
       if (!background) {
         foregroundRef.current -= 1;
@@ -131,6 +134,14 @@ export function usePabPeriodSettings(options: UsePabPeriodSettingsOptions = {}) 
   }, []);
 
   const refresh = useCallback(() => load(false), [load]);
+  /**
+   * A re-read that never flips `loading` — the Payroll Wizard's paystub Refresh
+   * (`paystub-dispatch.md` § *Refresh on an opened paystub*). The wizard's PAB tab
+   * gate and the statement's Attendance line both read `loading`, and a click
+   * the user asked for is not data first arriving. Same newest-read and
+   * degraded-keeps-healthy rules as every other read.
+   */
+  const refreshInBackground = useCallback(() => load(true), [load]);
 
   useEffect(() => {
     void refresh();
@@ -214,5 +225,6 @@ export function usePabPeriodSettings(options: UsePabPeriodSettingsOptions = {}) 
     activeMonthResolved: resolvedActiveMonth,
     activeRange,
     refresh,
+    refreshInBackground,
   };
 }

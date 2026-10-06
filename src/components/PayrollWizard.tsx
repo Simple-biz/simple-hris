@@ -366,6 +366,19 @@ import {
   sameJson,
   wizardKpiLiveAllowed,
 } from '@/lib/payroll/wizard-kpi-load';
+import {
+  PAYSTUB_REFRESH_NOT_REREAD,
+  READ,
+  diffPayStubViews,
+  failedRead,
+  joinLabels,
+  payStubDetailsChanged,
+  paystubRefreshBlockedReason,
+  skippedRead,
+  summarizePaystubRefresh,
+  type PaystubReadOutcome,
+  type PaystubRefreshOutcomes,
+} from '@/lib/payroll-wizard/paystub-refresh';
 import { useKpiLive } from '@/hooks/useKpiLive';
 import type { KpiLivePayload } from '@/lib/kpi-live';
 import { hslBranchConfigs, hslBranchKeys } from '@/lib/hsl-bonus/data-branch';
@@ -2442,6 +2455,22 @@ export default function PayrollWizard({
   const [previewPage, setPreviewPage] = useState(1);
   /** Preview Emails dept filter — scopes the Paystubs tab only ('all' = every dept). */
   const [previewDept, setPreviewDept] = useState<string>('all');
+  /**
+   * The Refresh on an opened paystub (`refreshPaystubSources`). `baseline` is
+   * the statement as it read when Refresh was clicked, so the strip can say
+   * which lines moved. Cleared when the dialog closes; a run that ends after
+   * that, or after a newer run started, lands nothing (`paystubRefreshRunIdRef`).
+   */
+  const [paystubRefreshRun, setPaystubRefreshRun] = useState<{
+    runId: number;
+    email: string;
+    name: string;
+    baseline: PayStubView;
+    phase: 'running' | 'done';
+    finishedAt: number | null;
+    outcomes: PaystubRefreshOutcomes | null;
+  } | null>(null);
+  const paystubRefreshRunIdRef = useRef(0);
   // Reset pagination whenever the active tab, search query or dept filter
   // changes so the user always lands back on the first page of the new result set.
   useEffect(() => {
@@ -3524,7 +3553,11 @@ export default function PayrollWizard({
   const managerLiveSeqRef = useRef(0);
   const hslLiveSeqRef = useRef(0);
 
-  const refreshKpiLive = useCallback(async (payload: KpiLivePayload | null) => {
+  // Resolves with what each of the two reads did, for the paystub Refresh's
+  // strip (`paystub-refresh.ts`); the live callers ignore it.
+  const refreshKpiLive = useCallback(async (
+    payload: KpiLivePayload | null,
+  ): Promise<{ managerKpi: PaystubReadOutcome; hslKpi: PaystubReadOutcome }> => {
     const snap = kpiLiveRef.current;
     if (!snap.allowed) {
       // Said, not applied: the values Payment Dispatch may be paying from stay put.
@@ -3535,7 +3568,8 @@ export default function PayrollWizard({
             'This cycle is locked for Payment Dispatch, so the new KPI figures were not pulled in. Unlock it in the Validation step to update them.',
         });
       }
-      return;
+      const notNow = skippedRead('the cycle is not editable right now');
+      return { managerKpi: notNow, hslKpi: notNow };
     }
     const week = snap.week;
     // Display-only HSL tab cards re-read quietly (monthly periods are scoped by
@@ -3545,50 +3579,64 @@ export default function PayrollWizard({
       setHslStepLiveKey((k) => k + 1);
     }
     // A message for another week cannot move this cycle's pay.
-    if (payload && week && payload.periodStart !== week) return;
+    if (payload && week && payload.periodStart !== week) {
+      const otherWeek = skippedRead('the change was for another week');
+      return { managerKpi: otherWeek, hslKpi: otherWeek };
+    }
 
-    const tasks: Promise<void>[] = [];
+    const superseded = skippedRead('a newer read replaced this one');
+    let managerKpi: Promise<PaystubReadOutcome> = Promise.resolve(
+      skippedRead('they have not loaded for this week yet'),
+    );
     if (kpiAmountsMatchWeek(snap.managerLoaded, week)) {
       const gen = managerKpiGenRef.current;
       const seq = ++managerLiveSeqRef.current;
-      tasks.push(
-        fetchManagerKpi(week).then(
-          (r) => {
-            const now = kpiLiveRef.current;
-            if (seq !== managerLiveSeqRef.current || gen !== managerKpiGenRef.current) return;
-            if (!now.allowed || now.week !== week) return;
-            if (sameJson(r.raw, now.managerRaw) && sameJson(r.rowsByEmail, now.managerRows)) return;
-            setManagerBonusMeta(r.meta);
-            setManagerBonusRaw(r.raw);
-            setManagerBonusRowsRaw(r.rowsByEmail);
-            setManagerBonusByDeptRaw(r.byDept);
-          },
-          (e) => console.warn('[managerBonus] live refresh failed — keeping the loaded amounts', e),
-        ),
+      managerKpi = fetchManagerKpi(week).then(
+        (r): PaystubReadOutcome => {
+          const now = kpiLiveRef.current;
+          if (seq !== managerLiveSeqRef.current || gen !== managerKpiGenRef.current) return superseded;
+          if (!now.allowed || now.week !== week) return superseded;
+          if (sameJson(r.raw, now.managerRaw) && sameJson(r.rowsByEmail, now.managerRows)) return READ;
+          setManagerBonusMeta(r.meta);
+          setManagerBonusRaw(r.raw);
+          setManagerBonusRowsRaw(r.rowsByEmail);
+          setManagerBonusByDeptRaw(r.byDept);
+          return READ;
+        },
+        (e): PaystubReadOutcome => {
+          console.warn('[managerBonus] live refresh failed — keeping the loaded amounts', e);
+          return failedRead(e, 'KPI bonuses failed to load');
+        },
       );
     }
+    let hslKpi: Promise<PaystubReadOutcome> = Promise.resolve(
+      skippedRead('they have not loaded for this week yet'),
+    );
     if (week && snap.hslSubsStatus === 'ready' && kpiAmountsMatchWeek(snap.hslLoaded, week)) {
       const gen = hslKpiGenRef.current;
       const seq = ++hslLiveSeqRef.current;
-      tasks.push(
-        fetchHslKpi({
-          week,
-          payableSet: hslPayableSet(snap.hslAllBranchKeys, snap.hslBranchCfgs),
-          perEmployeeDepts: hslPerEmployeeDepts(snap.hslAllBranchKeys, snap.hslBranchCfgs),
-        }).then(
-          (r) => {
-            const now = kpiLiveRef.current;
-            if (seq !== hslLiveSeqRef.current || gen !== hslKpiGenRef.current) return;
-            if (!now.allowed || now.week !== week) return;
-            if (sameJson(r.amounts, now.hslAmounts) && sameJson(r.period, now.hslPeriod)) return;
-            setHslKpiAmounts(r.amounts);
-            setHslKpiPeriod(r.period);
-          },
-          (e) => console.warn('[hslKpi] live refresh failed — keeping the loaded amounts', e),
-        ),
+      hslKpi = fetchHslKpi({
+        week,
+        payableSet: hslPayableSet(snap.hslAllBranchKeys, snap.hslBranchCfgs),
+        perEmployeeDepts: hslPerEmployeeDepts(snap.hslAllBranchKeys, snap.hslBranchCfgs),
+      }).then(
+        (r): PaystubReadOutcome => {
+          const now = kpiLiveRef.current;
+          if (seq !== hslLiveSeqRef.current || gen !== hslKpiGenRef.current) return superseded;
+          if (!now.allowed || now.week !== week) return superseded;
+          if (sameJson(r.amounts, now.hslAmounts) && sameJson(r.period, now.hslPeriod)) return READ;
+          setHslKpiAmounts(r.amounts);
+          setHslKpiPeriod(r.period);
+          return READ;
+        },
+        (e): PaystubReadOutcome => {
+          console.warn('[hslKpi] live refresh failed — keeping the loaded amounts', e);
+          return failedRead(e, 'HSL KPI bonuses failed to load');
+        },
       );
     }
-    await Promise.all(tasks);
+    const [m, h] = await Promise.all([managerKpi, hslKpi]);
+    return { managerKpi: m, hslKpi: h };
   }, []);
 
   useKpiLive({ onChange: (p) => void refreshKpiLive(p) });
@@ -4332,20 +4380,29 @@ export default function PayrollWizard({
   const masterListFileInputRef = useRef<HTMLInputElement>(null);
   const ratesFileInputRef = useRef<HTMLInputElement>(null);
 
-  const reloadMasterEmployees = React.useCallback(async () => {
+  // `background` (the paystub Refresh): a failed read keeps the list AND its
+  // line state as they were — the figures on screen are the earlier read's, and
+  // the Refresh strip says so. Every other caller keeps the `unavailable` flip.
+  const reloadMasterEmployees = React.useCallback(async (opts?: { background?: boolean }): Promise<PaystubReadOutcome> => {
+    const background = opts?.background === true;
     try {
       const res = await fetch('/api/employees', { cache: 'no-store' });
       // A non-ok response returns early and leaves the old list in place, which
       // is right for the roster and is still a read that did not land.
-      if (!res.ok) { setMasterRosterState('unavailable'); return; }
+      if (!res.ok) {
+        if (!background) setMasterRosterState('unavailable');
+        return failedRead(`The roster read answered HTTP ${res.status}`);
+      }
       const json = (await res.json()) as { employees: EmployeeRow[]; error: string | null };
       setMasterEmployees(json.employees ?? []);
       setMasterRosterState('settled');
-    } catch {
+      return READ;
+    } catch (e) {
       // payrollComparison degrades gracefully with an empty list — but the Tech
       // Allowance's 30-days-of-service gate reads `start_date` off this roster,
       // so an empty one silently forces that line to ₱0.00 for everybody.
-      setMasterRosterState('unavailable');
+      if (!background) setMasterRosterState('unavailable');
+      return failedRead(e, 'The master roster failed to load');
     }
   }, []);
 
@@ -4380,7 +4437,7 @@ export default function PayrollWizard({
    *  re-pull the overlay: since 2026-09-15 a leaver's department follows the
    *  structure that dialog writes (leaver-pay-department.ts), so the roster
    *  must move with the rates or Step 2 keeps the old cohort. */
-  const loadOffboardedRoster = React.useCallback(async () => {
+  const loadOffboardedRoster = React.useCallback(async (): Promise<PaystubReadOutcome> => {
     const seq = ++offboardedRosterSeqRef.current;
     // A NEW cycle's list is not trusted until it lands (salaried weeks hold meanwhile). A
     // same-cycle reload (RATES_CHANGED_EVENT) keeps the current trust, so salaried rows do not
@@ -4395,16 +4452,18 @@ export default function PayrollWizard({
       const json = (await res.json()) as { rows?: OffboardedRosterRow[]; error?: string | null };
       // A response for a cycle the clerk has already switched away from must
       // never land — it would cohort this week's people off another week's list.
-      if (seq !== offboardedRosterSeqRef.current) return;
+      if (seq !== offboardedRosterSeqRef.current) return skippedRead('a newer read replaced this one');
       setOffboardedRoster(res.ok ? json.rows ?? [] : []);
       // Salaried pay: without a trustworthy leaver list a salaried week cannot be confirmed
       // WHOLE (a mid-week last day is a partial week), so those weeks are held.
       setOffboardedRosterReady(res.ok && !json.error);
-    } catch {
+      return res.ok && !json.error ? READ : failedRead(json.error || `The leavers list answered HTTP ${res.status}`);
+    } catch (e) {
       if (seq === offboardedRosterSeqRef.current) {
         setOffboardedRoster([]);
         setOffboardedRosterReady(false);
       }
+      return failedRead(e, 'The leavers list failed to load');
     }
   }, [calcSourceFile]);
   useEffect(() => {
@@ -4718,7 +4777,23 @@ export default function PayrollWizard({
     return () => { cancelled = true; };
   }, [customDepartments]);
 
-  const loadEmployeeHourlyRates = React.useCallback(async () => {
+  const loadEmployeeHourlyRates = React.useCallback(async (opts?: { background?: boolean }): Promise<PaystubReadOutcome> => {
+    if (opts?.background) {
+      // The paystub Refresh. Never raises `hourlyRatesLoading` (it skeletons the
+      // Step-2 table and puts every money line back to pending), and never lets a
+      // failed read wipe the rates on screen: the route answers a failure as
+      // `{ rows: [], error }`, which the foreground path below applies (item 355).
+      try {
+        const res = await fetch('/api/employee-hourly-rates', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: EmployeeHourlyRateRow[]; error?: string | null };
+        if (!res.ok || json.error) return failedRead(json.error || `Hourly rates answered HTTP ${res.status}`);
+        setHourlyRateRows(json.rows ?? []);
+        setHourlyRatesError(null);
+        return READ;
+      } catch (e) {
+        return failedRead(e, 'Hourly rates failed to load');
+      }
+    }
     setHourlyRatesLoading(true);
     setHourlyRatesError(null);
     try {
@@ -4726,30 +4801,35 @@ export default function PayrollWizard({
       const json = (await res.json()) as { rows: EmployeeHourlyRateRow[]; error: string | null };
       if (json.error) setHourlyRatesError(json.error);
       setHourlyRateRows(json.rows ?? []);
+      return json.error ? failedRead(json.error) : READ;
     } catch (e) {
       setHourlyRatesError(e instanceof Error ? e.message : 'Failed to load employee_hourly_rates');
+      return failedRead(e, 'Failed to load employee_hourly_rates');
     } finally {
       setHourlyRatesLoading(false);
     }
   }, []);
 
-  const loadPayStructures = React.useCallback(async () => {
+  const loadPayStructures = React.useCallback(async (): Promise<PaystubReadOutcome> => {
     try {
       const res = await fetch('/api/payment-catalog/pay-structures', { cache: 'no-store' });
       const json = (await res.json()) as { structures?: PayStructure[]; error?: string | null };
       if (!res.ok || json.error) {
         // Keep whatever loaded before: a failed REfetch must not strip catalog
         // rates already applied to the calc. Only the error becomes visible.
-        setPayStructuresError(json.error || `Payment Catalog rates failed to load (HTTP ${res.status})`);
-        return;
+        const message = json.error || `Payment Catalog rates failed to load (HTTP ${res.status})`;
+        setPayStructuresError(message);
+        return failedRead(message);
       }
       setPayStructures(json.structures ?? []);
       setPayStructuresLoaded(true);
       setPayStructuresError(null);
+      return READ;
     } catch (e) {
       // Without the catalog, ratesByEmail falls back to the sheet rates — the
       // run can proceed, but the fallback must be visible, not silent.
       setPayStructuresError(e instanceof Error ? e.message : 'Payment Catalog rates failed to load');
+      return failedRead(e, 'Payment Catalog rates failed to load');
     }
   }, []);
 
@@ -4762,13 +4842,29 @@ export default function PayrollWizard({
   // mid-week transfer) so the wizard's pay matches Payment Dispatch. Loaded once
   // on mount; the bulk endpoint is rate-visible gated (the wizard is Accounting).
   const [rateHistoryByEmail, setRateHistoryByEmail] = useState<RateHistoryByEmail>(() => new Map());
-  const loadRateHistory = React.useCallback(async () => {
+  const loadRateHistory = React.useCallback(async (opts?: { background?: boolean }): Promise<PaystubReadOutcome> => {
+    if (opts?.background) {
+      // The paystub Refresh: a failed re-read keeps the history on screen. The
+      // foreground path below empties it, which silently drops every mid-week
+      // proration from the statement.
+      try {
+        const res = await fetch('/api/payroll/rate-history-bulk', { cache: 'no-store' });
+        const json = (await res.json()) as { rows?: Array<Record<string, unknown>>; error?: string | null };
+        if (!res.ok || json.error) return failedRead(json.error || `Rate history answered HTTP ${res.status}`);
+        setRateHistoryByEmail(buildRateHistoryByEmail(json.rows ?? []));
+        return READ;
+      } catch (e) {
+        return failedRead(e, 'Rate history failed to load');
+      }
+    }
     try {
       const res = await fetch('/api/payroll/rate-history-bulk', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: Array<Record<string, unknown>> };
       setRateHistoryByEmail(buildRateHistoryByEmail(json.rows ?? []));
-    } catch {
+      return res.ok ? READ : failedRead(`Rate history answered HTTP ${res.status}`);
+    } catch (e) {
       setRateHistoryByEmail(new Map());
+      return failedRead(e, 'Rate history failed to load');
     }
   }, []);
   useEffect(() => {
@@ -4783,7 +4879,7 @@ export default function PayrollWizard({
   const [salaryHistory, setSalaryHistory] = useState<SalaryHistoryByEmail>(() => new Map());
   const [salaryHistoryState, setSalaryHistoryState] = useState<SalaryHistoryState>('unavailable');
   const [salaryHistoryError, setSalaryHistoryError] = useState<string | null>(null);
-  const loadSalaryHistory = React.useCallback(async () => {
+  const loadSalaryHistory = React.useCallback(async (): Promise<PaystubReadOutcome> => {
     try {
       const res = await fetch('/api/payroll/salary-history-bulk', { cache: 'no-store' });
       const json = (await res.json()) as {
@@ -4792,16 +4888,19 @@ export default function PayrollWizard({
         error?: string | null;
       };
       if (!res.ok || json.state === 'unavailable' || !json.state) {
+        const message = json.error || `Salary history failed to load (HTTP ${res.status})`;
         setSalaryHistoryState('unavailable');
-        setSalaryHistoryError(json.error || `Salary history failed to load (HTTP ${res.status})`);
-        return;
+        setSalaryHistoryError(message);
+        return failedRead(message);
       }
       setSalaryHistory(buildSalaryHistoryByEmail(json.rows ?? []));
       setSalaryHistoryState(json.state);
       setSalaryHistoryError(null);
+      return READ;
     } catch (e) {
       setSalaryHistoryState('unavailable');
       setSalaryHistoryError(e instanceof Error ? e.message : 'Salary history failed to load');
+      return failedRead(e, 'Salary history failed to load');
     }
   }, []);
   useEffect(() => {
@@ -6364,26 +6463,42 @@ export default function PayrollWizard({
   }, [pabMonthRange, refreshOrphanageHoursIndex]);
 
   // Approved time-adjustment overrides for the PAB period — folded into pay + PAB.
-  const refreshApprovedAdjustmentOverrides = useCallback(() => {
-    if (!pabMonthRange) return;
+  //
+  // `background` (the paystub Refresh): no `pending` flip — the line keeps its
+  // figure while the read is out — a non-OK or `error` answer is a FAILED read,
+  // and a failed read keeps the rows and the line state on screen. A read that
+  // lands settles the line, so a Refresh can recover an `unavailable` one.
+  const refreshApprovedAdjustmentOverrides = useCallback((opts?: { background?: boolean }): Promise<PaystubReadOutcome> => {
+    if (!pabMonthRange) return Promise.resolve(skippedRead('the PAB month has not resolved yet'));
+    const background = opts?.background === true;
     const s = pabMonthRange.start;
     const e = pabMonthRange.end;
     const from = `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`;
     const dayAfterEnd = new Date(e.getFullYear(), e.getMonth(), e.getDate() + 1);
     const to = `${dayAfterEnd.getFullYear()}-${String(dayAfterEnd.getMonth() + 1).padStart(2, '0')}-${String(dayAfterEnd.getDate()).padStart(2, '0')}`;
-    setTimeAdjOverridesState('pending');
-    fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
-      .then(r => r.json())
-      .then((json: { rows?: TimeAdjustmentRow[] }) => {
+    if (!background) setTimeAdjOverridesState('pending');
+    return fetch(`/api/time-adjustments?status=approved&from=${from}&to=${to}`, { cache: 'no-store' })
+      .then(async (r) => {
+        const json = (await r.json()) as { rows?: TimeAdjustmentRow[]; error?: string | null };
+        if (background && (!r.ok || json.error)) {
+          throw new Error(json.error || `Time adjustments answered HTTP ${r.status}`);
+        }
+        return json;
+      })
+      .then((json): PaystubReadOutcome => {
         // Rows are kept RAW. Their day total depends on tracked hours, which are not
         // known here, so the overlay is derived in a memo further down.
         setApprovedAdjustmentRows(json.rows ?? []);
         setTimeAdjOverridesState('settled');
+        return READ;
       })
       // `[]` here is the same value the state initialises with, so without the
       // marker the Time Adjustment line is SUPPRESSED (showsTimeAdjustmentLine
       // keys on the money) and the credit silently leaves the statement with it.
-      .catch(() => { setApprovedAdjustmentRows([]); setTimeAdjOverridesState('unavailable'); });
+      .catch((err: unknown): PaystubReadOutcome => {
+        if (!background) { setApprovedAdjustmentRows([]); setTimeAdjOverridesState('unavailable'); }
+        return failedRead(err, 'Approved time adjustments failed to load');
+      });
   }, [pabMonthRange]);
 
   useEffect(() => {
@@ -6415,11 +6530,17 @@ export default function PayrollWizard({
 
   // Approved MESA disbursements (accounting-approved, not yet paid out via the
   // Urgent Payments queue) — folded into the Additions MESA column + Final pay.
-  const fetchMesaDisbursements = useCallback(() => {
-    setMesaDisbursementsState('pending');
-    fetch('/api/mesa-requests?request_type=disbursement&status=approved&limit=500', { cache: 'no-store' })
-      .then(r => r.json())
-      .then((json: { rows?: Array<{ work_email?: string; amount_needed?: number | null; dispatched_at?: string | null }> }) => {
+  // `background` (the paystub Refresh): no `pending` flip, a non-OK answer is a
+  // failed read, and a failed read keeps the map and the line state on screen.
+  const fetchMesaDisbursements = useCallback((opts?: { background?: boolean }): Promise<PaystubReadOutcome> => {
+    const background = opts?.background === true;
+    if (!background) setMesaDisbursementsState('pending');
+    return fetch('/api/mesa-requests?request_type=disbursement&status=approved&limit=500', { cache: 'no-store' })
+      .then(async (r) => {
+        if (background && !r.ok) throw new Error(`MESA disbursements answered HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((json: { rows?: Array<{ work_email?: string; amount_needed?: number | null; dispatched_at?: string | null }> }): PaystubReadOutcome => {
         const map = new Map<string, number>();
         for (const row of json.rows ?? []) {
           if (row.dispatched_at) continue; // already paid via Urgent Payments
@@ -6430,8 +6551,12 @@ export default function PayrollWizard({
         }
         setMesaDisbursements(map);
         setMesaDisbursementsState('settled');
+        return READ;
       })
-      .catch(() => { setMesaDisbursements(new Map()); setMesaDisbursementsState('unavailable'); });
+      .catch((e: unknown): PaystubReadOutcome => {
+        if (!background) { setMesaDisbursements(new Map()); setMesaDisbursementsState('unavailable'); }
+        return failedRead(e, 'MESA disbursements failed to load');
+      });
   }, []);
 
   // Load approved MESA disbursements as soon as the wizard mounts — and keep them fresh
@@ -6459,10 +6584,19 @@ export default function PayrollWizard({
   // print a confident −₱100.00 from a read that never came back. The fallback on
   // failure is the opt-out precedent (docs/features/mesa.md:193): no suspensions,
   // i.e. flag-only charging, with the stub's MESA line reading `unavailable`.
-  const fetchMesaOptedOut = useCallback(() => {
-    setMesaOptOutState('pending');
+  //
+  // `background` (the paystub Refresh): no `pending` flip; a non-OK LEDGER answer
+  // is a failed read too (never "nobody opted out"); and a failed half keeps
+  // its previous set and the line state on screen. The state settles only when
+  // both halves answered, exactly as in the foreground.
+  const fetchMesaOptedOut = useCallback((opts?: { background?: boolean }): Promise<PaystubReadOutcome> => {
+    const background = opts?.background === true;
+    if (!background) setMesaOptOutState('pending');
     const optedOut = fetch('/api/mesa-ledger', { cache: 'no-store' })
-      .then(r => (r.ok ? r.json() : { members: [] }))
+      .then(r => {
+        if (background && !r.ok) throw new Error(`mesa-ledger HTTP ${r.status}`);
+        return r.ok ? r.json() : { members: [] };
+      })
       .then((json: { members?: Array<{ email?: string | null; lastEventOptedOut?: boolean }> }) => {
         const set = new Set<string>();
         for (const m of json.members ?? []) {
@@ -6475,7 +6609,7 @@ export default function PayrollWizard({
       // The empty set can only mean "nobody opted out", so until this lands an
       // opted-out member's stub prints a confident −₱100.00 — a wrong NON-zero,
       // which is why the preview resolves state from the loader, never the amount.
-      .catch((e: unknown) => { setMesaOptedOutEmails(new Set()); throw e; });
+      .catch((e: unknown) => { if (!background) setMesaOptedOutEmails(new Set()); throw e; });
     const suspensions = fetch('/api/mesa-suspensions', { cache: 'no-store' })
       .then(async r => {
         // Unlike the ledger read, a non-OK answer is a FAILURE here, never "none".
@@ -6483,10 +6617,13 @@ export default function PayrollWizard({
         return (await r.json()) as { available?: boolean; suspensions?: MesaSuspension[] };
       })
       .then(json => setMesaSuspensionIndex(indexMesaSuspensions(json.suspensions ?? [])))
-      .catch((e: unknown) => { setMesaSuspensionIndex(EMPTY_MESA_SUSPENSION_INDEX); throw e; });
-    Promise.all([optedOut, suspensions])
-      .then(() => setMesaOptOutState('settled'))
-      .catch(() => setMesaOptOutState('unavailable'));
+      .catch((e: unknown) => { if (!background) setMesaSuspensionIndex(EMPTY_MESA_SUSPENSION_INDEX); throw e; });
+    return Promise.all([optedOut, suspensions])
+      .then((): PaystubReadOutcome => { setMesaOptOutState('settled'); return READ; })
+      .catch((e: unknown): PaystubReadOutcome => {
+        if (!background) setMesaOptOutState('unavailable');
+        return failedRead(e, 'MESA opt-outs failed to load');
+      });
   }, []);
 
   // Keep the opted-out set fresh across navigation for the same reason as
@@ -7360,14 +7497,14 @@ export default function PayrollWizard({
    *  truth and its amounts OVERWRITE the matching overrides, with explicit
    *  result toasts either way. `onlyRowIds` scopes the apply to one clerk's
    *  rows. */
-  const pullNotesAdjustments = React.useCallback(async (opts?: { force?: boolean; onlyRowIds?: string[] }) => {
-    if (isReplayRef.current) return;
+  const pullNotesAdjustments = React.useCallback(async (opts?: { force?: boolean; onlyRowIds?: string[] }): Promise<PaystubReadOutcome> => {
+    if (isReplayRef.current) return skippedRead('a past week is view-only');
     const force = opts?.force === true;
     const only = opts?.onlyRowIds?.length ? new Set(opts.onlyRowIds) : null;
     try {
       const res = await fetch('/api/payroll-wizard/notes', { cache: 'no-store' });
       const json = (await res.json()) as { rows?: PayrollWizardNoteRow[] };
-      if (!res.ok) return;
+      if (!res.ok) return failedRead(`Payroll Notes answered HTTP ${res.status}`);
       // `bonusOverrides` is keyed by the wizard's raw calc-result email casing
       // (that's the key the Adj. inputs and the dispatch payload read). Board
       // emails are lowercased for matching, so resolve each back to the actual
@@ -7599,7 +7736,7 @@ export default function PayrollWizard({
               'A row applies when its Worker was picked from the suggestion list and its Adjustment is a plain amount like +₱500, -$25, or COP 50,000.',
           });
         }
-        return;
+        return READ;
       }
       // These amounts are now newer than anything on file — an additions
       // hydration still in flight must merge around them, not over them.
@@ -7703,8 +7840,10 @@ export default function PayrollWizard({
           ),
         );
       }
-    } catch {
+      return READ;
+    } catch (e) {
       /* the board is an enhancement here — never block the wizard */
+      return failedRead(e, 'Payroll Notes failed to load');
     }
   }, [fxRates]);
 
@@ -9227,6 +9366,107 @@ export default function PayrollWizard({
       void pullNotesAdjustments();
     }
   }, [currentStep, isReplay, calcSourceFile, hasCalcRows, pullNotesAdjustments, dispatchValuesLock.loading, dispatchValuesLock.state.locked]);
+
+  // ── Refresh on an opened paystub (Dispatch → Preview Emails → a person) ────
+  // Kane 2026-10-06: "when we open them lets add a refresh button just incase
+  // there is an update or changes". Doc: paystub-dispatch.md § *Refresh on an
+  // opened paystub*; pure rules: paystub-refresh.ts.
+  //
+  // Re-reads, in the BACKGROUND, every source the statement is built from that
+  // changes OUTSIDE this tab: the rate sources a Set-rate save reloads
+  // (RATES_CHANGED_EVENT's five), the roster, both KPI maps, approved time
+  // adjustments, the Payroll Notes pull (merge-only, as on step entry), the PAB
+  // settings and both MESA reads. Background means: no loader raises its
+  // loading flag or puts a line back to `pending`, so the statement keeps its
+  // figures, the Step-2 table never re-skeletons and the step rail stays still —
+  // a click the user asked for is not data first arriving. Each read resolves
+  // with what it did, and a failed one lands nothing (the strip says so). The
+  // two salaried-pay reads (salary history, leavers list) keep their documented
+  // fail-closed behaviour (salaried-pay-basis.md): they are called exactly as
+  // the Set-rate reload calls them.
+  //
+  // NOT re-read, on purpose: the additions blob (no dirty tracking — a reload
+  // replaces typed, unsaved amounts with the saved ones), the week's hours and
+  // the all-uploads PAB merge (both re-skeleton Step 2; hours change only by a
+  // new upload in Step 1), and the FX pair (this tab's own Step-2 entry).
+  // Pinned by paystub-refresh.test.ts.
+  //
+  // Gated exactly like the KPI live refresh: never in a replayed week, while
+  // Start Processing holds the payroll, or while the values lock is unknown or
+  // ON — the final-pay publisher does not read the lock (Open items 277), so a
+  // moved figure would re-price Payment Dispatch. Unlock → change → lock again
+  // stays the only way to change a sent cycle.
+  const paystubRefreshBlocked = paystubRefreshBlockedReason({
+    isReplay,
+    processingLocked: lockState.locked,
+    valuesLockLoading: dispatchValuesLock.loading,
+    valuesLocked: dispatchValuesLock.state.locked,
+  });
+  const refreshPaystubSources = useCallback(async (): Promise<PaystubRefreshOutcomes> => {
+    const [
+      payStructures,
+      hourlyRates,
+      rateHistory,
+      salaryHistory,
+      offboardedRoster,
+      masterRoster,
+      kpi,
+      timeAdjustments,
+      notesAdjustments,
+      pab,
+      mesaDisbursements,
+      mesaOptOut,
+    ] = await Promise.all([
+      loadPayStructures(),
+      loadEmployeeHourlyRates({ background: true }),
+      loadRateHistory({ background: true }),
+      loadSalaryHistory(),
+      loadOffboardedRoster(),
+      reloadMasterEmployees({ background: true }),
+      refreshKpiLive(null),
+      refreshApprovedAdjustmentOverrides({ background: true }),
+      pullNotesAdjustments(),
+      pabPeriodSettings.refreshInBackground(),
+      fetchMesaDisbursements({ background: true }),
+      fetchMesaOptedOut({ background: true }),
+    ]);
+    const pabSettings: PaystubReadOutcome =
+      pab.failedKeys.length === 0
+        ? READ
+        : failedRead(
+            `${pab.failedKeys.length} of the PAB settings did not answer, so the ones on screen were kept`,
+          );
+    return {
+      payStructures,
+      hourlyRates,
+      rateHistory,
+      salaryHistory,
+      offboardedRoster,
+      masterRoster,
+      managerKpi: kpi.managerKpi,
+      hslKpi: kpi.hslKpi,
+      timeAdjustments,
+      notesAdjustments,
+      pabSettings,
+      mesaDisbursements,
+      mesaOptOut,
+    };
+  }, [
+    loadPayStructures, loadEmployeeHourlyRates, loadRateHistory, loadSalaryHistory, loadOffboardedRoster,
+    reloadMasterEmployees, refreshKpiLive, refreshApprovedAdjustmentOverrides, pullNotesAdjustments,
+    pabPeriodSettings.refreshInBackground, fetchMesaDisbursements, fetchMesaOptedOut,
+  ]);
+  const runPaystubRefresh = useCallback(async (target: { email: string; name: string; baseline: PayStubView }) => {
+    if (paystubRefreshBlocked) return;
+    const runId = ++paystubRefreshRunIdRef.current;
+    setPaystubRefreshRun({ runId, ...target, phase: 'running', finishedAt: null, outcomes: null });
+    const outcomes = await refreshPaystubSources();
+    // The dialog closed, or a newer run started: this one lands nothing.
+    if (runId !== paystubRefreshRunIdRef.current) return;
+    setPaystubRefreshRun((prev) =>
+      prev && prev.runId === runId ? { ...prev, phase: 'done', finishedAt: Date.now(), outcomes } : prev,
+    );
+  }, [paystubRefreshBlocked, refreshPaystubSources]);
 
   /**
    * Applies the step-1 Configuration tab + System Settings to the raw calc rows:
@@ -22322,6 +22562,10 @@ export default function PayrollWizard({
             setPreviewTab('paystubs');
             setPreviewPage(1);
             setPreviewDept('all');
+            // A Refresh still in flight finishes its reads (the wizard keeps the
+            // data) but reports to nobody.
+            paystubRefreshRunIdRef.current += 1;
+            setPaystubRefreshRun(null);
           }
         }}
       >
@@ -22386,6 +22630,26 @@ export default function PayrollWizard({
                     ? ['attendanceBonus']
                     : [],
               });
+              // The Refresh strip (`refreshPaystubSources`). Compared against the
+              // statement on screen NOW, so it keeps up as re-read figures land.
+              const refreshRun =
+                paystubRefreshRun && paystubRefreshRun.email === selected.email ? paystubRefreshRun : null;
+              const refreshRunning = paystubRefreshRun?.phase === 'running';
+              const refreshSummary = refreshRun?.outcomes ? summarizePaystubRefresh(refreshRun.outcomes) : null;
+              const refreshChanges =
+                refreshRun?.phase === 'done' ? diffPayStubViews(refreshRun.baseline, stubView) : [];
+              const refreshDetailsMoved =
+                refreshRun?.phase === 'done' &&
+                refreshChanges.length === 0 &&
+                payStubDetailsChanged(refreshRun.baseline, stubView);
+              const refreshNet = refreshChanges.find((c) => c.key === 'net');
+              const refreshLines = refreshChanges.filter((c) => c.key !== 'net');
+              const REFRESH_LINES_SHOWN = 5;
+              const refreshShown = [...refreshLines.slice(0, REFRESH_LINES_SHOWN), ...(refreshNet ? [refreshNet] : [])];
+              const refreshHidden = Math.max(0, refreshLines.length - REFRESH_LINES_SHOWN);
+              const refreshTitle =
+                paystubRefreshBlocked ??
+                `Re-read rates, KPI bonuses, approved time adjustments, Payroll Notes adjustments, PAB settings, MESA and the roster. ${PAYSTUB_REFRESH_NOT_REREAD}`;
               return (
                 <>
                   <DialogHeader className="sr-only">
@@ -22411,19 +22675,137 @@ export default function PayrollWizard({
                           Rate snapshots need a wider window
                         </span>
                       )}
-                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-300/70 bg-amber-50 py-1 pl-2 pr-2.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span
-                            className={cn(
-                              'absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75',
-                              !reduceMotion && 'animate-ping',
-                            )}
-                          />
-                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {/* The title sits on a wrapper: a disabled Button is
+                            pointer-events-none, so the hover that explains WHY
+                            it is off lands here. */}
+                        <span title={refreshTitle} className="inline-flex">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1 px-2 text-xs font-semibold text-zinc-700 hover:bg-indigo-100/60 hover:text-indigo-700"
+                            disabled={paystubRefreshBlocked !== null || refreshRunning}
+                            aria-label={paystubRefreshBlocked ? `Refresh is off. ${paystubRefreshBlocked}` : 'Refresh this paystub'}
+                            onClick={() =>
+                              void runPaystubRefresh({ email: selected.email, name: selected.name, baseline: stubView })
+                            }
+                          >
+                            <RefreshCw
+                              className={cn('h-3.5 w-3.5', refreshRunning && !reduceMotion && 'animate-spin')}
+                            />
+                            {refreshRunning ? 'Refreshing…' : 'Refresh'}
+                          </Button>
                         </span>
-                        Not sent yet
-                      </span>
+                        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-300/70 bg-amber-50 py-1 pl-2 pr-2.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span
+                              className={cn(
+                                'absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75',
+                                !reduceMotion && 'animate-ping',
+                              )}
+                            />
+                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          </span>
+                          Not sent yet
+                        </span>
+                      </div>
                     </div>
+                    {/* What the Refresh did — paper chrome like the bar above
+                        (the pane is a document in both themes). The statement
+                        below never re-skeletons: its figures stay until the
+                        re-read ones land, and a read that failed lands nothing. */}
+                    {refreshRun && (
+                      <div
+                        role="status"
+                        aria-live="polite"
+                        className="shrink-0 border-b border-zinc-200 bg-white px-3 py-2 text-[11px] leading-snug text-zinc-700"
+                      >
+                        {refreshRun.phase === 'running' ? (
+                          <p className="flex items-start gap-1.5 text-zinc-600">
+                            <Loader2
+                              className={cn('mt-px h-3 w-3 shrink-0 text-indigo-500', !reduceMotion && 'animate-spin')}
+                            />
+                            <span>
+                              Re-reading rates, KPI bonuses, adjustments, PAB settings, MESA and the roster. The
+                              figures below stay until the new ones land.
+                            </span>
+                          </p>
+                        ) : refreshSummary?.nothingRead ? (
+                          <p className="font-semibold text-amber-800">
+                            Nothing could be re-read, so this statement is unchanged from the earlier read.
+                          </p>
+                        ) : (
+                          <>
+                            <p
+                              className={cn(
+                                'font-semibold',
+                                refreshChanges.length > 0 ? 'text-indigo-800' : 'text-emerald-800',
+                              )}
+                            >
+                              Re-read at{' '}
+                              {new Date(refreshRun.finishedAt ?? Date.now()).toLocaleTimeString('en-US', {
+                                hour: 'numeric',
+                                minute: '2-digit',
+                              })}
+                              {' — '}
+                              {refreshChanges.length > 0
+                                ? `${refreshChanges.length} line${refreshChanges.length === 1 ? '' : 's'} changed:`
+                                : refreshDetailsMoved
+                                  ? 'no figure changed, but the hours, a note or a rate basis did.'
+                                  : 'nothing on this statement changed.'}
+                            </p>
+                            {refreshShown.length > 0 && (
+                              <ul className="mt-1 space-y-0.5">
+                                {refreshShown.map((c) => (
+                                  <li key={c.key} className="flex flex-wrap items-baseline gap-x-1.5">
+                                    <span className="font-semibold text-zinc-800">{c.label}</span>
+                                    <span className="font-mono tabular-nums text-zinc-500">{c.before}</span>
+                                    <span aria-hidden className="text-zinc-400">→</span>
+                                    <span className="sr-only">to</span>
+                                    <span className="font-mono font-semibold tabular-nums text-zinc-900">{c.after}</span>
+                                  </li>
+                                ))}
+                                {refreshHidden > 0 && (
+                                  <li className="text-zinc-500">
+                                    and {refreshHidden} more line{refreshHidden === 1 ? '' : 's'}
+                                  </li>
+                                )}
+                              </ul>
+                            )}
+                          </>
+                        )}
+                        {refreshSummary && refreshSummary.failures.length > 0 && (
+                          refreshSummary.nothingRead ? (
+                            // Every read failing is one cause (offline, signed out),
+                            // so one reason, not thirteen copies of it.
+                            <p className="mt-0.5 break-words text-amber-700">
+                              {refreshSummary.failures[0]!.label} — {refreshSummary.failures[0]!.message}
+                              {refreshSummary.failures.length > 1 &&
+                                ` (and ${refreshSummary.failures.length - 1} other read${refreshSummary.failures.length === 2 ? '' : 's'})`}
+                            </p>
+                          ) : (
+                            <div className="mt-1 text-amber-800">
+                              <p className="font-semibold">
+                                Could not re-read {joinLabels(refreshSummary.failures.map((f) => f.label))}:
+                              </p>
+                              <ul className="mt-0.5 space-y-0.5 break-words text-amber-700">
+                                {refreshSummary.failures.map((f) => (
+                                  <li key={f.id}>
+                                    {f.label} — {f.message}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )
+                        )}
+                        {refreshSummary && refreshSummary.skipped.length > 0 && (
+                          <p className="mt-1 text-zinc-500">
+                            Not re-read:{' '}
+                            {refreshSummary.skipped.map((s) => `${s.label} (${s.reason})`).join(' · ')}.
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {/* The SHARED PayStubStatement — the very component the
                         employee sees in their Pay Stubs modal, driven by the
                         same view the emailed HTML is rendered from. Full size
@@ -22698,6 +23080,19 @@ export default function PayrollWizard({
                   </div>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4 pt-3 sm:px-6">
+                  {/* The opened person left the batch on a Refresh (excluded, a
+                      rate removed, off the roster): the statement is gone, so
+                      say so here rather than silently showing the list. */}
+                  {previewTab === 'paystubs' &&
+                    paystubRefreshRun?.phase === 'done' &&
+                    previewSelectedEmail === paystubRefreshRun.email && (
+                      <p
+                        role="status"
+                        className="mb-3 rounded-lg border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300"
+                      >
+                        After the refresh, {paystubRefreshRun.name} is no longer among this batch&apos;s paystubs.
+                      </p>
+                    )}
                   {previewTab === 'paystubs' ? (
                     filteredPaystubs.length === 0 ? (
                       <div className="flex flex-col items-center justify-center gap-2 py-14 text-center">
