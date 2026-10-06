@@ -14,7 +14,8 @@ rail **only during the payout week** — see [the tab only exists on the payout
 week](#the-tab-only-exists-on-the-payout-week).
 
 Shipped **2026-08-28**; Ignore + payout-week gate **2026-09-01**; bulk Ignore (checkboxes) +
-the route's CAS write **2026-10-05**. Source:
+the route's CAS write **2026-10-05**; the PAB Calendar shows and revokes every forgiven date,
+with its own hours, **2026-10-06**. Source:
 `src/lib/payroll/pab-ineligibility.ts`, `src/lib/payroll/pab-payout-week.ts`,
 `app/api/payroll-wizard/pab-forgive-month/route.ts`,
 `src/components/payroll/PabIneligibleTable.tsx`, `src/components/PayrollWizard.tsx` (step 4).
@@ -24,6 +25,7 @@ the route's CAS write **2026-10-05**. Source:
 | Piece | File |
 | --- | --- |
 | Failed-day detail — pure, tested | `src/lib/payroll/pab-ineligibility.ts` |
+| One breakdown day: verdict inputs pinned, forgiven flag, shown hours — pure, tested | `src/lib/payroll/pab-breakdown-day.ts` |
 | The identity alarm | `src/lib/payroll/pab-ineligibility.test.ts` |
 | Payout-week tab gate — pure, tested | `src/lib/payroll/pab-payout-week.ts` (+ `.test.ts`) |
 | Forgive-the-month batch write | `app/api/payroll-wizard/pab-forgive-month/route.ts` |
@@ -57,29 +59,80 @@ Per-day forgiveness is unchanged and still lives in two places: the PAB Calendar
 who FILED an issue, scoped to the active department — a different list from this one, which is
 everyone who FAILED, filed or not, across every department).
 
-## `override_hours: 7` — the value that reaches the employee
+## `override_hours: 7` — what is still STORED, and why it is being retired
 
-Both forgive paths write a flat `7`. Server-side that is indistinguishable from the `null`
-(or `5`) the modal used to write: `applyPabAdjustments` bumps any forgiven day with ≥4h
-effective to a full 7h regardless, so **no pay changes**.
+Both forgive paths still write a flat `7` (2026-10-06). Server-side that is indistinguishable
+from the `null` (or `5`) the modal used to write: `applyPabAdjustments` bumps any forgiven day
+with ≥4h effective to a full 7h regardless, so **no pay changes**.
 
-What changes is the employee's own screen. `EmployeeDashboard` applies `override_hours` as a
-plain SET and skips `null` entirely, and 5h sits below the 7h bar — so before this change a
-forgiven person kept a failing day, `pabViolations` kept counting it, and the dashboard read
-**"No longer Eligible for PAB, Try again next month — violated on <the exact days that were
-just forgiven>"** while dispatch paid them the bonus. `EmployeeMyHours` applied the ≥4h→7h bump
-and said the opposite, on the same person, at the same time.
+Why 7 was chosen (2026-08-28): `EmployeeDashboard` applies `override_hours` as a plain SET and
+skips `null` entirely, and 5h sits below the 7h bar — so a forgiven person kept a failing day,
+`pabViolations` kept counting it, and the dashboard read **"No longer Eligible for PAB, Try
+again next month — violated on <the exact days that were just forgiven>"** while dispatch paid
+them the bonus. `EmployeeMyHours` applied the ≥4h→7h bump and said the opposite, on the same
+person, at the same time. 7 made the dashboard agree with the money without touching the
+dashboard. `EmployeeDashboard` still does not call `applyPabAdjustments` and still ignores a
+`null` override — out of scope by ruling then (Kane, 2026-08-28: "a separate thing that would
+inherit"); an older dispute row carrying `null` or `5` still shows the old contradiction.
 
-Writing 7 makes the dashboard agree with the money **without touching the dashboard**. The
-visible trade: a forgiven cell reads `7:00` with a "Forgiven" chip instead of real tracked
-hours. That is the opposite of the choice `orphanage-pab-coverage.md` made, and the difference
-is real — orphanage coverage is an *additive top-up* that never needs a SET, so it can afford
-to keep honest hours.
+**Kane, 2026-10-06: forgiveness must not add hours.** A forgiven date keeps its original
+hours and simply reads as forgiven. Two halves:
 
-`EmployeeDashboard` still does not call `applyPabAdjustments` and still ignores a `null`
-override. That divergence is **out of scope by ruling** (Kane, 2026-08-28: "a separate thing
-that would inherit") and is now inert for anything this step writes — but an older dispute row
-carrying `null` or `5` still shows the old contradiction.
+- **Display — done in the wizard's PAB Calendar** (next section). No cell there reads `7:00`
+  for a forgiven day any more; the store is untouched, so no money moved.
+- **Storage — NOT changed, waiting on Kane** (session log item 363). Storing no hours means
+  `override_hours: null`, and `null` today means the **4h floor** for every non-orphanage reason
+  (`business-logic.md` §PAB disputes): a forgiven day with 0–3h tracked would stay FAILED and the
+  month would stay lost. Either wizard forgiveness gets its own reason that skips the floor, or
+  the floor is retired for every approved issue — a money ruling, so it was not picked here.
+  Until then the 7 stays, and so does every reason it was chosen for: changing it without
+  `EmployeeDashboard`, `EmployeeMyHours` and `EmployeePabCalendar` learning the new rule would
+  bring back the "violated on <forgiven days>" contradiction.
+
+## The PAB Calendar shows every forgiven date, with its own hours, and can revoke it
+
+**Kane, 2026-10-06:** *"make sure we can still see in the PAB Calendar the forgiven dates and can
+retract those dates that were forgiven"*.
+
+**What was broken.** The breakdown memos (`employeeWeekdayHours` / `employeeAllDaysHours`)
+called a day "forgiven by issue" only when its post-override hours sat in `[4h, 7h)`. A 7h
+override lands AT 7h, so every day this step or the calendar forgave since 2026-08-28 read as
+an ordinary pass — green, `7:00`, missing from the modal's *Forgiven days* list, and with no
+Revoke on the cell or the list. The forgiveness was real and paid; it was invisible and could
+not be retracted. Measured 2026-10-06: **17** such rows (Aug 13, Sep 4).
+
+**The rule now** — `classifyPabBreakdownDay` (`src/lib/payroll/pab-breakdown-day.ts`, tested):
+
+- `seconds` and `passes` are **byte-identical** to the old formula for every input — they are
+  the verdict inputs (`pabStatusByEmail`, this step's severity, the HSL week walk). The test
+  walks a grid of raw hours × override values × issue/non-issue × holiday and pins both. If
+  it fails, the calendar fix has moved PAB money.
+- `forgivenByDispute` also recognises a day an approved **issue** forgave whose own tracked
+  time was under 7h. The added branch can only fire when `seconds ≥ 7h`, where `passes` is
+  already true — it changes the label, never the verdict.
+- `displaySeconds` is what the cell, its tooltip and the *Forgiven days* list show: on an
+  issue-forgiven day, the day's **own tracked time** (a 0h day forgiven reads `0:00 ★`).
+- **"Issue" means `pab_day_disputes`**, not the merged forgiveness map: a same-day approved
+  time adjustment wins the merge and its hours are real, and the orphanage-coverage overlay's 7
+  is not an issue either. Both keep showing what they showed before.
+- The 4h floor is untouched: a `null`-override issue under 4h still reads FAILED, because that
+  is what dispatch pays.
+
+**Revoke.** Every issue-forgiven date is in the list with a Revoke, and the cell is clickable
+for the same. A date forgiven by a time adjustment or orphanage hours lists **without** the
+button (there is no issue id; the old list offered one that errored "Issue ID not found").
+
+**Re-forgive after a revoke.** Revoking sends the issue back to `pending`
+(`revokeDisputeDecision`), so the modal's per-day Forgive used to 409 ("An issue already exists
+for this date") — a retracted day could not be forgiven again from the same calendar. On a 409
+the handler now reads the row for that date and **approves the pending row** (what the month
+batch does with a pending row); an already-forgiven row says so; anything else — e.g. denied —
+is refused with "resolve it in Accounting → Issues", the batch's rule.
+
+**Not changed here:** the employee-side calendars. `EmployeePabCalendar` (People / Overview)
+hides a 7h-forgiven day exactly the same way (`forgiven` requires `!day.passes`, and a 7h SET
+passes), and `EmployeeDashboard` / `EmployeeMyHours` show `7:00`. They are the readers the
+storage change above has to move anyway.
 
 ## Ignore writes the month's PAB EXCLUSION — the existing store, the audited route
 

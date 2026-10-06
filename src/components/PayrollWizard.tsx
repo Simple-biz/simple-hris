@@ -416,6 +416,7 @@ import { buildHrisNpdSnapshot, parseHrisNpdSaveMeta } from '@/lib/payroll/hris-n
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
+import { classifyPabBreakdownDay } from '@/lib/payroll/pab-breakdown-day';
 import PabIneligibleTable, { type PabIneligibleRow } from '@/components/payroll/PabIneligibleTable';
 import PabDoneTable, { type PabDoneRow } from '@/components/payroll/PabDoneTable';
 import PabDecisionConfirmDialog, { type PabDecisionTarget } from '@/components/payroll/PabDecisionConfirmDialog';
@@ -6801,36 +6802,46 @@ export default function PayrollWizard({
 
   /**
    * Per-employee weekday breakdown for the PAB period (merged month). Used in the PA cell.
+   *
+   * Each day goes through `classifyPabBreakdownDay` (pab-breakdown-day.ts, tested):
+   * `seconds`/`passes` are the verdict inputs and never moved; `forgivenByDispute`
+   * also recognises a day an approved ISSUE forgave at 7h, and `displaySeconds` is the
+   * day's own tracked time on such a day — so the PAB Calendar shows every forgiven
+   * date, with its original hours, and can revoke it (Kane 2026-10-06).
    */
   const employeeWeekdayHours = useMemo<
-    Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
+    Map<string, { col: string; iso: string | null; seconds: number; displaySeconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (weekdayColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
+    const map = new Map<string, { col: string; iso: string | null; seconds: number; displaySeconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
       const forgivenDates = effectiveOverridesForPab.get(email);
+      // Which map entries are ISSUES. A same-day approved time adjustment wins the
+      // merge (`effectiveOverrides`), and its hours are real — never an issue.
+      const issueDates = approvedDisputeDates.get(email);
+      const adjustedDates = approvedTimeAdjustments.get(email);
       map.set(
         email,
         weekdayColumnGroups.map(group => {
           const col = pickPreferredHubstaffColumn(group);
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
-          const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
           // SET semantics: override_hours replaces Hubstaff hours for the day. `null` dispute
           // falls through to Hubstaff hours (floor-drop marker); `0` zeros the day out.
-          const seconds =
-            overrideHours != null ? overrideHours * 3600 : rawSeconds;
+          const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
           const holidayName = groupDate ? (usHolidayDates.get(groupDate) ?? null) : null;
-          const isHoliday = holidayName !== null;
-          const disputeForgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
-          // Holidays take precedence over dispute classification — a holiday day passes regardless of hours
-          const holidayForgiven = isHoliday && seconds < 7 * 3600;
+          const day = classifyPabBreakdownDay({
+            rawSeconds,
+            override: overrideHours,
+            fromIssue: !!(groupDate && issueDates?.has(groupDate) && !adjustedDates?.has(groupDate)),
+            isHoliday: holidayName !== null,
+          });
           return {
             col,
             // The group's resolved ISO date. `col` is only a LABEL: for a week
@@ -6838,35 +6849,35 @@ export default function PayrollWizard({
             // returns the canonical `monday`…`sunday` name, which parseColDate cannot
             // read. Anything needing the DATE must use this, never re-parse `col`.
             iso: groupDate,
-            seconds,
-            passes: seconds >= 7 * 3600 || disputeForgiven || isHoliday,
-            forgivenByDispute: disputeForgiven && !holidayForgiven,
-            forgivenByHoliday: holidayForgiven,
+            ...day,
             holidayName,
           };
         }),
       );
     }
     return map;
-  }, [hubstaffRowsForPab, weekdayColumnGroups, effectiveOverridesForPab, usHolidayDates]);
+  }, [hubstaffRowsForPab, weekdayColumnGroups, effectiveOverridesForPab, approvedDisputeDates, approvedTimeAdjustments, usHolidayDates]);
 
   /**
    * Per-employee Mon–Sun breakdown for HSL PAB display. Same structure as
    * employeeWeekdayHours but uses allDaysColumnGroups so Sat/Sun are included.
    */
   const employeeAllDaysHours = useMemo<
-    Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
+    Map<string, { col: string; iso: string | null; seconds: number; displaySeconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>
   >(() => {
     const rows = hubstaffRowsForPab;
     if (!rows || rows.length === 0) return new Map();
     if (allDaysColumnGroups.length === 0) return new Map();
 
-    const map = new Map<string, { col: string; iso: string | null; seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
+    const map = new Map<string, { col: string; iso: string | null; seconds: number; displaySeconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }[]>();
     for (const row of rows) {
       const rawEmail = String(row['Email'] ?? row['email'] ?? '').trim();
       const email = normEmail(rawEmail) ?? rawEmail.toLowerCase();
       if (!email) continue;
       const forgivenDates = effectiveOverridesForPab.get(email);
+      // Same issue-vs-adjustment split as employeeWeekdayHours.
+      const issueDates = approvedDisputeDates.get(email);
+      const adjustedDates = approvedTimeAdjustments.get(email);
       map.set(
         email,
         allDaysColumnGroups.map(group => {
@@ -6874,11 +6885,13 @@ export default function PayrollWizard({
           const rawSeconds = maxSecondsAcrossWeekdayGroup(row, group);
           const groupDate = isoDateFromColumnGroup(group);
           const overrideHours = groupDate != null ? forgivenDates?.get(groupDate) : undefined;
-          const seconds = overrideHours != null ? overrideHours * 3600 : rawSeconds;
           const holidayName = groupDate ? (usHolidayDates.get(groupDate) ?? null) : null;
-          const isHoliday = holidayName !== null;
-          const disputeForgiven = !!(groupDate && forgivenDates?.has(groupDate) && seconds >= 4 * 3600 && seconds < 7 * 3600);
-          const holidayForgiven = isHoliday && seconds < 7 * 3600;
+          const day = classifyPabBreakdownDay({
+            rawSeconds,
+            override: overrideHours,
+            fromIssue: !!(groupDate && issueDates?.has(groupDate) && !adjustedDates?.has(groupDate)),
+            isHoliday: holidayName !== null,
+          });
           return {
             col,
             // The group's resolved ISO date. `col` is only a LABEL: for a week
@@ -6886,17 +6899,14 @@ export default function PayrollWizard({
             // returns the canonical `monday`…`sunday` name, which parseColDate cannot
             // read. Anything needing the DATE must use this, never re-parse `col`.
             iso: groupDate,
-            seconds,
-            passes: seconds >= 7 * 3600 || disputeForgiven || isHoliday,
-            forgivenByDispute: disputeForgiven && !holidayForgiven,
-            forgivenByHoliday: holidayForgiven,
+            ...day,
             holidayName,
           };
         }),
       );
     }
     return map;
-  }, [hubstaffRowsForPab, allDaysColumnGroups, effectiveOverridesForPab, usHolidayDates]);
+  }, [hubstaffRowsForPab, allDaysColumnGroups, effectiveOverridesForPab, approvedDisputeDates, approvedTimeAdjustments, usHolidayDates]);
 
   /**
    * Tri-state PAB display status per employee:
@@ -23983,13 +23993,14 @@ export default function PayrollWizard({
             ? (employeeAllDaysHours.get(normEmpEmail) ?? [])
             : (employeeWeekdayHours.get(normEmpEmail) ?? []);
           // Map ISO date → breakdown entry so we can look up per-cell data quickly.
-          const byIso = new Map<string, { seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }>();
+          const byIso = new Map<string, { seconds: number; displaySeconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null }>();
           for (const entry of breakdown) {
             const d = parseColDate(entry.col);
             if (!d) continue;
             const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
             byIso.set(iso, {
               seconds: entry.seconds,
+              displaySeconds: entry.displaySeconds,
               passes: entry.passes,
               forgivenByDispute: entry.forgivenByDispute,
               forgivenByHoliday: entry.forgivenByHoliday,
@@ -24083,7 +24094,7 @@ export default function PayrollWizard({
           }
 
           // Build calendar grid (weeks × 7 days) spanning the PAB period.
-          type Cell = { date: Date; iso: string; inRange: boolean; isWeekday: boolean; data: { seconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null } | null; holidayName: string | null };
+          type Cell = { date: Date; iso: string; inRange: boolean; isWeekday: boolean; data: { seconds: number; displaySeconds: number; passes: boolean; forgivenByDispute: boolean; forgivenByHoliday: boolean; holidayName: string | null } | null; holidayName: string | null };
           const cells: Cell[] = [];
           if (pabMonthRange) {
             // Legacy HSL weeks run Mon–Sun; standard + post-cutover HSL weeks run Sun–Sat.
@@ -24246,7 +24257,31 @@ export default function PayrollWizard({
                 }),
               });
               const createData = await createRes.json();
-              if (!createRes.ok || !createData.id) throw new Error(createData.error ?? 'Failed to create issue');
+              let issueId: string | null = createRes.ok && createData.id ? createData.id : null;
+              if (!issueId && createRes.status === 409) {
+                // An issue is already on file for this day — most often a forgiveness
+                // revoked from this calendar, which `revokeDisputeDecision` sends back
+                // to `pending`. Approve THAT row (what the PAB step's month batch does)
+                // instead of failing; never re-decide a denied one — reversing a denial
+                // belongs in the Issues queue, where the note and decider are visible.
+                const lookupRes = await fetch(
+                  `/api/pab-disputes?email=${encodeURIComponent(pabCalendarModalEmail)}&from=${iso}&to=${iso}`,
+                  { cache: 'no-store' },
+                );
+                const lookup = (await lookupRes.json()) as { rows?: { id: string; dispute_date: string; status: string }[]; error?: string | null };
+                if (!lookupRes.ok) throw new Error(lookup.error ?? 'Could not read the existing issue for this day');
+                const existing = (lookup.rows ?? []).find((r) => r.dispute_date === iso);
+                if (!existing) throw new Error(createData.error ?? 'Failed to create issue');
+                if (existing.status === 'approved' || existing.status === 'accounting_approved') {
+                  throw new Error('This day is already forgiven (someone else may have just done it) — reopen the calendar to see it.');
+                }
+                if (existing.status !== 'pending') {
+                  throw new Error(`This day already has an issue in status "${existing.status.replace(/_/g, ' ')}" — resolve it in Accounting → Issues.`);
+                }
+                issueId = existing.id;
+              }
+              if (!issueId) throw new Error(createData.error ?? 'Failed to create issue');
+              const approvedId: string = issueId;
               // A flat 7h SET, matching the PAB step's "Forgive month" batch so the two
               // forgive paths write indistinguishable rows.
               //
@@ -24260,7 +24295,7 @@ export default function PayrollWizard({
               // being paid the bonus. 7 is the value that makes the dashboard agree.
               const overrideHours = 7;
               void rawSeconds;
-              const approveRes = await fetch(`/api/pab-disputes/${createData.id}`, {
+              const approveRes = await fetch(`/api/pab-disputes/${approvedId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -24284,7 +24319,7 @@ export default function PayrollWizard({
                 const next = new Map(prev);
                 const existing = next.get(em) ?? new Map<string, string>();
                 const updated = new Map(existing);
-                updated.set(iso, createData.id);
+                updated.set(iso, approvedId);
                 next.set(em, updated);
                 return next;
               });
@@ -24292,7 +24327,7 @@ export default function PayrollWizard({
                 kind: 'days_forgiven',
                 email: em,
                 monthKey: pabMonthKey,
-                days: [{ iso, id: createData.id }],
+                days: [{ iso, id: approvedId }],
                 override: overrideHours,
               });
               setPabForgiveActiveIso(null);
@@ -24557,11 +24592,13 @@ export default function PayrollWizard({
                                     : (weekend && !isHsl)
                                       ? `${cell.date.toDateString()} — weekend`
                                       : data
-                                        ? `${cell.date.toDateString()} · ${formatSeconds(data.seconds)} logged${
+                                        ? `${cell.date.toDateString()} · ${formatSeconds(data.displaySeconds)} logged${
                                             cell.holidayName
                                               ? ` · ${cell.holidayName} (US holiday)`
                                               : data.forgivenByDispute
-                                                ? ' · ★ forgiven by issue'
+                                                ? forgivenIsoSet.has(cell.iso)
+                                                  ? ' · ★ forgiven by issue — click to revoke'
+                                                  : ' · ★ forgiven'
                                                 : state === 'overnight'
                                                   ? ' · → overnight shift (combined with next day)'
                                                   : state === 'reconciled'
@@ -24592,7 +24629,8 @@ export default function PayrollWizard({
                               </span>
                               {cell.inRange && (!weekend || isHsl) && data && state !== 'idle' && (
                                 <span className="mt-0.5 font-mono text-[9px] leading-none opacity-85">
-                                  {formatSeconds(data.seconds)}
+                                  {/* A forgiven day shows its OWN tracked hours, never the 7:00 override (Kane 2026-10-06). */}
+                                  {formatSeconds(data.displaySeconds)}
                                 </span>
                               )}
                               {state === 'passed' && (
@@ -24847,12 +24885,17 @@ export default function PayrollWizard({
 
                         {/* Forgiven Days — always shown when any days were forgiven by dispute */}
                         {forgivenDays > 0 && (() => {
+                          // Every forgiven date, with its OWN tracked hours (displaySeconds),
+                          // and a Revoke wherever an issue id backs it (Kane 2026-10-06). A
+                          // day forgiven by a time adjustment or orphanage coverage has no
+                          // issue to revoke, so it lists without the button rather than with
+                          // one that errors. Dates come from the resolved `iso`, never `col`.
                           const forgivenEntries = breakdown
                             .filter(b => b.forgivenByDispute)
                             .map(b => {
-                              const d = parseColDate(b.col);
-                              const iso = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : b.col;
-                              return { date: d, iso, seconds: b.seconds };
+                              const d = b.iso ? parseLocalDateFromIso(b.iso) : parseColDate(b.col);
+                              const iso = b.iso ?? (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : b.col);
+                              return { date: d, iso, seconds: b.displaySeconds, revocable: forgivenIsoSet.has(iso) };
                             })
                             .sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0));
                           return (
@@ -24876,12 +24919,16 @@ export default function PayrollWizard({
                                         initial={{ opacity: 0, x: -4 }}
                                         animate={{ opacity: 1, x: 0 }}
                                         transition={{ delay: 0.22 + i * 0.03, duration: 0.2 }}
-                                        onClick={() => { setPabRevokeActiveIso(isExpanded ? null : f.iso); setPabRevokeError(null); }}
+                                        onClick={f.revocable ? () => { setPabRevokeActiveIso(isExpanded ? null : f.iso); setPabRevokeError(null); } : undefined}
+                                        title={f.revocable ? undefined : 'Forgiven by an approved time adjustment or orphanage hours — there is no issue to revoke here'}
                                         className={cn(
-                                          'flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] transition-colors',
+                                          'flex items-center justify-between gap-2 rounded-md px-2 py-1 text-[11px] transition-colors',
+                                          f.revocable ? 'cursor-pointer' : 'cursor-default',
                                           isExpanded
                                             ? 'bg-red-50 ring-1 ring-red-300/60 dark:bg-red-950/40 dark:ring-red-700/50'
-                                            : 'bg-white/60 hover:bg-white/90 dark:bg-zinc-950/40 dark:hover:bg-zinc-900/60',
+                                            : f.revocable
+                                              ? 'bg-white/60 hover:bg-white/90 dark:bg-zinc-950/40 dark:hover:bg-zinc-900/60'
+                                              : 'bg-white/60 dark:bg-zinc-950/40',
                                         )}
                                       >
                                         <div className="flex items-center gap-1.5 min-w-0">
@@ -24893,17 +24940,19 @@ export default function PayrollWizard({
                                         <div className="flex items-center gap-2 shrink-0">
                                           <span className="font-mono text-amber-700 dark:text-amber-400">{formatSeconds(f.seconds)}</span>
                                           <span className="text-[9px] text-amber-600 dark:text-amber-500">★ forgiven</span>
-                                          <span className={cn(
-                                            'rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 transition-colors',
-                                            isExpanded
-                                              ? 'bg-indigo-100 text-indigo-700 ring-indigo-400/50 dark:bg-indigo-900/40 dark:text-indigo-300'
-                                              : 'bg-red-100 text-red-700 ring-red-400/40 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300',
-                                          )}>
-                                            {isExpanded ? 'Cancel' : 'Revoke'}
-                                          </span>
+                                          {f.revocable && (
+                                            <span className={cn(
+                                              'rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1 transition-colors',
+                                              isExpanded
+                                                ? 'bg-indigo-100 text-indigo-700 ring-indigo-400/50 dark:bg-indigo-900/40 dark:text-indigo-300'
+                                                : 'bg-red-100 text-red-700 ring-red-400/40 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-300',
+                                            )}>
+                                              {isExpanded ? 'Cancel' : 'Revoke'}
+                                            </span>
+                                          )}
                                         </div>
                                       </motion.div>
-                                      {isExpanded && (
+                                      {isExpanded && f.revocable && (
                                         <motion.div
                                           initial={{ opacity: 0, height: 0 }}
                                           animate={{ opacity: 1, height: 'auto' }}
