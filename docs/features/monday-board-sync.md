@@ -2623,3 +2623,7 @@ day, so the budget was spent elsewhere, as on 08-13 and 09-29. At the reset:
 
 **Also off the board:** `9d6225b6` and `9129b1d0` (HRIS vs NPD, items 337 and 339, 2026-10-02) have no
 row. Adding them is Kane's call. Open item 359.
+
+**Approved.** Kane, 2026-10-06 07:42 EDT: *"Approve"*, on exactly that shape. A hash minted in that shape
+at the reset is applied on it; any other shape goes back to him. He did not take up the two 10-02 rows,
+so they stay out of this pass.
