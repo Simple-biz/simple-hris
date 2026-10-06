@@ -441,6 +441,7 @@ function renderFeed(text: string, feedProps: HrisNpdFeedProps, step: HrisNpdStep
       onFilterChange: () => {},
       save: NOT_SAVED,
       getPaystubs: () => new Map(),
+      reasons: new Map(),
     }),
   );
 }

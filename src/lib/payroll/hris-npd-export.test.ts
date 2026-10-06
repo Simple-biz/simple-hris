@@ -13,6 +13,8 @@
  *  - the Notes column reads the person's PAYSTUB on a row with an issue (Kane, 2026-10-06): the
  *    statement's lines, "No Tech Allowance" / "No Attendance Incentive" / "No Performance Bonus
  *    (KPI)" for a ₱0.00 bonus, built through the real `mapPayloadToPayStub`
+ *  - the Why column is the screen's reasons, copied, with their strength ("Likely:" / "Check:"),
+ *    and no file while a reason still waits on the roster lookup (Kane, 2026-10-06)
  *
  * Run:  node --import tsx --test src/lib/payroll/hris-npd-export.test.ts
  */
@@ -38,6 +40,7 @@ import {
   type HrisNpdPaystubs,
 } from './hris-npd-export';
 import { mapPayloadToPayStub, type PayStubView } from './paystub-view';
+import type { HrisNpdReasons } from './hris-npd-reasons';
 
 const FX = 61.52;
 const phpFor = (dollars: number) => Math.round(dollars * FX * 100) / 100;
@@ -111,18 +114,53 @@ function setup(over: Partial<CompareHrisNpdInput> = {}, paste = PASTE) {
   return { parse, comparison };
 }
 
+const NO_REASONS: HrisNpdReasons = new Map();
+
 function build(
   over: Partial<CompareHrisNpdInput> = {},
   source: HrisNpdExportSource = { kind: 'paste' },
   paystubs: HrisNpdPaystubs = PAYSTUBS,
+  reasons: HrisNpdReasons = NO_REASONS,
 ) {
   const { parse, comparison } = setup(over);
   return {
     parse,
     comparison,
-    out: buildHrisNpdCsv({ comparison, parse, fxRate: over.fxRate ?? FX, periodLabel: WEEK, source, paystubs, now: NOW }),
+    out: buildHrisNpdCsv({ comparison, parse, fxRate: over.fxRate ?? FX, periodLabel: WEEK, source, paystubs, reasons, now: NOW }),
   };
 }
+
+/** One CSV line → its cells, RFC 4180 (quoted cells may hold commas and doubled quotes). */
+function cells(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      quoted = true;
+    } else if (ch === ',') {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/** Column positions, from the header itself, so a new column can never silently shift a check. */
+const COL = Object.fromEntries(HRIS_NPD_EXPORT_HEADER.map((h, i) => [h, i])) as Record<(typeof HRIS_NPD_EXPORT_HEADER)[number], number>;
 
 /** The body: the lines from the header row to the line before the TOTAL row. */
 function body(csv: string): string[] {
@@ -137,7 +175,9 @@ function body(csv: string): string[] {
 function lineFor(csv: string, email: string): string[] {
   const hit = body(csv).find((l) => l.startsWith(email + ','));
   assert.ok(hit, `no line for ${email}`);
-  return hit!.split(',');
+  const c = cells(hit!);
+  assert.equal(c.length, HRIS_NPD_EXPORT_HEADER.length, `${email}: one cell per column`);
+  return c;
 }
 
 describe('HRIS vs NPD export — every row, as the comparison decided it', () => {
@@ -163,24 +203,23 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     const { out } = build();
     assert.ok(out.ok);
     const k = lineFor(out.csv, 'kaner@simple.biz');
-    assert.equal(k[2], 'Match');
-    assert.equal(k[3], '250.00');
-    assert.equal(k[4], '250.00');
-    assert.equal(k[5], '0.00');
+    assert.equal(k[COL.Match], 'Match');
+    assert.equal(k[COL['HRIS USD']], '250.00');
+    assert.equal(k[COL['NPD USD']], '250.00');
+    assert.equal(k[COL['Difference USD (NPD - HRIS)']], '0.00');
 
     const l = lineFor(out.csv, 'lorar@simple.biz');
-    assert.equal(l[2], 'Mismatch');
-    assert.equal(l[3], '279.17');
-    assert.equal(l[4], '281.00');
-    assert.equal(l[5], '1.83', 'Difference is NPD − HRIS');
-    // Quoted: the paystub's figures carry thousands commas.
-    assert.match(l.slice(9).join(','), /^"Paystub: /, 'a Mismatch carries the paystub');
-    assert.doesNotMatch(l.slice(9).join(','), /implies/);
+    assert.equal(l[COL.Match], 'Mismatch');
+    assert.equal(l[COL['HRIS USD']], '279.17');
+    assert.equal(l[COL['NPD USD']], '281.00');
+    assert.equal(l[COL['Difference USD (NPD - HRIS)']], '1.83', 'Difference is NPD − HRIS');
+    assert.match(l[COL.Notes], /^Paystub: /, 'a Mismatch carries the paystub');
+    assert.doesNotMatch(l[COL.Notes], /implies/);
 
-    assert.equal(lineFor(out.csv, 'npdonly@simple.biz')[2], 'Not in HRIS');
+    assert.equal(lineFor(out.csv, 'npdonly@simple.biz')[COL.Match], 'Not in HRIS');
     const h = lineFor(out.csv, 'hrisonly@simple.biz');
-    assert.equal(h[2], 'Not in NPD');
-    assert.equal(h[4], '', 'NPD has no figure for them');
+    assert.equal(h[COL.Match], 'Not in NPD');
+    assert.equal(h[COL['NPD USD']], '', 'NPD has no figure for them');
   });
 
   it('leaves out people configured not to be paid (Kane, 2026-10-06), and says how many', () => {
@@ -201,12 +240,14 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     const { comparison, out } = build();
     assert.ok(out.ok);
     const lines = out.csv.split('\r\n');
-    const total = lines.find((l) => l.startsWith('TOTAL'))!.split(',');
+    const total = cells(lines.find((l) => l.startsWith('TOTAL'))!);
+    assert.equal(total.length, HRIS_NPD_EXPORT_HEADER.length, 'the TOTAL row has one cell per column');
     assert.equal(total[0], `TOTAL - ${comparison.totals.people} people`);
     assert.equal(total[1], '');
-    assert.equal(total[3], centsCell(comparison.totals.hrisCents));
-    assert.equal(total[4], centsCell(comparison.totals.npdCents));
-    assert.equal(total[5], centsCell(comparison.totals.npdCents - comparison.totals.hrisCents!));
+    assert.equal(total[COL.Why], '');
+    assert.equal(total[COL['HRIS USD']], centsCell(comparison.totals.hrisCents));
+    assert.equal(total[COL['NPD USD']], centsCell(comparison.totals.npdCents));
+    assert.equal(total[COL['Difference USD (NPD - HRIS)']], centsCell(comparison.totals.npdCents - comparison.totals.hrisCents!));
     // The paused person's $9.50 is NOT in the NPD total.
     assert.equal(comparison.totals.npdCents, 25000 + 28100 + 1200);
     const c = comparison.counts!;
@@ -221,9 +262,10 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     const { out } = build({ hrisRows: [hris('kaner@simple.biz', phpFor(249.98))] });
     assert.ok(out.ok);
     const k = lineFor(out.csv, 'kaner@simple.biz');
-    assert.equal(k[2], 'Match');
-    assert.equal(k[5], '0.02');
-    assert.equal(k.slice(9).join(','), '');
+    assert.equal(k[COL.Match], 'Match');
+    assert.equal(k[COL['Difference USD (NPD - HRIS)']], '0.02');
+    assert.equal(k[COL.Notes], '');
+    assert.equal(k[COL.Why], '');
     assert.match(out.csv, /off by at most 3 cents/);
   });
 
@@ -235,7 +277,7 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
       ],
     });
     assert.ok(out.ok);
-    const notes = lineFor(out.csv, 'kaner@simple.biz').slice(9).join(',');
+    const notes = lineFor(out.csv, 'kaner@simple.biz')[COL.Notes];
     assert.match(notes, /No paystub: no payout address on file/);
     assert.match(notes, /1 excluded row not counted/);
   });
@@ -243,11 +285,7 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
 
 describe('HRIS vs NPD export — the Notes column reads the paystub (Kane, 2026-10-06)', () => {
   /** The Notes cell of a row, unquoted. */
-  const notesOf = (csv: string, email: string) => {
-    const line = body(csv).find((l) => l.startsWith(email + ','))!;
-    const cell = line.split(',').slice(9).join(',');
-    return cell.startsWith('"') ? cell.slice(1, -1).replace(/""/g, '"') : cell;
-  };
+  const notesOf = (csv: string, email: string) => lineFor(csv, email)[COL.Notes];
 
   it('a Mismatch and a Not in NPD row carry the paystub; a Match and a Not in HRIS row do not', () => {
     const { out } = build();
@@ -329,6 +367,56 @@ describe('HRIS vs NPD export — the Notes column reads the paystub (Kane, 2026-
   });
 });
 
+describe("HRIS vs NPD export — the Why column is the screen's reasons (Kane, 2026-10-06)", () => {
+  const keyOf = (comparison: ReturnType<typeof setup>['comparison'], email: string) =>
+    comparison.rows.find((r) => r.workEmail === email)!.key;
+
+  it('sits right after Match and writes each reason with its strength, in order', () => {
+    assert.equal(COL.Why, COL.Match + 1);
+    const { comparison } = setup();
+    const reasons: HrisNpdReasons = new Map([
+      [
+        keyOf(comparison, 'lorar@simple.biz'),
+        [
+          { tone: 'likely', text: "NPD is ₱112.58 higher: exactly HRIS's Tech Allowance ₱500.00. NPD likely left it out." },
+          { tone: 'lead', text: 'Check the rate, too.' },
+        ],
+      ],
+      [keyOf(comparison, 'npdonly@simple.biz'), [{ tone: 'found', text: 'No one in HRIS has this address: it is not on the roster, active or offboarded.' }]],
+    ]);
+    const { out } = build({}, { kind: 'paste' }, PAYSTUBS, reasons);
+    assert.ok(out.ok);
+    assert.equal(
+      lineFor(out.csv, 'lorar@simple.biz')[COL.Why],
+      "Likely: NPD is ₱112.58 higher: exactly HRIS's Tech Allowance ₱500.00. NPD likely left it out. | Check: Check the rate, too.",
+    );
+    assert.equal(
+      lineFor(out.csv, 'npdonly@simple.biz')[COL.Why],
+      'No one in HRIS has this address: it is not on the roster, active or offboarded.',
+    );
+    assert.equal(lineFor(out.csv, 'kaner@simple.biz')[COL.Why], '', 'a Match has no reason');
+    assert.match(out.csv, /Why: what HRIS's own records say/);
+  });
+
+  it('makes no file while a reason still waits on the roster lookup', () => {
+    const { comparison } = setup();
+    const pending: HrisNpdReasons = new Map([
+      [keyOf(comparison, 'npdonly@simple.biz'), [{ tone: 'pending', text: 'Looking this address up in HRIS…' }]],
+    ]);
+    const { out } = build({}, { kind: 'paste' }, PAYSTUBS, pending);
+    assert.equal(out.ok, false);
+    assert.equal(out.ok ? null : out.reason, 'Still looking up who the Not in HRIS addresses belong to.');
+  });
+
+  it('neutralises a reason like any text cell', () => {
+    const { comparison } = setup();
+    const reasons: HrisNpdReasons = new Map([[keyOf(comparison, 'npdonly@simple.biz'), [{ tone: 'found', text: '=HYPERLINK("x")' }]]]);
+    const { out } = build({}, { kind: 'paste' }, PAYSTUBS, reasons);
+    assert.ok(out.ok);
+    assert.equal(lineFor(out.csv, 'npdonly@simple.biz')[COL.Why], `'=HYPERLINK("x")`);
+  });
+});
+
 describe('HRIS vs NPD export — no file while the verdicts are held', () => {
   it('refuses while loading, on a failed source, and at FX 0, with the shared reason', () => {
     for (const over of [
@@ -346,7 +434,10 @@ describe('HRIS vs NPD export — no file while the verdicts are held', () => {
     const parse = parseNpdPaste('');
     const comparison = compareHrisNpd({ hrisRows: [hris('a@simple.biz', 100)], npdRows: parse.rows, fxRate: FX, hrisState: 'settled' });
     assert.ok(hrisNpdExportBlockedReason(comparison));
-    assert.equal(buildHrisNpdCsv({ comparison, parse, fxRate: FX, periodLabel: WEEK, source: { kind: 'paste' }, paystubs: PAYSTUBS, now: NOW }).ok, false);
+    assert.equal(
+      buildHrisNpdCsv({ comparison, parse, fxRate: FX, periodLabel: WEEK, source: { kind: 'paste' }, paystubs: PAYSTUBS, reasons: NO_REASONS, now: NOW }).ok,
+      false,
+    );
   });
 
   it('is open on a judged output', () => {
@@ -376,14 +467,14 @@ describe('HRIS vs NPD export — cells', () => {
       fxRate: FX,
       hrisState: 'settled',
     });
-    const out = buildHrisNpdCsv({ comparison, parse, fxRate: FX, periodLabel: WEEK, source: { kind: 'paste' }, paystubs: PAYSTUBS, now: NOW });
+    const out = buildHrisNpdCsv({ comparison, parse, fxRate: FX, periodLabel: WEEK, source: { kind: 'paste' }, paystubs: PAYSTUBS, reasons: NO_REASONS, now: NOW });
     assert.ok(out.ok);
     const k = lineFor(out.csv, 'kaner@simple.biz');
     assert.equal(k[1], "'+Kane");
-    assert.equal(k[5], '-1.00', 'a negative difference is a number, not a formula');
+    assert.equal(k[COL['Difference USD (NPD - HRIS)']], '-1.00', 'a negative difference is a number, not a formula');
     // An NPD address as pasted is a row (Not in HRIS), and a refused line's raw text is listed:
     // both are text, both neutralised.
-    assert.equal(lineFor(out.csv, "'=cmd@evil.com")[2], 'Not in HRIS');
+    assert.equal(lineFor(out.csv, "'=cmd@evil.com")[COL.Match], 'Not in HRIS');
     assert.match(out.csv, /\r\n\d+,[^\r\n]*,'@SUM\(A1\)/);
     for (const l of out.csv.split('\r\n')) assert.doesNotMatch(l, /^"?[=+@]|,"?[=+@]/, l);
   });
@@ -413,7 +504,7 @@ describe('HRIS vs NPD export — the notes travel with the file', () => {
     const paste = ['kaner@simple.biz\t250.00'].join('\n');
     const parse = parseNpdPaste(paste);
     const comparison = compareHrisNpd({ hrisRows: [hris('kaner@simple.biz', phpFor(250))], npdRows: parse.rows, fxRate: FX, hrisState: 'settled' });
-    const out = buildHrisNpdCsv({ comparison, parse, fxRate: FX, periodLabel: WEEK, source: { kind: 'paste' }, paystubs: PAYSTUBS, now: NOW });
+    const out = buildHrisNpdCsv({ comparison, parse, fxRate: FX, periodLabel: WEEK, source: { kind: 'paste' }, paystubs: PAYSTUBS, reasons: NO_REASONS, now: NOW });
     assert.ok(out.ok);
     assert.doesNotMatch(out.csv, /Line,Reason,Text/);
   });

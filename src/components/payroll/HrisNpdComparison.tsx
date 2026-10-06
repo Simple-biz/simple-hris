@@ -33,6 +33,9 @@
  *     render uncoloured with "—" in Match, and the banner says why.
  *   - HRIS's figure is the dollar amount Payment Dispatch is sent, and the rate it was
  *     divided by is printed, because an HRIS-vs-NPD gap is an FX question first.
+ *   - **Why** (Kane, 2026-10-06): every Mismatch / Not in HRIS / Not in NPD row carries the
+ *     reason under the person, from `reasons` (`explainHrisNpd`, built by the wizard). This
+ *     file never decides one, and a reason never changes a verdict. Still four columns.
  *   - The full-screen overlay renders THIS component from the SAME `HrisNpdPanelProps`
  *     object as the step; only `fillHeight` differs. The search and chip are the wizard's
  *     state, so both mounts show the same slice.
@@ -83,9 +86,11 @@ import {
   buildHrisNpdCsv,
   hrisNpdExportBlockedReason,
   hrisNpdExportFilename,
+  hrisNpdReasonsBlockedReason,
   type HrisNpdExportSource,
   type HrisNpdPaystubs,
 } from '@/lib/payroll/hris-npd-export';
+import type { HrisNpdReason, HrisNpdReasons } from '@/lib/payroll/hris-npd-reasons';
 import type { NpdFeedTabStatus } from '@/lib/payroll/hris-npd-feed';
 import type { NpdSheetKind } from '@/lib/npd/columns';
 
@@ -203,6 +208,13 @@ export type HrisNpdPanelProps = {
    * every render. The WIZARD builds them with `mapPayloadToPayStub`, the Step-8 preview's call.
    */
   getPaystubs: () => HrisNpdPaystubs;
+  /**
+   * Why each row that needs a look is what it is (Kane, 2026-10-06: "add the reason why they
+   * arent in HRIS … why they arent [in NPD] … for the Mismatch … be smart about this"), by row
+   * key. The WIZARD builds it with `explainHrisNpd`; this panel only shows it, under the person,
+   * and Export CSV writes the same lines in its Why column.
+   */
+  reasons: HrisNpdReasons;
 };
 
 type Props = HrisNpdPanelProps & {
@@ -286,17 +298,59 @@ function downloadCsv(filename: string, csv: string): void {
 
 // ─── Row ───────────────────────────────────────────────────────────────────────
 
+/** The strength of a Why line, said in words beside it (never by colour alone). */
+const REASON_TAG: Record<HrisNpdReason['tone'], string | null> = {
+  found: null,
+  likely: 'Likely',
+  lead: 'Check',
+  pending: null,
+};
+
+/**
+ * The Why lines under a person (§ Why). A plain line is a fact from HRIS's own records; "Likely"
+ * reproduces NPD's figure to the cent; "Check" is a lead. Ink is the row's own (ui-standards
+ * §15.3), so it reads on the red ground.
+ */
+function WhyLines({ reasons }: { reasons: readonly HrisNpdReason[] }) {
+  return (
+    <ul className="mt-1.5 space-y-1 border-l-2 border-current/25 pl-2 text-[11px] leading-snug" aria-label="Why">
+      {reasons.map((x, i) => (
+        <li key={i} className={cn('break-words', x.tone === 'lead' && 'opacity-80')}>
+          {x.tone === 'pending' ? (
+            <span className="inline-flex items-center gap-1.5 opacity-75">
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
+              {x.text}
+            </span>
+          ) : (
+            <>
+              {REASON_TAG[x.tone] && (
+                <span className="mr-1 rounded border border-current/30 px-1 py-px text-[9px] font-bold uppercase tracking-wide">
+                  {REASON_TAG[x.tone]}
+                </span>
+              )}
+              {x.text}
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 const ComparisonRow = React.memo(function ComparisonRow({
   r,
   fxRate,
   loading,
   toleranceCents,
+  reasons,
 }: {
   r: HrisNpdRow;
   fxRate: number;
   loading: boolean;
   /** The tolerance the verdict was given with (`comparison.toleranceCents`). */
   toleranceCents: number;
+  /** Why this row is what it is; absent on a Match and while held. */
+  reasons: readonly HrisNpdReason[] | undefined;
 }) {
   const tone = r.status === 'match' ? 'match' : r.status == null ? 'held' : 'problem';
   // Ink comes from the row's own ground (ui-standards §15.3), never grey on a tint.
@@ -347,6 +401,7 @@ const ComparisonRow = React.memo(function ComparisonRow({
             )}
           </div>
         )}
+        {reasons && reasons.length > 0 && <WhyLines reasons={reasons} />}
       </td>
 
       <td className="px-3 py-2 text-right align-top font-mono text-xs tabular-nums">
@@ -643,6 +698,7 @@ export default function HrisNpdComparison({
   onFilterChange,
   save,
   getPaystubs,
+  reasons,
   fillHeight = false,
   onOpenFullScreen,
 }: Props) {
@@ -689,7 +745,7 @@ export default function HrisNpdComparison({
   // Export CSV (Kane, 2026-10-06). Every row of the output, never the search or chip's slice
   // (the wizard's money exports ignore the search), and off while verdicts are held: a file
   // travels and the hold banner does not.
-  const exportBlocked = hrisNpdExportBlockedReason(comparison);
+  const exportBlocked = hrisNpdExportBlockedReason(comparison) ?? hrisNpdReasonsBlockedReason(reasons);
   const exportCsv = () => {
     const now = new Date();
     const out = buildHrisNpdCsv({
@@ -699,6 +755,7 @@ export default function HrisNpdComparison({
       periodLabel,
       source: exportSource(npdFeed.view),
       paystubs: getPaystubs(),
+      reasons,
       now,
     });
     if (out.ok) downloadCsv(hrisNpdExportFilename(periodLabel, now), out.csv);
@@ -1006,7 +1063,14 @@ export default function HrisNpdComparison({
                   </thead>
                   <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
                     {visible.map((r) => (
-                      <ComparisonRow key={r.key} r={r} fxRate={fxRate} loading={loading} toleranceCents={comparison.toleranceCents} />
+                      <ComparisonRow
+                        key={r.key}
+                        r={r}
+                        fxRate={fxRate}
+                        loading={loading}
+                        toleranceCents={comparison.toleranceCents}
+                        reasons={reasons.get(r.key)}
+                      />
                     ))}
                   </tbody>
                   {/* Whole-comparison totals: a search or a chip never changes them

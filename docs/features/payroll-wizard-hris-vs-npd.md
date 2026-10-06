@@ -12,7 +12,8 @@ are never compared or counted. One neutral line says how many were left out (§ 
 not to be paid). The comparison itself writes nothing. The
 one write is **Save output** (2026-10-01), which appends the output on screen as the week's next
 saved version (§ Saving the output). **Export CSV** (2026-10-06) downloads the whole output as a
-file and writes nothing (§ Export CSV).
+file and writes nothing (§ Export CSV). **Why** (2026-10-06) puts the reason under every Mismatch,
+Not in HRIS and Not in NPD row, from HRIS's own records (§ Why: the reason under each row).
 
 **Since 2026-10-02 the NPD figures load on their own once NPD is locked in.** When Accounting →
 NPD has **both** tabs (All Departments and HSL) locked for the wizard's week, step 1 reads them
@@ -48,6 +49,10 @@ commit: `git log -- docs/features/payroll-wizard-hris-vs-npd.md`. Plan:
 | Export CSV: the builder, the filename, why it is off (pure) + its tests | `src/lib/payroll/hris-npd-export.ts` · `hris-npd-export.test.ts` |
 | Export CSV: the button and the download (BOM) | `src/components/payroll/HrisNpdComparison.tsx` (`exportCsv`, `downloadCsv`) |
 | Export CSV: the paystubs the Notes column reads (`getHrisNpdPaystubs`, a getter run on the click) | `src/components/PayrollWizard.tsx` |
+| Why: every row's reason (pure: `explainHrisNpd`, `linesExplainingGap`, `INFER_TOL_CENTS`) + its tests | `src/lib/payroll/hris-npd-reasons.ts` · `hris-npd-reasons.test.ts` |
+| Why: the roster lookup's matching and reply check (pure, shared by route and wizard) | `src/lib/payroll/hris-npd-identity.ts` |
+| Why: the read-only roster lookup for Not in HRIS addresses | `app/api/payroll-wizard/npd-identities/route.ts` |
+| Why: the wiring (`npdIdentities`, `hrisNpdFacts`, `hrisNpdReasons`, after `firstPaycheckSummary`); the Why lines (`WhyLines`) | `src/components/PayrollWizard.tsx` · `src/components/payroll/HrisNpdComparison.tsx` |
 
 ## Where it lives
 
@@ -195,7 +200,16 @@ applies to both:
 | Their department's **"Pay this week"** off (Step 1 → Configuration) | Not a row. Counted in the left-out line as "in a department paused" |
 
 Both are the wizard's own do-not-pay settings for the week (`payroll-wizard-configuration-tab.md`
-§ "Pay this week"). **The Final Pay table is not affected.** Excluded people stay on it, because
+§ "Pay this week"). **Paused does not need hours** (2026-10-06): `npdPausedEmails` is everyone with
+Hubstaff hours whose department is paused, **and** everyone on the active roster whose every master
+row sits in a paused department, by all of their addresses (work, personal, both alternates), with
+the department key from the Configuration tab's own chain (`normalizeDeptToKey` → registry → slug).
+Before that, only the first half existed, so a Sales or US EE person with no hours that NPD lists at
+$0.00 came through as a false Not in HRIS, which this section forbids. Measured on the 09-27 week:
+6 such people (brad@, will@, randy@, chad@, locke@, thomas@; 7 on 09-20), so Not in HRIS goes from
+8 rows to the 2 real ones (two leavers, below). An address with a
+payable row is never left out, whatever its department (`compareHrisNpd` checks that first).
+**The Final Pay table is not affected.** Excluded people stay on it, because
 that is where Exclude is ticked and un-ticked. Only HRIS vs NPD leaves them out.
 
 History, so nobody "restores" an older version as a fix. Kane, 2026-09-30: *"If they are configured
@@ -311,6 +325,97 @@ A green or red row painted over a figure that hasn't landed is the defect this p
 make verdicts "optimistic" while loading.** The status chips are disabled while held, and the
 table falls back to All.
 
+## Why: the reason under each row (2026-10-06)
+
+Kane, 2026-10-06: *"Payroll Wizard - Validation - Not in HRIS - Lets add the reason why they arent in
+HRIS please it could be that they were excluded from Configuration or something else - and if its not
+in NPD, find an appropriate reason why they arent there - and for the Mismatch, lets find a way where
+we can check what could that reason be like if they lack their PAB, Tech Bonus, KPI or whatever be
+smart about this"*. Built via `hardening`, no contradiction (one question left open, below).
+
+Every **Mismatch**, **Not in HRIS** and **Not in NPD** row carries its reason **under the person, in
+the Work Email cell**. The table keeps exactly the four columns Kane named (a render test pins it).
+Export CSV writes the same lines in a **Why** column (§ Export CSV). `explainHrisNpd`
+(`hris-npd-reasons.ts`) decides every line; the panel only shows them.
+
+| Rule | Why |
+|---|---|
+| **A reason never changes a verdict, a figure, a count or a total.** `explainHrisNpd` reads the comparison and returns lines by row key; a test proves the comparison is byte-identical afterwards | The verdicts are `compareHrisNpd`'s, and that is where they stay |
+| **Naming the person behind a personal email is not a join.** When NPD used someone's personal or alternate address, BOTH rows stay what they are (Not in HRIS and Not in NPD), and each says who the other is | Kane, 2026-09-30: the join is the work email, exactly (§ Matching people). Telling the clerk which address NPD used is not connecting the figures |
+| **Three strengths, said in words, never colour alone.** A plain line is a **fact** from HRIS's own records. **Likely** = an inference that reproduces NPD's figure **to the cent**. **Check** = a lead, not a finding. A spinner line = waiting on the roster lookup | So nobody reads a lead as a finding. The CSV carries the same words ("Likely:", "Check:") |
+| **"Likely" must land within 1¢** (`INFER_TOL_CENTS`), never the operator's "off by" setting, which decides a match | A looser bar lets a coincidence pass as a cause |
+| **No reason while the verdicts are held** | A ₱0.00 bonus is only safe to call "no bonus" once every Net input has landed (§ No verdict before the figures can be judged) |
+| **NPD's own columns are not read.** A Mismatch is explained from HRIS's side only: which of HRIS's paystub lines, left out, gives exactly NPD's figure | `npd-dashboard.md` § Read by the HRIS vs NPD step: "Two columns only", kept by Kane on 2026-10-06 (session log item 368). That is why such a line is "Likely", never a fact. Reading NPD's bonus and hours columns is an open question (item 371) |
+
+**Not in HRIS** (an address NPD lists that has no payable HRIS row). The wizard's roster carries
+nobody who has left, so the wizard asks the read-only roster lookup
+(`POST /api/payroll-wizard/npd-identities`) about exactly these addresses, once per list, only while
+the tab is open:
+
+- **Their personal (or alternate) email**: *"This is Reroma, Kane's personal email. HRIS pays them as
+  kaner@…, which shows as Not in NPD: NPD used the wrong address."* The HRIS row says the reverse.
+- **Offboarded**: *"… was offboarded Sep 24, 2026 (resigned), before this week."* plus whether they
+  have Hubstaff hours this week under any of their addresses.
+- **On the roster but no Hubstaff hours this week** (department and start date given).
+- **On the roster with hours but no payable row**: a lead to the Final Pay table.
+- **No one has the address**, active or offboarded, plus a lead when it is one or two letters off a
+  Not in NPD address on the same domain (*"Did NPD mean kaner@…?"*).
+- NPD's figure of **$0.00** is said as a lead.
+- **A failed lookup says it failed** (*"Couldn't check HRIS's roster for this address: …"*), never "not
+  on the roster". A reply missing any address asked about is refused (`parseNpdIdentityPayload`).
+  While the lookup runs the line spins, and **Export CSV waits** (a file would carry "Looking up…").
+  A failed lookup is retried the next time the tab opens.
+- People configured not to be paid are not rows at all (§ People configured not to be paid), so
+  "excluded in Configuration" is never a Not in HRIS reason: they are in the left-out count.
+
+**Not in NPD** (a payable HRIS row NPD has no line for), from what the wizard already holds:
+
+- **NPD lists them under another address** (the Not in HRIS pairing above).
+- **NPD's line for them was skipped**: a refused line carrying their address, with its label
+  (`All Departments row 431` on the locked sheets, `line 12` on a paste) and the refusal.
+- **Paid in COP (Colombia)**, plus *"NPD lists none of this week's N COP-paid people"* when that is
+  true. Measured 2026-10-06: all three Not in NPD rows on the 09-27 week, and 3 of 7 on 09-20, are
+  the Colombians; NPD carries no COP payee.
+- **Final paycheck** (the wizard's leaver overlay, with the offboarding date), **first paycheck**
+  (first-ever Hubstaff hours this week), **HRIS pays ₱0.00** (with "no pay rate on file" or the
+  salary hold), and a lead for a week under 2 hours or with no payout address.
+- Otherwise a lead naming NPD's tab to look on (HSL for HSL, All Departments for everyone else).
+
+**Mismatch**, tried in this order; the first that reproduces NPD's figure is said:
+
+1. **NPD lists them on several lines** (both tabs, or twice on one) and one line alone is HRIS's
+   figure: a fact, *"NPD looks to have them twice"*. Another NPD line for them that was refused is a
+   fact too.
+2. **Exactly one, two or three of HRIS's paystub lines** (`linesExplainingGap`): *"NPD is ₱2,000.00
+   lower: exactly HRIS's Performance Bonus (KPI) ₱2,000.00. NPD likely left it out."* The lines are
+   the statement's own (Tech Allowance, Attendance Incentive, Performance Bonus (KPI), Overtime,
+   Weekend, Time Adjustment, Adjustment with its note, Orphanage, MESA). An hours or salary line is
+   only tried alone. Two equal lines are said as "one of". More than three fits is not said.
+3. **A ₱100 MESA contribution** NPD took and HRIS did not.
+4. **Three or more mismatched rows** whose pesos give NPD's figure at one other rate: *"The pesos
+   agree: NPD converted at ₱62.70 …"*. One row alone proves nothing and is not said (the ✗'s tooltip
+   still gives that row's implied rate).
+5. **A different hourly rate**, in ₱5 steps, priced over the week's hours with overtime.
+6. **Different hours**, priced the way the week is (regular to 40, overtime past it), so fewer hours
+   come off overtime first: *"NPD pays for 40.29h, HRIS for 42.29h (2.00h fewer)."* A gap of a
+   hundredth of an hour or so is *"a rounding-sized gap"* with its size only, never whose hours moved
+   (measured: one of three such rows had the same hours on both sides). When NPD pays **more** past 40h and "extra hours at the plain
+   rate, paid outside the timesheet" gives the same pesos, both are said, as a lead.
+7. **Leads**: a **round** amount more (₱5,000, ₱500) is said as a bonus lead before any hours reading
+   (measured: a ₱5,000 monthly bonus at a ₱500/h rate read as "10.00h more" until this came first),
+   with HRIS's three bonus lines to hold against NPD's; quarter hours at the plain rate as "hours paid
+   outside the timesheet?"; any other amount more as a bonus lead; and otherwise the gap with HRIS's
+   bonus lines.
+
+Measured 2026-10-06, read-only, on the 09-27 week (HRIS = the saved final-pay snapshot, NPD = both
+locked sheets): 53 mismatches, 17 "Likely". Checked one by one against NPD's own rate, hours and
+bonus columns: the ₱110/h, ₱90/h, ₱70/h and ₱60/h rate changes, the ₱2,000 and ₱100 KPI, the ₱304
+time adjustment and the 2.00h of overtime are all what NPD's columns show; of the three rounding-sized
+gaps, two are a 0.01h hours difference and one (₱2.40) has the same hours on both sides, which is
+why that line names the size, not the cause. Separately, one person is on NPD twice (a fact). The other 36 are
+leads; most are bonuses NPD pays that HRIS does not (₱5,000 / ₱7,500 monthly, a ₱480.33 QC team
+bonus), which only NPD's columns could name exactly.
+
 ## Saving the output (2026-10-01)
 
 Kane: *"Payroll Wizard - Validation Step - HRIS vs NPD - Give me an SQL Migration for this one so I
@@ -380,7 +485,8 @@ and in the overlay, and only on step 2: step 1 has no output.
 | **People configured not to be paid this week are not in the file** (Kane, 2026-10-06), as they are not rows on screen. A note says `Left out, not paid this week: N (X excluded on Final Pay · Y in a department paused …). NPD lists Z of them.` and the counts block ends `Left out - not paid this week,N` | § People configured not to be paid. The count is the screen's own (`summarizeHrisNpdLeftOut`) |
 | **The skipped NPD lines are listed at the bottom** (line, reason, text), and a note at the top says how many | Hiding the input must never hide a refused line (§ Two steps). A file with no refusals has no such block |
 | **Notes above the header row**: the week key, when it was exported (UTC), the NPD source (`NPD's locked sheets for week … (All Departments vN, HSL vN)`, or the paste), the FX divisor, the "off by" N in use, Difference = NPD − HRIS, the "every row" rule, the left-out count, and the Total Pay US Workers note when NPD has such rows | The screen's legend doesn't travel with the file. The tolerance and the rate are what the verdicts mean |
-| **Columns**: Work Email, Name, Match, HRIS USD, NPD USD, Difference USD (NPD − HRIS), HRIS PHP (final pay), HRIS rows added, NPD lines added, Notes | One column per thing the screen shows, so nothing on screen is missing from the file |
+| **Columns**: Work Email, Name, Match, **Why**, HRIS USD, NPD USD, Difference USD (NPD − HRIS), HRIS PHP (final pay), HRIS rows added, NPD lines added, Notes | One column per thing the screen shows, so nothing on screen is missing from the file |
+| **Why = the screen's reasons, copied** (2026-10-06, § Why), in order, joined by ` \| `, with their strength in words (`Likely:` / `Check:`; a fact has no prefix). A note at the top says what the three mean and that NPD's own columns are not read. **No file while a reason still waits on the roster lookup** (the button says *"Still looking up who the Not in HRIS addresses belong to."*) | The strength must travel with the file. A spinner cannot |
 | **Notes = the person's paystub, on a row with an issue** (Kane, 2026-10-06: *"Change the note and make it match the paystub if there are issues, like no bonus no kpi and any of that"*). A **Mismatch** or **Not in NPD** row gets `Paystub: Regular Hours ₱10,600.00 (40.00h) · No Tech Allowance · Attendance Incentive ₱1,000.00 · No Performance Bonus (KPI) · Adjustment -₱500.00 (its note) · MESA Deduction -₱100.00 · Net ₱…`: the statement's labels, in its order (`PayStubStatement.tsx`). Hours lines (Regular / M-F, Overtime / OT Differential, Weekend, or the Salary line) and the extras (Time Adjustment, Adjustment, Orphanage, MESA) appear only when they carry money. **The three bonus lines always appear**, as the amount or as **`No Tech Allowance` / `No Attendance Incentive` / `No Performance Bonus (KPI)`**, because a missing bonus or KPI is what the note is for. Performance Bonus is `other_bonuses`, the KPI and department bonuses (`paystub-dispatch.md:500`). A **Match** carries no note. **Not in HRIS** reads `No HRIS paystub this week` | Accounting reads the file to find why HRIS and NPD differ, and the paystub is HRIS's side of that line by line. Kane's ruling replaced the first build's notes, which gave the implied FX rate and "within the off-by setting" (the screen's ✗ tooltip still gives the rate) |
 | **The note is the SAME paystub Step 8 renders, never a re-computation.** The wizard maps each payable staged payload (`dispatchData.rows`, which holds no excluded row) through `mapPayloadToPayStub`, the call the Step-8 preview, the in-app modal and the email use, keyed by normalized work email (source-guarded). It is a getter run on the click, so ~1,200 payloads are not mapped on every render | Two descriptions of one paystub that could disagree is the defect this avoids (the preview's own reason for rendering the shared statement) |
 | **A ₱0.00 bonus is safe to call "No …" only because the file waits for the hold.** No file is made while any Net input is still loading or failed (§ No verdict before the figures can be judged), so every line is settled. Never let the export run while held to "get the notes out" | An unloaded bonus prints ₱0.00 and is indistinguishable from a real one ([[paystub-preview-pending-fields]]). "No Performance Bonus (KPI)" over an unread KPI would be a false claim on a pay record |
@@ -403,7 +509,8 @@ the same rule as Reports: a total that follows a filter gets read out as the wee
 (`payroll-wizard-final-pay.md` § 2026-09-09). The search matches the work email and the name. It is
 a **full-width bar directly above the table**, the Final Pay pattern (Kane, 2026-09-30: *"add a
 search bar in the output"*). There is no Not paid chip, and no search can reach a left-out person,
-because they are not rows (§ People configured not to be paid).
+because they are not rows (§ People configured not to be paid). The search does **not** match the
+Why text.
 
 ## Phone layout (three traps, each pinned by a render test)
 
@@ -431,6 +538,13 @@ because they are not rows (§ People configured not to be paid).
   (`payroll-wizard-final-pay.md` § 2026-08-18 stays OPEN).
 - The Continue button's confirm does **not** consult this tab. It still counts only the Final Pay
   red flags.
+- **Exact, line-by-line Mismatch reasons from NPD's own columns** (Tech Bonus, Attendance Bonus,
+  Performance Bonus, hours, rate). The step reads two NPD columns only (§ Why), so a Mismatch is
+  explained from HRIS's paystub, and a bonus NPD pays that HRIS does not is only ever a lead. Reading
+  more needs Kane to change `npd-dashboard.md`'s "Two columns only" (session log item 371).
+- **Save output does not store the Why lines.** They are rebuilt from the comparison on screen;
+  storing them would need a migration.
+- **Searching the Why text.**
 
 ## Verification at ship
 
@@ -525,7 +639,19 @@ against the removed helpers and the `not_paid` filter. The five HRIS-vs-NPD file
 `npm test` **6,006/6,006**. tsc clean apart from the stale `.next/types` errors. **Not clicked
 through signed in.** `next build` not run (dev server on :3000).
 
+*Why (2026-10-06):* `hris-npd-reasons.test.ts` (new, 46) plus the five existing files: **246/246**.
+Export CSV's tests now read cells with an RFC 4180 parser and look columns up from the header, so the
+new column could not silently shift a check. `npm test` **6,063/6,063**. tsc clean. Run read-only
+against the live 09-27 week (numbers in § Why) and checked against NPD's own rate and hours columns.
+The panel was rendered to static markup and screenshotted (light, dark, 390px; no page overflow)
+against CSS compiled by the app's own Tailwind. **Not clicked through signed in**; the lookup route
+has not been called in production. `next build` not run (dev server on :3000).
+
 ## Deploy notes
+
+**Why (2026-10-06): nothing to apply.** No migration, no env var, no n8n, no grant: the new route
+(`POST /api/payroll-wizard/npd-identities`) is read-only behind the wizard's own view grant. It needs
+the push.
 
 **People configured not to be paid are not rows (2026-10-06): nothing to apply.** No migration, no
 route change: Save output's payload is unchanged. It needs the push.

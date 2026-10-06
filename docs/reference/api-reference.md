@@ -3332,6 +3332,20 @@ still locked at the signature's versions, identical rebuilt text. Otherwise **40
 **400** (not NPD's text, or another week), or **500/503** (NPD unreadable). Nothing is saved in any of those cases. The audit row
 adds `npd_source` (`locked_sheets` + `npd_week` + `npd_versions`, or `paste`).
 
+### `POST /api/payroll-wizard/npd-identities` — HRIS vs NPD's roster lookup for its Not in HRIS rows *(added 2026-10-06)*
+
+[npd-identities/route.ts](../../app/api/payroll-wizard/npd-identities/route.ts). Governing doc:
+[payroll-wizard-hris-vs-npd.md](../features/payroll-wizard-hris-vs-npd.md) § Why. Gate:
+`requireFeatureAccess('accounting', 'payroll_wizard', 'view')`, like the wizard's other reads. **Read-only**: writes and audits
+nothing. Body `{ emails: string[] }` (normalized and deduplicated; at most 500, else **400**). It reads the WHOLE
+`global_master_list`, active and offboarded, paged through `selectAllPaged`, and matches in memory, so no `.in()` list can hit the
+URL ceiling. **200** `{ byEmail, error: null }`: every requested address has an entry, `[]` meaning the list was read and holds no
+such address; each match is `{ name, workEmail, personalEmail, alternateEmails, department, startDate, offboardedAt,
+offboardedReason, matchedBy: 'work' | 'personal' | 'alternate' }`, active rows first, then the latest leaver. **502** when the
+master list cannot be read, never an empty answer. The wizard refuses a reply that misses any address it asked about
+(`parseNpdIdentityPayload`), so a partial answer can never read as "not on the roster". POST only so the addresses never ride in
+a URL.
+
 ---
 
 ## 24. Accounting Scoreboard *(added 2026-10-01)*
@@ -3710,6 +3724,7 @@ of cells — the matches were not re-run).
 | `/api/payroll-wizard/manual-validation` | GET, PATCH | `requireFeatureAccess` | [payroll-wizard-manual-validation](../features/payroll-wizard-manual-validation.md) |
 | `/api/payroll-wizard/npd-comparison` | GET, POST | `requireFeatureAccess` | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) § Saving the output |
 | `/api/payroll-wizard/npd-feed` | GET | `requireFeatureAccess` ×2 (`payroll_wizard` + `npd` view) | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) § NPD's locked sheets feed the step |
+| `/api/payroll-wizard/npd-identities` | POST (read-only) | `requireFeatureAccess` (`payroll_wizard` view) | [payroll-wizard-hris-vs-npd](../features/payroll-wizard-hris-vs-npd.md) § Why |
 | `/api/payroll-wizard/notes` | GET, POST, PATCH, DELETE | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |
 | `/api/payroll-wizard/notes/adjustment` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/payroll-wizard/notes/workers` | GET | `requireFeatureAccess` | [payroll-wizard-notes](../features/payroll-wizard-notes.md) |

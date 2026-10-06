@@ -414,6 +414,13 @@ import {
   type HrisNpdFilter,
 } from '@/lib/payroll/hris-npd-compare';
 import { buildHrisNpdSnapshot, parseHrisNpdSaveMeta } from '@/lib/payroll/hris-npd-snapshot';
+import {
+  explainHrisNpd,
+  hrisNpdIdentityEmails,
+  type HrisNpdIdentityState,
+  type HrisNpdPersonFacts,
+} from '@/lib/payroll/hris-npd-reasons';
+import { parseNpdIdentityPayload } from '@/lib/payroll/hris-npd-identity';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { buildCatalogDeptNameMap } from '@/lib/departments/dept-identity';
 import { computePabIneligibility, groupFailedDaysByHslWeek, pabSeverityBand, type PabDayEntry } from '@/lib/payroll/pab-ineligibility';
@@ -2984,6 +2991,16 @@ export default function PayrollWizard({
   /** HRIS vs NPD's "off by at most N¢" setting (Kane, 2026-09-30). Wizard state so step and
    *  full screen agree; never saved, so every load starts at the default 3¢. */
   const [hrisNpdTolerance, setHrisNpdTolerance] = useState<number>(DEFAULT_MATCH_TOLERANCE_CENTS);
+  /**
+   * HRIS vs NPD → Why (Kane, 2026-10-06): the roster lookup for the Not in HRIS addresses
+   * (`POST /api/payroll-wizard/npd-identities`), keyed by the exact address list it answered,
+   * so a reply for another list is never read as this one's. A failed lookup is an error the
+   * Why line says out loud, never "not on the roster".
+   */
+  const [npdIdentities, setNpdIdentities] = useState<{ key: string; view: HrisNpdIdentityState }>({
+    key: '',
+    view: { state: 'loading' },
+  });
   /**
    * HRIS vs NPD **Save output** (Kane, 2026-10-01): the week's newest saved output and the
    * save in flight, stamped with the week like `npdPaste`, so another week's state is never
@@ -10726,8 +10743,19 @@ export default function PayrollWizard({
     return out;
   }, [dispatchData.rows]);
 
-  /** People in a department paused this week — the same predicate `effectiveCalcResults`
-   *  filters them out with — so NPD listing one reads "paused", not a bare "Not in HRIS". */
+  /**
+   * People in a department paused this week, so NPD listing one is LEFT OUT ("in a department
+   * paused"), never a false "Not in HRIS" (payroll-wizard-hris-vs-npd.md § People configured not
+   * to be paid). Two sources, because being paused does not need hours:
+   *   - everyone with Hubstaff hours whose department is paused: the same predicate
+   *     `effectiveCalcResults` filters them out with;
+   *   - everyone on the ACTIVE roster whose every master row sits in a paused department, by all
+   *     of their addresses. Before 2026-10-06 only the first source existed, so a Sales or US EE
+   *     person with no hours (NPD lists them at $0.00) leaked in as Not in HRIS. The department
+   *     key is the Configuration tab's own chain (`allWizardDepartments`).
+   * `compareHrisNpd` only leaves an address out when no payable row carries it, so this can
+   * never hide someone HRIS pays.
+   */
   const npdPausedEmails = useMemo(() => {
     const out = new Set<string>();
     if (pausedDeptKeys.size === 0) return out;
@@ -10737,8 +10765,34 @@ export default function PayrollWizard({
       const k = normEmail(row.email);
       if (k) out.add(k);
     }
+    const rowsByWork = new Map<string, typeof masterEmployees>();
+    for (const emp of masterEmployees) {
+      const we = normEmail(emp.work_email);
+      if (!we) continue;
+      const list = rowsByWork.get(we);
+      if (list) list.push(emp);
+      else rowsByWork.set(we, [emp]);
+    }
+    for (const rows of rowsByWork.values()) {
+      const allPaused = rows.every((emp) => {
+        const label = emp.department?.trim();
+        if (!label) return false;
+        const key =
+          normalizeDeptToKey(label) ??
+          resolveDeptKeyWithRegistry(label, customDepartments) ??
+          slugifyDeptKey(label);
+        return !!key && pausedDeptKeys.has(key);
+      });
+      if (!allPaused) continue;
+      for (const emp of rows) {
+        for (const e of [emp.work_email, emp.personal_email, emp.alternate_work_email, emp.alternate_work_email_2]) {
+          const k = normEmail(e);
+          if (k) out.add(k);
+        }
+      }
+    }
     return out;
-  }, [calcResults, employeeDepts, pausedDeptKeys]);
+  }, [calcResults, employeeDepts, pausedDeptKeys, masterEmployees, customDepartments]);
 
   /**
    * Can HRIS's dollar figures be judged yet? The Step-8 preview's own judgement of the
@@ -11918,6 +11972,140 @@ export default function PayrollWizard({
     }
     return { first, alsoLeaving, unknown, floor };
   }, [firstPaycheckByEmail]);
+
+  /* ── HRIS vs NPD → Why (Kane, 2026-10-06) ───────────────────────────────────────
+     "add the reason why they arent in HRIS … if its not in NPD, find an appropriate reason …
+     for the Mismatch … be smart about this". Every Mismatch / Not in HRIS / Not in NPD row
+     carries the reason under the person (payroll-wizard-hris-vs-npd.md § Why). DISPLAY ONLY:
+     `explainHrisNpd` reads the comparison and never moves a figure or a verdict. */
+
+  /** The Not in HRIS addresses, as one key: the roster lookup answers exactly this list. */
+  const hrisNpdIdentityKey = useMemo(() => hrisNpdIdentityEmails(hrisNpdComparison).join('\n'), [hrisNpdComparison]);
+  const npdIdentitySeq = useRef(0);
+  const npdIdentitiesRef = useRef(npdIdentities);
+  useEffect(() => {
+    npdIdentitiesRef.current = npdIdentities;
+  }, [npdIdentities]);
+  useEffect(() => {
+    // Only while the tab is open: nobody reads a reason anywhere else.
+    if (!hrisNpdOpen || !hrisNpdIdentityKey) return;
+    const held = npdIdentitiesRef.current;
+    // Answered, or in flight, for exactly this list. A failed lookup is retried on the next open.
+    if (held.key === hrisNpdIdentityKey && held.view.state !== 'error') return;
+    const key = hrisNpdIdentityKey;
+    const emails = key.split('\n');
+    const seq = ++npdIdentitySeq.current;
+    setNpdIdentities({ key, view: { state: 'loading' } });
+    void (async () => {
+      let view: HrisNpdIdentityState;
+      try {
+        const res = await fetch('/api/payroll-wizard/npd-identities', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ emails }),
+        });
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        const byEmail = res.ok ? parseNpdIdentityPayload(json, emails) : null;
+        view = byEmail
+          ? { state: 'ready', byEmail }
+          : { state: 'error', message: json?.error?.trim() || (res.ok ? 'its reply could not be read.' : `HTTP ${res.status}.`) };
+      } catch {
+        view = { state: 'error', message: 'the server could not be reached.' };
+      }
+      // Only the newest lookup may land.
+      if (seq !== npdIdentitySeq.current) return;
+      setNpdIdentities({ key, view });
+    })();
+  }, [hrisNpdOpen, hrisNpdIdentityKey]);
+
+  /** What the wizard knows about each payable person, by normalized work email. */
+  const hrisNpdFacts = useMemo(() => {
+    const leftOn = new Map<string, string | null>();
+    for (const r of offboardedRoster) {
+      for (const e of [r.hubstaff_email, r.work_email, r.personal_email, r.alternate_work_email, r.alternate_work_email_2]) {
+        const n = normEmail(e);
+        if (n && !leftOn.has(n)) leftOn.set(n, r.off_boarded_at);
+      }
+    }
+    const out = new Map<string, HrisNpdPersonFacts>();
+    for (const b of validationBreakdownInputs) {
+      if (b.excluded) continue;
+      const em = normEmail(b.email);
+      if (!em || out.has(em)) continue;
+      out.set(em, {
+        department: b.deptName && b.deptName !== '—' ? b.deptName : null,
+        isHsl: b.isHsl,
+        totalHours: b.totalHours,
+        regularHours: b.regularHours,
+        otHours: b.otHours,
+        regularRate: b.regularRate,
+        otRate: b.otRate,
+        otIsDifferential: b.otRateIsDifferential === true,
+        salaried: b.salary != null || b.salaryHeld != null,
+        salaryHeld: b.salaryHeld?.label ?? null,
+        firstPaycheck: firstPaycheckByEmail?.get(em)?.kind === 'first',
+        startDate: masterIndex.byWorkEmail.get(em)?.start_date ?? offboardedIndex.byWorkEmail.get(em)?.start_date ?? null,
+        finalPay: finalPayEmails.has(em) ? { offboardedAt: leftOn.get(em) ?? null } : null,
+        settlement: settlementFor(b.email),
+      });
+    }
+    return out;
+  }, [validationBreakdownInputs, offboardedRoster, firstPaycheckByEmail, masterIndex, offboardedIndex, finalPayEmails, settlementFor]);
+
+  /** Every address with a row in this week's Hubstaff timesheet. */
+  const hrisNpdTimesheetEmails = useMemo(() => {
+    const out = new Set<string>();
+    for (const r of hubstaffData) {
+      const n = normEmail(r.email);
+      if (n) out.add(n);
+    }
+    return out;
+  }, [hubstaffData]);
+
+  const hrisNpdReasons = useMemo(() => {
+    // HRIS's paystubs for the Mismatch rows only, through the Step-8 call (`mapPayloadToPayStub`),
+    // so a gap is explained in the paystub's own lines. Only these rows: ~1,200 payloads are not
+    // mapped on every render.
+    const wanted = new Set<string>();
+    for (const r of hrisNpdComparison.rows) {
+      const e = r.status === 'mismatch' ? normEmail(r.workEmail) : null;
+      if (e) wanted.add(e);
+    }
+    const paystubs = new Map<string, PayStubView[]>();
+    if (wanted.size > 0) {
+      for (const e of dispatchData.rows) {
+        const k = normEmail(e.email);
+        if (!k || !wanted.has(k)) continue;
+        const list = paystubs.get(k) ?? [];
+        list.push(mapPayloadToPayStub(e as unknown as Record<string, unknown>));
+        paystubs.set(k, list);
+      }
+    }
+    return explainHrisNpd({
+      comparison: hrisNpdComparison,
+      parse: npdParse,
+      sourceText: npdSourceText,
+      fxRate: usdToPhpRate,
+      facts: hrisNpdFacts,
+      paystubs,
+      identities:
+        hrisNpdIdentityKey && npdIdentities.key === hrisNpdIdentityKey ? npdIdentities.view : { state: 'loading' },
+      timesheetEmails: hrisNpdTimesheetEmails,
+      weekStart: hubstaffWeekStart,
+    });
+  }, [
+    hrisNpdComparison,
+    npdParse,
+    npdSourceText,
+    usdToPhpRate,
+    hrisNpdFacts,
+    dispatchData.rows,
+    hrisNpdIdentityKey,
+    npdIdentities,
+    hrisNpdTimesheetEmails,
+    hubstaffWeekStart,
+  ]);
 
   const filteredCalcResults = useMemo(() => {
     const needle = initialCalcSearch.toLowerCase().trim();
@@ -20335,6 +20523,7 @@ export default function PayrollWizard({
           onFilterChange: setHrisNpdFilter,
           save: hrisNpdSaveProps,
           getPaystubs: getHrisNpdPaystubs,
+          reasons: hrisNpdReasons,
         };
 
         return (

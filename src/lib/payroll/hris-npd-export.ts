@@ -36,6 +36,12 @@
  * The hold is what makes a ₱0.00 safe to call "No": a file is only made once every Net input
  * has landed.
  *
+ * **The Why column is the screen's reason, copied** (Kane, 2026-10-06: "add the reason why they
+ * arent in HRIS … find an appropriate reason why they arent [in NPD] … for the Mismatch … be
+ * smart about this"). `explainHrisNpd` decides it once; this writes it, "Likely:" / "Check:"
+ * prefixed so the strength travels with the file. No file while a reason still waits on the
+ * roster lookup.
+ *
  * Deliberately pure: comparison in, CSV text out. No fetch, no DOM, no Supabase.
  */
 
@@ -47,6 +53,7 @@ import {
   type HrisNpdStatus,
   type NpdPasteParse,
 } from './hris-npd-compare';
+import { hrisNpdReasonsPending, reasonText, type HrisNpdReasons } from './hris-npd-reasons';
 import { heldSaveReason } from './hris-npd-snapshot';
 import {
   formatPhp,
@@ -145,6 +152,14 @@ export function hrisNpdExportFilename(periodLabel: string | null, now: Date): st
   return `hris-vs-npd_${week}_${exportTimestamp(now)}.csv`;
 }
 
+/**
+ * Why the file has to wait for the Why column, or null: a reason still waiting on the roster
+ * lookup would travel as "Looking this address up…" in a file that outlives the lookup.
+ */
+export function hrisNpdReasonsBlockedReason(reasons: HrisNpdReasons): string | null {
+  return hrisNpdReasonsPending(reasons) ? 'Still looking up who the Not in HRIS addresses belong to.' : null;
+}
+
 /** Why the output can't be exported right now, or null. Also the button's title. */
 export function hrisNpdExportBlockedReason(comparison: HrisNpdComparison): string | null {
   if (comparison.hold) return heldSaveReason(comparison.hold);
@@ -157,6 +172,7 @@ export const HRIS_NPD_EXPORT_HEADER = [
   'Work Email',
   'Name',
   'Match',
+  'Why',
   'HRIS USD',
   'NPD USD',
   'Difference USD (NPD - HRIS)',
@@ -245,12 +261,14 @@ function comparedNotes(r: HrisNpdRow, paystubs: HrisNpdPaystubs): string {
   return notes.join(' | ');
 }
 
-function comparedRow(r: HrisNpdRow, paystubs: HrisNpdPaystubs): string {
+function comparedRow(r: HrisNpdRow, paystubs: HrisNpdPaystubs, reasons: HrisNpdReasons): string {
   return [
     textCell(r.workEmail),
     textCell(r.name),
     // Held rows never reach here: the builder refuses while held.
     textCell(r.status ? STATUS_LABEL[r.status] : ''),
+    // The screen's Why line, the same reasons in the same order (§ Why).
+    textCell((reasons.get(r.key) ?? []).map(reasonText).join(' | ')),
     centsCell(r.hrisCents),
     centsCell(r.npdCents),
     centsCell(r.deltaCents),
@@ -283,10 +301,12 @@ export function buildHrisNpdCsv(input: {
   source: HrisNpdExportSource;
   /** The staged paystubs the Notes column reads (`mapPayloadToPayStub`, as Step 8 renders them). */
   paystubs: HrisNpdPaystubs;
+  /** The Why column: the SAME reasons the screen shows under each row (`explainHrisNpd`). */
+  reasons: HrisNpdReasons;
   now: Date;
 }): { ok: true; csv: string } | { ok: false; reason: string } {
-  const { comparison, parse, fxRate, periodLabel, source, paystubs, now } = input;
-  const blocked = hrisNpdExportBlockedReason(comparison);
+  const { comparison, parse, fxRate, periodLabel, source, paystubs, reasons, now } = input;
+  const blocked = hrisNpdExportBlockedReason(comparison) ?? hrisNpdReasonsBlockedReason(reasons);
   if (blocked) return { ok: false, reason: blocked };
   const counts = comparison.counts!;
   const { totals, toleranceCents } = comparison;
@@ -301,6 +321,7 @@ export function buildHrisNpdCsv(input: {
     `Match: HRIS and NPD off by at most ${toleranceCents} cent${toleranceCents === 1 ? '' : 's'} (the output's "off by" setting). A match inside that still shows its Difference.`,
     'Difference = NPD - HRIS.',
     'Every row of the output is here. The search and the chips on screen do not narrow this file.',
+    'Why: what HRIS\'s own records say about a row that needs a look. A plain line is a fact. "Likely:" means that leaving exactly that paystub line out (or using that rate) gives NPD\'s figure to the cent. "Check:" is a lead, not a finding. NPD\'s own bonus and hours columns are not read.',
     'Notes: on a Mismatch or Not in NPD row, the person\'s paystub as Step 8 shows it, line by line. "No Tech Allowance", "No Attendance Incentive" and "No Performance Bonus (KPI)" mean that line is PHP 0.00 on the paystub.',
     left.total > 0
       ? `Left out, not paid this week: ${left.total} (${hrisNpdLeftOutWhy(left)}).${left.inNpd > 0 ? ` NPD lists ${left.inNpd} of them.` : ''} They are not in this file, not compared and not in the counts or totals.`
@@ -321,9 +342,10 @@ export function buildHrisNpdCsv(input: {
     ...notes.map(textCell),
     '',
     HRIS_NPD_EXPORT_HEADER.join(','),
-    ...comparison.rows.map((r) => comparedRow(r, paystubs)),
+    ...comparison.rows.map((r) => comparedRow(r, paystubs, reasons)),
     [
       textCell(`TOTAL - ${totals.people} ${totals.people === 1 ? 'person' : 'people'}`),
+      '',
       '',
       '',
       centsCell(totals.hrisCents),
