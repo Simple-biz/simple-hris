@@ -13,13 +13,15 @@ Key files:
 - `src/components/Sidebar.tsx`, `ceo/CeoSidebar.tsx`,
   `payroll-clerk/PayrollClerkSidebar.tsx` — purge it on sign-out.
 - Tests: `src/lib/accounting/tab-cache.test.ts`.
+- `src/lib/people/people-cache.ts` (+ `.test.ts`) — the People tab's only way in or out of the
+  store (§ *People: the whole tab paints*).
 
 Siblings: `employee-dashboard-cache.md`, `manager-dashboard-cache.md`, and
 `hsl-kpi-calculator-2026-07.md` § *Tab-switch & reload cache*.
 
 ## One store, three dashboards
 
-Fourteen call sites across three shells read it, which is why it is neither the Accounting
+Fifteen call sites across three shells read it, which is why it is neither the Accounting
 store nor the CEO store but the shared one:
 
 | Consumer | Datasets |
@@ -27,7 +29,8 @@ store nor the CEO store but the shared one:
 | `components/Overview.tsx` | `overviewPayouts`, `overviewPabMetrics` |
 | `accounting/PayrollCycleGreetingModal.tsx` (the shell's "Hi Kane" modal, 2026-09-26) | `payrollReadiness(null)` — the live week, same entry and helpers as the FAB; `cycleGreetingShown` — a **UI flag** (`true` once opened this session), here rather than in raw sessionStorage because this store's purge-on-sign-out / viewer-swap / 12h lifetime IS "once per browser session" |
 | `accounting/PayrollNotesSetupCard.tsx` (the Overview's Payroll Notes card, 2026-09-26) | `payrollReadiness` — the SAME per-week entry as the FAB, via `payroll/readiness-cache.ts`; seeded in a layout effect (hydration-safe), revalidated unless under 30s old, never skip-flagged |
-| `people/PeopleTab.tsx` | `peopleRoster` |
+| `people/PeopleTab.tsx` (via `lib/people/people-cache.ts`) | `peopleRoster` — the default week's rows, summary, week and warning as ONE entry; `peopleWeeks` (the pay-week selector); `peopleStats` (Statistics, each point's leaders cut to the tooltip's five) |
+| `people/PeopleBankChanges.tsx` (via `lib/people/people-cache.ts`) | `peopleBankChanges` — the newest 80 masked payout edits |
 | `accounting/AccountingTransfers.tsx` | `transfers` |
 | `accounting/AccountingDocuments.tsx` | `documentsQueue`, `documentsSignature`, `documentsView` |
 | `accounting/BonusCatalog.tsx` | `ratesSummary`, `ratesFx`, `ratesView` |
@@ -145,8 +148,9 @@ same request twice", and `employee-dashboard-cache.md`'s reason, which is that
 `upsertPaystubDispatchQueue` re-stages onto an already-PAID row with no post-pay detector
 ([[paystub-staged-snapshot-stale]]). `tab-cache.test.ts` greps the call sites for
 `dispatchQueue`, `peopleRoster`, `transfers`, `pabDisputes`, `bankPreferredRequests`,
-`ratesSummary`, `overviewPayouts`, `payrollReadiness`, `payrollNotesOffboarded` and
-`documentsQueue`, so the boundary cannot be crossed by copy-paste.
+`ratesSummary`, `overviewPayouts`, `payrollReadiness`, `payrollNotesOffboarded`,
+`documentsQueue`, the NPD keys, `ceoPaymentsLive`, `peopleStats` and `peopleBankChanges`, so
+the boundary cannot be crossed by copy-paste.
 `bankPreferredRequests` stays on that banned list although the key was deleted on
 2026-09-24. A name on a ban list protects the boundary if the key ever returns, and
 removing it would loosen a test.
@@ -269,8 +273,9 @@ previous value into the cache just as it keeps it on the tab. The mirror is writ
 touch it, because they reconcile by calling `refetch` and a write that may still be
 refused does not belong on disk.
 
-Unlike `PeopleTab`, this tab has **no SSR/hydration seed mismatch**: `App.tsx` starts
-`activeTab` at `'overview'`, so `BonusCatalog` never renders server-side.
+This tab has **no SSR/hydration seed mismatch**: `App.tsx` starts `activeTab` at
+`'overview'`, so `BonusCatalog` never renders server-side. (This line used to say "unlike
+`PeopleTab`". The same argument covers `PeopleTab`, measured 2026-10-06; see *Not done*.)
 
 Client paint only. No route changed, every fetch is still `cache: 'no-store'`, the
 Realtime channel and the focus refetch are untouched, and no gate moved.
@@ -360,6 +365,75 @@ moved. Verified by `tsc` and the full suite (5,662 / 5,662). **Not clicked throu
 in** (Google SSO), and `next build` was not run because a `next dev` server was live on
 :3000.
 
+### People: the whole tab paints (2026-10-06)
+
+Kane: *"Accounting - People - Cache store the data in cache"*. Since 2026-09-09 People had
+cached its roster **rows** and nothing else. On every return the four week KPI cards read
+`0` / `$0.00` until the read landed, the week selector said *Current week*, and Statistics and
+Bank changes each sat on a skeleton. Same tab on the CEO shell.
+
+Every People read and write goes through **`src/lib/people/people-cache.ts`**. A test fails if
+any file under `src/components/people/` touches `setTabCache` / `getTabCache` /
+`TAB_CACHE_KEYS` directly. The rules, all in that module and its tests:
+
+- **`peopleRoster` is ONE entry: rows + summary + the week they are + a good read's
+  warning.** The cards print "N of {rows.length}" and the period label names the rows' week,
+  so they may never come from two reads. Per-key age eviction could split them, the same
+  correctness argument as the Payment Catalog's CAS pairs. The key moved from `people:list`
+  (bare rows) to **`people:roster:v2`**, so the old shape is orphaned, never read back as an
+  entry. Still only the **default single week** is cached, never a custom range or a chosen
+  week (unchanged). A profile save patches the cached rows and keeps their summary and week.
+  With nothing cached it writes nothing, because a save has no summary to pair with.
+- **A failed read is never cached.** `/api/people` answers 200 with `error` and **no rows** when
+  the roster read itself failed. Before this change that empty roster was written to the cache
+  as if it were true. Now the last good copy stays. With rows, `error` is a warning (bank
+  change history unavailable) and is cached beside them, so the paint repeats the banner.
+  The week list caches only a non-empty `r.ok` answer without `error`. Statistics and Bank
+  changes cache only a successful read.
+- **The selector paints the week the cached rows ARE** (`period` seeded from the entry's
+  `sourceFile`). `defaultFileRef` stays unset until the live week list says which week is
+  current, so no cache write can happen on a guess.
+- **A summary not known yet is `—`, never `0`.** The two OT cards print a dash while
+  `summary` is null (a cold load, or a failed read), the rule the CEO Overview set
+  (§ *CEO Overview*). The export menu still passes `0` and was not changed.
+- **Statistics keeps each point's top five leaders, nothing else is cut.** The live
+  `/api/people/stats` answer was **measured at 3.2M characters** on 2026-10-06 (daily 76
+  points 1.42M, weekly 26 points 1.15M, monthly 7 points 0.54M, leaderboard 0.12M), almost
+  all of it the full OT leaderboard repeated inside every point. sessionStorage has roughly
+  5M characters per origin, shared with the roster (**0.96M for 1,261 rows**, measured the
+  same day), NPD and every other tab. A point's leaders are read ONLY by the chart tooltip,
+  through `.slice(0, STATS_TOOLTIP_LEADERS)`. The cache trims to that same constant
+  (**0.43M**). A test pins that the tooltip uses the constant and no literal. The live state
+  keeps the full answer. The cross-week leaderboard (`otLeaders`, all 1,040) and every
+  department series are kept whole. This is the store's second allow-listed copy after
+  `ceoPaymentsLive`. Step 5 below ("cache the raw payload") still holds for everything else.
+- **A failed Statistics read keeps the chart.** It used to replace the series with empty
+  arrays. Now the series stays and a banner above it says it is the last copy loaded. With
+  nothing on screen, the error card shows as before.
+- **Bank changes paints the last feed with its own write time.** "synced … ago" is seeded
+  from the entry's stamp (`readTabCacheStamp`), so the line is true for the paint. The
+  spinner is derived (`!settled && rows.length === 0`). **`hydratedRef` is never seeded**:
+  a cached copy is not a live read, so the first live read after it flashes nothing, the
+  `recentHydrated` rule from `usePaymentsLive`. The rows are masked at write time
+  (`mask-field.ts`: account, routing and phone numbers keep their last 4, payout emails
+  their first letter and domain). They also carry the editor's IP address, kept because
+  the detail dialog shows it. That is the same level as the roster's own addresses, phones
+  and last-4s already held here.
+- **Banned category, all of it.** Statistics carries per-person OT pay and Bank changes is a
+  live feed. Both were added to `tab-cache.test.ts`'s banned list. The roster was already
+  on it. Every mount still re-reads everything.
+
+**Left cold on purpose:** which People sub-tab you were on (`people-bank-search.md:5`: *"Roster
+is still the tab People opens on"*), the Offboarded search (search-first, nothing loads on
+entry), the Search Bar's and the popup's person reads (they carry the payout record, never
+cached), and the Statistics per-week leaderboard drill (on demand, per week).
+
+Client paint only. No route changed, every fetch is still `cache: 'no-store'`, no gate moved,
+and the Realtime pulse, the 30 s poll and the focus refetch on Bank changes are untouched.
+Verified by `tsc`, 17 new tests in `people-cache.test.ts` (with a mutation check: deleting
+the failed-read guard fails two of them) and the full suite (5,965 / 5,965). **Not clicked
+through signed in** (Google SSO). `next build` not run.
+
 ## Adding another dataset
 
 1. Add a key to `TAB_CACHE_KEYS`. Keys do **not** carry the viewer's email — the identity
@@ -381,11 +455,15 @@ in** (Google SSO), and `next build` was not run because a `next dev` server was 
   factory is the obvious follow-up and is still open — it was not done here because all
   four are shipped and tested, and migrating them is its own review.
   (`manager-dashboard-cache.md` § *Not done* has said this since 2026-09-01.)
-- **`PeopleTab` has a pre-existing SSR/hydration seed mismatch.** The `/accounting` route
-  renders `AppShell` server-side, so `useState(getTabCache(...))` yields `[]` on the
-  server and cached rows on the client. The envelope did not introduce this and does not
-  worsen it (reads were already inert server-side), but the other two stores treat
-  hydration safety as load-bearing and this one has no argument for it. Own review.
+- **`PeopleTab`'s SSR/hydration seed mismatch: measured unreachable, 2026-10-06.** This
+  bullet used to say: the `/accounting` route renders `AppShell` server-side, so the seed
+  yields `[]` on the server and cached rows on the client. But `PeopleTab` is mounted only by
+  `App.tsx` and `CeoApp.tsx`, and **both start `activeTab` at `'overview'`** (`App.tsx:73`,
+  `CeoApp.tsx:42`), switching tabs only from an effect or a click. So `PeopleTab` never
+  renders on the server, which is the same argument this doc already accepts for
+  `BonusCatalog`. The mismatch returns if either shell ever starts on (or server-renders) the
+  People tab, for example a deep link resolved during render. Then the seed must move
+  into a layout effect, the `PayrollNotesSetupCard` recipe.
 - **No server-side caching.** Every route keeps `cache: 'no-store'`; this is a
   client-side paint optimisation and changes no route's freshness.
 - **Not verified in a browser.** `tsc` is clean and, as of the 2026-09-21 Payment

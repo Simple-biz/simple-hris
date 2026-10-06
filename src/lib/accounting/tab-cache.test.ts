@@ -362,6 +362,9 @@ test('the skip flag is confined to lookup lists and aggregate snapshots', async 
     'npdView',
     // CEO "Payments to send": a count over the dispatch queue (2026-10-02).
     'ceoPaymentsLive',
+    // People → Statistics: per-person OT pay; Bank changes: a live feed (2026-10-06).
+    'peopleStats',
+    'peopleBankChanges',
   ];
 
   const offenders: string[] = [];

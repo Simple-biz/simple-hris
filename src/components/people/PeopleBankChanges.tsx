@@ -19,6 +19,7 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { bankTypeKey, bankTypeLabel, bankTypeOptions } from '@/lib/people/bank-change-type';
 import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
 import { countOf } from '@/lib/refresh-progress/refresh-progress';
+import { readCachedBankChanges, writeCachedBankChanges } from '@/lib/people/people-cache';
 
 // Kept literal to avoid pulling the server-only app-settings module into the
 // client bundle — must match BANK_CHANGES_PULSE_KEY in src/lib/supabase/app-settings.ts.
@@ -76,20 +77,29 @@ export default function PeopleBankChanges({
 }) {
   const reduce = useReducedMotion();
   const instanceId = useId();
-  const [rows, setRows] = useState<BankChange[]>([]);
-  const [loading, setLoading] = useState(true);
+  // The last feed read paints at once; the mount fetch below always runs
+  // (docs/features/accounting-dashboard-cache.md § People). "synced … ago" is
+  // the cached copy's own write time, so the line stays true for the paint.
+  const [seed] = useState(readCachedBankChanges);
+  const [rows, setRows] = useState<BankChange[]>(() => seed?.rows ?? []);
+  // Derived, never stored: the skeleton is for having nothing to show, not for a
+  // read in flight. `settled` is never seeded and never reset.
+  const [settled, setSettled] = useState(false);
+  const loading = !settled && rows.length === 0;
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [bankTypeFilter, setBankTypeFilter] = useState<string>('all');
-  const [lastSync, setLastSync] = useState<number | null>(null);
+  const [lastSync, setLastSync] = useState<number | null>(() => seed?.syncedAt ?? null);
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<BankChange | null>(null);
 
   // True once the FIRST fetch has completed (independent of row count) so the
-  // first real arrivals into an initially-empty feed still flash "New".
+  // first real arrivals into an initially-empty feed still flash "New". Never
+  // seeded from the cache: a cached copy is not a live read, so the first live
+  // read after it flashes nothing, exactly like a cold load.
   const hydratedRef = useRef(false);
   // Ids we've already shown — so only genuinely NEW rows flash (never the whole
   // list on first load). Cleared-fresh ids stay "seen".
@@ -133,10 +143,11 @@ export default function PeopleBankChanges({
       setRows(next);
       setError(json.error ?? null);
       setLastSync(Date.now());
+      writeCachedBankChanges(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      setSettled(true);
       setRefreshing(false);
     }
   }, []);

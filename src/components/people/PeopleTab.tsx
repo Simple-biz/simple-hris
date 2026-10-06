@@ -19,7 +19,17 @@ import PeopleBankChanges from './PeopleBankChanges';
 import PeopleOffboarded, { ActiveHolderWarning, type OffboardedPayPerson } from './PeopleOffboarded';
 import type { RailMix } from '@/lib/people/rail-mix';
 import { BankChangeDetailDialog, timeAgo, type BankChangeEntry } from './bank-change-detail';
-import { getTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
+import {
+  patchCachedPeopleRosterRows,
+  readCachedPeopleRoster,
+  readCachedPeopleStats,
+  readCachedPeopleWeeks,
+  STATS_TOOLTIP_LEADERS,
+  weeksFromSourceFilesAnswer,
+  writeCachedPeopleRoster,
+  writeCachedPeopleStats,
+  writeCachedPeopleWeeks,
+} from '@/lib/people/people-cache';
 import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
 import { countOf } from '@/lib/refresh-progress/refresh-progress';
 import { parseNameParts, composeMasterListName, type NameParts } from '@/lib/name/name-parts';
@@ -452,9 +462,15 @@ export default function PeopleTab({
           today: 'text-orange-700 dark:text-orange-300',
         };
 
-  const [rows, setRows] = useState<RosterRow[]>(() => getTabCache<RosterRow[]>(TAB_CACHE_KEYS.peopleRoster) ?? []);
+  // The cached default week paints at once and the mount effect still re-reads
+  // it (docs/features/accounting-dashboard-cache.md § People). Rows, summary,
+  // week and warning come from ONE cached read, so the KPI cards can never pair
+  // one read's rows with another's totals.
+  const [rosterSeed] = useState(readCachedPeopleRoster);
+  const [statsSeed] = useState(readCachedPeopleStats);
+  const [rows, setRows] = useState<RosterRow[]>(() => rosterSeed?.rows ?? []);
   const [loading, setLoading] = useState(rows.length === 0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => rosterSeed?.warning ?? null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<RosterRow | null>(null);
@@ -473,10 +489,16 @@ export default function PeopleTab({
   const [otOnly, setOtOnly] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 15;
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [periods, setPeriods] = useState<{ file: string; label: string }[]>([]);
-  const [period, setPeriod] = useState('');
-  const periodRef = useRef('');
+  // `null` = not known yet: the KPI cards print a dash, never a made-up 0.
+  const [summary, setSummary] = useState<Summary | null>(() => rosterSeed?.summary ?? null);
+  const [periods, setPeriods] = useState<{ file: string; label: string }[]>(() =>
+    (readCachedPeopleWeeks()?.files ?? []).map((f) => ({ file: f, label: labelForSourceFile(f) })),
+  );
+  // Seeded with the week the cached rows ARE, so the label names what is on
+  // screen. Stays unset as the default until the live week list lands, so no
+  // cache write can happen before the server says which week is current.
+  const [period, setPeriod] = useState(() => rosterSeed?.sourceFile ?? '');
+  const periodRef = useRef(rosterSeed?.sourceFile ?? '');
   const defaultFileRef = useRef('');
   // Custom date range — when set, the roster aggregates hours/OT across every
   // payroll week overlapping [start, end] (overrides the single-week selector).
@@ -487,9 +509,11 @@ export default function PeopleTab({
   // Top-level mode: the roster, the weekly Statistics graph, or the live
   // Bank-changes feed (self-service payout edits via the external link).
   const [mode, setMode] = useState<'roster' | 'stats' | 'changes' | 'offboarded' | 'search'>('roster');
-  const [statsSeries, setStatsSeries] = useState<StatsSeries | null>(null);
-  const [statsLeaders, setStatsLeaders] = useState<StatsLeader[] | null>(null);
-  const [statsDepts, setStatsDepts] = useState<StatsDept[] | null>(null);
+  const [statsSeries, setStatsSeries] = useState<StatsSeries | null>(() =>
+    statsSeed ? { daily: statsSeed.daily, weekly: statsSeed.weekly, monthly: statsSeed.monthly } : null,
+  );
+  const [statsLeaders, setStatsLeaders] = useState<StatsLeader[] | null>(() => statsSeed?.otLeaders ?? null);
+  const [statsDepts, setStatsDepts] = useState<StatsDept[] | null>(() => statsSeed?.otDepts ?? null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const statsFetchedRef = useRef(false);
@@ -532,8 +556,9 @@ export default function PeopleTab({
       setRangeMeta(json.range ?? null);
       setError(json.error ?? null);
       // Cache only the current/default single week so the next mount paints it
-      // instantly — never a custom range or a non-default week.
-      if (!rng && (!src || src === defaultFileRef.current)) setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
+      // instantly — never a custom range or a non-default week. A failed read
+      // (an `error` with no rows) is never cached; people-cache.ts decides.
+      if (!rng && (!src || src === defaultFileRef.current)) writeCachedPeopleRoster(json);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -556,22 +581,31 @@ export default function PeopleTab({
     void load(false);
   };
 
-  // Statistics tab — lazy-fetch the weekly trend on first open.
+  // Statistics tab — fetch the trend on first open in this mount. A cached copy
+  // paints under it, but the read always runs (per-person OT pay: never skipped).
+  // A failed read keeps whatever is on screen and says so; it never replaces a
+  // painted chart with empty arrays.
   const openStats = () => {
     setMode('stats');
     if (statsFetchedRef.current) return;
     statsFetchedRef.current = true;
     setStatsLoading(true);
     fetch('/api/people/stats', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j: {
-        daily?: StatsPoint[]; weekly?: StatsPoint[]; monthly?: StatsPoint[];
-        otLeaders?: StatsLeader[]; otDepts?: StatsDept[]; error?: string;
-      }) => {
-        setStatsSeries({ daily: j.daily ?? [], weekly: j.weekly ?? [], monthly: j.monthly ?? [] });
-        setStatsLeaders(j.otLeaders ?? []);
-        setStatsDepts(j.otDepts ?? []);
-        setStatsError(j.error ?? null);
+      .then(async (r) => {
+        const j = (await r.json()) as {
+          daily?: StatsPoint[]; weekly?: StatsPoint[]; monthly?: StatsPoint[];
+          otLeaders?: StatsLeader[]; otDepts?: StatsDept[]; error?: string | null;
+        };
+        if (!r.ok || j.error) throw new Error(j.error || `Request failed (${r.status})`);
+        const answer = {
+          daily: j.daily ?? [], weekly: j.weekly ?? [], monthly: j.monthly ?? [],
+          otLeaders: j.otLeaders ?? [], otDepts: j.otDepts ?? [],
+        };
+        setStatsSeries({ daily: answer.daily, weekly: answer.weekly, monthly: answer.monthly });
+        setStatsLeaders(answer.otLeaders);
+        setStatsDepts(answer.otDepts);
+        setStatsError(null);
+        writeCachedPeopleStats(answer);
       })
       .catch((e) => setStatsError(e instanceof Error ? e.message : String(e)))
       .finally(() => setStatsLoading(false));
@@ -607,7 +641,7 @@ export default function PeopleTab({
     setRows((prev) => {
       const next = prev.map((r) => (r.id != null && r.id === master.id ? mergeMaster(r, master) : r));
       if (!rangeRef.current && (!periodRef.current || periodRef.current === defaultFileRef.current)) {
-        setTabCache(TAB_CACHE_KEYS.peopleRoster, next);
+        patchCachedPeopleRosterRows(next);
       }
       return next;
     });
@@ -637,11 +671,13 @@ export default function PeopleTab({
         const j = (await r.json()) as {
           files?: string[];
           uploads?: { source_file: string | null; is_current: boolean }[];
+          error?: string | null;
         };
-        const ups = j.uploads ?? [];
-        const files = (j.files ?? ups.map((u) => u.source_file ?? '')).filter(Boolean) as string[];
-        defaultFile = ups.find((u) => u.is_current)?.source_file ?? files[0] ?? '';
-        if (alive) setPeriods(files.map((f) => ({ file: f, label: labelForSourceFile(f) })));
+        const weeks = weeksFromSourceFilesAnswer(j);
+        defaultFile = weeks.defaultFile;
+        if (alive) setPeriods(weeks.files.map((f) => ({ file: f, label: labelForSourceFile(f) })));
+        // The route answers 200 with `error` and no files when the read failed.
+        if (r.ok && !j.error) writeCachedPeopleWeeks(weeks);
       } catch {
         /* selector stays empty; the roster still loads the current week below */
       }
@@ -972,10 +1008,10 @@ export default function PeopleTab({
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                {summary?.otEmployees ?? 0}
+                {summary ? summary.otEmployees : '—'}
               </span>
               <span className="text-[12px] text-zinc-400">
-                of {rows.length} · {fmtHours(summary?.otHours ?? 0)} OT
+                of {rows.length}{summary ? ` · ${fmtHours(summary.otHours)} OT` : ''}
               </span>
             </div>
           </div>
@@ -985,9 +1021,11 @@ export default function PeopleTab({
             </div>
             <div className="mt-1 flex items-baseline gap-2">
               <span className="text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">
-                {fmtMoney(summary?.otPayoutUsd ?? 0, 'USD')}
+                {summary ? fmtMoney(summary.otPayoutUsd ?? 0, 'USD') : '—'}
               </span>
-              <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(summary?.otPayoutPhp ?? 0, 'PHP')}</span>
+              {summary && (
+                <span className="text-[12px] tabular-nums text-zinc-400">{fmtMoney(summary.otPayoutPhp, 'PHP')}</span>
+              )}
             </div>
           </div>
           <button
@@ -1978,7 +2016,9 @@ function PeopleStatsChart({
   if (loading && !series) {
     return <StatsSkeleton />;
   }
-  if (error) {
+  // With a chart on screen (a cached copy), a failed read is a banner above it,
+  // never a card in its place.
+  if (error && !series) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
         {error}
@@ -2071,6 +2111,11 @@ function PeopleStatsChart({
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 lg:col-span-2 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+          Couldn&apos;t refresh the statistics, so this is the last copy loaded. {error}
+        </div>
+      )}
       {/* LEFT column: KPIs + the OT-by-employee chart + the OT-by-department chart. */}
       <div className="space-y-3 lg:space-y-4">
       {/* Latest-bucket headline — adapts to the selected granularity. */}
@@ -2236,7 +2281,7 @@ function PeopleStatsChart({
                   <div className="mt-1.5 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
                     <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-zinc-400">Top OT renderers</div>
                     <ul className="space-y-0.5">
-                      {(data[hover].leaders ?? []).slice(0, 5).map((t, ti) => (
+                      {(data[hover].leaders ?? []).slice(0, STATS_TOOLTIP_LEADERS).map((t, ti) => (
                         <li key={ti} className="flex items-center justify-between gap-2">
                           <span className="min-w-0 truncate text-zinc-700 dark:text-zinc-200">
                             <span className="text-zinc-400">{ti + 1}.</span> {t.name ?? '—'}

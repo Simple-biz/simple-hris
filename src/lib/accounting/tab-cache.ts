@@ -465,7 +465,31 @@ export const TAB_CACHE_KEYS = {
   timeAdjustmentIssues: (statusFilter: string) => `time-adjustment-issues:${statusFilter}`,
   overviewPayouts: 'overview:payouts',
   overviewPabMetrics: 'overview:pab-metrics',
-  peopleRoster: 'people:list',
+  /**
+   * Accounting / CEO → People: the DEFAULT week's roster rows, its summary (the
+   * KPI cards and the Bank changes rail band), the week they are, and a good
+   * read's warning, as ONE entry so per-key age eviction can never pair one
+   * read's rows with another's summary. Per-person rates and OT pay: the banned
+   * category (paint, always refetch, never a skip flag). Read and written only
+   * through `src/lib/people/people-cache.ts`, which re-validates on read.
+   *
+   * v2 (2026-10-06): the entry was bare rows under `people:list`; the new name
+   * orphans that shape instead of reading it back as an entry.
+   */
+  peopleRoster: 'people:roster:v2',
+  /** People's pay-week selector (every uploaded week + the current one). A lookup list; paint, always re-read. */
+  peopleWeeks: 'people:weeks',
+  /**
+   * People → Statistics (`/api/people/stats`), each point's leaders cut to the
+   * tooltip's top five because the full answer is ~3.2M characters
+   * (`people-cache.ts`). Per-person OT pay: the banned category.
+   */
+  peopleStats: 'people:stats',
+  /**
+   * People → Bank changes: the newest 80 self-service payout edits, masked at
+   * write time (`mask-field.ts`). A live feed: paint, always refetch, never a skip flag.
+   */
+  peopleBankChanges: 'people:bank-changes',
   transfers: 'transfers:list',
   // Payroll Notes / Readiness FAB (PayrollWizardNotesFab). The FAB unmounts
   // whenever you leave the Payroll Wizard tab, and its panes unmount on
