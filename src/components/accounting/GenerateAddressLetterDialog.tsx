@@ -1,17 +1,11 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  AlertTriangle,
-  FileCheck2,
-  FileSignature,
-  Loader2,
-  Search,
-  X,
-} from 'lucide-react';
+import { AlertTriangle, FileSignature, Home, Loader2, PenLine, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SmoothSelect } from '@/components/ui/smooth-select';
 import {
   Dialog,
   DialogContent,
@@ -20,78 +14,49 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import type {
-  CoePreviewFacts,
-  DocumentRequestRow,
-  DocumentSignatureRow,
+import {
+  ADDRESS_LETTER_COUNTRIES,
+  ADDRESS_LETTER_FIELD_LABELS,
+  ADDRESS_LETTER_MAX_LENGTH,
+} from '@/lib/documents/address-letter';
+import {
+  ADDRESS_LETTER_FIELDS,
+  type AddressLetterField,
+  type AddressLetterPreviewFacts,
+  type DocumentRequestRow,
+  type DocumentSignatureRow,
 } from '@/lib/documents/types';
+import {
+  initialsOf,
+  useOptimisticProgress,
+  type Candidate,
+  type SearchResponse,
+} from '@/components/accounting/GenerateCoeDialog';
 
-/** Mirrors CoeSearchCandidate (src/lib/documents/coe-admin.ts — server-side). */
-export interface Candidate {
-  workEmail: string;
-  name: string | null;
-  department: string | null;
-}
-
-/** Two letters for the avatar tile: first + last word of the display name
- *  (master names are surname-first with a quoted nickname, so strip the
- *  punctuation first), falling back to the email. */
-export function initialsOf(name: string | null, email: string): string {
-  const source = (name ?? '').replace(/["“”().,]/g, ' ').trim() || email;
-  const words = source.split(/\s+/).filter((w) => /[a-z0-9]/i.test(w));
-  if (words.length === 0) return email.slice(0, 2).toUpperCase();
-  return (words[0][0] + (words.length > 1 ? words[words.length - 1][0] : '')).toUpperCase();
-}
+const PLACEHOLDERS: Record<Exclude<AddressLetterField, 'country'>, string> = {
+  street: 'House no., street, barangay',
+  cityProvince: 'e.g. Caloocan, Metro Manila',
+  postalCode: 'e.g. 1420',
+};
 
 /**
- * Optimistic load progress for the facts fetch: ramps quickly, eases toward
- * ~92% and NEVER reaches 100 on prediction alone — the data landing completes
- * it by replacing the bar with the facts card (the payroll wizard's step-load
- * rule: a bar may not fill on prediction).
- */
-export function useOptimisticProgress(active: boolean): number {
-  const [progress, setProgress] = useState(0);
-  useEffect(() => {
-    if (!active) {
-      setProgress(0);
-      return;
-    }
-    let p = 8;
-    setProgress(p);
-    const id = setInterval(() => {
-      p += (92 - p) * 0.07;
-      setProgress(p);
-    }, 90);
-    return () => clearInterval(id);
-  }, [active]);
-  return progress;
-}
-
-export interface SearchResponse {
-  candidates?: Candidate[];
-  matched?: number;
-  truncated?: boolean;
-  tooShort?: boolean;
-  error?: string | null;
-}
-
-/**
- * Accounting → Documents → "Generate COE": search an ACTIVE Global Master List
- * person, review the same facts card the employee-side request form shows
- * (resolved by the same server resolver), and generate + sign the certificate
- * in one action. The result is an ordinary `document_requests` COE row, so the
- * signed copy lands in the employee's Profile → Request Documents with the
- * usual notification — this dialog exists purely so non-technical employees
- * don't have to file the request themselves.
+ * Accounting → Documents → "Proof of Address": issue a signed Proof of Residential
+ * Address letter for an ACTIVE Global Master List person (Carla's rule: only
+ * Accounting creates it). Same picker as Generate COE (it reuses the COE search —
+ * the population is identical), then the facts the letter will state.
  *
- * A 412 from the generate call (no active signature) steers into the SAME
- * signature-capture dialog the Approve path uses, via `onRequireSignature`.
- * A sign failure AFTER the row was created is not an error state: the pending
- * row is real and the normal Approve button finishes it — the toast says so.
+ * The address comes from the records — the roster, else the worker's newest
+ * onboarding form — and its source is shown, never printed. A field the records
+ * leave BLANK becomes an input; a field on file cannot be edited here (the server
+ * refuses it too): a stale roster address is HR's to correct.
+ *
+ * There is no pending state. One click renders, signs and delivers the letter to
+ * the worker's Profile → Request Documents. A 412 steers into the signature
+ * capture dialog exactly like Approve; a 503 means the one-time migration that
+ * admits the `address` type has not run.
  */
-export default function GenerateCoeDialog({
+export default function GenerateAddressLetterDialog({
   open,
   onOpenChange,
   signature,
@@ -111,15 +76,12 @@ export default function GenerateCoeDialog({
 
   const [factsLoading, setFactsLoading] = useState(false);
   const [factsBlocked, setFactsBlocked] = useState<string | null>(null);
-  const [facts, setFacts] = useState<CoePreviewFacts | null>(null);
+  const [facts, setFacts] = useState<AddressLetterPreviewFacts | null>(null);
+  const [fills, setFills] = useState<Partial<Record<AddressLetterField, string>>>({});
 
   const [generating, setGenerating] = useState(false);
-
   const factsProgress = useOptimisticProgress(factsLoading);
-
   const signingBlocked = !signature || !signature.enabled;
-
-  // A stale response must never overwrite a newer query's list.
   const searchSeq = useRef(0);
 
   useEffect(() => {
@@ -134,16 +96,13 @@ export default function GenerateCoeDialog({
     setSearching(true);
     const t = setTimeout(async () => {
       try {
+        // The COE search IS this letter's search: active GML people, work email identifies.
         const res = await fetch(`/api/accounting/documents/coe/search?q=${encodeURIComponent(q)}`, {
           cache: 'no-store',
         });
         const json = (await res.json()) as SearchResponse;
         if (seq !== searchSeq.current) return;
-        if (!res.ok) {
-          setResult({ candidates: [], error: json.error || `Search failed (${res.status})` });
-        } else {
-          setResult(json);
-        }
+        setResult(res.ok ? json : { candidates: [], error: json.error || `Search failed (${res.status})` });
       } catch (e) {
         if (seq !== searchSeq.current) return;
         setResult({ candidates: [], error: e instanceof Error ? e.message : 'Search failed' });
@@ -158,21 +117,22 @@ export default function GenerateCoeDialog({
     setSelected(candidate);
     setFacts(null);
     setFactsBlocked(null);
+    setFills({});
     setFactsLoading(true);
     try {
       const res = await fetch(
-        `/api/accounting/documents/coe/preview?email=${encodeURIComponent(candidate.workEmail)}`,
+        `/api/accounting/documents/address/preview?email=${encodeURIComponent(candidate.workEmail)}`,
         { cache: 'no-store' },
       );
-      const json = (await res.json()) as { facts?: CoePreviewFacts; blocked?: string; error?: string };
+      const json = (await res.json()) as { facts?: AddressLetterPreviewFacts; blocked?: string; error?: string };
       if (res.status === 422 && json.blocked) {
         setFactsBlocked(json.blocked);
         return;
       }
-      if (!res.ok || !json.facts) throw new Error(json.error || 'Could not load the certificate details');
+      if (!res.ok || !json.facts) throw new Error(json.error || 'Could not load the letter details');
       setFacts(json.facts);
     } catch (e) {
-      setFactsBlocked(e instanceof Error ? e.message : 'Could not load the certificate details');
+      setFactsBlocked(e instanceof Error ? e.message : 'Could not load the letter details');
     } finally {
       setFactsLoading(false);
     }
@@ -186,6 +146,7 @@ export default function GenerateCoeDialog({
     setSelected(null);
     setFacts(null);
     setFactsBlocked(null);
+    setFills({});
     setGenerating(false);
   }, []);
 
@@ -197,45 +158,41 @@ export default function GenerateCoeDialog({
     [onOpenChange, reset],
   );
 
+  const blanks = useMemo(() => new Set(facts?.blanks ?? []), [facts]);
+  const missing = useMemo(
+    () => (facts ? facts.blanks.filter((f) => !(fills[f] ?? '').trim()) : []),
+    [facts, fills],
+  );
+
   const generate = async () => {
-    if (!selected || !facts) return;
+    if (!selected || !facts || missing.length > 0) return;
     setGenerating(true);
     try {
-      const res = await fetch('/api/accounting/documents/coe', {
+      // Only blank fields are sent; the server refuses any other key.
+      const body = {
+        work_email: selected.workEmail,
+        fills: Object.fromEntries(facts.blanks.map((f) => [f, (fills[f] ?? '').trim()])),
+      };
+      const res = await fetch('/api/accounting/documents/address', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_email: selected.workEmail }),
+        body: JSON.stringify(body),
       });
-      const json = (await res.json()) as {
-        row?: DocumentRequestRow;
-        sign_error?: string | null;
-        blocked?: string;
-        error?: string;
-      };
+      const json = (await res.json()) as { row?: DocumentRequestRow; blocked?: string; error?: string };
       if (res.status === 412) {
-        // Same steering as the Approve path: capture a signature, come back.
         close(false);
         onRequireSignature();
         throw new Error(json.error || 'No active signature');
       }
-      if (!res.ok || !json.row) {
-        throw new Error(json.blocked || json.error || `Generate failed (${res.status})`);
-      }
+      if (!res.ok || !json.row) throw new Error(json.blocked || json.error || `Could not issue the letter (${res.status})`);
       const who = json.row.employee_name || json.row.employee_email;
-      if (json.sign_error) {
-        // The certificate exists as a pending row — say exactly that.
-        toast.warning('Certificate generated, but not signed', {
-          description: `${json.sign_error}. It is waiting in the queue — finish it with Approve & sign.`,
-        });
-      } else {
-        toast.success('Certificate generated & signed', {
-          description: `${who} can now download the signed COE from their profile.`,
-        });
-      }
+      toast.success('Proof of Address issued & signed', {
+        description: `${who} can download the signed letter from their profile.`,
+      });
       close(false);
       onGenerated();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not generate the certificate');
+      toast.error(e instanceof Error ? e.message : 'Could not issue the letter');
     } finally {
       setGenerating(false);
     }
@@ -243,18 +200,24 @@ export default function GenerateCoeDialog({
 
   const candidates = useMemo(() => result?.candidates ?? [], [result]);
 
+  const sourceLine = facts
+    ? facts.addressSource
+      ? `From ${facts.addressSourceDetail ?? facts.addressSource}`
+      : 'No address on file — type the one the contractor gave you'
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Generate a Certificate of Engagement</DialogTitle>
+          <DialogTitle>Issue a Proof of Residential Address</DialogTitle>
           <DialogDescription>
-            Issue and sign a COE in one step. The signed copy goes to the employee&rsquo;s profile.
+            Accounting-only. The signed letter goes to the worker&rsquo;s profile.
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-          {/* ── Person picker ─────────────────────────────────────────────── */}
+          {/* ── Person picker (same as Generate COE) ──────────────────────── */}
           {selected ? (
             <div className="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50/70 px-3 py-2 dark:border-orange-500/30 dark:bg-orange-500/10">
               <span
@@ -269,8 +232,6 @@ export default function GenerateCoeDialog({
                 </span>
                 <span className="block truncate text-[11.5px] text-orange-900/70 dark:text-orange-200/70">
                   {selected.workEmail}
-                  {/* Server-formatted already; formatDeptLabel is the unconditional
-                      render chokepoint and a no-op on non-HSL labels. */}
                   {selected.department ? ` · ${formatDeptLabel(selected.department)}` : ''}
                 </span>
               </div>
@@ -280,9 +241,10 @@ export default function GenerateCoeDialog({
                   setSelected(null);
                   setFacts(null);
                   setFactsBlocked(null);
+                  setFills({});
                 }}
                 disabled={generating}
-                aria-label="Pick a different employee"
+                aria-label="Pick a different worker"
                 className="shrink-0 rounded-md p-1 text-orange-700/70 transition-colors hover:bg-orange-100 hover:text-orange-900 dark:text-orange-300/70 dark:hover:bg-orange-500/20"
               >
                 <X className="h-3.5 w-3.5" />
@@ -297,7 +259,7 @@ export default function GenerateCoeDialog({
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Name or email…"
-                  aria-label="Search active employees"
+                  aria-label="Search active workers"
                   className="h-9 pl-9 pr-8 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
                 />
                 {searching && (
@@ -313,12 +275,10 @@ export default function GenerateCoeDialog({
                   <span>{result.error}</span>
                 </div>
               ) : result?.tooShort ? (
-                <p className="px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                  Keep typing, at least two characters.
-                </p>
+                <p className="px-1 text-[12px] text-zinc-500 dark:text-zinc-400">Keep typing, at least two characters.</p>
               ) : result && candidates.length === 0 && !searching ? (
                 <p className="px-1 text-[12px] text-zinc-500 dark:text-zinc-400">
-                  No match for &ldquo;{query.trim()}&rdquo;. Only active employees are listed.
+                  No match for &ldquo;{query.trim()}&rdquo;. Only active workers are listed.
                 </p>
               ) : candidates.length > 0 ? (
                 <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
@@ -359,25 +319,23 @@ export default function GenerateCoeDialog({
             </>
           )}
 
-          {/* ── Facts card — what the certificate will state ──────────────── */}
+          {/* ── What the letter will state ────────────────────────────────── */}
           {selected && (
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/70 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/40">
               {factsLoading ? (
                 <div className="py-1">
                   <div className="flex items-baseline justify-between text-[11.5px] text-zinc-500 dark:text-zinc-400">
-                    <span>Preparing certificate details…</span>
+                    <span>Reading the records…</span>
                     <span className="tabular-nums">{Math.round(factsProgress)}%</span>
                   </div>
                   <div
                     role="progressbar"
-                    aria-label="Loading certificate details"
+                    aria-label="Loading letter details"
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={Math.round(factsProgress)}
                     className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
                   >
-                    {/* Optimistic ramp, capped under 100 — the facts card landing is
-                        what completes it (wizard step-load rule). */}
                     <div
                       className="h-full rounded-full bg-orange-500 transition-[width] duration-200 ease-out motion-reduce:transition-none"
                       style={{ width: `${factsProgress}%` }}
@@ -389,31 +347,23 @@ export default function GenerateCoeDialog({
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                   <div className="min-w-0 flex-1">
                     <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
-                      This certificate can&rsquo;t be issued
+                      This letter can&rsquo;t be issued
                     </p>
-                    <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-                      {factsBlocked}
-                    </p>
+                    <p className="mt-0.5 text-[12px] leading-relaxed text-zinc-500 dark:text-zinc-400">{factsBlocked}</p>
                   </div>
                 </div>
               ) : facts ? (
                 <>
                   <div className="flex items-center gap-2.5">
-                    <FileCheck2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                    <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">
-                      The certificate will state
-                    </p>
+                    <Home className="h-4 w-4 shrink-0 text-orange-500" />
+                    <p className="text-[12.5px] font-medium text-zinc-800 dark:text-zinc-200">The letter will state</p>
                   </div>
                   <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-zinc-200/70 pt-3 dark:border-zinc-800/70 sm:grid-cols-[auto_1fr]">
                     {(
                       [
                         ['Worker', facts.employeeId ? `${facts.workerName} · ${facts.employeeId}` : facts.workerName],
-                        ['Engaged since', facts.startDateLabel],
+                        ['Contracted since', facts.startDateLabel],
                         ['Team', facts.team],
-                        // The employee's own Profile → Skill Sets entry; omitted from the certificate when blank.
-                        ...(facts.roleTitle ? ([['Role', facts.roleTitle]] as const) : []),
-                        ['Hourly / OT', `${facts.hourlyRate} · ${facts.overtimeRate} per hour`],
-                        ['Schedule', `${facts.weeklyHours} hours per week`],
                       ] as ReadonlyArray<readonly [string, string]>
                     ).map(([label, value]) => (
                       <React.Fragment key={label}>
@@ -423,55 +373,75 @@ export default function GenerateCoeDialog({
                         <dd className="mb-1 text-[12.5px] text-zinc-800 dark:text-zinc-200 sm:mb-0">{value}</dd>
                       </React.Fragment>
                     ))}
-                    <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                      Bonuses
-                    </dt>
-                    <dd className="text-[12.5px] leading-relaxed text-zinc-800 dark:text-zinc-200">
-                      {facts.standardBonuses.length === 0 && facts.performanceBonuses.length === 0 ? (
-                        <span className="text-zinc-400 dark:text-zinc-500">None they currently qualify for</span>
-                      ) : (
-                        <>
-                          {facts.standardBonuses.map((b) => (
-                            <div key={b.label}>
-                              {b.label}: {b.amount}
+                  </dl>
+
+                  <div className="mt-3 border-t border-zinc-200/70 pt-3 dark:border-zinc-800/70">
+                    <p className="text-[11.5px] text-zinc-500 dark:text-zinc-400">{sourceLine}</p>
+                    <div className="mt-2 space-y-2.5">
+                      {ADDRESS_LETTER_FIELDS.map((field) => {
+                        const label = ADDRESS_LETTER_FIELD_LABELS[field];
+                        const onFile = facts.address[field];
+                        const inputId = `address-letter-${field}`;
+                        if (!blanks.has(field) && onFile) {
+                          return (
+                            <div key={field}>
+                              <div className="text-[11px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+                                {label}
+                              </div>
+                              <div className="text-[12.5px] text-zinc-800 dark:text-zinc-200">{onFile}</div>
                             </div>
-                          ))}
-                          <div>
-                            Performance:{' '}
-                            {facts.performanceBonuses.length > 0 ? (
-                              facts.performanceBonuses
-                                .map((b) => (b.amount ? `${b.label} (${b.amount})` : b.label))
-                                .join(', ')
+                          );
+                        }
+                        return (
+                          <div key={field}>
+                            <label
+                              htmlFor={inputId}
+                              className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300"
+                            >
+                              <PenLine className="h-3 w-3" aria-hidden />
+                              {label} — not on file
+                            </label>
+                            {field === 'country' ? (
+                              <SmoothSelect
+                                id={inputId}
+                                aria-label={label}
+                                value={fills.country ?? null}
+                                placeholder="Pick a country…"
+                                options={ADDRESS_LETTER_COUNTRIES.map((c) => ({ value: c, label: c }))}
+                                onChange={(v) => setFills((f) => ({ ...f, country: v }))}
+                                accent="orange"
+                                align="start"
+                                triggerClassName="mt-1 w-full"
+                                disabled={generating}
+                              />
                             ) : (
-                              <span className="text-zinc-400 dark:text-zinc-500">none assigned</span>
+                              <Input
+                                id={inputId}
+                                value={fills[field] ?? ''}
+                                maxLength={ADDRESS_LETTER_MAX_LENGTH[field]}
+                                onChange={(e) => setFills((f) => ({ ...f, [field]: e.target.value }))}
+                                placeholder={PLACEHOLDERS[field]}
+                                disabled={generating}
+                                className="mt-1 h-9 text-sm focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20"
+                              />
                             )}
                           </div>
-                        </>
-                      )}
-                    </dd>
-                    {facts.recentBonuses && (
-                      <>
-                        <dt className="text-[11.5px] font-medium uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
-                          Earned recently
-                        </dt>
-                        <dd className="text-[12.5px] leading-relaxed text-zinc-800 dark:text-zinc-200">
-                          <div>
-                            {facts.recentBonuses.total} in bonuses over the last {facts.recentBonuses.cycles} pay{' '}
-                            {facts.recentBonuses.cycles === 1 ? 'cycle' : 'cycles'} ({facts.recentBonuses.windowLabel})
-                          </div>
-                          <div className="text-zinc-400 dark:text-zinc-500">
-                            {facts.recentBonuses.breakdown ?? 'No bonus lines on those statements'}
-                          </div>
-                        </dd>
-                      </>
+                        );
+                      })}
+                    </div>
+                    {facts.blanks.length > 0 && (
+                      <p className="mt-2.5 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+                        Type only what the contractor gave you. What you type prints on the letter and is
+                        recorded as entered by Accounting; it does not change the roster.
+                      </p>
                     )}
-                  </dl>
+                  </div>
                 </>
               ) : null}
             </div>
           )}
 
-          {/* ── Signing identity / block ──────────────────────────────────── */}
+          {/* ── Signing identity ──────────────────────────────────────────── */}
           {selected && facts && (
             signingBlocked ? (
               <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50/80 px-3 py-2.5 text-xs text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/20 dark:text-amber-200">
@@ -484,21 +454,14 @@ export default function GenerateCoeDialog({
               </div>
             ) : (
               <div className="flex items-center gap-3 rounded-xl border border-zinc-200 px-2 py-2 dark:border-zinc-700">
-                {/* Signature ink is dark navy — the plate stays WHITE in dark mode
-                    or the ink disappears (same rule as the signature manager card). */}
+                {/* Ink is dark navy — the plate stays WHITE in dark mode. */}
                 <div className="rounded-lg bg-white px-3 py-1.5">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={signature!.image_data_url}
-                    alt="Your signature"
-                    className="h-9 w-auto max-w-[150px] object-contain"
-                  />
+                  <img src={signature!.image_data_url} alt="Your signature" className="h-9 w-auto max-w-[150px] object-contain" />
                 </div>
                 <div className="min-w-0 text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">
-                  <div className="truncate font-medium text-zinc-700 dark:text-zinc-300">
-                    Signing as {signature!.owner_name}
-                  </div>
-                  <div className="truncate">{signature!.title || 'Accounting Head'}</div>
+                  <div className="truncate font-medium text-zinc-700 dark:text-zinc-300">Signing as {signature!.owner_name}</div>
+                  <div className="truncate">Accounting Team · {signature!.owner_email}</div>
                 </div>
               </div>
             )
@@ -524,15 +487,12 @@ export default function GenerateCoeDialog({
             <Button
               type="button"
               onClick={() => void generate()}
-              disabled={!selected || !facts || factsLoading || generating}
-              className={cn('gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700')}
+              disabled={!selected || !facts || factsLoading || generating || missing.length > 0}
+              title={missing.length > 0 ? `Fill in: ${missing.map((f) => ADDRESS_LETTER_FIELD_LABELS[f]).join(', ')}` : undefined}
+              className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
             >
-              {generating ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <FileSignature className="h-3.5 w-3.5" />
-              )}
-              Generate &amp; sign
+              {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSignature className="h-3.5 w-3.5" />}
+              Issue &amp; sign
             </Button>
           )}
         </DialogFooter>

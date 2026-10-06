@@ -192,6 +192,15 @@ Rules that hold it up:
   suppressed for this flow (`notifyAccounting: false`); both parameters default to the original
   employee-initiated behaviour byte-for-byte.
 
+### Proof of Residential Address — Accounting-only (2026-10-06)
+
+The Signing Queue toolbar also carries **Proof of Address**, a second Accounting-issued letter.
+Unlike the COE it is **never requestable by an employee** (Carla's rule): the employee form and
+route read `EMPLOYEE_REQUEST_TYPES`, which leaves out `document_type = 'address'`. It is issued
+**already signed**, with no pending row and no appended certification page, and the rep may type
+only the address fields the records leave blank. Everything about it is in
+[proof-of-address-letter.md](proof-of-address-letter.md).
+
 ### Where the facts come from
 
 [coe-facts.ts](../../src/lib/documents/coe-facts.ts) resolves everything server-side; nothing is
@@ -553,6 +562,9 @@ downloads via 1-hour signed URLs):
 <sanitized-email>/<request-id>/original.pdf   ← exactly as submitted, never mutated
 <sanitized-email>/<request-id>/signed.pdf     ← original + certification page
 ```
+
+Exception: a Proof of Residential Address row's `signed.pdf` is the signed letter alone, with no
+certification page ([proof-of-address-letter.md](proof-of-address-letter.md) § 6).
 
 ## RBAC / registries
 

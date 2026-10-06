@@ -7,7 +7,7 @@ import {
   createDocumentRequest,
   listDocumentRequests,
 } from '@/lib/documents/requests';
-import { MAX_DOCUMENT_BYTES, isDocumentRequestType } from '@/lib/documents/types';
+import { MAX_DOCUMENT_BYTES, isEmployeeRequestType } from '@/lib/documents/types';
 import { notifyCoeRequested } from '@/lib/documents/coe-request-notify';
 
 export const dynamic = 'force-dynamic';
@@ -57,7 +57,10 @@ export async function POST(req: NextRequest) {
     const periodLabel = String(form.get('period_label') ?? '').trim() || null;
     const note = String(form.get('note') ?? '').trim() || null;
 
-    if (!isDocumentRequestType(documentType)) {
+    // EMPLOYEE_REQUEST_TYPES, never the full type list: a Proof of Residential
+    // Address letter is Accounting-only (Carla, 2026-10-06), so `address` is
+    // refused here like any unknown type.
+    if (!isEmployeeRequestType(documentType)) {
       return NextResponse.json({ error: 'Choose a document type' }, { status: 400 });
     }
     if (note && note.length > 2000) {

@@ -10,9 +10,28 @@
  * labels only — safe on both server and client.
  */
 
-export type DocumentRequestType = 'paystub' | 'coe' | 'award' | 'other';
+export type DocumentRequestType = 'paystub' | 'coe' | 'award' | 'other' | 'address';
 
+/** Every type a `document_requests` row can carry (mirrors the DB CHECK). */
 export const DOCUMENT_REQUEST_TYPES: readonly DocumentRequestType[] = [
+  'paystub',
+  'coe',
+  'award',
+  'other',
+  'address',
+];
+
+/**
+ * The types an EMPLOYEE may request from Profile → Request Documents. The form's
+ * picker and `POST /api/employee/documents` both read this list, never
+ * DOCUMENT_REQUEST_TYPES.
+ *
+ * `address` (Proof of Residential Address) is absent on purpose: Carla's rule
+ * (2026-10-06) is that only Accounting creates it, from Accounting → Documents →
+ * Signing Queue. The signed copy still reaches the worker's profile. A test
+ * pins that neither employee surface can offer it.
+ */
+export const EMPLOYEE_REQUEST_TYPES: readonly DocumentRequestType[] = [
   'paystub',
   'coe',
   'award',
@@ -27,13 +46,68 @@ export const DOCUMENT_TYPE_LABELS: Record<DocumentRequestType, string> = {
   coe: 'Certificate of Engagement (COE)',
   award: 'Award / Certificate',
   other: 'Other document',
+  address: 'Proof of Residential Address',
 };
 
-/** Types the HRIS generates itself — the employee attaches nothing. */
-export const SYSTEM_GENERATED_TYPES: readonly DocumentRequestType[] = ['coe'];
+/** Types the HRIS generates itself — the employee attaches nothing. The stored
+ *  `original.pdf` of each is a watermarked UNSIGNED DRAFT. */
+export const SYSTEM_GENERATED_TYPES: readonly DocumentRequestType[] = ['coe', 'address'];
 
 export function isSystemGeneratedType(type: string | null | undefined): boolean {
   return !!type && (SYSTEM_GENERATED_TYPES as readonly string[]).includes(type);
+}
+
+export function isEmployeeRequestType(v: string): v is DocumentRequestType {
+  return (EMPLOYEE_REQUEST_TYPES as readonly string[]).includes(v);
+}
+
+/** The four facts the letter's address box states. Each one is either on file
+ *  (roster or onboarding form) or left blank for Accounting to type. */
+export type AddressLetterField = 'street' | 'cityProvince' | 'postalCode' | 'country';
+
+export const ADDRESS_LETTER_FIELDS: readonly AddressLetterField[] = [
+  'street',
+  'cityProvince',
+  'postalCode',
+  'country',
+];
+
+/** Where the address in the box came from. Shown to the rep, never printed. */
+export type AddressLetterSource = 'roster' | 'onboarding' | 'accounting';
+
+export interface AddressLetterAddress {
+  street: string | null;
+  cityProvince: string | null;
+  postalCode: string | null;
+  country: string | null;
+}
+
+/** The address once every field is present — what the letter prints. Only
+ *  applyLetterFills produces one, after refusing any field still blank. */
+export interface CompleteLetterAddress {
+  street: string;
+  cityProvince: string;
+  postalCode: string;
+  country: string;
+}
+
+/** Shape of GET /api/accounting/documents/address/preview → { facts }. Mirrors
+ *  AddressLetterFacts in src/lib/documents/address-letter.ts. */
+export interface AddressLetterPreviewFacts {
+  workerName: string;
+  workEmail: string;
+  employeeId: string | null;
+  team: string;
+  startDateLabel: string;
+  startDateRaw: string;
+  address: AddressLetterAddress;
+  /** null ⇒ no address on file anywhere; every address field is blank. */
+  addressSource: 'roster' | 'onboarding' | null;
+  /** "Onboarding form, submitted Mar 4, 2026" — the rep's provenance line. */
+  addressSourceDetail: string | null;
+  countrySource: 'onboarding' | null;
+  /** The fields the records leave blank — the only ones the rep may type. */
+  blanks: AddressLetterField[];
 }
 
 /** Shape of GET /api/employee/documents/coe-preview → { facts }. Mirrors

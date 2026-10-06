@@ -36,6 +36,7 @@ import { generatePayStubsPdf, type PayStubWeek } from '@/lib/payroll/paystub-exp
 import {
   DOCUMENT_STATUS_LABELS,
   DOCUMENT_TYPE_LABELS,
+  EMPLOYEE_REQUEST_TYPES,
   documentTypeLabel,
   formatDocumentDate,
   formatFileSize,
@@ -368,7 +369,9 @@ export default function RequestDocumentsTab({
                   triggerClassName="w-full"
                   options={[
                     { value: '', label: 'Select a document…' },
-                    ...Object.entries(DOCUMENT_TYPE_LABELS).map(([value, label]) => ({ value, label })),
+                    // Only the types an employee may request — never `address`,
+                    // which Accounting alone issues (EMPLOYEE_REQUEST_TYPES).
+                    ...EMPLOYEE_REQUEST_TYPES.map((value) => ({ value, label: DOCUMENT_TYPE_LABELS[value] })),
                   ]}
                 />
               </label>

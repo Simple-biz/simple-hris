@@ -130,6 +130,18 @@ export type CoeActiveGateResult =
   | { ok: true }
   | { ok: false; rejection: CoeActiveGateRejection };
 
+/** How the refusal names the document. The default is the COE's own wording,
+ *  unchanged; the Proof of Residential Address letter (which also asserts CURRENT
+ *  engagement — "is currently contracted with Simple") passes its own. */
+export interface ActiveGateWording {
+  /** "a COE can only be generated for an active GML person" */
+  short: string;
+  /** "a Certificate of Engagement asserts current engagement" */
+  long: string;
+}
+
+const COE_GATE_WORDING: ActiveGateWording = { short: 'COE', long: 'Certificate of Engagement' };
+
 /**
  * The generate/preview-side re-check of the population rule, judged at request
  * time against the live status map — never against what the picker showed
@@ -138,7 +150,9 @@ export type CoeActiveGateResult =
 export function decideCoeActiveGate(params: {
   status: CoeGmlStatus | undefined;
   statusError: string | null;
+  wording?: ActiveGateWording;
 }): CoeActiveGateResult {
+  const wording = params.wording ?? COE_GATE_WORDING;
   // Error FIRST: a broken read is a config/infra failure, and reading it as
   // "not on the list" would tell the rep a real employee doesn't exist.
   if (params.statusError) {
@@ -157,7 +171,7 @@ export function decideCoeActiveGate(params: {
       rejection: {
         status: 422,
         code: 'not_on_gml',
-        message: 'This email is not on the Global Master List — a COE can only be generated for an active GML person.',
+        message: `This email is not on the Global Master List — a ${wording.short} can only be generated for an active GML person.`,
       },
     };
   }
@@ -170,7 +184,7 @@ export function decideCoeActiveGate(params: {
       rejection: {
         status: 422,
         code: 'not_active',
-        message: `This person is not active on the Global Master List${when} — a Certificate of Engagement asserts current engagement, so it can't be issued for them.`,
+        message: `This person is not active on the Global Master List${when} — a ${wording.long} asserts current engagement, so it can't be issued for them.`,
       },
     };
   }

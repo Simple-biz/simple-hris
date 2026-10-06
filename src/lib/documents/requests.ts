@@ -20,11 +20,15 @@ import { stampSignedDocument } from './sign-pdf';
 import { getDocumentSignature } from './signatures';
 import { renderCoeDocument } from './coe-document';
 import { coeSummaryLabel, resolveCoeFacts } from './coe-facts';
+import { renderAddressLetterDocument } from './address-letter-document';
+import { addressLetterSummaryLabel, type AddressLetterFacts } from './address-letter';
 import {
   DOCUMENT_REQUESTS_BUCKET,
   MAX_DOCUMENT_BYTES,
   documentTypeLabel,
   isDocumentRequestType,
+  type AddressLetterField,
+  type CompleteLetterAddress,
   type DocumentRequestRow,
   type DocumentRequestStatus,
 } from './types';
@@ -262,6 +266,182 @@ export async function createCoeDocumentRequest(params: {
 }
 
 /**
+ * Accounting issues a **Proof of Residential Address** letter — generated AND
+ * signed in one call. There is never a pending row (docs/features/proof-of-address-letter.md):
+ *
+ *   • the letter states a point-in-time record plus, possibly, blanks the rep
+ *     typed (`typed`). Those typed values are stored nowhere a later re-render
+ *     could read, so the COE's "re-render at signing" cannot apply — and a
+ *     pending row an ordinary Approve could reach would stamp the watermarked
+ *     draft instead. signDocumentRequest refuses an `address` row for that reason.
+ *   • so this function signs before it inserts: render the watermarked draft
+ *     (stored as `original.pdf`, the worker can download it) and the signed letter
+ *     (`signed.pdf`, with NO certification page — see below), upload both, then
+ *     insert the row ALREADY `signed`. Any failure removes what was uploaded;
+ *     nothing half-exists.
+ *
+ * The caller (the route) has already run the active-roster gate, the signature
+ * gate (412 before any work) and applyLetterFills. The signature is re-read here
+ * because it is the thing being drawn.
+ *
+ * `code: 'migration_pending'` = the document_type CHECK predates 'address'
+ * (references/sql/alter/2026-10-06_document_requests_address_type.sql not run yet).
+ */
+export async function createSignedAddressLetter(params: {
+  facts: AddressLetterFacts;
+  address: CompleteLetterAddress;
+  /** Which box fields the rep typed — recorded in the audit, never printed. */
+  typed: AddressLetterField[];
+  actorEmail: string;
+}): Promise<{
+  row: DocumentRequestRow | null;
+  error: string | null;
+  code?: 'migration_pending' | 'no_signature';
+}> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { row: null, error: 'Supabase not configured' };
+
+  const actor = normEmail(params.actorEmail) ?? params.actorEmail.trim().toLowerCase();
+  const { facts, address } = params;
+  const email = normEmail(facts.workEmail) ?? facts.workEmail.trim().toLowerCase();
+  if (!email) return { row: null, error: 'Missing employee email' };
+
+  const { row: signature, error: sigErr } = await getDocumentSignature(actor);
+  if (sigErr) return { row: null, error: sigErr };
+  if (!signature || !signature.enabled) {
+    return {
+      row: null,
+      code: 'no_signature',
+      error: !signature
+        ? 'No saved signature — draw and save your signature in the Documents tab first'
+        : 'Your signature is switched off — turn it back on to sign documents',
+    };
+  }
+  const signerName = signature.owner_name?.trim() || actor;
+  const signerTitle = signature.title?.trim() || 'Accounting Head';
+
+  const id = randomUUID();
+  const issuedAtIso = new Date().toISOString();
+  const summary = addressLetterSummaryLabel(address);
+
+  // The signed copy is the signed letter ALONE — no appended certification page.
+  // That page says the document "was submitted by the employee named below", which
+  // is false for a letter Accounting issues, and it would print the city as a
+  // "PERIOD". The letter is self-verifying without it: Reference ID in the footer,
+  // the issue date in the box and on the signature line, the signer's own block.
+  let draftBytes: Uint8Array;
+  let signedBytes: Uint8Array;
+  try {
+    draftBytes = await renderAddressLetterDocument({ facts, address, requestId: id, issuedAtIso });
+    signedBytes = await renderAddressLetterDocument({
+      facts,
+      address,
+      requestId: id,
+      issuedAtIso,
+      signature: { dataUrl: signature.image_data_url, name: signerName, email: actor },
+    });
+  } catch (e) {
+    return { row: null, error: e instanceof Error ? e.message : 'Could not generate the letter' };
+  }
+
+  const filePath = `${emailPathSegment(email)}/${id}/original.pdf`;
+  const signedPath = `${emailPathSegment(email)}/${id}/signed.pdf`;
+  const removeUploads = () =>
+    supabase.storage.from(DOCUMENT_REQUESTS_BUCKET).remove([filePath, signedPath]).catch(() => {});
+
+  const { error: upErr } = await supabase.storage
+    .from(DOCUMENT_REQUESTS_BUCKET)
+    .upload(filePath, draftBytes, { contentType: 'application/pdf', upsert: false });
+  if (upErr) return { row: null, error: upErr.message };
+  const { error: upSignedErr } = await supabase.storage
+    .from(DOCUMENT_REQUESTS_BUCKET)
+    .upload(signedPath, signedBytes, { contentType: 'application/pdf', upsert: false });
+  if (upSignedErr) {
+    await removeUploads();
+    return { row: null, error: `Could not store the signed copy: ${upSignedErr.message}` };
+  }
+
+  const { data, error } = await supabase
+    .from(TABLE)
+    .insert({
+      id,
+      employee_email: email,
+      employee_name: facts.workerName,
+      document_type: 'address' as const,
+      period_label: summary,
+      note: 'Issued by Accounting at the contractor’s request.',
+      file_path: filePath,
+      file_name: 'proof-of-residential-address.pdf',
+      file_size: draftBytes.byteLength,
+      status: 'signed' as const,
+      signed_file_path: signedPath,
+      signed_at: issuedAtIso,
+      signed_by: actor,
+      signed_by_name: signerName,
+      signed_by_title: signerTitle,
+      requested_at: issuedAtIso,
+      updated_at: issuedAtIso,
+    })
+    .select('*')
+    .single();
+  if (error) {
+    await removeUploads();
+    const pending =
+      (error as { code?: string }).code === '23514' && /document_type/.test(error.message ?? '');
+    return pending
+      ? {
+          row: null,
+          code: 'migration_pending',
+          error:
+            'Proof of Address letters need a one-time database update that has not been run yet. Nothing was saved — ask Kane to run the address-letter migration.',
+        }
+      : { row: null, error: error.message };
+  }
+  const row = data as DocumentRequestRow;
+
+  void (async () => {
+    // The audit names the ADMIN: the worker filed nothing in HRIS. Which facts came
+    // from records and which the rep typed is recorded; the address text is not —
+    // the signed PDF is the record, and a delete must mean gone (documents-tab.md).
+    const role = await resolveUserRole(actor, 'Accounting');
+    await insertAuditLog({
+      user_name: actor,
+      user_role: role,
+      action: 'documents.request_submitted',
+      resource: TABLE,
+      resource_id: row.id,
+      details: {
+        document_type: 'address',
+        generated: true,
+        generated_for: email,
+        initiated_by: 'accounting',
+        start_date: facts.startDateRaw,
+        team: facts.team,
+        address_source: facts.addressSource ?? 'accounting',
+        country_source: facts.countrySource ?? (params.typed.includes('country') ? 'accounting' : null),
+        typed_by_accounting: params.typed,
+      },
+    });
+    await insertAuditLog({
+      user_name: actor,
+      user_role: role,
+      action: 'documents.request_signed',
+      resource: TABLE,
+      resource_id: row.id,
+      details: {
+        employee: email,
+        document_type: 'address',
+        signed_at: issuedAtIso,
+        requested_at: issuedAtIso,
+      },
+    });
+  })();
+  void notifyEmployeeOfDecision(row);
+
+  return { row, error: null };
+}
+
+/**
  * Remove a request outright — row plus both storage objects.
  *
  * Two callers, one path:
@@ -340,6 +520,15 @@ export async function signDocumentRequest(
   if (fetchErr) return { row: null, error: fetchErr };
   if (!row) return { row: null, error: 'Request not found' };
   if (row.status !== 'pending') return { row: null, error: 'Request is no longer pending' };
+  // A Proof of Address letter is born signed (createSignedAddressLetter). A pending
+  // one should not exist; if it ever does, stamping its stored original would sign
+  // the watermarked DRAFT, and its rep-typed facts cannot be re-rendered.
+  if (row.document_type === 'address') {
+    return {
+      row: null,
+      error: 'A Proof of Residential Address letter is issued already signed — generate a new one instead.',
+    };
+  }
 
   const { row: signature, error: sigErr } = await getDocumentSignature(approver);
   if (sigErr) return { row: null, error: sigErr };

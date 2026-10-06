@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Eye,
   FilePlus2,
+  Home,
   FileSignature,
   FileText,
   Hash,
@@ -57,6 +58,7 @@ import {
 import TerminationDocsTabRow from '@/components/accounting/termination-docs/TerminationDocsTabRow';
 import TerminationDocsPanel from '@/components/accounting/termination-docs/TerminationDocsPanel'; // [TERMINATION-DOCS]
 import GenerateCoeDialog from '@/components/accounting/GenerateCoeDialog';
+import GenerateAddressLetterDialog from '@/components/accounting/GenerateAddressLetterDialog';
 import { readJsonResponse } from '@/lib/documents/read-json-response';
 import { getTabCache, hasTabCache, setTabCache, TAB_CACHE_KEYS } from '@/lib/accounting/tab-cache';
 import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
@@ -168,6 +170,8 @@ export default function AccountingDocuments({
 
   /** The "Generate COE" dialog — accounting issues + signs on an employee's behalf. */
   const [coeDialogOpen, setCoeDialogOpen] = useState(false);
+  /** The "Proof of Address" dialog — Accounting-only letter, issued already signed. */
+  const [addressDialogOpen, setAddressDialogOpen] = useState(false);
 
   const [signTarget, setSignTarget] = useState<DocumentRequestRow | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRequestRow | null>(null);
@@ -764,6 +768,18 @@ export default function AccountingDocuments({
               Generate COE
             </Button>
           )}
+          {canEdit && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setAddressDialogOpen(true)}
+              className="h-9 gap-1.5 border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300"
+            >
+              <Home className="h-3.5 w-3.5" />
+              Proof of Address
+            </Button>
+          )}
         </div>
 
         {/* ── Requests table ──────────────────────────────────────────────── */}
@@ -1154,6 +1170,15 @@ export default function AccountingDocuments({
       <GenerateCoeDialog
         open={coeDialogOpen}
         onOpenChange={setCoeDialogOpen}
+        signature={signature}
+        onRequireSignature={openSignatureDialog}
+        onGenerated={() => void fetchRows({ silent: true })}
+      />
+
+      {/* ── Proof of Residential Address (Accounting-only, born signed) ───── */}
+      <GenerateAddressLetterDialog
+        open={addressDialogOpen}
+        onOpenChange={setAddressDialogOpen}
         signature={signature}
         onRequireSignature={openSignatureDialog}
         onGenerated={() => void fetchRows({ silent: true })}
