@@ -2330,7 +2330,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // efa568af (the Monday backlog triage line and a pronoun fix), a1a9860d (item 358, a finding with no
   // fix yet), 3db9748d (a 7-line header trim). d2115d23 carries three things, so it is split: the n8n
   // email and the return amount are live, and the archive waits on its migration (measured missing
-  // 2026-10-06). Names are plain ASCII, the pass 38 precedent.
+  // 2026-10-06, then applied by Kane the same morning). Names are plain ASCII, the pass 38 precedent.
   { epic: 'HRIS-09', name: 'The Employee Dashboard shows a Loading your Employee Dashboard card on every cold load until the Overview is on screen', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-01a', name: 'Orientation no-shows go on the Offboarded list, and the 55 missing since the sheet era are backfilled', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-09', name: 'Employee Profile cold load skeletons only the pane - the hero and tabs render for real, and the ID card forms in', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
@@ -2341,10 +2341,9 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-18', name: 'An employee-filed COE request emails its handler via n8n, with the recipient editable in Admin', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-02a', name: "NPD shows a loading card per tab and week fed by the read's real steps, keeps a read left mid-load, and reads the other tab ahead", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-07', name: 'Every member-filed MESA request emails Accounting via n8n, and the recipients edited in Admin are the ones mailed', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
-  // NOT done: scripts/apply-mesa-request-archive-migration.mts --verify FAILS 4/4 on 2026-10-06, and
-  // PostgREST answers 42703 for archived_at (negative control 42703, positive control ok). The pushed
-  // code tolerates the missing columns, so the button is dormant, not broken.
-  { epic: 'HRIS-07', name: 'Accounting can archive a completed MESA request - Active and Archived views, row and bulk Archive', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  // Done on 2026-10-06, the day Kane ran its migration: --verify passed every check, negative controls
+  // included, and both columns read through PostgREST. At 07:40 EDT the same day it had failed 0/4.
+  { epic: 'HRIS-07', name: 'Accounting can archive a completed MESA request - Active and Archived views, row and bulk Archive', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-07', name: 'A MESA return carries its amount, and Review shows the balance after it', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-02a', name: 'Payroll Wizard PAB step - bulk Ignore on Needs review, and /api/pab-exclusions writes by compare-and-swap', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-15', name: "Every table's Refresh keeps its rows and opens a progress modal with one line per real read - 48 buttons", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'Medium' },

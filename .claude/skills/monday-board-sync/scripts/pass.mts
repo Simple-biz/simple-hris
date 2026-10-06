@@ -792,8 +792,8 @@
  *     real send at 2026-10-05 20:05Z returned 200 to jakec@ (audit webhook.coe_request_notify). CLEAR.
  *   • MESA email (item 350/352): mesa_request_notify is active with an n8n cloud URL (config saved
  *     2026-10-05 18:21Z). No member has filed since, so 0 sends. Imported, so CLEAR.
- *   • MESA archive migration (item 350): --verify FAILS 4/4, and PostgREST answers 42703 for
- *     archived_at (negative control 42703, positive control ok). OPEN, so that row stays Pending Deploy.
+ *   • MESA archive migration (item 350): --verify FAILED 4/4 at 11:40Z. Kane then ran it, and at 11:47Z
+ *     --verify passes every check and both columns read through PostgREST. CLEAR, Done on 2026-10-06.
  *   • No-show backfill (item 343): applied 55/55 on 10-05; the owed post-deploy rerun was dry-run on
  *     10-06 and plans 0 inserts. CLEAR.
  *   • Start-date restore (item 344): dry run on 10-06 plans 0 DB rows and 0 Sheet cells. CLEAR.
@@ -869,8 +869,8 @@ export interface PassRow {
 
 export const ROWS: PassRow[] = [
   // —── PASS 40 · staged 2026-10-06 · Oct 5's commits, 16 rows / 69 SP, all Sprint 30 ─────────────────
-  // 15 Done (66 SP) on Kane's word, with the last sha's commit date (2026-10-05). 1 Pending Deploy:
-  // the MESA archive, whose migration is measured NOT applied.
+  // All 16 Done (69 SP). 15 on Kane's word with the last sha's commit date (2026-10-05); the MESA
+  // archive on 2026-10-06, the day Kane ran its migration (measured applied, dateBasis external).
   {
     name: 'The Employee Dashboard shows a Loading your Employee Dashboard card on every cold load until the Overview is on screen',
     status: 'Done',
@@ -943,10 +943,11 @@ export const ROWS: PassRow[] = [
   },
   {
     name: 'Accounting can archive a completed MESA request - Active and Archived views, row and bulk Archive',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-06',
+    dateBasis: 'external',
     shas: ['d2115d23'],
-    basis: "PENDING DEPLOY. Item 350. The code is on origin/main and tolerates the missing columns, so Archive is dormant rather than broken. Its migration is MEASURED NOT applied on 2026-10-06: apply-mesa-request-archive-migration.mts --verify fails 4 of 4 checks, and PostgREST answers 42703 for mesa_requests.archived_at (negative control 42703, positive control ok). Kane's word on 2026-10-06 cannot run a migration.",
-    blockers: ['Run node --import tsx scripts/apply-mesa-request-archive-migration.mts --apply (rehearsed 15/15 on 2026-10-05, rolled back), then --verify'],
+    basis: "DONE. Item 350. The code landed 2026-10-05 (d2115d23, on origin/main); this row was held at Pending Deploy because its migration was MEASURED NOT applied at 11:40Z on 2026-10-06 (--verify 0/4, PostgREST 42703 with a negative control). Kane then ran it, and it is MEASURED APPLIED at 11:47Z the same day: apply-mesa-request-archive-migration.mts --verify passes every check, including the six negative controls, and both archived_at and archived_by read through PostgREST (negative control 42703). Kane, 2026-10-06: \"Done now lets close it out and update the monday board\". The Completed Date is the day the migration ran, inside Sprint 30.",
   },
   {
     name: 'A MESA return carries its amount, and Review shows the balance after it',

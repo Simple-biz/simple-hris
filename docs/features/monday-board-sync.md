@@ -2627,3 +2627,10 @@ row. Adding them is Kane's call. Open item 359.
 **Approved.** Kane, 2026-10-06 07:42 EDT: *"Approve"*, on exactly that shape. A hash minted in that shape
 at the reset is applied on it; any other shape goes back to him. He did not take up the two 10-02 rows,
 so they stay out of this pass.
+
+**The held row closed the same morning.** Kane: *"Done now lets close it out and update the monday
+board"*. He had run the MESA archive migration. At 11:47Z `--verify` passed every check, including the
+six negative controls, and both columns read through PostgREST (negative control 42703). The row is
+Done, dated **2026-10-06**, the day the migration ran (`dateBasis: 'external'`). The shape is now **16
+created / 16 Done / 69 SP**, and his message approves it. A second `review.mts` at 11:48Z still hit
+`DAILY_LIMIT_EXCEEDED` (`retry_in_seconds` 43,871), so the write still waits for 00:00Z.
