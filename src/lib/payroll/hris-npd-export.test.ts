@@ -92,13 +92,12 @@ function lineFor(csv: string, email: string): string[] {
 }
 
 describe('HRIS vs NPD export — every row, as the comparison decided it', () => {
-  it('has one line per compared row and one per not-paid person, and nothing else', () => {
+  it('has one line per compared row, and nothing else', () => {
     const { comparison, out } = build();
     assert.ok(out.ok);
     const rows = body(out.csv);
-    assert.equal(rows.length, comparison.rows.length + comparison.leftOut.length);
+    assert.equal(rows.length, comparison.rows.length);
     for (const r of comparison.rows) assert.ok(rows.some((l) => l.startsWith(r.workEmail + ',')), r.workEmail);
-    for (const l of comparison.leftOut) assert.ok(rows.some((x) => x.startsWith(l.workEmail + ',')), l.workEmail);
   });
 
   it('takes no filter: the builder has no search or chip input to narrow it', () => {
@@ -108,7 +107,7 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     const params = sig.slice(0, sig.indexOf('}): '));
     assert.ok(params.length > 0, 'buildHrisNpdCsv signature not found');
     assert.doesNotMatch(params, /needle|search|filter|visible/i);
-    assert.match(sig, /hrisNpdDisplayRows\(comparison\)/);
+    assert.match(sig, /comparison\.rows\.map\(/);
   });
 
   it('writes each verdict and figure exactly as compared', () => {
@@ -133,16 +132,18 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     assert.equal(h[4], '', 'NPD has no figure for them');
   });
 
-  it('puts the reason in Match for people configured not to be paid, with no HRIS figure', () => {
-    const { out } = build();
+  it('leaves out people configured not to be paid (Kane, 2026-10-06), and says how many', () => {
+    const { comparison, out } = build();
     assert.ok(out.ok);
-    const x = lineFor(out.csv, 'xena@simple.biz');
-    assert.equal(x[2], 'Not paid · Excluded on Final Pay');
-    assert.equal(x[3], '');
-    const p = lineFor(out.csv, 'paused@simple.biz');
-    assert.equal(p[2], 'Not paid · Department paused this week');
-    assert.equal(p[4], '9.50', "NPD's figure as listed");
-    assert.equal(p[5], '', 'never compared, so no difference');
+    assert.equal(comparison.leftOut.length, 2, 'fixture: one excluded, one paused');
+    // Not a line anywhere in the file: not the body, not the notes.
+    assert.ok(!out.csv.includes('xena@simple.biz'), 'excluded on Final Pay');
+    assert.ok(!out.csv.includes('paused@simple.biz'), 'department paused');
+    assert.doesNotMatch(out.csv, /Not paid ·/);
+    assert.match(
+      out.csv,
+      /Left out, not paid this week: 2 \(1 excluded on Final Pay · 1 in a department paused in Step 1 → Configuration\)\. NPD lists 1 of them\./,
+    );
   });
 
   it("foots to the comparison's own totals and counts — never the not-paid rows", () => {
@@ -150,8 +151,8 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     assert.ok(out.ok);
     const lines = out.csv.split('\r\n');
     const total = lines.find((l) => l.startsWith('TOTAL'))!.split(',');
-    assert.equal(total[0], `TOTAL - ${comparison.totals.people} people compared`);
-    assert.equal(total[1], '2 not paid (not counted)');
+    assert.equal(total[0], `TOTAL - ${comparison.totals.people} people`);
+    assert.equal(total[1], '');
     assert.equal(total[3], centsCell(comparison.totals.hrisCents));
     assert.equal(total[4], centsCell(comparison.totals.npdCents));
     assert.equal(total[5], centsCell(comparison.totals.npdCents - comparison.totals.hrisCents!));
@@ -162,7 +163,7 @@ describe('HRIS vs NPD export — every row, as the comparison decided it', () =>
     assert.ok(lines.includes(`Mismatch,${c.mismatch}`));
     assert.ok(lines.includes(`Not in HRIS,${c.not_in_hris}`));
     assert.ok(lines.includes(`Not in NPD,${c.not_in_npd}`));
-    assert.ok(lines.includes('Not paid (not compared),2'));
+    assert.ok(lines.includes('Left out - not paid this week,2'));
   });
 
   it('a within-tolerance match keeps its difference and says why it is a match', () => {

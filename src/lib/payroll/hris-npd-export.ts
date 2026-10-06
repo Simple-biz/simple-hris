@@ -9,8 +9,12 @@
  * display only (§ The search and the chips never narrow the totals), and the wizard's money
  * exports ignore the search permanently (Reports, 2026-09-09): a filtered file cannot be told
  * apart from a short week once it is in someone's Downloads folder. So the rows are
- * `hrisNpdDisplayRows(comparison)` — compared rows and the people configured not to be paid —
- * and no filter is ever an input here.
+ * `comparison.rows`, every compared row, and no filter is ever an input here.
+ *
+ * **People configured not to be paid this week are not in it** (Kane, 2026-10-06: "they should
+ * not reach the validation step … because they are not getting paid for that week"), exactly
+ * as they are not rows on screen. The notes and the counts block say how many were left out,
+ * why, and how many of them NPD lists (`summarizeHrisNpdLeftOut`, the screen's own count).
  *
  * **Nothing the comparison did not decide.** Verdicts, differences, counts and totals are
  * `compareHrisNpd`'s, copied, never recomputed. The TOTAL row is a row, not a SUM(): a formula
@@ -27,11 +31,10 @@
  */
 
 import {
-  HRIS_NPD_NOT_PAID_REASON,
-  hrisNpdDisplayRows,
+  hrisNpdLeftOutWhy,
+  summarizeHrisNpdLeftOut,
   type HrisNpdComparison,
   type HrisNpdRow,
-  type HrisNpdLeftOut,
   type HrisNpdStatus,
   type NpdPasteParse,
 } from './hris-npd-compare';
@@ -129,7 +132,7 @@ export function hrisNpdExportFilename(periodLabel: string | null, now: Date): st
 export function hrisNpdExportBlockedReason(comparison: HrisNpdComparison): string | null {
   if (comparison.hold) return heldSaveReason(comparison.hold);
   if (comparison.counts == null) return 'Rows are not marked yet.';
-  if (comparison.rows.length === 0 && comparison.leftOut.length === 0) return 'There is no output to export.';
+  if (comparison.rows.length === 0) return 'There is no output to export.';
   return null;
 }
 
@@ -175,22 +178,6 @@ function comparedRow(r: HrisNpdRow, fxRate: number): string {
   ].join(',');
 }
 
-/** Someone configured not to be paid: the reason where a verdict would be, never compared. */
-function notPaidRow(l: HrisNpdLeftOut): string {
-  return [
-    textCell(l.workEmail),
-    textCell(l.name),
-    textCell(`Not paid · ${HRIS_NPD_NOT_PAID_REASON[l.reason].short}`),
-    '',
-    centsCell(l.npdCents),
-    '',
-    '',
-    '',
-    intCell(l.npdLines.length),
-    textCell(l.npdCents == null ? 'Not compared; NPD does not list them' : 'Not compared; not in the totals'),
-  ].join(',');
-}
-
 function sourceLine(source: HrisNpdExportSource, parse: NpdPasteParse): string {
   if (source.kind === 'paste') {
     return `NPD figures: pasted on step 1 (NPD Figures), ${parse.rows.length} line${parse.rows.length === 1 ? '' : 's'} read`;
@@ -217,8 +204,8 @@ export function buildHrisNpdCsv(input: {
   const blocked = hrisNpdExportBlockedReason(comparison);
   if (blocked) return { ok: false, reason: blocked };
   const counts = comparison.counts!;
-  const { totals, leftOut, toleranceCents } = comparison;
-  const notPaid = leftOut.length;
+  const { totals, toleranceCents } = comparison;
+  const left = summarizeHrisNpdLeftOut(comparison.leftOut);
 
   const notes: string[] = [
     'HRIS vs NPD - Payroll Wizard > Validation',
@@ -229,8 +216,8 @@ export function buildHrisNpdCsv(input: {
     `Match: HRIS and NPD off by at most ${toleranceCents} cent${toleranceCents === 1 ? '' : 's'} (the output's "off by" setting). A match inside that still shows its Difference.`,
     'Difference = NPD - HRIS.',
     'Every row of the output is here. The search and the chips on screen do not narrow this file.',
-    notPaid > 0
-      ? `"Not paid" rows (${notPaid}) are configured not to be paid this week: never compared, not in the counts or the totals.`
+    left.total > 0
+      ? `Left out, not paid this week: ${left.total} (${hrisNpdLeftOutWhy(left)}).${left.inNpd > 0 ? ` NPD lists ${left.inNpd} of them.` : ''} They are not in this file, not compared and not in the counts or totals.`
       : 'Nobody is configured not to be paid this week.',
   ];
   if (source.kind === 'locked_sheets' && source.usWorkersRows > 0) {
@@ -248,12 +235,10 @@ export function buildHrisNpdCsv(input: {
     ...notes.map(textCell),
     '',
     HRIS_NPD_EXPORT_HEADER.join(','),
-    ...hrisNpdDisplayRows(comparison).map((d) =>
-      d.kind === 'compared' ? comparedRow(d.row, fxRate) : notPaidRow(d.leftOut),
-    ),
+    ...comparison.rows.map((r) => comparedRow(r, fxRate)),
     [
-      textCell(`TOTAL - ${totals.people} ${totals.people === 1 ? 'person' : 'people'} compared`),
-      notPaid > 0 ? textCell(`${notPaid} not paid (not counted)`) : '',
+      textCell(`TOTAL - ${totals.people} ${totals.people === 1 ? 'person' : 'people'}`),
+      '',
       '',
       centsCell(totals.hrisCents),
       centsCell(totals.npdCents),
@@ -268,7 +253,7 @@ export function buildHrisNpdCsv(input: {
     'Mismatch,' + intCell(counts.mismatch),
     'Not in HRIS,' + intCell(counts.not_in_hris),
     'Not in NPD,' + intCell(counts.not_in_npd),
-    'Not paid (not compared),' + intCell(notPaid),
+    'Left out - not paid this week,' + intCell(left.total),
   ];
 
   if (parse.refusals.length > 0) {

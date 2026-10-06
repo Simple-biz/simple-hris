@@ -179,9 +179,10 @@ describe('HRIS vs NPD — rendered', () => {
   });
 
   // Kane, 2026-09-30: "If they are configured not to be paid please lets not include them here"
-  // (not compared). Kane, 2026-10-02: "if they are configured to not be paid it will state the
-  // reason in the match column" — so they are ROWS again, still never compared.
-  const CONFIGURED_OUT = () =>
+  // (not compared). Kane, 2026-10-06: "they should not reach the validation step … because they
+  // are not getting paid for that week" — so they are NOT rows (replacing 2026-10-02's rows with
+  // the reason in Match). One neutral line still says how many.
+  const CONFIGURED_OUT = (over: Partial<CompareHrisNpdInput> = {}, mount: Mount = {}) =>
     render(`${PASTE}\nexcl@simple.biz\t50.00\npaused@simple.biz\t9.00`, {
       hrisRows: [
         hris('kaner@simple.biz', phpFor(250)),
@@ -190,67 +191,53 @@ describe('HRIS vs NPD — rendered', () => {
         { email: 'exclnpd@simple.biz', name: 'Ex2', php: phpFor(10), dispatchable: true, excluded: true },
       ],
       pausedEmails: new Set(['paused@simple.biz']),
-    });
+      ...over,
+    }, mount);
 
-  it('people configured not to be paid are rows with the REASON in the Match column (Kane, 2026-10-02)', () => {
-    const html = CONFIGURED_OUT();
-    const excl = rowFor(html, 'excl@simple.biz');
-    assert.match(excl, /Not paid/);
-    assert.match(excl, /Excluded on Final Pay/);
-    assert.match(excl, /\$50\.00/, "NPD's figure is shown as listed");
-    const paused = rowFor(html, 'paused@simple.biz');
-    assert.match(paused, /Not paid/);
-    assert.match(paused, /Department paused this week/);
-    // Excluded, and NPD does not list them: still a row, NPD reads "—".
-    const notInNpd = rowFor(html, 'exclnpd@simple.biz');
-    assert.match(notInNpd, /Excluded on Final Pay/);
-    assert.match(notInNpd, /NPD does not list them/);
-  });
+  /** The table body's markup ('' when a chip or search leaves no row, so there is no table). */
+  const tbody = (html: string) => (html.split('<tbody')[1] ?? '').split('</tbody>')[0]!;
 
-  it('…and never compared: neutral, no ✓/✗, never a false "Not in HRIS", no HRIS dollar figure', () => {
+  it('people configured not to be paid are NOT rows — excluded or paused, listed by NPD or not (Kane, 2026-10-06)', () => {
     const html = CONFIGURED_OUT();
-    for (const email of ['excl@simple.biz', 'paused@simple.biz', 'exclnpd@simple.biz']) {
-      const r = rowFor(html, email);
-      assert.doesNotMatch(r, /bg-emerald|bg-rose/, `${email}: neutral, never green or red`);
-      assert.doesNotMatch(r, /Not in HRIS|Not in NPD|sr-only">(Match|Mismatch)</, `${email}: no verdict`);
-      assert.match(r, /HRIS pays them nothing this week/);
+    for (const email of ['excl@simple.biz', 'exclnpd@simple.biz', 'paused@simple.biz']) {
+      assert.ok(!html.includes(email), `${email} must not appear anywhere on the output`);
     }
+    assert.doesNotMatch(html, /Excluded on Final Pay|Department paused this week|Not paid/);
+    // Never a false "Not in HRIS" for an NPD line HRIS deliberately does not pay.
+    assert.equal((tbody(html).match(/Not in HRIS/g) ?? []).length, 1, 'only npdonly@ is Not in HRIS');
   });
 
-  it('…and not in the counts or the totals: the chips count verdicts only, and the footer says how many were left out', () => {
+  it('…not under any chip or search either, and there is no Not paid chip', () => {
+    for (const filter of ['all', 'match', 'mismatch', 'not_in_hris', 'not_in_npd'] as const) {
+      const html = CONFIGURED_OUT({}, { filter });
+      assert.ok(!tbody(html).includes('excl@simple.biz') && !tbody(html).includes('paused@simple.biz'), filter);
+    }
+    const searched = CONFIGURED_OUT({}, { search: 'excl' });
+    assert.match(searched, /No rows match/);
+    assert.doesNotMatch(CONFIGURED_OUT(), />Not paid<\/span>/);
+    // While verdicts are held too.
+    assert.ok(!CONFIGURED_OUT({ hrisState: 'pending' }).includes('excl@simple.biz'));
+  });
+
+  it('…and not in the counts or the totals; the footer counts compared people only', () => {
     const html = CONFIGURED_OUT();
-    assert.match(html, /Totals · 3 people compared/);
-    assert.match(html, /\(3 not paid, not counted\)/);
-    // NPD's total is the compared rows' only ($250.00 + $279.17 + $12.00), never the not-paid $59.
+    assert.match(html, /Totals · 3 people</);
+    assert.doesNotMatch(html, /not counted/);
+    // NPD's total is the compared rows' only ($250.00 + $279.17 + $12.00), never the left-out $59.
     assert.match(html, /\$541\.17/);
-    assert.match(html, />Not paid<\/span>[\s\S]*?>3</, 'a Not paid chip with its count');
   });
 
-  it('the "not compared" line says how many and why, and points at the rows', () => {
+  it('one neutral line says how many were left out, why, and how many NPD lists — no names, no Show button', () => {
     const html = CONFIGURED_OUT();
-    assert.match(html, /3 people not compared/);
-    assert.match(html, /2 excluded on Final Pay · 1 in a department paused in Step 1 → Configuration/);
+    assert.match(html, /3 people left out/);
+    assert.match(html, /not paid this week: 2 excluded on Final Pay · 1 in a department paused in Step 1 → Configuration\./);
     assert.match(html, /NPD lists 2 of them/);
-    assert.match(html, /in the\s+table with the reason in Match, and not in the counts or totals/);
-    assert.match(html, />Show them</);
+    assert.match(html, /not in the table, the counts or the totals/);
+    assert.doesNotMatch(html, />Show them</);
   });
 
-  it('the Not paid chip shows only them, and holds while verdicts are held (configuration, not a verdict)', () => {
-    const only = render(`${PASTE}\nexcl@simple.biz\t50.00`, {
-      hrisRows: [hris('kaner@simple.biz', phpFor(250)), { email: 'excl@simple.biz', name: 'Ex', php: phpFor(50), dispatchable: true, excluded: true }],
-    }, { filter: 'not_paid' });
-    const body = only.split('<tbody')[1]!.split('</tbody>')[0]!;
-    assert.ok(body.includes('excl@simple.biz') && !body.includes('kaner@simple.biz'));
-    const held = render(`${PASTE}\nexcl@simple.biz\t50.00`, {
-      hrisRows: [hris('kaner@simple.biz', phpFor(250)), { email: 'excl@simple.biz', name: 'Ex', php: phpFor(50), dispatchable: true, excluded: true }],
-      hrisState: 'pending',
-    }, { filter: 'not_paid' });
-    const heldBody = held.split('<tbody')[1]!.split('</tbody>')[0]!;
-    assert.ok(heldBody.includes('excl@simple.biz') && !heldBody.includes('kaner@simple.biz'));
-  });
-
-  it('with nobody configured out, there is no "not compared" line', () => {
-    assert.doesNotMatch(render(PASTE), /not compared/);
+  it('with nobody configured out, there is no "left out" line', () => {
+    assert.doesNotMatch(render(PASTE), /left out/);
   });
 
   it('prints the divisor behind every HRIS dollar figure', () => {

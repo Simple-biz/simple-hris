@@ -6,9 +6,10 @@ Figures**: Accounting pastes the NPD sheet's work emails and dollar figures. **S
 figure beside NPD's. A **green** row with a check means they agree within N cents (N is set at the
 top of the output, default 3). A **red** row
 with an ✗ and the difference means they don't. A red **Not in HRIS** / **Not in NPD** means one
-side has nobody at that address. Nobody on either side is ever dropped. People configured not to
-be paid this week are rows too, with the reason in the Match column, but they are never compared
-and never counted (§ People configured not to be paid). The comparison itself writes nothing. The
+side has nobody at that address. Nobody on either side is ever dropped, except people configured
+not to be paid this week (Excluded on Final Pay, or a paused department): they are **not rows** and
+are never compared or counted. One neutral line says how many were left out (§ People configured
+not to be paid). The comparison itself writes nothing. The
 one write is **Save output** (2026-10-01), which appends the output on screen as the week's next
 saved version (§ Saving the output). **Export CSV** (2026-10-06) downloads the whole output as a
 file and writes nothing (§ Export CSV).
@@ -178,45 +179,54 @@ together or not at all.
   same rows as Final Pay, minus the excluded). Contractor invoices (step 6) and orphanage interns
   are not part of it.
 
-### People configured not to be paid: a row with the reason, never compared (2026-09-30, 2026-10-02)
+### People configured not to be paid: never rows, never compared, only counted (2026-09-30, 2026-10-02, 2026-10-06)
 
-Kane, 2026-09-30: *"If they are configured not to be paid please lets not include them here"*
-(they are **not compared**). Kane, 2026-10-02: *"Please make sure that if they are configured to
-not be paid it will state the reason in the match column"*: so they are **rows again**, with the
-reason where a verdict would be. The 2026-10-02 instruction replaced the 09-30 build's "not a row"
-(this section said *"Not a row … They are listed as left out"*). "Not compared" stands. There are
-two ways to be configured not to be paid this week, both the wizard's own do-not-pay settings for
-the week (`payroll-wizard-configuration-tab.md` § "Pay this week"):
+Kane, 2026-10-06: *"Please make sure the that HRIS vs NPD - when someone is excluded it should not
+show up anymore"*, then, asked whether that reversed his 10-02 ruling: *"they should not reach the
+validation step or because they are not getting paid for that week"*. So **people configured not to
+be paid this week are not rows**: not in the table, not under any chip or search, and not in Export
+CSV. His reason ("not getting paid for that week") covers both ways of being configured out, so this
+applies to both:
 
-| Configured by | What the Match column says |
+| Configured by | On HRIS vs NPD |
 |---|---|
-| **Exclude** ticked on the Final Pay table ("do not pay") | **Not paid · Excluded on Final Pay**. Never a false "Not in HRIS", and never ✓/✗ |
-| Their department's **"Pay this week"** off (Step 1 → Configuration) | **Not paid · Department paused this week**. Never "Not in HRIS" |
+| **Exclude** ticked on the Final Pay table ("do not pay") | Not a row. Counted in the left-out line as "excluded on Final Pay" |
+| Their department's **"Pay this week"** off (Step 1 → Configuration) | Not a row. Counted in the left-out line as "in a department paused" |
 
-- **A row, never a verdict.** The row is neutral grey: never green, never red. Its HRIS cell is "—"
-  (HRIS pays them nothing this week), and its NPD cell is NPD's figure, or "—" when NPD does not list
-  them. The reason's tooltip says why they are not compared (`HRIS_NPD_NOT_PAID_REASON`). The rows
-  sort in with everyone else by work email (`hrisNpdDisplayRows`).
-- **Never counted.** They are not in the verdict counts, the totals, the "Totals · N people
-  compared" figure or the tab's badge. The footer adds `(M not paid, not counted)`. The comparison
-  keeps them apart as `leftOut`, exactly as before, so the verdicts, counts and totals did not move,
-  and neither did Save output: it already stores `left_out` with each reason.
-- **A Not paid chip** (neutral, with its count) shows only them. Because it is configuration and
-  not a verdict, it stays usable while verdicts are held, when the other chips fall back to All.
-  The search covers these rows too.
-- **Still said out loud.** The neutral line `N people not compared, configured not to be paid this
-  week: X excluded on Final Pay · Y in a department paused in Step 1 → Configuration. NPD lists Z
-  of them.` stays, and adds that they are in the table with the reason in Match and are not in the
-  counts or totals. **Show them** turns on the Not paid chip (it used to open a separate list).
-- A paused-department person NPD does **not** list is never a row, because they were never going to
-  be on this step. Every excluded person is a row, whether or not NPD has them.
+Both are the wizard's own do-not-pay settings for the week (`payroll-wizard-configuration-tab.md`
+§ "Pay this week"). **The Final Pay table is not affected.** Excluded people stay on it, because
+that is where Exclude is ticked and un-ticked. Only HRIS vs NPD leaves them out.
+
+History, so nobody "restores" an older version as a fix. Kane, 2026-09-30: *"If they are configured
+not to be paid please lets not include them here"* (not compared, not rows, listed separately). Kane,
+2026-10-02: *"if they are configured to not be paid it will state the reason in the match column"*
+(rows again, grey, with `Not paid · Excluded on Final Pay` / `Not paid · Department paused this week`
+in Match, plus a Not paid chip). Kane, 2026-10-06: not rows (above). The 10-02 row, its chip, its
+`HRIS_NPD_NOT_PAID_REASON` labels and the `hrisNpdDisplayRows` merge are **gone**. A source guard in
+`hris-npd-compare.test.ts` fails if any of them comes back.
+
+- **Never compared, never counted.** They are not in the verdict counts, the totals, the
+  "Totals · N people" figure or the tab's badge. `compareHrisNpd` keeps them apart as `leftOut`.
+  The verdicts, counts and totals have never included them, so this change did not move them.
+- **Still said out loud, as a number.** One neutral line on the output: `N people left out, not
+  paid this week: X excluded on Final Pay · Y in a department paused in Step 1 → Configuration. NPD
+  lists Z of them. They are not compared and not in the table, the counts or the totals.` No names,
+  no button to show them. Export CSV's notes and counts block carry the same count
+  (`summarizeHrisNpdLeftOut` is the one count for both). "NPD lists Z" is what keeps NPD planning to
+  pay someone HRIS won't visible.
+- **No Not paid chip.** `HrisNpdFilter` is `'all' | HrisNpdStatus`, so a not-paid filter can't be
+  represented (source-guarded). The table's filter, `filterHrisNpdRows`, only ever sees `comparison.rows`.
+- **Never a false "Not in HRIS".** An NPD line for a paused person, or for an excluded person, is
+  left out, never turned into a Not in HRIS row.
+- **Save output still stores them** as `left_out`, with each reason and NPD's figure
+  (§ Saving the output). That is the record of who was left out. The screen and the CSV only count them.
 - **Edge:** one work email with an excluded row AND a payable row is compared on the payable one.
   The row says `1 excluded row not counted`, and the person is not in the left-out list.
 - **"No payout this week" is NOT a configuration** (a missing payout address, a data gap). Those
   rows stay in and are compared like anyone else.
-- This reversed the first build (items 292–295), which kept excluded people in as struck green or red
-  rows and showed paused people as "Not in HRIS" with a note. That was the brief's CHOSEN 7, whose
-  other way was "payable-only".
+- The very first build (items 292–295) kept excluded people in as struck green or red rows, and
+  showed paused people as "Not in HRIS" with a note. That was the brief's CHOSEN 7, whose other way
+  was "payable-only". Kane reversed it on 09-30.
 
 The rate line prints the divisor (`final pay ÷ ₱61.52 per $1`). **An HRIS-vs-NPD gap is an FX
 divisor question before it is a math question** (Payroll Wizard INDEX row; 2026-08-18: all three
@@ -279,10 +289,10 @@ parsed. At 1,200 HRIS rows against 1,100 NPD lines, the test asserts one row per
 unique keys, and exact bucket counts. Rows sort by address. Unreadable paste lines are
 **refusals**, listed on step 1, not rows.
 
-**People configured not to be paid this week are rows too** (§ People configured not to be paid,
-2026-10-02). They carry the reason in the Match column instead of a verdict, and they are kept
-out of the counts and totals. From 2026-09-30 to 2026-10-02 they were the one thing that was not
-a row.
+**The one exception: people configured not to be paid this week are not rows** (Kane, 2026-10-06,
+§ People configured not to be paid). That is a configuration, not a dropped person: they are counted
+in the left-out line, and Save output stores them. A missing payout address is not a configuration,
+so those rows stay in.
 
 ## No verdict before the figures can be judged
 
@@ -363,12 +373,12 @@ and in the overlay, and only on step 2: step 1 has no output.
 
 | Rule | Why |
 |---|---|
-| **The file is every row of the output: compared rows and Not paid rows, sorted by work email** (`hrisNpdDisplayRows`). The search and the chip never narrow it. `buildHrisNpdCsv` takes **no** filter input (test-pinned), and the panel hands it `comparison`, never `visible` (source-guarded). When the table is narrowed, the button reads **Export CSV · all N** | The wizard's money exports ignore the search permanently (Reports, 2026-09-09, [[wizard-reports-search-display-only]]). A filtered file can't be told apart from a short week once it is downloaded. The spreadsheet can filter it |
+| **The file is every row of the output, sorted by work email** (`comparison.rows`). The search and the chip never narrow it. `buildHrisNpdCsv` takes **no** filter input (test-pinned), and the panel hands it `comparison`, never `visible` (source-guarded). When the table is narrowed, the button reads **Export CSV · all N** | The wizard's money exports ignore the search permanently (Reports, 2026-09-09, [[wizard-reports-search-display-only]]). A filtered file can't be told apart from a short week once it is downloaded. The spreadsheet can filter it |
 | **No file while the verdicts are held** (loading, a failed source, FX 0, nothing read). The button is disabled and its title gives the reason, in Save output's words (`heldSaveReason`). The builder refuses too | A file travels and the hold banner does not. An HRIS figure that hasn't landed must never leave as a figure (§ No verdict before the figures can be judged) |
 | **Everything is copied from `compareHrisNpd`, never recomputed**: verdicts, Difference (NPD − HRIS), counts, totals. The TOTAL row is a row, not a `SUM()` | A formula would recompute from whatever the reader has since edited, and stop matching the screen it came from |
-| **Not paid rows**: Match is `Not paid · Excluded on Final Pay` / `Not paid · Department paused this week`, HRIS is blank, NPD is its figure as listed, and there is no Difference. They are **not** in the TOTAL row, which says `N not paid (not counted)` | § People configured not to be paid. Same as the screen's footer |
+| **People configured not to be paid this week are not in the file** (Kane, 2026-10-06), as they are not rows on screen. A note says `Left out, not paid this week: N (X excluded on Final Pay · Y in a department paused …). NPD lists Z of them.` and the counts block ends `Left out - not paid this week,N` | § People configured not to be paid. The count is the screen's own (`summarizeHrisNpdLeftOut`) |
 | **The skipped NPD lines are listed at the bottom** (line, reason, text), and a note at the top says how many | Hiding the input must never hide a refused line (§ Two steps). A file with no refusals has no such block |
-| **Notes above the header row**: the week key, when it was exported (UTC), the NPD source (`NPD's locked sheets for week … (All Departments vN, HSL vN)`, or the paste), the FX divisor, the "off by" N in use, Difference = NPD − HRIS, the "every row" rule, the Not paid rule, and the Total Pay US Workers note when NPD has such rows | The screen's legend doesn't travel with the file. The tolerance and the rate are what the verdicts mean |
+| **Notes above the header row**: the week key, when it was exported (UTC), the NPD source (`NPD's locked sheets for week … (All Departments vN, HSL vN)`, or the paste), the FX divisor, the "off by" N in use, Difference = NPD − HRIS, the "every row" rule, the left-out count, and the Total Pay US Workers note when NPD has such rows | The screen's legend doesn't travel with the file. The tolerance and the rate are what the verdicts mean |
 | **Columns**: Work Email, Name, Match, HRIS USD, NPD USD, Difference USD (NPD − HRIS), HRIS PHP (final pay), HRIS rows added, NPD lines added, Notes. Notes carry what the screen tags: *No payout this week*, *N excluded rows not counted*, *within the off-by setting*, and on a mismatch the PHP rate NPD's figure implies | One column per thing the screen shows, so nothing on screen is missing from the file |
 | **Money is written from integer cents** (`centsCell`: `-2.68`, ungrouped), never through `cents / 100`. Pesos are 2dp | The comparison's cents ARE the figure |
 | **Text cells are formula-neutralised** (`=`, `+`, `-`, `@` → a leading `'`). Number cells are not | A pasted NPD address or a refused line is free text that Excel would run. A negative Difference legitimately starts with `-`. Same split as `cycle-processor-export.ts` |
@@ -387,8 +397,8 @@ stay visible down a long list), and says "(every row, not just those shown)" whe
 the same rule as Reports: a total that follows a filter gets read out as the week's figure
 (`payroll-wizard-final-pay.md` § 2026-09-09). The search matches the work email and the name. It is
 a **full-width bar directly above the table**, the Final Pay pattern (Kane, 2026-09-30: *"add a
-search bar in the output"*). The search and the **Not paid** chip cover the not-paid rows too.
-Those rows never enter a total (§ People configured not to be paid).
+search bar in the output"*). There is no Not paid chip, and no search can reach a left-out person,
+because they are not rows (§ People configured not to be paid).
 
 ## Phone layout (three traps, each pinned by a render test)
 
@@ -495,7 +505,18 @@ skipped lines all came out as above. **Not clicked through signed in, and no fil
 in Excel or Sheets.** The button's states are pinned by markup tests only. **`next build` not
 run**: a dev server was live on :3000.
 
+*People configured not to be paid are not rows (2026-10-06, second commit):* the tests that pinned
+10-02's rows-with-the-reason were rewritten to pin the opposite, at least as tightly: no excluded or
+paused address anywhere in the output markup under any chip, search or hold; no false Not in HRIS;
+footer and totals unchanged; the left-out line's wording; no such address in the CSV; a source guard
+against the removed helpers and the `not_paid` filter. The five HRIS-vs-NPD files: **189/189**.
+`npm test` **6,006/6,006**. tsc clean apart from the stale `.next/types` errors. **Not clicked
+through signed in.** `next build` not run (dev server on :3000).
+
 ## Deploy notes
+
+**People configured not to be paid are not rows (2026-10-06): nothing to apply.** No migration, no
+route change: Save output's payload is unchanged. It needs the push.
 
 **Export CSV (2026-10-06): nothing to apply.** No migration, no env var, no n8n, no route. It
 needs the push.

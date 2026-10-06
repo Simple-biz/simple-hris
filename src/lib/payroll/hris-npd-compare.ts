@@ -411,8 +411,11 @@ export interface HrisNpdComparison {
   rows: HrisNpdRow[];
   /**
    * People configured not to be paid this week, left OUT of `rows` (Kane, 2026-09-30:
-   * "If they are configured not to be paid please lets not include them here"). Listed so
-   * leaving them out is disclosed, never silent. Sorted by `workEmail`.
+   * "If they are configured not to be paid please lets not include them here"). They are
+   * never a table row and never a line of the export (Kane, 2026-10-06: "they should not
+   * reach the validation step … because they are not getting paid for that week"). Kept
+   * here so the output can state how many were left out (never silent) and so Save output
+   * stores them as `left_out`. Sorted by `workEmail`.
    */
   leftOut: HrisNpdLeftOut[];
   /** Null while verdicts are held. */
@@ -691,84 +694,65 @@ export function compareHrisNpd(input: CompareHrisNpdInput): HrisNpdComparison {
 
 // ─── Display filter ───────────────────────────────────────────────────────────
 
-/** The table's chips: All, each verdict, and the people configured not to be paid. */
-export type HrisNpdFilter = 'all' | HrisNpdStatus | 'not_paid';
-
 /**
- * Why a person is not paid this week, as the Match column states it (Kane, 2026-10-02: "if
- * they are configured to not be paid it will state the reason in the match column"). `short`
- * is the cell; `detail` is its tooltip.
+ * The table's chips: All and each verdict. There is no "Not paid" chip: people configured not
+ * to be paid this week are never rows (Kane, 2026-10-06), so there is nothing for one to show.
  */
-export const HRIS_NPD_NOT_PAID_REASON: Readonly<Record<HrisNpdLeftOutReason, { short: string; detail: string }>> = {
-  excluded: {
-    short: 'Excluded on Final Pay',
-    detail: 'Excluded on the Final Pay table (do not pay) this week, so HRIS pays them nothing and they are not compared.',
-  },
-  paused: {
-    short: 'Department paused this week',
-    detail: "Their department's \"Pay this week\" is off (Step 1 → Configuration), so HRIS pays them nothing and they are not compared.",
-  },
-};
+export type HrisNpdFilter = 'all' | HrisNpdStatus;
 
 /**
- * One line of the table. A `compared` row carries a verdict; a `not_paid` row is someone
- * configured not to be paid this week (`HrisNpdComparison.leftOut`): it is shown, with the
- * reason in the Match column, but never compared — no ✓/✗, and never in the counts, the
- * totals or the tab's badge.
- */
-export type HrisNpdDisplayRow =
-  | { kind: 'compared'; key: string; workEmail: string; row: HrisNpdRow }
-  | { kind: 'not_paid'; key: string; workEmail: string; leftOut: HrisNpdLeftOut };
-
-/** Every line of the table — compared rows and not-paid rows — sorted together by work email. */
-export function hrisNpdDisplayRows(comparison: Pick<HrisNpdComparison, 'rows' | 'leftOut'>): HrisNpdDisplayRow[] {
-  const out: HrisNpdDisplayRow[] = [
-    ...comparison.rows.map((r) => ({ kind: 'compared' as const, key: r.key, workEmail: r.workEmail, row: r })),
-    ...comparison.leftOut.map((l) => ({
-      kind: 'not_paid' as const,
-      key: `not_paid:${l.reason}:${l.workEmail.toLowerCase()}`,
-      workEmail: l.workEmail,
-      leftOut: l,
-    })),
-  ];
-  return out.sort((a, b) => a.workEmail.localeCompare(b.workEmail) || a.key.localeCompare(b.key));
-}
-
-/**
- * The table's search + chips over every line. DISPLAY ONLY: totals and counts are always the
- * whole comparison's. The needle matches the work email and the name.
- */
-export function filterHrisNpdDisplay(
-  rows: readonly HrisNpdDisplayRow[],
-  opts: { needle?: string; status?: HrisNpdFilter },
-): HrisNpdDisplayRow[] {
-  const needle = (opts.needle ?? '').trim().toLowerCase();
-  const status = opts.status ?? 'all';
-  return rows.filter((d) => {
-    if (status === 'not_paid' ? d.kind !== 'not_paid' : status !== 'all' && (d.kind !== 'compared' || d.row.status !== status)) {
-      return false;
-    }
-    if (!needle) return true;
-    const name = d.kind === 'compared' ? d.row.name : d.leftOut.name;
-    return `${d.workEmail} ${name ?? ''}`.toLowerCase().includes(needle);
-  });
-}
-
-/**
- * The compared rows only, by the same search + chips. DISPLAY ONLY. (The table shows
- * `filterHrisNpdDisplay`; this stays for callers that want verdict rows alone.)
+ * The table's search + chips over the compared rows. DISPLAY ONLY: totals and counts are always
+ * the whole comparison's. The needle matches the work email and the name.
  */
 export function filterHrisNpdRows(
   rows: readonly HrisNpdRow[],
   opts: { needle?: string; status?: HrisNpdFilter },
 ): HrisNpdRow[] {
-  const out: HrisNpdRow[] = [];
-  const shown = filterHrisNpdDisplay(
-    rows.map((r) => ({ kind: 'compared' as const, key: r.key, workEmail: r.workEmail, row: r })),
-    opts,
+  const needle = (opts.needle ?? '').trim().toLowerCase();
+  const status = opts.status ?? 'all';
+  return rows.filter(
+    (r) =>
+      (status === 'all' || r.status === status) &&
+      (!needle || `${r.workEmail} ${r.name ?? ''}`.toLowerCase().includes(needle)),
   );
-  for (const d of shown) if (d.kind === 'compared') out.push(d.row);
-  return out;
+}
+
+// ─── Left out: how many, never who ───────────────────────────────────────────
+
+/**
+ * How many people were left out as configured not to be paid this week, by reason, and how
+ * many of them NPD still lists. Kane, 2026-10-06: "they should not reach the validation step
+ * … because they are not getting paid for that week", so they are never rows on screen or in
+ * the export. This count is what is still said, by the output's notice line and the export's
+ * notes alike, so leaving them out is never silent and NPD planning to pay someone HRIS will
+ * not stays visible as a number.
+ */
+export interface HrisNpdLeftOutSummary {
+  total: number;
+  excluded: number;
+  paused: number;
+  /** Of `total`, how many NPD lists with a figure. */
+  inNpd: number;
+}
+
+export function summarizeHrisNpdLeftOut(leftOut: readonly HrisNpdLeftOut[]): HrisNpdLeftOutSummary {
+  const excluded = leftOut.filter((l) => l.reason === 'excluded').length;
+  return {
+    total: leftOut.length,
+    excluded,
+    paused: leftOut.length - excluded,
+    inNpd: leftOut.filter((l) => l.npdCents != null).length,
+  };
+}
+
+/** "2 excluded on Final Pay · 1 in a department paused in Step 1 → Configuration". */
+export function hrisNpdLeftOutWhy(s: HrisNpdLeftOutSummary): string {
+  return [
+    s.excluded > 0 ? `${s.excluded} excluded on Final Pay` : null,
+    s.paused > 0 ? `${s.paused} in a department paused in Step 1 → Configuration` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /** Cents → the number `formatMoney(…, 'USD')` renders. */

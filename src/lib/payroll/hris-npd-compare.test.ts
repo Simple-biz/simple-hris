@@ -527,14 +527,20 @@ describe('filterHrisNpdRows — display only', () => {
   });
 });
 
-// ─── People configured not to be paid: rows with the reason, never compared (Kane, 2026-10-02) ──
+// ─── People configured not to be paid: never rows, only counted (Kane, 2026-10-06) ──
+//
+// Kane, 2026-10-06: "they should not reach the validation step … because they are not getting
+// paid for that week". This replaced 2026-10-02's rows-with-the-reason. They stay in
+// `leftOut` (Save output stores them, the notice counts them), but nothing the table or the
+// export renders can carry them.
 
-describe('the table lines: compared rows + people configured not to be paid', async () => {
+describe('people configured not to be paid: never rows, only counted', async () => {
   const m = await import('./hris-npd-compare');
   const c = m.compareHrisNpd({
     hrisRows: [
       { email: 'b@simple.biz', name: 'Bee', php: 6152, dispatchable: true, excluded: false },
       { email: 'a@simple.biz', name: 'Ay', php: 6152, dispatchable: true, excluded: true },
+      { email: 'd@simple.biz', name: 'Dee', php: 6152, dispatchable: true, excluded: true },
     ],
     npdRows: m.parseNpdPaste('a@simple.biz\t100.00\nb@simple.biz\t100.00\nc@simple.biz\t5.00').rows,
     fxRate: 61.52,
@@ -542,28 +548,30 @@ describe('the table lines: compared rows + people configured not to be paid', as
     pausedEmails: new Set(['c@simple.biz']),
   });
 
-  test('both kinds, sorted together by work email; the not-paid ones are not in counts or totals', () => {
-    const lines = m.hrisNpdDisplayRows(c);
-    assert.deepEqual(lines.map((l) => [l.kind, l.workEmail]), [
-      ['not_paid', 'a@simple.biz'],
-      ['compared', 'b@simple.biz'],
-      ['not_paid', 'c@simple.biz'],
+  test('the table filter reaches only compared rows: no chip, no search finds a left-out person', () => {
+    assert.deepEqual(m.filterHrisNpdRows(c.rows, {}).map((r) => r.workEmail), ['b@simple.biz']);
+    assert.deepEqual(m.filterHrisNpdRows(c.rows, { needle: 'ay' }), []);
+    assert.deepEqual(m.filterHrisNpdRows(c.rows, { needle: 'c@simple' }), []);
+    assert.deepEqual(c.leftOut.map((l) => [l.reason, l.workEmail]), [
+      ['excluded', 'a@simple.biz'],
+      ['paused', 'c@simple.biz'],
+      ['excluded', 'd@simple.biz'],
     ]);
     assert.deepEqual(c.counts, { match: 1, mismatch: 0, not_in_hris: 0, not_in_npd: 0 });
     assert.equal(c.totals.npdCents, 10000);
     assert.equal(c.totals.people, 1);
   });
 
-  test('the Not paid chip shows only them; a verdict chip never shows them; the search covers both', () => {
-    const lines = m.hrisNpdDisplayRows(c);
-    assert.deepEqual(m.filterHrisNpdDisplay(lines, { status: 'not_paid' }).map((l) => l.workEmail), ['a@simple.biz', 'c@simple.biz']);
-    assert.deepEqual(m.filterHrisNpdDisplay(lines, { status: 'match' }).map((l) => l.workEmail), ['b@simple.biz']);
-    assert.deepEqual(m.filterHrisNpdDisplay(lines, { needle: 'ay' }).map((l) => l.workEmail), ['a@simple.biz']);
-    assert.equal(m.filterHrisNpdDisplay(lines, {}).length, 3);
+  test('the count that is still said: how many, why, and how many NPD lists', () => {
+    const s = m.summarizeHrisNpdLeftOut(c.leftOut);
+    assert.deepEqual(s, { total: 3, excluded: 2, paused: 1, inNpd: 2 });
+    assert.equal(m.hrisNpdLeftOutWhy(s), '2 excluded on Final Pay · 1 in a department paused in Step 1 → Configuration');
+    assert.equal(m.hrisNpdLeftOutWhy(m.summarizeHrisNpdLeftOut([])), '');
   });
 
-  test('every reason has the words the Match column states', () => {
-    assert.equal(m.HRIS_NPD_NOT_PAID_REASON.excluded.short, 'Excluded on Final Pay');
-    assert.equal(m.HRIS_NPD_NOT_PAID_REASON.paused.short, 'Department paused this week');
+  test('no display helper can merge them back in, and there is no Not paid chip (source guard)', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src/lib/payroll/hris-npd-compare.ts'), 'utf8');
+    assert.doesNotMatch(src, /hrisNpdDisplayRows|filterHrisNpdDisplay|HrisNpdDisplayRow|HRIS_NPD_NOT_PAID_REASON/);
+    assert.match(src, /export type HrisNpdFilter = 'all' \| HrisNpdStatus;/);
   });
 });

@@ -22,12 +22,13 @@
  *     (`buildHrisNpdCsv`): every row, never the search or chip's slice, and nothing while the
  *     verdicts are held. Client-side only; it writes nothing either.
  *   - Every row, count, total and verdict comes from `compareHrisNpd` — this file never
- *     decides a match. The search and the status chips are `filterHrisNpdDisplay`, and they
+ *     decides a match. The search and the status chips are `filterHrisNpdRows`, and they
  *     never narrow the totals.
- *   - People configured not to be paid this week (`comparison.leftOut`) are ROWS, with the
- *     reason in the Match column (Kane, 2026-10-02: "if they are configured to not be paid it
- *     will state the reason in the match column"). They are never compared: no ✓/✗, neutral,
- *     and never in the counts, the totals or the tab's badge.
+ *   - People configured not to be paid this week (`comparison.leftOut`: Excluded on Final
+ *     Pay, or a paused department) are NEVER ROWS (Kane, 2026-10-06: "they should not reach
+ *     the validation step … because they are not getting paid for that week", replacing
+ *     2026-10-02's rows-with-the-reason). They are never compared or counted. One neutral
+ *     line says how many, and how many of them NPD lists, so leaving them out is never silent.
  *   - No verdict before the figures can be judged: while `comparison.hold` is set, rows
  *     render uncoloured with "—" in Match, and the banner says why.
  *   - HRIS's figure is the dollar amount Payment Dispatch is sent, and the rate it was
@@ -66,9 +67,9 @@ import {
   MAX_MATCH_TOLERANCE_CENTS,
   parseToleranceCents,
   centsToDollars,
-  filterHrisNpdDisplay,
-  hrisNpdDisplayRows,
-  HRIS_NPD_NOT_PAID_REASON,
+  filterHrisNpdRows,
+  hrisNpdLeftOutWhy,
+  summarizeHrisNpdLeftOut,
   type HrisNpdComparison as Comparison,
   type HrisNpdFilter,
   type HrisNpdHold,
@@ -205,13 +206,12 @@ type Props = HrisNpdPanelProps & {
   onOpenFullScreen?: () => void;
 };
 
-/** The chips' labels: each verdict, and the people configured not to be paid. */
+/** The chips' labels: each verdict. */
 const CHIP_LABEL: Record<Exclude<HrisNpdFilter, 'all'>, string> = {
   match: 'Match',
   mismatch: 'Mismatch',
   not_in_hris: 'Not in HRIS',
   not_in_npd: 'Not in NPD',
-  not_paid: 'Not paid',
 };
 
 const STATUS_LABEL: Record<HrisNpdStatus, string> = {
@@ -408,48 +408,6 @@ const ComparisonRow = React.memo(function ComparisonRow({
   );
 });
 
-/**
- * Someone configured not to be paid this week (Excluded on Final Pay, or a department paused
- * in Configuration). A row, so the reason sits in the Match column (Kane, 2026-10-02), but
- * NEVER compared: neutral, no ✓/✗, no HRIS dollar figure (HRIS pays them nothing), NPD's figure
- * shown as listed. Not in any count, total or badge.
- */
-const NotPaidRow = React.memo(function NotPaidRow({ l }: { l: HrisNpdLeftOut }) {
-  const reason = HRIS_NPD_NOT_PAID_REASON[l.reason];
-  return (
-    <tr className="bg-zinc-100/80 text-zinc-700 dark:bg-zinc-800/40 dark:text-zinc-300">
-      <td className="px-3 py-2 align-top">
-        <div className="truncate font-mono text-xs font-medium" title={l.workEmail}>{l.workEmail}</div>
-        {l.name && <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">{l.name}</div>}
-      </td>
-      <td className="px-3 py-2 text-right align-top font-mono text-xs tabular-nums">
-        <span className="text-zinc-500 dark:text-zinc-400" title="HRIS pays them nothing this week">—</span>
-      </td>
-      <td className="px-3 py-2 text-right align-top font-mono text-xs tabular-nums">
-        {l.npdCents == null ? (
-          <span className="text-zinc-500 dark:text-zinc-400" title="NPD does not list them">—</span>
-        ) : (
-          <>
-            <span className="font-semibold">{usd(l.npdCents)}</span>
-            {l.npdLines.length > 1 && (
-              <div className="font-sans text-[10px] text-zinc-500 dark:text-zinc-400" title={`Paste lines ${l.npdLines.join(', ')}`}>
-                {l.npdLines.length} lines added
-              </div>
-            )}
-          </>
-        )}
-      </td>
-      <td className="px-3 py-2 text-center align-top">
-        <span className="inline-flex flex-col items-center gap-0.5" title={reason.detail}>
-          <PowerOff className="h-3.5 w-3.5 text-zinc-500 dark:text-zinc-400" aria-hidden />
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">Not paid</span>
-          <span className="text-[11px] font-semibold leading-tight text-zinc-700 dark:text-zinc-200">{reason.short}</span>
-        </span>
-      </td>
-    </tr>
-  );
-});
-
 // ─── Hold banner ───────────────────────────────────────────────────────────────
 
 function HoldBanner({ hold }: { hold: HrisNpdHold }) {
@@ -632,55 +590,27 @@ function SaveOutputBar({ save }: { save: HrisNpdSaveProps }) {
   );
 }
 
-// ─── Not compared ──────────────────────────────────────────────────────────────
+// ─── Left out ──────────────────────────────────────────────────────────────────
 
 /**
- * People configured not to be paid this week are left out of the comparison (Kane,
- * 2026-09-30). Said out loud here, with who and why, so leaving them out is never silent.
- * Neutral, not amber: a deliberate configuration is not a warning.
+ * People configured not to be paid this week are left out (Kane, 2026-09-30), and since
+ * 2026-10-06 they are not rows either: "they should not reach the validation step … because
+ * they are not getting paid for that week". This one line is all that is said about them: how
+ * many, why, and how many NPD still lists, so leaving them out is never silent. No names, no
+ * button to show them. Neutral, not amber: a deliberate configuration is not a warning.
  */
-function LeftOutNotice({
-  leftOut,
-  showing,
-  onShow,
-}: {
-  leftOut: readonly HrisNpdLeftOut[];
-  /** The Not paid chip is on. */
-  showing: boolean;
-  onShow: () => void;
-}) {
-  const excluded = leftOut.filter((l) => l.reason === 'excluded').length;
-  const paused = leftOut.length - excluded;
-  const inNpd = leftOut.filter((l) => l.npdCents != null).length;
-  const why = [
-    excluded > 0 ? `${excluded} excluded on Final Pay` : null,
-    paused > 0 ? `${paused} in a department paused in Step 1 → Configuration` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+function LeftOutNotice({ leftOut }: { leftOut: readonly HrisNpdLeftOut[] }) {
+  const s = summarizeHrisNpdLeftOut(leftOut);
   return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <span className="flex min-w-0 items-start gap-2">
-          <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
-          <span>
-            <strong className="font-semibold">
-              {leftOut.length} {leftOut.length === 1 ? 'person' : 'people'} not compared
-            </strong>
-            , configured not to be paid this week: {why}.{inNpd > 0 ? ` NPD lists ${inNpd} of them.` : ''} They are in the
-            table with the reason in Match, and not in the counts or totals.
-          </span>
-        </span>
-        {!showing && (
-          <button
-            type="button"
-            onClick={onShow}
-            className="shrink-0 font-medium text-violet-700 hover:underline dark:text-violet-300"
-          >
-            Show them
-          </button>
-        )}
-      </div>
+    <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300">
+      <PowerOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden />
+      <span>
+        <strong className="font-semibold">
+          {s.total} {s.total === 1 ? 'person' : 'people'} left out
+        </strong>
+        , not paid this week: {hrisNpdLeftOutWhy(s)}.{s.inNpd > 0 ? ` NPD lists ${s.inNpd} of them.` : ''} They are not
+        compared and not in the table, the counts or the totals.
+      </span>
     </div>
   );
 }
@@ -732,21 +662,21 @@ export default function HrisNpdComparison({
     goTo('output');
   };
   const judged = counts != null;
-  // A verdict chip means nothing while verdicts are held, so the table falls back to All. Not
-  // paid is configuration, not a verdict, so it holds.
-  const activeFilter: HrisNpdFilter = judged || filter === 'not_paid' ? filter : 'all';
+  // A verdict chip means nothing while verdicts are held, so the table falls back to All.
+  const activeFilter: HrisNpdFilter = judged ? filter : 'all';
 
-  // Every line: compared rows and the people configured not to be paid, sorted together.
-  const lines = useMemo(() => hrisNpdDisplayRows(comparison), [comparison]);
+  // Every line is a compared row. People configured not to be paid this week are never rows
+  // (Kane, 2026-10-06); `LeftOutNotice` says how many.
+  const lines = comparison.rows;
   const visible = useMemo(
-    () => filterHrisNpdDisplay(lines, { needle: deferredSearch, status: activeFilter }),
+    () => filterHrisNpdRows(lines, { needle: deferredSearch, status: activeFilter }),
     [lines, deferredSearch, activeFilter],
   );
   const loading = hold?.kind === 'loading';
   const narrowed = visible.length !== lines.length;
-  const notPaid = comparison.leftOut.length;
+  const leftOutCount = comparison.leftOut.length;
 
-  const chips: HrisNpdFilter[] = ['all', ...HRIS_NPD_STATUSES, ...(notPaid > 0 ? (['not_paid'] as const) : [])];
+  const chips: HrisNpdFilter[] = ['all', ...HRIS_NPD_STATUSES];
 
   // Export CSV (Kane, 2026-10-06). Every row of the output, never the search or chip's slice
   // (the wizard's money exports ignore the search), and off while verdicts are held: a file
@@ -880,18 +810,15 @@ export default function HrisNpdComparison({
               </p>
             )}
             {hold && <HoldBanner hold={hold} />}
-            {notPaid > 0 && (
-              <LeftOutNotice leftOut={comparison.leftOut} showing={activeFilter === 'not_paid'} onShow={() => onFilterChange('not_paid')} />
-            )}
+            {leftOutCount > 0 && <LeftOutNotice leftOut={comparison.leftOut} />}
 
               <div role="group" aria-label="Show rows" className="flex flex-wrap items-center gap-1.5">
                 {chips.map((f) => {
                   const active = activeFilter === f;
-                  const n = f === 'all' ? lines.length : f === 'not_paid' ? notPaid : counts?.[f];
-                  const disabled = f !== 'all' && f !== 'not_paid' && !judged;
+                  const n = f === 'all' ? lines.length : counts?.[f];
+                  const disabled = f !== 'all' && !judged;
                   const good = f === 'match';
-                  const neutral = f === 'not_paid';
-                  const bad = f !== 'all' && f !== 'match' && f !== 'not_paid';
+                  const bad = f !== 'all' && f !== 'match';
                   return (
                     <button
                       key={f}
@@ -911,7 +838,7 @@ export default function HrisNpdComparison({
                           layoutId="hris-npd-filter"
                           className={cn(
                             'absolute inset-0 rounded-md',
-                            good ? 'bg-emerald-600' : bad ? 'bg-rose-600' : neutral ? 'bg-zinc-600' : 'bg-violet-600',
+                            good ? 'bg-emerald-600' : bad ? 'bg-rose-600' : 'bg-violet-600',
                           )}
                           transition={{ duration: reduceMotion ? 0 : 0.28, ease: EASE }}
                         />
@@ -1062,13 +989,9 @@ export default function HrisNpdComparison({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
-                    {visible.map((d) =>
-                      d.kind === 'compared' ? (
-                        <ComparisonRow key={d.key} r={d.row} fxRate={fxRate} loading={loading} toleranceCents={comparison.toleranceCents} />
-                      ) : (
-                        <NotPaidRow key={d.key} l={d.leftOut} />
-                      ),
-                    )}
+                    {visible.map((r) => (
+                      <ComparisonRow key={r.key} r={r} fxRate={fxRate} loading={loading} toleranceCents={comparison.toleranceCents} />
+                    ))}
                   </tbody>
                   {/* Whole-comparison totals: a search or a chip never changes them
                       (a total that follows a filter gets read out as the week's). Sticky,
@@ -1078,12 +1001,7 @@ export default function HrisNpdComparison({
                   <tfoot className="sticky bottom-0 z-10 bg-zinc-100 shadow-[0_-2px_0_0_rgb(212_212_216)] dark:bg-zinc-900 dark:shadow-[0_-2px_0_0_rgb(63_63_70)]">
                     <tr>
                       <td className="px-3 py-2.5 text-xs font-bold text-zinc-700 dark:text-zinc-300">
-                        Totals · {totals.people} {totals.people === 1 ? 'person' : 'people'}{notPaid > 0 ? ' compared' : ''}
-                        {notPaid > 0 && (
-                          <span className="ml-1 font-normal text-zinc-500 dark:text-zinc-400">
-                            ({notPaid} not paid, not counted)
-                          </span>
-                        )}
+                        Totals · {totals.people} {totals.people === 1 ? 'person' : 'people'}
                         {narrowed && <span className="ml-1 font-normal text-zinc-500 dark:text-zinc-400">(every row, not just those shown)</span>}
                       </td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs font-bold tabular-nums text-zinc-800 dark:text-zinc-200">
