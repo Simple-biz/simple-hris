@@ -14,7 +14,9 @@ import {
   Handshake,
   Headphones,
   Layers,
+  LayoutList,
   Mail,
+  Scale,
   ShieldAlert,
   ShieldCheck,
   Timer,
@@ -22,8 +24,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { GoalRule, SectionKey } from '@/lib/accounting-scoreboard/sections';
-import { goalText, minutesToTimeInput, timeInputToMinutes } from '@/lib/accounting-scoreboard/scoring';
+import type { BoardSection, GoalRule, SectionKey } from '@/lib/accounting-scoreboard/sections';
+import {
+  goalText,
+  minutesToTimeInput,
+  timeInputToMinutes,
+  type RowScoreStatus,
+} from '@/lib/accounting-scoreboard/scoring';
 import { LIGHT_LABEL, type Light } from '@/lib/accounting-scoreboard/stoplight';
 
 /** One icon per KPI card (Kane: "add like icons that match the kpi card"). */
@@ -34,10 +41,35 @@ export const SECTION_ICON: Record<SectionKey, LucideIcon> = {
   onboarding: Handshake,
   inbox: Mail,
   chargebacks: ShieldAlert,
+  chargeback_outcomes: Scale,
   compliance: ShieldCheck,
   cancellations: Headphones,
   payroll_timing: Timer,
   payroll_problems: TriangleAlert,
+};
+
+/** A built-in section's own icon; a custom section's is a plain list. */
+export function sectionIcon(section: Pick<BoardSection, 'key'>): LucideIcon {
+  return section.key === 'custom' ? LayoutList : SECTION_ICON[section.key];
+}
+
+/**
+ * What a row's score cell says when it has no number (Carla, 2026-10-02): "N/A" for a bucket that
+ * was 0 all week, "Pending" for a weekday Collections bucket before its own day's PM is in. Neither
+ * is a 0, and neither is in the overall.
+ */
+export const SCORE_STATUS_TEXT: Record<Exclude<RowScoreStatus, 'scored'>, string> = {
+  na: 'N/A',
+  pending: 'Pending',
+  pm_missing: 'PM missing',
+  empty: '—',
+};
+
+export const SCORE_STATUS_TITLE: Record<Exclude<RowScoreStatus, 'scored'>, string> = {
+  na: 'Nothing in this bucket all week: no score, and left out of the overall',
+  pending: "Waiting for this bucket's own day's PM reading. Left out of the overall until then",
+  pm_missing: "This bucket's own day is over and its PM reading was never typed. Left out of the overall",
+  empty: 'Nothing typed this week',
 };
 
 /**
@@ -477,6 +509,24 @@ export function TimeCell({
         saving && 'opacity-70',
       )}
     />
+  );
+}
+
+/** A small rounded tag beside a row name ("Mon bucket", "due in 7 days"). */
+export function RowTag({ children, tone = 'zinc', title }: { children: ReactNode; tone?: 'zinc' | 'amber'; title?: string }) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        TINY_CAPS,
+        'rounded px-1 text-[9px]',
+        tone === 'amber'
+          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+          : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800',
+      )}
+    >
+      {children}
+    </span>
   );
 }
 

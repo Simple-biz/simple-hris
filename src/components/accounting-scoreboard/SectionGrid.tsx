@@ -1,25 +1,29 @@
 'use client';
 
 /**
- * One grid section of the Accounting Scoreboard (every section except Collections): rows down the
- * side, the section's days across, the sheet's computed columns on the right, and a team total
- * row. Every number is computed by src/lib/accounting-scoreboard/scoring.ts; nothing here sums.
+ * One grid section of the Accounting Scoreboard (every section except Collections, Payroll Timing
+ * and Payroll Problems, which have panels of their own): rows down the side, the section's days
+ * across, the computed columns on the right, and a team total row. Every number is computed by
+ * src/lib/accounting-scoreboard/scoring.ts; nothing here sums.
  */
 
 import { useMemo, type ReactNode } from 'react';
+import { CalendarX2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ResolvedSection, Slot } from '@/lib/accounting-scoreboard/sections';
+import { WEEKDAY_LABEL, type BoardSection, type GoalRule, type Slot } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader } from '@/lib/accounting-scoreboard/week';
 import {
+  amountCountSectionStats,
   amPmSectionStats,
   dailySectionStats,
+  noMeetingStreak,
   timeSpanSectionHours,
+  type AmPmRowStats,
   type EntryLookup,
 } from '@/lib/accounting-scoreboard/scoring';
 import type { BoardRow } from '@/lib/accounting-scoreboard/types';
 import { summarizeSection } from '@/lib/accounting-scoreboard/board';
 import { goalLight } from '@/lib/accounting-scoreboard/stoplight';
-import type { GoalRule } from '@/lib/accounting-scoreboard/sections';
 import {
   DIM,
   EmptyRows,
@@ -27,11 +31,15 @@ import {
   GoalChip,
   LIGHT_STYLE,
   NumberCell,
+  RowTag,
+  SCORE_STATUS_TEXT,
+  SCORE_STATUS_TITLE,
   SectionHeader,
   TimeCell,
   TINY_CAPS,
   fmtNum,
   fmtScore,
+  fmtUsd,
   handle,
   type EditingSignal,
 } from './shared';
@@ -39,7 +47,7 @@ import {
 export type SaveEntry = (rowId: string, date: string, slot: Slot, value: number | null) => Promise<boolean>;
 
 interface Props {
-  section: ResolvedSection;
+  section: BoardSection;
   rows: BoardRow[];
   weekStart: string;
   lastWeekStart: string;
@@ -48,6 +56,8 @@ interface Props {
   isManager: boolean;
   onSave: SaveEntry;
   onEditing: EditingSignal;
+  /** PM Buckets: the latest day any meeting was ticked (the No Meeting Streak counts from it). */
+  lastMeetingDate?: string | null;
 }
 
 const TH = cn(TINY_CAPS, 'whitespace-nowrap px-2 py-2 text-zinc-500 dark:text-zinc-400');
@@ -66,46 +76,94 @@ function RowLabel({ row }: { row: BoardRow }) {
             {handle(row.workEmail)}
           </span>
         ) : null}
-        {row.archived ? (
-          <span className={cn(TINY_CAPS, 'rounded bg-zinc-100 px-1 text-[9px] text-zinc-500 dark:bg-zinc-800')}>
-            removed
-          </span>
+        {row.bucketDay ? (
+          <RowTag title={`A weekday Collections bucket: scored once ${WEEKDAY_LABEL[row.bucketDay]}'s PM is in`}>
+            {WEEKDAY_LABEL[row.bucketDay]} bucket
+          </RowTag>
         ) : null}
+        {row.dueSoon ? (
+          <RowTag tone="amber" title="Counts the disputes due in the next 7 days">
+            due in 7 days
+          </RowTag>
+        ) : null}
+        {row.archived ? <RowTag>removed</RowTag> : null}
       </div>
     </div>
   );
 }
 
-export function SectionGrid({ section, rows, weekStart, lastWeekStart, today, lookup, isManager, onSave, onEditing }: Props) {
+export function SectionGrid({
+  section,
+  rows,
+  weekStart,
+  lastWeekStart,
+  today,
+  lookup,
+  isManager,
+  onSave,
+  onEditing,
+  lastMeetingDate = null,
+}: Props) {
   const dates = useMemo(() => datesFor(weekStart, section.days), [weekStart, section.days]);
   const lastDates = useMemo(() => datesFor(lastWeekStart, section.days), [lastWeekStart, section.days]);
-  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
   const summary = useMemo(
     () =>
       summarizeSection(
         section,
-        rowIds,
-        { lookup, collections: [], payrollEvents: [], firstClosedPeriodEnd: null, today, nowIso: new Date().toISOString() },
+        rows,
+        {
+          lookup,
+          collections: [],
+          problems: [],
+          payrollEvents: [],
+          firstClosedPeriodEnd: null,
+          today,
+          nowIso: new Date().toISOString(),
+        },
         weekStart,
         lastWeekStart,
       ),
-    [section, rowIds, lookup, weekStart, lastWeekStart, today],
+    [section, rows, lookup, weekStart, lastWeekStart, today],
   );
 
-  const unitFormat = section.goal?.measure === 'avg_score' ? fmtScore : fmtNum;
+  const isOpenDisputes = section.kind === 'am_pm' && !section.score;
+  const unitFormat = section.goal?.measure === 'score' ? fmtScore : fmtNum;
+  const dueSoon = isOpenDisputes ? amPmSectionStats(rows, dates, lookup, undefined, today).dueSoonNow : null;
+  const streak = section.kind === 'daily_flag' ? noMeetingStreak(lastMeetingDate, today) : null;
+
   const header = (
     <SectionHeader
       title={section.title}
       help={section.help}
       right={
         <>
-          <GoalChip goal={section.goal} light={summary.light} value={summary.headline} unitFormat={unitFormat} />
-          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-            Last week{' '}
-            <span className={cn('font-mono tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>
-              {unitFormat(summary.lastHeadline)}
+          {isOpenDisputes ? (
+            <>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+                <span className="font-mono tabular-nums">{fmtNum(summary.headline)}</span> open now
+              </span>
+              {/* Carla, 2026-10-02: the ones due in the next 7 days, called out. */}
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold',
+                  dueSoon ? LIGHT_STYLE.amber.chip : LIGHT_STYLE.none.chip,
+                )}
+              >
+                <span className="font-mono tabular-nums">{fmtNum(dueSoon)}</span> due in the next 7 days
+              </span>
+            </>
+          ) : section.kind === 'amount_count' ? null : (
+            <GoalChip goal={section.goal} light={summary.light} value={summary.headline} unitFormat={unitFormat} />
+          )}
+          {section.kind === 'daily_flag' ? <NoMeetingStreak days={streak} /> : null}
+          {section.kind === 'amount_count' ? null : (
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              Last week{isOpenDisputes ? ' (open)' : ''}{' '}
+              <span className={cn('font-mono tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>
+                {unitFormat(summary.lastHeadline)}
+              </span>
             </span>
-          </span>
+          )}
         </>
       }
     />
@@ -120,24 +178,50 @@ export function SectionGrid({ section, rows, weekStart, lastWeekStart, today, lo
     );
   }
 
+  const tableProps = { section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope: weekStart };
   return (
     <div className="space-y-4">
       {header}
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         {section.kind === 'am_pm' ? (
-          <AmPmTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} scope={weekStart} />
+          <AmPmTable {...tableProps} />
         ) : section.kind === 'time_span' ? (
-          <TimeTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} scope={weekStart} />
+          <TimeTable {...tableProps} />
+        ) : section.kind === 'amount_count' ? (
+          <AmountCountTable {...tableProps} />
         ) : (
-          <DailyTable {...{ section, rows, dates, lastDates, today, lookup, onSave, onEditing }} scope={weekStart} />
+          <DailyTable {...tableProps} />
         )}
       </div>
     </div>
   );
 }
 
+/**
+ * PM Buckets' No Meeting Streak (Carla, 2026-10-02): calendar days since any meeting was ticked.
+ * All time; it drops to 0 only when a meeting is ticked. Amber once a week has gone by.
+ */
+function NoMeetingStreak({ days }: { days: number | null }) {
+  const long = days !== null && days >= 7;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium',
+        long ? LIGHT_STYLE.amber.chip : LIGHT_STYLE.none.chip,
+      )}
+      title="Days since any PM meeting was ticked. All time: it only goes back to 0 when a meeting is ticked."
+    >
+      <CalendarX2 className="size-3.5" />
+      No meeting streak{' '}
+      <span className="font-mono font-semibold tabular-nums">
+        {days === null ? '—' : `${days} ${days === 1 ? 'day' : 'days'}`}
+      </span>
+    </span>
+  );
+}
+
 interface TableProps {
-  section: ResolvedSection;
+  section: BoardSection;
   rows: BoardRow[];
   dates: string[];
   lastDates: string[];
@@ -164,11 +248,24 @@ function DayHeads({ dates, today, span }: { dates: string[]; today: string; span
   );
 }
 
+const PM_TITLE = {
+  cleared: {
+    pm_missing: 'PM missing: skipped. The next reading carries on from the AM (a blank is never a 0)',
+    pm_pending: 'PM not in yet',
+    am_missing: 'AM missing: skipped (a blank is never a 0)',
+  },
+  inbox: {
+    pm_missing: 'PM missing: this day is not in the end-of-day average',
+    pm_pending: 'PM not in yet: this day counts once it is',
+    am_missing: 'AM missing',
+  },
+} as const;
+
 function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
-  const ids = rows.map((r) => r.id);
-  const stats = amPmSectionStats(ids, dates, lookup, section.score, today);
-  const last = amPmSectionStats(ids, lastDates, lookup, section.score, today);
-  const isInbox = section.score === 'inbox';
+  const stats = amPmSectionStats(rows, dates, lookup, section.score, today);
+  const last = amPmSectionStats(rows, lastDates, lookup, section.score, today);
+  const rule = section.score;
+  const titles = PM_TITLE[rule === 'inbox' ? 'inbox' : 'cleared'];
 
   return (
     <table className="table-keep w-full border-collapse text-sm">
@@ -178,8 +275,28 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
             {section.rowNoun}
           </th>
           <DayHeads dates={dates} today={today} span={2} />
-          {isInbox ? <th rowSpan={2} className={cn(TH, 'text-right')}>EOD avg</th> : <th rowSpan={2} className={cn(TH, 'text-right')}>Comp</th>}
-          {section.score ? <th rowSpan={2} className={cn(TH, 'text-right')}>Score</th> : null}
+          {rule === 'cleared' ? (
+            <>
+              <th rowSpan={2} className={cn(TH, 'text-right')} title="Every decrease between back-to-back readings, overnight too">
+                Completed
+              </th>
+              <th rowSpan={2} className={cn(TH, 'text-right')} title="The latest reading">
+                Open
+              </th>
+              <th rowSpan={2} className={cn(TH, 'text-right')} title="10 × completed ÷ (completed + open)">
+                Score
+              </th>
+            </>
+          ) : rule === 'inbox' ? (
+            <>
+              <th rowSpan={2} className={cn(TH, 'text-right')}>EOD avg</th>
+              <th rowSpan={2} className={cn(TH, 'text-right')}>Score</th>
+            </>
+          ) : (
+            <th rowSpan={2} className={cn(TH, 'text-right')} title="The latest reading">
+              Now
+            </th>
+          )}
           <th rowSpan={2} className={cn(TH, 'text-right')}>Last wk</th>
         </tr>
         <tr>
@@ -193,8 +310,14 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
           const s = stats.rows.get(row.id)!;
           const l = last.rows.get(row.id)!;
           return (
-            <tr key={row.id} className="transition-colors hover:bg-orange-50/30 dark:hover:bg-zinc-900/40">
-              <td className={cn(TD, 'sticky left-0 z-10 bg-white dark:bg-zinc-950')}>
+            <tr
+              key={row.id}
+              className={cn(
+                'transition-colors hover:bg-orange-50/30 dark:hover:bg-zinc-900/40',
+                row.dueSoon && 'bg-amber-50/60 dark:bg-amber-950/20',
+              )}
+            >
+              <td className={cn(TD, 'sticky left-0 z-10', row.dueSoon ? 'bg-amber-50 dark:bg-zinc-950' : 'bg-white dark:bg-zinc-950')}>
                 <RowLabel row={row} />
               </td>
               {s.days.map((day) => {
@@ -207,8 +330,9 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                         value={day.am}
                         label={`${row.label} · ${dayHeader(day.date).weekday} AM`}
                         disabled={disabled}
-                        warn={day.state === 'am_missing'}
-                        title={day.state === 'am_missing' ? 'AM missing: this day is not counted in Comp' : undefined}
+                        // A removed row is read-only: flagging a missing number nobody can type is noise.
+                        warn={!row.archived && day.state === 'am_missing'}
+                        title={day.state === 'am_missing' ? titles.am_missing : undefined}
                         onCommit={(v) => onSave(row.id, day.date, 'am', v)}
                         onEditing={onEditing}
                       />
@@ -218,13 +342,9 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                         value={day.pm}
                         label={`${row.label} · ${dayHeader(day.date).weekday} PM`}
                         disabled={disabled}
-                        warn={day.state === 'pm_missing'}
+                        warn={!row.archived && day.state === 'pm_missing'}
                         title={
-                          day.state === 'pm_missing'
-                            ? 'PM missing: this day is not counted (the sheet counted it as cleared)'
-                            : day.state === 'pm_pending'
-                              ? 'PM not in yet: this day counts once it is'
-                              : undefined
+                          day.state === 'pm_missing' ? titles.pm_missing : day.state === 'pm_pending' ? titles.pm_pending : undefined
                         }
                         onCommit={(v) => onSave(row.id, day.date, 'pm', v)}
                         onEditing={onEditing}
@@ -233,55 +353,91 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                   </FragmentCells>
                 );
               })}
-              <td className={cn(TD, NUM)}>
-                <Flash value={isInbox ? s.pmAverage : s.comp} scope={scope}>
-                  {isInbox ? fmtScore(s.pmAverage) : fmtNum(s.comp)}
-                </Flash>
-              </td>
-              {section.score ? (
-                <td className={cn(TD, NUM, 'font-semibold')}>
-                  <Flash value={s.score} scope={scope}>
-                    <ScoreText score={s.score} goal={section.goal} />
-                  </Flash>
-                </td>
-              ) : null}
-              <td className={cn(TD, NUM, DIM)}>{section.score ? fmtScore(l.score) : fmtNum(l.comp)}</td>
+              {rule === 'cleared' ? (
+                <>
+                  <td className={cn(TD, NUM)}>
+                    <Flash value={s.completed} scope={scope}>{fmtNum(s.completed)}</Flash>
+                  </td>
+                  <td className={cn(TD, NUM)}>
+                    <Flash value={s.open} scope={scope}>{fmtNum(s.open)}</Flash>
+                  </td>
+                  <td className={cn(TD, NUM, 'font-semibold')}>
+                    <Flash value={s.status === 'scored' ? s.score : s.status} scope={scope}>
+                      <RowScore stats={s} goal={section.goal} />
+                    </Flash>
+                  </td>
+                  <td className={cn(TD, NUM, DIM)}>
+                    <RowScore stats={l} goal={undefined} />
+                  </td>
+                </>
+              ) : rule === 'inbox' ? (
+                <>
+                  <td className={cn(TD, NUM)}>
+                    <Flash value={s.pmAverage} scope={scope}>{fmtScore(s.pmAverage)}</Flash>
+                  </td>
+                  <td className={cn(TD, NUM, 'font-semibold')}>
+                    <Flash value={s.score} scope={scope}>
+                      <RowScore stats={s} goal={section.goal} />
+                    </Flash>
+                  </td>
+                  <td className={cn(TD, NUM, DIM)}>{fmtScore(l.score)}</td>
+                </>
+              ) : (
+                <>
+                  <td className={cn(TD, NUM, 'font-semibold', row.dueSoon && 'text-amber-700 dark:text-amber-300')}>
+                    <Flash value={s.open} scope={scope}>{fmtNum(s.open)}</Flash>
+                  </td>
+                  <td className={cn(TD, NUM, DIM)}>{fmtNum(l.open)}</td>
+                </>
+              )}
             </tr>
           );
         })}
       </tbody>
-      <tfoot className="border-t border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <tr>
-          <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Day total</td>
-          {stats.dayTotals.map((t) => (
-            <FragmentCells key={t.date}>
-              <td className={cn(TD, PAIR_CELL, 'text-zinc-600 dark:text-zinc-300')}>
-                <Flash value={t.am} scope={scope}>
-                  <BoxAligned>{fmtNum(t.am)}</BoxAligned>
-                </Flash>
+      {/* Open Disputes has no Day total: "due in 7 days" is part of "open", so adding the lines double counts. */}
+      {rule ? (
+        <tfoot className="border-t border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
+          <tr>
+            <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>
+              {rule === 'cleared' ? 'Day total · overall' : 'Day total'}
+            </td>
+            {stats.dayTotals.map((t) => (
+              <FragmentCells key={t.date}>
+                <td className={cn(TD, PAIR_CELL, 'text-zinc-600 dark:text-zinc-300')}>
+                  <Flash value={t.am} scope={scope}>
+                    <BoxAligned>{fmtNum(t.am)}</BoxAligned>
+                  </Flash>
+                </td>
+                <td className={cn(TD, PAIR_CELL, 'text-zinc-600 dark:text-zinc-300')}>
+                  <Flash value={t.pm} scope={scope}>
+                    <BoxAligned>{fmtNum(t.pm)}</BoxAligned>
+                  </Flash>
+                </td>
+              </FragmentCells>
+            ))}
+            {rule === 'cleared' ? (
+              <>
+                <td className={cn(TD, NUM, 'font-semibold')} title="Scored buckets only: N/A and Pending are left out">
+                  <Flash value={stats.completedTotal} scope={scope}>{fmtNum(stats.completedTotal)}</Flash>
+                </td>
+                <td className={cn(TD, NUM, 'font-semibold')} title="Scored buckets only: N/A and Pending are left out">
+                  <Flash value={stats.openTotal} scope={scope}>{fmtNum(stats.openTotal)}</Flash>
+                </td>
+              </>
+            ) : (
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={stats.teamPmAverage} scope={scope}>{fmtScore(stats.teamPmAverage)}</Flash>
               </td>
-              <td className={cn(TD, PAIR_CELL, 'text-zinc-600 dark:text-zinc-300')}>
-                <Flash value={t.pm} scope={scope}>
-                  <BoxAligned>{fmtNum(t.pm)}</BoxAligned>
-                </Flash>
-              </td>
-            </FragmentCells>
-          ))}
-          <td className={cn(TD, NUM, 'font-semibold')}>
-            <Flash value={isInbox ? stats.teamPmAverage : stats.compTotal} scope={scope}>
-              {isInbox ? fmtScore(stats.teamPmAverage) : fmtNum(stats.compTotal)}
-            </Flash>
-          </td>
-          {section.score ? (
-            <td className={cn(TD, NUM, 'font-semibold')}>
+            )}
+            <td className={cn(TD, NUM, 'font-semibold')} title={rule === 'cleared' ? '10 × total completed ÷ total (completed + open), scored buckets only' : undefined}>
               <Flash value={stats.headline} scope={scope}>
                 <ScoreText score={stats.headline} goal={section.goal} />
               </Flash>
             </td>
-          ) : null}
-          <td className={cn(TD, NUM, DIM)}>{section.score ? fmtScore(last.headline) : fmtNum(last.compTotal)}</td>
-        </tr>
-      </tfoot>
+            <td className={cn(TD, NUM, DIM)}>{fmtScore(last.headline)}</td>
+          </tr>
+        </tfoot>
+      ) : null}
     </table>
   );
 }
@@ -311,11 +467,28 @@ function FragmentCells({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-/** A row score in its stop-light colour: the same thresholds as the Overview (stoplight.ts). */
+/** A score in its stop-light colour: the same thresholds as the Overview (stoplight.ts). */
 function ScoreText({ score, goal }: { score: number | null; goal?: GoalRule }) {
   if (score === null) return <span className={DIM}>—</span>;
   const light = goalLight(goal, score);
   return <span className={light === 'none' ? 'text-zinc-800 dark:text-zinc-200' : LIGHT_STYLE[light].text}>{fmtScore(score)}</span>;
+}
+
+/** A row's score, or the word for why it has none (N/A, Pending, PM missing). Never a 0 in place of absence. */
+function RowScore({ stats, goal }: { stats: AmPmRowStats; goal?: GoalRule }) {
+  if (stats.status === 'scored') return <ScoreText score={stats.score} goal={goal} />;
+  const word = SCORE_STATUS_TEXT[stats.status];
+  return (
+    <span
+      title={SCORE_STATUS_TITLE[stats.status]}
+      className={cn(
+        'font-sans text-[11px] font-semibold',
+        stats.status === 'pending' ? 'text-orange-600 dark:text-orange-400' : stats.status === 'pm_missing' ? 'text-amber-700 dark:text-amber-300' : DIM,
+      )}
+    >
+      {word}
+    </span>
+  );
 }
 
 function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
@@ -455,6 +628,87 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
           )}
         </tr>
       </tfoot>
+    </table>
+  );
+}
+
+/**
+ * Chargeback Outcomes (Carla, 2026-10-02): per outcome, per day, the dollar amount and how many
+ * chargebacks ("one dispute won for $99 → Wins: $99 / 1"). Per-outcome week totals only: there is
+ * no total across outcomes, because adding a win to a loss means nothing.
+ */
+function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
+  const ids = rows.map((r) => r.id);
+  const stats = amountCountSectionStats(ids, dates, lookup);
+  const last = amountCountSectionStats(ids, lastDates, lookup);
+  return (
+    <table className="table-keep w-full border-collapse text-sm">
+      <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
+        <tr>
+          <th rowSpan={2} className={cn(TH, 'sticky left-0 z-10 bg-zinc-50 text-left dark:bg-zinc-900')}>
+            {section.rowNoun}
+          </th>
+          <DayHeads dates={dates} today={today} span={2} />
+          <th colSpan={2} className={cn(TH, 'text-center')}>Week</th>
+          <th colSpan={2} className={cn(TH, 'text-center')}>Last wk</th>
+        </tr>
+        <tr>
+          {[...dates, 'week', 'last'].map((d) => (
+            <FragmentCells key={d}>
+              <th className={cn(TH, PAIR_CELL, 'py-1 font-mono text-[9px]')}>$</th>
+              <th className={cn(TH, PAIR_CELL, 'py-1 font-mono text-[9px]')}>#</th>
+            </FragmentCells>
+          ))}
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+        {rows.map((row) => {
+          const s = stats.rows.get(row.id)!;
+          const l = last.rows.get(row.id)!;
+          return (
+            <tr key={row.id} className="transition-colors hover:bg-orange-50/30 dark:hover:bg-zinc-900/40">
+              <td className={cn(TD, 'sticky left-0 z-10 bg-white dark:bg-zinc-950')}>
+                <RowLabel row={row} />
+              </td>
+              {dates.map((date, i) => {
+                const disabled = date > today || row.archived;
+                const wd = dayHeader(date).weekday;
+                return (
+                  <FragmentCells key={date}>
+                    <td className={cn(TD, PAIR_CELL)}>
+                      <NumberCell
+                        value={s.usd[i]}
+                        label={`${row.label} · ${wd} · dollar amount`}
+                        disabled={disabled}
+                        className="w-20"
+                        onCommit={(v) => onSave(row.id, date, 'usd', v)}
+                        onEditing={onEditing}
+                      />
+                    </td>
+                    <td className={cn(TD, PAIR_CELL)}>
+                      <NumberCell
+                        value={s.count[i]}
+                        label={`${row.label} · ${wd} · number of chargebacks`}
+                        disabled={disabled}
+                        onCommit={(v) => onSave(row.id, date, 'count', v)}
+                        onEditing={onEditing}
+                      />
+                    </td>
+                  </FragmentCells>
+                );
+              })}
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={s.weekUsd} scope={scope}>{s.weekUsd === null ? '—' : fmtUsd(s.weekUsd)}</Flash>
+              </td>
+              <td className={cn(TD, NUM, 'font-semibold')}>
+                <Flash value={s.weekCount} scope={scope}>{fmtNum(s.weekCount)}</Flash>
+              </td>
+              <td className={cn(TD, NUM, DIM)}>{l.weekUsd === null ? '—' : fmtUsd(l.weekUsd)}</td>
+              <td className={cn(TD, NUM, DIM)}>{fmtNum(l.weekCount)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
     </table>
   );
 }

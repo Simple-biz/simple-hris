@@ -3,27 +3,32 @@
  * from stored entries instead of retyped in every cell.
  * Governing doc: docs/features/accounting-scoreboard.md § Scoring.
  *
- * Kept EXACTLY as the sheet:
- *   - Accounting Buckets: Comp = Σ(AM − PM), tiers <0 → 1, 0 → 2, 1–5 → 4, 6–10 → 6, 11–15 → 8, >15 → 10
- *     (sheet R9:R27). The headline is the AVERAGE of the row scores (R28).
- *   - Email Inbox: EOD average = mean of the PM counts, score = IF(avg=0, 10, IF(avg>=9, 1, 10 − avg))
- *     (R32:R58). The headline is the score of the team's average (R59).
- *   - Collections: points per rep per day are summed from the log. The week runs Mon–Fri, and
- *     the record is the best team week.
+ * Accounting Buckets: CARLA'S RULE of 2026-10-02 ("SCOREBOARD UPDATES" § 1), her reference code
+ * kept as written (`clearedFromReadings`). It replaced the sheet's tiers on Σ(AM − PM):
+ *   - readings = Mon AM, Mon PM, Tue AM, … Fri PM, in order, BLANKS SKIPPED (never read as 0)
+ *   - Completed = Σ every decrease between back-to-back readings, overnight included; an increase is
+ *     new work and never counts against it
+ *   - Open = the latest reading
+ *   - Score = 10 × Completed ÷ (Completed + Open), one decimal. 80% cleared = 8.0, the goal.
+ *   - A bucket that was 0 all week is N/A; a weekday Collections bucket is Pending until its own
+ *     day's PM is in. Neither is in the overall.
+ *   - Overall = 10 × Σ Completed ÷ Σ(Completed + Open) over the scored buckets (was an average).
+ * Email Inbox (the sheet's): EOD average = mean of the PM counts, score = IF(avg=0, 10, IF(avg>=9, 1,
+ * 10 − avg)) (R32:R58). The headline is the score of the team's average (R59).
+ * Collections: points per rep per day are summed from the log. The week runs Mon–Fri, and the record
+ * is the best team week.
  *
- * ONE deliberate difference: the sheet's SUM treats a blank cell as 0, so a day with an AM count and
- * no PM count was credited as fully cleared (Thursday's bucket showed +68 with nothing typed for
- * Thursday PM). Here a day counts only when BOTH numbers are in. An AM without a PM is "PM missing"
- * once the day is over and "PM pending" today, and it is never credited. The other scoring quirks
- * (a day bucket's fill-up counts against it; an empty bucket scores 2) are the sheet's rules and are
- * Carla's to change, so they are kept.
+ * Absence is never 0. The sheet's SUM read a blank PM as 0 and credited the whole AM as cleared
+ * (Thursday's bucket showed +68 with nothing typed for Thursday PM). Carla's readings skip blanks, so
+ * that cannot happen: a drop is only ever measured between two numbers somebody typed. An AM without
+ * a PM is still flagged on screen ("PM pending" today, "PM missing" once the day is over).
  *
  * Pure: no I/O. The page recomputes from these after every edit; the routes never trust a total
  * the browser sends.
  */
 
-import type { GoalRule, ScoreRule, Slot } from './sections';
-import { weekStartOf } from './week';
+import type { GoalRule, ScoreRule, Slot, Weekday } from './sections';
+import { weekdayOf, weekStartOf } from './week';
 
 export function entryKey(rowId: string, date: string, slot: Slot): string {
   return `${rowId}|${date}|${slot}`;
@@ -57,14 +62,27 @@ function mean(values: readonly number[]): number | null {
   return values.length ? values.reduce((s, v) => s + v, 0) / values.length : null;
 }
 
-/** Accounting Buckets' tiers, exactly the sheet's formula. */
-export function bucketScore(comp: number): number {
-  if (comp < 0) return 1;
-  if (comp === 0) return 2;
-  if (comp <= 5) return 4;
-  if (comp <= 10) return 6;
-  if (comp <= 15) return 8;
-  return 10;
+/**
+ * Carla's score, her reference expression exactly: `+(10 * completed / (completed + open)).toFixed(1)`.
+ * null when completed + open is 0 (the bucket was 0 all week: N/A).
+ */
+export function clearedScore(completed: number, open: number): number | null {
+  return completed + open === 0 ? null : +((10 * completed) / (completed + open)).toFixed(1);
+}
+
+/**
+ * Carla's Completed / Open / Score over one bucket's readings, in order, blanks already skipped.
+ * null when there is no reading at all ("—", nothing typed).
+ */
+export function clearedFromReadings(
+  readings: readonly number[],
+): { completed: number; open: number; score: number | null } | null {
+  if (!readings.length) return null;
+  let completed = 0;
+  for (let i = 1; i < readings.length; i++) completed += Math.max(0, readings[i - 1] - readings[i]);
+  completed = round2(completed);
+  const open = readings[readings.length - 1];
+  return { completed, open, score: clearedScore(completed, open) };
 }
 
 /** Email Inbox: =IF(avg=0, 10, IF(avg>=9, 1, 10 − avg)). */
@@ -79,10 +97,11 @@ export function inboxScore(averagePm: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * - `complete`    both numbers in: the day counts
- * - `pm_pending`  AM in, PM not yet, and it is today: not counted yet
- * - `pm_missing`  AM in, PM never typed, and the day is over: NOT counted (the sheet counted it as cleared)
- * - `am_missing`  PM in, AM never typed: not counted in Comp (the inbox average still uses the PM)
+ * What a cell pair shows. It flags data on screen; it never decides a score (the readings do).
+ * - `complete`    both numbers in
+ * - `pm_pending`  AM in, PM not yet, and it is today
+ * - `pm_missing`  AM in, PM never typed, and the day is over (the sheet credited the whole AM here)
+ * - `am_missing`  PM in, AM never typed
  * - `empty`       nothing typed
  * - `future`      after today
  */
@@ -95,45 +114,88 @@ export interface AmPmDay {
   state: AmPmDayState;
 }
 
+/** The row facts the AM/PM math needs besides its id (accounting_scoreboard_rows.bucket_day / due_soon). */
+export interface AmPmRowMeta {
+  id: string;
+  /** A weekday Collections bucket's own day: its score is Pending until that day's PM is in. */
+  bucketDay: Weekday | null;
+  /** An Open Disputes line that counts the disputes due in 7 days: called out, never added to the open total. */
+  dueSoon: boolean;
+}
+
+/**
+ * Why a row has (or has no) score:
+ * - `scored`      a number
+ * - `na`          the bucket was 0 all week: "N/A", left out of the overall (Carla)
+ * - `pending`     a weekday Collections bucket whose own day's PM is not in yet, and that day is
+ *                 today or still ahead: "Pending", left out of the overall (Carla)
+ * - `pm_missing`  the same bucket once its day is over with no PM: "PM missing", left out
+ * - `empty`       nothing typed: "—"
+ */
+export type RowScoreStatus = 'scored' | 'na' | 'pending' | 'pm_missing' | 'empty';
+
 export interface AmPmRowStats {
   days: AmPmDay[];
-  /** Σ(AM − PM) over complete days; null when no day is complete. */
-  comp: number | null;
-  /** Mean of the PM counts typed on or before today; null when none. */
+  /** Carla's Completed: Σ every decrease between back-to-back readings; null when nothing is typed. */
+  completed: number | null;
+  /** The latest reading; null when nothing is typed. */
+  open: number | null;
+  /** Mean of the PM counts typed on or before today; null when none (the inbox rule). */
   pmAverage: number | null;
-  /** The row's 1–10 score under the section's rule; null when there is nothing to score. */
+  status: RowScoreStatus;
+  /** The row's 0–10 score under the section's rule; null unless `status` is `scored` and there is a rule. */
   score: number | null;
 }
 
 export function amPmRowStats(
-  rowId: string,
+  row: AmPmRowMeta,
   dates: readonly string[],
   lookup: EntryLookup,
   rule: ScoreRule | undefined,
   today: string,
 ): AmPmRowStats {
   const days: AmPmDay[] = [];
-  const diffs: number[] = [];
+  const readings: number[] = [];
   const pms: number[] = [];
   for (const date of dates) {
-    const am = lookup.get(entryKey(rowId, date, 'am')) ?? null;
-    const pm = lookup.get(entryKey(rowId, date, 'pm')) ?? null;
+    const am = lookup.get(entryKey(row.id, date, 'am')) ?? null;
+    const pm = lookup.get(entryKey(row.id, date, 'pm')) ?? null;
     let state: AmPmDayState;
     if (date > today) state = 'future';
     else if (am !== null && pm !== null) state = 'complete';
     else if (am !== null) state = date < today ? 'pm_missing' : 'pm_pending';
     else if (pm !== null) state = 'am_missing';
     else state = 'empty';
-    if (state === 'complete') diffs.push((am as number) - (pm as number));
-    if (state !== 'future' && pm !== null) pms.push(pm);
+    if (state !== 'future') {
+      // Carla's readings, in order, with a blank skipped: it is never a 0.
+      if (am !== null) readings.push(am);
+      if (pm !== null) readings.push(pm);
+      if (pm !== null) pms.push(pm);
+    }
     days.push({ date, am, pm, state });
   }
-  const comp = diffs.length ? sum(diffs) : null;
+  const cleared = clearedFromReadings(readings);
   const pmAverage = mean(pms);
-  let score: number | null = null;
-  if (rule === 'bucket' && comp !== null) score = bucketScore(comp);
-  if (rule === 'inbox' && pmAverage !== null) score = inboxScore(pmAverage);
-  return { days, comp, pmAverage, score };
+  const base = { days, completed: cleared?.completed ?? null, open: cleared?.open ?? null, pmAverage };
+
+  if (rule === 'inbox') {
+    return pmAverage === null
+      ? { ...base, status: 'empty', score: null }
+      : { ...base, status: 'scored', score: inboxScore(pmAverage) };
+  }
+  if (rule === 'cleared') {
+    // A weekday Collections bucket fills the day before its day and is worked on its day, so it is
+    // judged only once its own day's PM is in (Carla, 2026-10-02).
+    const ownDate = row.bucketDay ? dates.find((d) => weekdayOf(d) === row.bucketDay) : undefined;
+    if (ownDate !== undefined && lookup.get(entryKey(row.id, ownDate, 'pm')) === undefined) {
+      if (ownDate >= today) return { ...base, status: 'pending', score: null };
+      return { ...base, status: cleared ? 'pm_missing' : 'empty', score: null };
+    }
+    if (!cleared) return { ...base, status: 'empty', score: null };
+    if (cleared.score === null) return { ...base, status: 'na', score: null };
+    return { ...base, status: 'scored', score: cleared.score };
+  }
+  return { ...base, status: cleared ? 'scored' : 'empty', score: null };
 }
 
 export interface DayTotal {
@@ -146,55 +208,71 @@ export interface DayTotal {
 export interface AmPmSectionStats {
   rows: Map<string, AmPmRowStats>;
   dayTotals: DayTotal[];
-  /** Σ of the rows' Comp; null when no row has one. */
-  compTotal: number | null;
-  /** Mean of the row scores (buckets), null when none. */
-  averageScore: number | null;
+  /** Σ Completed and Σ Open over the SCORED rows only (N/A, Pending, PM missing are left out); null when none. */
+  completedTotal: number | null;
+  openTotal: number | null;
   /** Mean of the rows' PM averages (inbox), null when none. */
   teamPmAverage: number | null;
-  /** The headline the goal is judged on: buckets = averageScore; inbox = inboxScore(teamPmAverage);
-   *  no rule (chargebacks) = compTotal. */
+  /** Open Disputes: Σ of the latest reading of every line NOT marked due-soon; null when none is typed. */
+  openNow: number | null;
+  /** Σ of the latest reading of the lines marked "due in 7 days"; null when none is typed. */
+  dueSoonNow: number | null;
+  /**
+   * The headline the goal is judged on:
+   * - cleared (buckets) = 10 × Σ Completed ÷ Σ(Completed + Open) over the scored rows (Carla's overall)
+   * - inbox             = inboxScore(teamPmAverage)
+   * - no rule           = openNow (Open Disputes: how many are open now)
+   */
   headline: number | null;
 }
 
 export function amPmSectionStats(
-  rowIds: readonly string[],
+  rowMeta: readonly AmPmRowMeta[],
   dates: readonly string[],
   lookup: EntryLookup,
   rule: ScoreRule | undefined,
   today: string,
 ): AmPmSectionStats {
   const rows = new Map<string, AmPmRowStats>();
-  for (const id of rowIds) rows.set(id, amPmRowStats(id, dates, lookup, rule, today));
+  for (const r of rowMeta) rows.set(r.id, amPmRowStats(r, dates, lookup, rule, today));
 
   const dayTotals: DayTotal[] = dates.map((date) => {
     const ams: number[] = [];
     const pms: number[] = [];
-    for (const id of rowIds) {
-      const am = lookup.get(entryKey(id, date, 'am'));
-      const pm = lookup.get(entryKey(id, date, 'pm'));
+    for (const r of rowMeta) {
+      const am = lookup.get(entryKey(r.id, date, 'am'));
+      const pm = lookup.get(entryKey(r.id, date, 'pm'));
       if (am !== undefined) ams.push(am);
       if (pm !== undefined) pms.push(pm);
     }
     return { date, am: ams.length ? sum(ams) : null, pm: pms.length ? sum(pms) : null };
   });
 
-  const all = [...rows.values()];
-  const comps = all.map((r) => r.comp).filter((c): c is number => c !== null);
-  const scores = all.map((r) => r.score).filter((s): s is number => s !== null);
-  const pmAvgs = all.map((r) => r.pmAverage).filter((a): a is number => a !== null);
-  const compTotal = comps.length ? sum(comps) : null;
-  const averageScore = mean(scores);
+  const scored = [...rows.values()].filter((r) => r.status === 'scored');
+  const completedTotal = scored.length ? sum(scored.map((r) => r.completed as number)) : null;
+  const openTotal = scored.length ? sum(scored.map((r) => r.open as number)) : null;
+  const pmAvgs = [...rows.values()].map((r) => r.pmAverage).filter((a): a is number => a !== null);
   const teamPmAverage = mean(pmAvgs);
-  const headline =
-    rule === 'bucket'
-      ? averageScore
-      : rule === 'inbox'
-        ? teamPmAverage === null
-          ? null
-          : inboxScore(teamPmAverage)
-        : compTotal;
-  return { rows, dayTotals, compTotal, averageScore, teamPmAverage, headline };
+
+  const latest = (wantDueSoon: boolean): number | null => {
+    const opens = rowMeta
+      .filter((r) => r.dueSoon === wantDueSoon)
+      .map((r) => rows.get(r.id)?.open ?? null)
+      .filter((o): o is number => o !== null);
+    return opens.length ? sum(opens) : null;
+  };
+  const openNow = latest(false);
+  const dueSoonNow = latest(true);
+
+  let headline: number | null;
+  if (rule === 'cleared') {
+    headline = completedTotal === null || openTotal === null ? null : clearedScore(completedTotal, openTotal);
+  } else if (rule === 'inbox') {
+    headline = teamPmAverage === null ? null : inboxScore(teamPmAverage);
+  } else {
+    headline = openNow;
+  }
+  return { rows, dayTotals, completedTotal, openTotal, teamPmAverage, openNow, dueSoonNow, headline };
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +340,132 @@ export function dailySectionStats(
     meetingsByDay,
     weekTotal: weeks.length ? sum(weeks) : null,
     averageTotal: avgs.length ? round2(avgs.reduce((s, v) => s + v, 0)) : null,
+  };
+}
+
+/**
+ * PM Buckets' No Meeting Streak (Carla, 2026-10-02): calendar days since the last day ANY PM meeting
+ * was ticked, counted from today. All time: it runs across weeks and drops to 0 only on a day a
+ * meeting is ticked. null when no meeting has ever been ticked. Computed from the ticks; never stored.
+ */
+export function noMeetingStreak(lastMeetingDate: string | null, today: string): number | null {
+  if (lastMeetingDate === null) return null;
+  return Math.max(0, daysBetween(lastMeetingDate, today));
+}
+
+/** Whole calendar days from `from` to `to` (YYYY-MM-DD, no time zone involved). */
+export function daysBetween(from: string, to: string): number {
+  const ms = (d: string) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
+  return Math.round((ms(to) - ms(from)) / 86_400_000);
+}
+
+// ---------------------------------------------------------------------------
+// Chargeback Outcomes: a dollar amount and a count a day (Pre-arb, Wins, Losses)
+// ---------------------------------------------------------------------------
+
+export interface AmountCountRowStats {
+  usd: (number | null)[];
+  count: (number | null)[];
+  /** Σ of the days typed; null when none. */
+  weekUsd: number | null;
+  weekCount: number | null;
+}
+
+/**
+ * Per outcome only. There is no team total across outcomes: adding a win to a loss means nothing,
+ * and Carla's earlier "won chargebacks as negative losses" was never pinned down (Open item 317 (a)).
+ */
+export function amountCountSectionStats(
+  rowIds: readonly string[],
+  dates: readonly string[],
+  lookup: EntryLookup,
+): { rows: Map<string, AmountCountRowStats>; weekCount: number | null; weekUsd: number | null } {
+  const rows = new Map<string, AmountCountRowStats>();
+  for (const id of rowIds) {
+    const usd = dates.map((d) => lookup.get(entryKey(id, d, 'usd')) ?? null);
+    const count = dates.map((d) => lookup.get(entryKey(id, d, 'count')) ?? null);
+    const u = usd.filter((v): v is number => v !== null);
+    const c = count.filter((v): v is number => v !== null);
+    rows.set(id, { usd, count, weekUsd: u.length ? sum(u) : null, weekCount: c.length ? sum(c) : null });
+  }
+  const counts = [...rows.values()].map((r) => r.weekCount).filter((v): v is number => v !== null);
+  const usds = [...rows.values()].map((r) => r.weekUsd).filter((v): v is number => v !== null);
+  return { rows, weekCount: counts.length ? sum(counts) : null, weekUsd: usds.length ? sum(usds) : null };
+}
+
+// ---------------------------------------------------------------------------
+// Payroll Problems: the problem log (each problem has a type)
+// ---------------------------------------------------------------------------
+
+export interface ProblemEntry {
+  id: string;
+  date: string;
+  rowId: string;
+  typeId: string;
+  /** How many problems of this type this line records (usually 1). */
+  count: number;
+  createdBy: string;
+  createdAt: string;
+}
+
+/** The "type" of a count typed into the old grid before problems had types (read, never written). */
+export const UNTYPED_PROBLEMS = 'untyped';
+
+export interface ProblemsWeekStats {
+  /** Per person: per day (in `dates` order) and the week. null = nothing logged or typed. */
+  rows: Map<string, { byDay: (number | null)[]; week: number | null }>;
+  byDay: (number | null)[];
+  /** The headline: null when the week has no log line and no typed count (absence is not 0). */
+  week: number | null;
+  /** Problems per type this week, largest first; UNTYPED_PROBLEMS for the old grid's counts. */
+  byType: { typeId: string; count: number }[];
+}
+
+/**
+ * A person's day = Σ of their log lines + the count typed into the old grid that day, if any. A typed
+ * 0 in the grid is a real 0. Nothing logged and nothing typed is null ("—"): the board cannot tell
+ * "no problems" from "nobody logged", the same rule as the collections log.
+ */
+export function problemsWeekStats(
+  rowIds: readonly string[],
+  logs: readonly Pick<ProblemEntry, 'date' | 'rowId' | 'typeId' | 'count'>[],
+  lookup: EntryLookup,
+  dates: readonly string[],
+): ProblemsWeekStats {
+  const dayIndex = new Map(dates.map((d, i) => [d, i]));
+  const ids = new Set(rowIds);
+  const cells = new Map<string, (number | null)[]>();
+  const byType = new Map<string, number>();
+  for (const id of rowIds) {
+    const legacy = dates.map((d) => lookup.get(entryKey(id, d, 'day')) ?? null);
+    cells.set(id, legacy);
+    const untyped = legacy.reduce<number>((s, v) => s + (v ?? 0), 0);
+    if (untyped > 0) byType.set(UNTYPED_PROBLEMS, round2((byType.get(UNTYPED_PROBLEMS) ?? 0) + untyped));
+  }
+  for (const log of logs) {
+    const i = dayIndex.get(log.date);
+    if (i === undefined || !ids.has(log.rowId)) continue;
+    const row = cells.get(log.rowId)!;
+    row[i] = (row[i] ?? 0) + log.count;
+    byType.set(log.typeId, (byType.get(log.typeId) ?? 0) + log.count);
+  }
+  const rows = new Map<string, { byDay: (number | null)[]; week: number | null }>();
+  for (const [id, byDay] of cells) {
+    const typed = byDay.filter((v): v is number => v !== null);
+    rows.set(id, { byDay, week: typed.length ? sum(typed) : null });
+  }
+  const byDay = dates.map((_, i) => {
+    const typed = [...rows.values()].map((r) => r.byDay[i]).filter((v): v is number => v !== null);
+    return typed.length ? sum(typed) : null;
+  });
+  const weeks = [...rows.values()].map((r) => r.week).filter((w): w is number => w !== null);
+  return {
+    rows,
+    byDay,
+    week: weeks.length ? sum(weeks) : null,
+    byType: [...byType.entries()]
+      .map(([typeId, count]) => ({ typeId, count }))
+      .sort((a, b) => b.count - a.count || a.typeId.localeCompare(b.typeId)),
   };
 }
 
@@ -352,6 +556,12 @@ export interface CollectionEntry {
   amountUsd: number | null;
   createdBy: string;
   createdAt: string;
+  /**
+   * "Payment Verified" (Carla, 2026-10-02): who ticked it and when, from
+   * accounting_scoreboard_collection_verifications. null = not verified. The log line itself is
+   * never edited.
+   */
+  verified: { by: string; name: string; at: string } | null;
 }
 
 export interface PointsAndAccounts {

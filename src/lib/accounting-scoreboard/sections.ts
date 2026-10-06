@@ -5,14 +5,20 @@
  *
  * Pure: no imports, so the page, the routes and `node --test` all share it.
  *
- * The section keys and slots are ALSO in the SQL CHECKs
- * (references/sql/create/2026-10-01_accounting_scoreboard.sql). `sections.test.ts` pins the two
- * lists together, so a section added here without its SQL fails the suite.
+ * The section keys and slots are ALSO in the SQL CHECKs (created in
+ * references/sql/create/2026-10-01_accounting_scoreboard.sql, re-declared by
+ * 2026-10-06_accounting_scoreboard_round3.sql). `sections.test.ts` pins the two lists together, so a
+ * section added here without its SQL fails the suite.
+ *
+ * Built-in sections are code. A manager's CUSTOM section (Setup → Sections → New section, Carla
+ * 2026-10-02) is a row of accounting_scoreboard_custom_sections, and its rows carry section_key
+ * 'custom'. `BoardSection` is the one shape the page renders for both.
  */
 
 export const SECTION_KEYS = [
   'buckets',
   'chargebacks',
+  'chargeback_outcomes',
   'pm_buckets',
   'collections',
   'onboarding',
@@ -24,8 +30,15 @@ export const SECTION_KEYS = [
 ] as const;
 export type SectionKey = (typeof SECTION_KEYS)[number];
 
-/** What one stored number is. `start`/`end` are minutes after midnight; `mtg` is 0/1. */
-export const SLOTS = ['am', 'pm', 'day', 'mtg', 'start', 'end'] as const;
+/** What a row's section_key may be: a built-in section, or 'custom' (its custom_section_id says which). */
+export const ROW_SECTION_KEYS = [...SECTION_KEYS, 'custom'] as const;
+export type RowSectionKey = (typeof ROW_SECTION_KEYS)[number];
+
+/**
+ * What one stored number is. `start`/`end` are minutes after midnight; `mtg` is 0/1; `usd` is a
+ * dollar amount and `count` a whole number (Chargeback Outcomes).
+ */
+export const SLOTS = ['am', 'pm', 'day', 'mtg', 'start', 'end', 'usd', 'count'] as const;
 export type Slot = (typeof SLOTS)[number];
 
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
@@ -41,9 +54,12 @@ export const WEEKDAY_LABEL: Record<Weekday, string> = {
   sat: 'Sat',
 };
 
+/** The board's working days. Every section keeps these, except Payroll Timing (its two deadlines). */
+export const MON_FRI: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
+
 /**
  * - `am_pm`       two counts a day: start of day and end of day (buckets, chargebacks, inbox)
- * - `daily`       one count a day (onboarding, compliance, cancellations, payroll problems)
+ * - `daily`       one count a day (onboarding, compliance, cancellations)
  * - `daily_flag`  one count a day plus a "had a meeting" tick (PM buckets)
  * - `time_span`   a start and an end time a day, giving hours. No section uses it since 2026-10-01
  *                 (Payroll Timing moved to `payroll_cycle`). It is kept because the SQL slot CHECK
@@ -51,8 +67,20 @@ export const WEEKDAY_LABEL: Record<Weekday, string> = {
  * - `collections` nothing typed in a grid: points come from the collections log
  * - `payroll_cycle` nothing typed at all: started/closed come from HRIS's own audit log
  *                 (payroll-cycle.ts)
+ * - `amount_count` a dollar amount and a count a day (Chargeback Outcomes: Pre-arb, Wins, Losses)
+ * - `problem_log` nothing typed in a grid: problems are logged one line at a time, each with a type
+ *                 (Payroll Problems since 2026-10-06). The grid's earlier `day` counts are read, never
+ *                 written: they count as "No type".
  */
-export type SectionKind = 'am_pm' | 'daily' | 'daily_flag' | 'time_span' | 'collections' | 'payroll_cycle';
+export type SectionKind =
+  | 'am_pm'
+  | 'daily'
+  | 'daily_flag'
+  | 'time_span'
+  | 'collections'
+  | 'payroll_cycle'
+  | 'amount_count'
+  | 'problem_log';
 
 export const SLOTS_BY_KIND: Record<SectionKind, readonly Slot[]> = {
   am_pm: ['am', 'pm'],
@@ -61,15 +89,18 @@ export const SLOTS_BY_KIND: Record<SectionKind, readonly Slot[]> = {
   time_span: ['start', 'end'],
   collections: [],
   payroll_cycle: [],
+  amount_count: ['usd', 'count'],
+  problem_log: [],
 };
 
 /**
- * - `avg_score`  the section's average 1–10 score (buckets: AVERAGE of the row scores; inbox: the
- *                score of the team's average end-of-day count, the sheet's R59)
+ * - `score`      the section's 0–10 score, never paced (buckets: 10 × Σ completed ÷ Σ(completed +
+ *                open) over the scored buckets; inbox: the score of the team's average end-of-day
+ *                count, the sheet's R59)
  * - `team_week`  the section's whole-team total for the week
  * - `cycle_score` Payroll Timing's 0–100 cycle score (payroll-cycle.ts)
  */
-export type GoalMeasure = 'avg_score' | 'team_week' | 'cycle_score';
+export type GoalMeasure = 'score' | 'team_week' | 'cycle_score';
 export type GoalDirection = 'at_least' | 'below';
 
 export interface GoalRule {
@@ -80,8 +111,14 @@ export interface GoalRule {
   unit: string;
 }
 
-/** Per-row score: `bucket` = the sheet's tiers on Σ(AM − PM); `inbox` = 10 − average PM count. */
-export type ScoreRule = 'bucket' | 'inbox';
+/**
+ * Per-row score:
+ * - `cleared` Carla's rule of 2026-10-02: Completed = every decrease between back-to-back readings
+ *             (overnight too), Open = the latest reading, Score = 10 × Completed ÷ (Completed + Open).
+ *             It replaced the sheet's tiers on Σ(AM − PM).
+ * - `inbox`   10 − the average PM count (the sheet's rule).
+ */
+export type ScoreRule = 'cleared' | 'inbox';
 
 export interface SectionDef {
   key: SectionKey;
@@ -98,9 +135,12 @@ export interface SectionDef {
   rowNoun: string;
   /** One line telling people what to type. */
   help: string;
+  /**
+   * Shown inside another section's tab (no tab, Overview card or menu entry of its own) while that
+   * section is on. Chargeback Outcomes sits under Open Disputes on the Chargebacks tab.
+   */
+  hostTab?: SectionKey;
 }
-
-const MON_FRI: readonly Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri'];
 
 /** Tab order. */
 export const SECTIONS: readonly SectionDef[] = [
@@ -110,10 +150,10 @@ export const SECTIONS: readonly SectionDef[] = [
     tab: 'Buckets',
     kind: 'am_pm',
     days: MON_FRI,
-    score: 'bucket',
-    goal: { value: 8, direction: 'at_least', measure: 'avg_score', unit: 'score' },
+    score: 'cleared',
+    goal: { value: 8, direction: 'at_least', measure: 'score', unit: 'score' },
     rowNoun: 'bucket',
-    help: 'How many items sit in the bucket at the start of the day (AM) and at the end (PM).',
+    help: 'Items in the bucket at the start (AM) and end (PM) of each day. Score = 10 × completed ÷ (completed + open).',
   },
   {
     key: 'collections',
@@ -150,18 +190,30 @@ export const SECTIONS: readonly SectionDef[] = [
     kind: 'am_pm',
     days: MON_FRI,
     score: 'inbox',
-    goal: { value: 9, direction: 'at_least', measure: 'avg_score', unit: 'score' },
+    goal: { value: 9, direction: 'at_least', measure: 'score', unit: 'score' },
     rowNoun: 'inbox',
     help: 'How many emails are in the inbox at the start of the day (AM) and at the end (PM).',
   },
   {
     key: 'chargebacks',
-    title: 'Chargebacks',
+    title: 'Open Disputes',
     tab: 'Chargebacks',
     kind: 'am_pm',
     days: MON_FRI,
     rowNoun: 'line',
-    help: 'Open disputes, disputes due in 7 days and pre-arb, at the start (AM) and end (PM) of the day.',
+    help: 'Open disputes at the start (AM) and end (PM) of the day. A line marked "due in 7 days" is called out.',
+  },
+  {
+    key: 'chargeback_outcomes',
+    title: 'Outcomes',
+    tab: 'Chargebacks',
+    // Carla, 2026-10-02: per outcome, per day, the dollar amount and the number of chargebacks
+    // ("one dispute won for $99 → Wins: $99 / 1").
+    kind: 'amount_count',
+    days: MON_FRI,
+    rowNoun: 'outcome',
+    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks.',
+    hostTab: 'chargebacks',
   },
   {
     key: 'compliance',
@@ -199,11 +251,12 @@ export const SECTIONS: readonly SectionDef[] = [
     key: 'payroll_problems',
     title: 'Payroll Scoreboard — Problems',
     tab: 'Payroll Problems',
-    kind: 'daily',
+    // Carla, 2026-10-02: a Problem Type on every problem logged. A daily count grid until 2026-10-06.
+    kind: 'problem_log',
     days: MON_FRI,
     goal: { value: 20, direction: 'below', measure: 'team_week', unit: 'problems' },
     rowNoun: 'person',
-    help: 'Payroll problems each person handled that day.',
+    help: "Log each payroll problem with its type. Each person's day adds up from the log.",
   },
 ];
 
@@ -211,6 +264,10 @@ const BY_KEY = new Map<SectionKey, SectionDef>(SECTIONS.map((s) => [s.key, s]));
 
 export function isSectionKey(value: unknown): value is SectionKey {
   return typeof value === 'string' && BY_KEY.has(value as SectionKey);
+}
+
+export function isRowSectionKey(value: unknown): value is RowSectionKey {
+  return value === 'custom' || isSectionKey(value);
 }
 
 export function sectionDef(key: SectionKey): SectionDef {
@@ -245,4 +302,105 @@ export function resolveSections(settings: readonly SectionSetting[]): ResolvedSe
       def.goal && s && s.goal !== null && Number.isFinite(s.goal) ? { ...def.goal, value: s.goal } : def.goal;
     return { ...def, enabled: s ? s.enabled : true, goal };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Custom sections
+// ---------------------------------------------------------------------------
+
+/** The two shapes a manager can give a custom section (the SQL CHECK acct_sb_custom_kind_valid). */
+export const CUSTOM_KINDS = ['daily', 'am_pm'] as const;
+export type CustomKind = (typeof CUSTOM_KINDS)[number];
+
+export const CUSTOM_KIND_LABEL: Record<CustomKind, string> = {
+  daily: 'One number a day',
+  am_pm: 'Start and end of day, scored like Buckets',
+};
+
+/** A row of accounting_scoreboard_custom_sections, as the board reads it. */
+export interface CustomSection {
+  id: string;
+  title: string;
+  kind: CustomKind;
+  /** Null = no goal. Always set together with goalDirection. */
+  goal: number | null;
+  goalDirection: GoalDirection | null;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+/**
+ * A section as the page renders it: a built-in section, or a custom one. `id` is unique on the
+ * board (the built-in key, or `custom:<uuid>`); tabs, React keys and row lookups use it.
+ */
+export interface BoardSection extends Omit<ResolvedSection, 'key'> {
+  id: string;
+  key: RowSectionKey;
+  /** Set on a custom section only. */
+  customId: string | null;
+}
+
+export function customSectionId(customId: string): string {
+  return `custom:${customId}`;
+}
+
+/** The board id of the section a row belongs to. */
+export function rowSectionId(row: { sectionKey: RowSectionKey; customSectionId: string | null }): string {
+  return row.sectionKey === 'custom' && row.customSectionId ? customSectionId(row.customSectionId) : row.sectionKey;
+}
+
+export function builtInBoardSection(s: ResolvedSection): BoardSection {
+  return { ...s, id: s.key, customId: null };
+}
+
+export function customBoardSection(c: CustomSection): BoardSection {
+  const goal: GoalRule | undefined =
+    c.goal === null || c.goalDirection === null
+      ? undefined
+      : c.kind === 'am_pm'
+        ? { value: c.goal, direction: 'at_least', measure: 'score', unit: 'score' }
+        : { value: c.goal, direction: c.goalDirection, measure: 'team_week', unit: 'total' };
+  return {
+    id: customSectionId(c.id),
+    key: 'custom',
+    customId: c.id,
+    title: c.title,
+    tab: c.title,
+    kind: c.kind,
+    days: MON_FRI,
+    score: c.kind === 'am_pm' ? 'cleared' : undefined,
+    goal,
+    rowNoun: 'line',
+    help:
+      c.kind === 'am_pm'
+        ? 'A reading at the start (AM) and end (PM) of each day. Score = 10 × completed ÷ (completed + open).'
+        : 'One number a day for each line.',
+    enabled: c.enabled,
+  };
+}
+
+/**
+ * Built-in sections in tab order, then the custom sections in their own order: lowest sort order first,
+ * and a new one is given one below the lowest, so the newest is first (Kane, 2026-10-06).
+ */
+export function boardSections(settings: readonly SectionSetting[], custom: readonly CustomSection[]): BoardSection[] {
+  return [
+    ...resolveSections(settings).map(builtInBoardSection),
+    ...[...custom].sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title)).map(customBoardSection),
+  ];
+}
+
+/**
+ * The sections that get a tab of their own: every enabled one, except a hosted section whose host
+ * is on (Chargeback Outcomes shows inside Chargebacks). If the host is switched off, the hosted
+ * section takes a tab of its own, so it never disappears silently.
+ */
+export function tabSections(sections: readonly BoardSection[]): BoardSection[] {
+  const on = new Set(sections.filter((s) => s.enabled).map((s) => s.id));
+  return sections.filter((s) => s.enabled && !(s.hostTab && on.has(s.hostTab)));
+}
+
+/** The enabled sections shown inside `host`'s tab. */
+export function hostedSections(sections: readonly BoardSection[], host: BoardSection): BoardSection[] {
+  return sections.filter((s) => s.enabled && s.hostTab !== undefined && s.hostTab === host.id);
 }

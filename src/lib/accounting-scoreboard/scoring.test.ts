@@ -7,21 +7,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  amountCountSectionStats,
   amPmRowStats,
   amPmSectionStats,
-  bucketScore,
   buildLookup,
+  clearedFromReadings,
   collectionsHistory,
   collectionsWeekStats,
   dailySectionStats,
+  daysBetween,
   goalMet,
   goalText,
   inboxScore,
   minutesToClock,
   minutesToTimeInput,
+  noMeetingStreak,
+  problemsWeekStats,
   round2,
   timeInputToMinutes,
   timeSpanSectionHours,
+  UNTYPED_PROBLEMS,
+  type AmPmRowMeta,
   type StoredEntry,
 } from './scoring';
 import { sectionDef } from './sections';
@@ -38,19 +44,6 @@ function amPm(rowId: string, pairs: Array<[number | null, number | null]>): Stor
   return out;
 }
 
-test("bucketScore is the sheet's tier formula", () => {
-  assert.equal(bucketScore(-2), 1);
-  assert.equal(bucketScore(0), 2);
-  assert.equal(bucketScore(0.5), 4);
-  assert.equal(bucketScore(5), 4);
-  assert.equal(bucketScore(6), 6);
-  assert.equal(bucketScore(10), 6);
-  assert.equal(bucketScore(12), 8);
-  assert.equal(bucketScore(15), 8);
-  assert.equal(bucketScore(16), 10);
-  assert.equal(bucketScore(94), 10);
-});
-
 test("inboxScore is the sheet's =IF(avg=0,10,IF(avg>=9,1,10-avg))", () => {
   assert.equal(inboxScore(0), 10);
   assert.equal(inboxScore(9), 1);
@@ -58,62 +51,188 @@ test("inboxScore is the sheet's =IF(avg=0,10,IF(avg>=9,1,10-avg))", () => {
   assert.equal(round2(inboxScore(5 / 3)), 8.33, "Tieg's row: PMs 2, 3, 0 → 8.3");
 });
 
-test('a complete week reproduces the sheet: Tues (Collections) cleared 81 but scores Comp 12 → 8', () => {
-  // G10:N10 = 7/76, 81/0, 0/0, 0/0 — the fill on Monday counts against the Tuesday bucket (sheet rule, kept).
-  const lookup = buildLookup(amPm('tue', [[7, 76], [81, 0], [0, 0], [0, 0], [null, null]]));
-  const s = amPmRowStats('tue', MON_FRI, lookup, 'bucket', '2026-10-02');
-  assert.equal(s.comp, 12);
-  assert.equal(s.score, 8);
+
+const row = (id: string, over: Partial<AmPmRowMeta> = {}): AmPmRowMeta => ({ id, bucketDay: null, dueSoon: false, ...over });
+
+/** Carla's reference code from "SCOREBOARD UPDATES" (2026-10-02), verbatim, as the oracle. */
+function carlaReference(cells: Array<number | '' | null | undefined>): number | null {
+  const readings = cells.filter((v) => v !== '' && v != null) as number[];
+  let completed = 0;
+  for (let i = 1; i < readings.length; i++) completed += Math.max(0, readings[i - 1] - readings[i]);
+  const open = readings.at(-1)!;
+  const score = completed + open === 0 ? null : +((10 * completed) / (completed + open)).toFixed(1);
+  return score;
+}
+
+test('clearedFromReadings is Carla\'s reference code: decreases count (overnight too), increases never do', () => {
+  // Mon AM 10 → PM 4 (−6), overnight → Tue AM 9 (+5, new work: not against it), → PM 2 (−7): completed 13, open 2.
+  assert.deepEqual(clearedFromReadings([10, 4, 9, 2]), { completed: 13, open: 2, score: 8.7 });
+  assert.equal(clearedFromReadings([10, 4, 9, 2])?.score, carlaReference([10, 4, 9, 2]));
+  // 80% cleared = 8.0, which meets the goal of 8.
+  assert.equal(clearedFromReadings([10, 2])?.score, 8);
+  // Rising all week: nothing completed, everything open → 0 (not N/A).
+  assert.deepEqual(clearedFromReadings([1, 3, 5]), { completed: 0, open: 5, score: 0 });
+  // 0 all week → N/A (null), left out of the overall.
+  assert.deepEqual(clearedFromReadings([0, 0, 0, 0]), { completed: 0, open: 0, score: null });
+  assert.equal(carlaReference([0, 0, 0, 0]), null);
+  // Nothing typed → no stats at all ("—", not N/A).
+  assert.equal(clearedFromReadings([]), null);
 });
 
-test("a day with AM and no PM is NOT credited (the sheet's blank-as-0 credited +68)", () => {
-  // Thurs (Collections) on Oct 1: 1/1, 1/5, 5/66, then Thu AM 68 with no PM yet.
+test('the score matches the reference on every shape, with 2-decimal readings too', () => {
+  const cases: number[][] = [
+    [7, 76, 81, 0, 0, 0, 0, 0],
+    [1, 1, 1, 5, 5, 66, 68],
+    [23, 20, 25, 18, 30, 12, 12, 0, 4, 1],
+    [94, 0],
+    [3.5, 1.25, 2.75, 0.5],
+    [5],
+  ];
+  for (const c of cases) assert.equal(clearedFromReadings(c)?.score ?? null, carlaReference(c), JSON.stringify(c));
+});
+
+test('a blank reading is SKIPPED, never read as 0 (the sheet credited a whole AM as cleared)', () => {
+  // Thurs (Collections) on Oct 1: 1/1, 1/5, 5/66, then Thu AM 68 with no PM yet. The sheet showed +68.
   const lookup = buildLookup(amPm('thu', [[1, 1], [1, 5], [5, 66], [68, null], [null, null]]));
-  const today = amPmRowStats('thu', MON_FRI, lookup, 'bucket', THU);
-  assert.equal(today.comp, -65, 'only the three complete days count');
-  assert.equal(today.score, 1);
-  assert.equal(today.days[3].state, 'pm_pending');
-  assert.equal(today.days[4].state, 'future');
-
-  const nextDay = amPmRowStats('thu', MON_FRI, lookup, 'bucket', '2026-10-02');
-  assert.equal(nextDay.days[3].state, 'pm_missing', 'once the day is over the missing PM is flagged');
-  assert.equal(nextDay.comp, -65, 'and still never credited');
+  const s = amPmRowStats(row('thu'), MON_FRI, lookup, 'cleared', THU);
+  assert.equal(s.completed, 0, 'every reading rose: nothing completed, and no blank PM was read as 0');
+  assert.equal(s.open, 68);
+  assert.equal(s.score, 0);
+  assert.equal(s.days[3].state, 'pm_pending');
+  assert.equal(s.days[4].state, 'future');
+  // The overnight drop across a missing PM is measured between two typed numbers only.
+  const gap = buildLookup(amPm('b', [[50, null], [40, 30], [null, null], [null, null], [null, null]]));
+  const g = amPmRowStats(row('b'), MON_FRI, gap, 'cleared', '2026-10-02');
+  assert.equal(g.completed, 20, 'Mon AM 50 → Tue AM 40 → Tue PM 30; the blank Mon PM is skipped');
+  assert.equal(g.days[0].state, 'pm_missing', 'the missing PM is still flagged on screen');
+  assert.equal(g.score, carlaReference([50, '', 40, 30]));
 });
 
-test('a PM with no AM is left out of Comp, flagged, and still feeds the inbox average', () => {
+test('a bucket that was 0 all week is N/A; nothing typed is empty; neither is a number', () => {
+  const zeros = buildLookup(amPm('rto', [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]));
+  const z = amPmRowStats(row('rto'), MON_FRI, zeros, 'cleared', '2026-10-02');
+  assert.equal(z.status, 'na');
+  assert.equal(z.score, null);
+  const blank = amPmRowStats(row('rto'), MON_FRI, new Map(), 'cleared', '2026-10-02');
+  assert.equal(blank.status, 'empty');
+  assert.equal(blank.score, null);
+  assert.equal(blank.completed, null);
+});
+
+test("a weekday Collections bucket is Pending until its own day's PM is in, then scored", () => {
+  // Wed (Collections): fills Mon/Tue, worked on Wed.
+  const before = buildLookup(amPm('wed', [[0, 20], [20, 45], [45, null], [null, null], [null, null]]));
+  const pending = amPmRowStats(row('wed', { bucketDay: 'wed' }), MON_FRI, before, 'cleared', '2026-09-30');
+  assert.equal(pending.status, 'pending');
+  assert.equal(pending.score, null);
+  const monday = amPmRowStats(row('wed', { bucketDay: 'wed' }), MON_FRI, new Map(), 'cleared', '2026-09-28');
+  assert.equal(monday.status, 'pending', 'still Pending before anything is typed, while its day is ahead');
+
+  const after = buildLookup(amPm('wed', [[0, 20], [20, 45], [45, 3], [null, null], [null, null]]));
+  const scored = amPmRowStats(row('wed', { bucketDay: 'wed' }), MON_FRI, after, 'cleared', '2026-09-30');
+  assert.equal(scored.status, 'scored');
+  assert.equal(scored.completed, 42);
+  assert.equal(scored.score, carlaReference([0, 20, 20, 45, 45, 3]));
+
+  const missed = amPmRowStats(row('wed', { bucketDay: 'wed' }), MON_FRI, before, 'cleared', '2026-10-02');
+  assert.equal(missed.status, 'pm_missing', 'its day is over with no PM: not Pending any more, still not scored');
+  assert.equal(missed.score, null);
+});
+
+test("Buckets' overall = 10 × Σ completed ÷ Σ(completed + open) over the scored buckets only", () => {
+  const lookup = buildLookup([
+    ...amPm('a', [[10, 0], [null, null], [null, null], [null, null], [null, null]]), // completed 10, open 0
+    ...amPm('b', [[3, 1], [null, null], [null, null], [null, null], [null, null]]), // completed 2, open 1
+    ...amPm('z', [[0, 0], [0, 0], [null, null], [null, null], [null, null]]), // N/A
+    ...amPm('w', [[9, 9], [9, null], [null, null], [null, null], [null, null]]), // Tue bucket, Tue PM missing → pending today
+  ]);
+  const rows = [row('a'), row('b'), row('z'), row('w', { bucketDay: 'tue' })];
+  const s = amPmSectionStats(rows, MON_FRI, lookup, 'cleared', '2026-09-29');
+  assert.equal(s.rows.get('w')?.status, 'pending');
+  assert.equal(s.completedTotal, 12);
+  assert.equal(s.openTotal, 1);
+  assert.equal(s.headline, 9.2, '10 × 12 ÷ 13, not the average of the row scores (10 and 6.7)');
+  assert.deepEqual(s.dayTotals[0], { date: MON_FRI[0], am: 22, pm: 10 });
+
+  const inbox = amPmSectionStats([row('a'), row('b')], MON_FRI, lookup, 'inbox', '2026-10-02');
+  assert.equal(inbox.teamPmAverage, 0.5);
+  assert.equal(inbox.headline, 9.5);
+
+  const none = amPmSectionStats([row('z')], MON_FRI, lookup, 'cleared', '2026-10-02');
+  assert.equal(none.headline, null, 'no scored bucket: no overall');
+});
+
+test('a PM with no AM still feeds the inbox average', () => {
   const lookup = buildLookup(amPm('x', [[null, 4], [3, 1], [null, null], [null, null], [null, null]]));
-  const s = amPmRowStats('x', MON_FRI, lookup, 'inbox', '2026-10-02');
+  const s = amPmRowStats(row('x'), MON_FRI, lookup, 'inbox', '2026-10-02');
   assert.equal(s.days[0].state, 'am_missing');
-  assert.equal(s.comp, 2);
   assert.equal(s.pmAverage, 2.5);
   assert.equal(s.score, 7.5);
 });
 
-test('an empty bucket all week scores 2 when zeros are typed, and nothing when nothing is typed', () => {
-  const zeros = buildLookup(amPm('rto', [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]));
-  assert.equal(amPmRowStats('rto', MON_FRI, zeros, 'bucket', '2026-10-02').score, 2, "the sheet's rule, kept for Carla");
-  const blank = amPmRowStats('rto', MON_FRI, new Map(), 'bucket', '2026-10-02');
-  assert.equal(blank.score, null);
-  assert.equal(blank.comp, null);
+test('Open Disputes: the headline is open now; the "due in 7 days" line is called out, never added to it', () => {
+  const lookup = buildLookup([
+    ...amPm('open', [[7, 6], [8, 7], [null, null], [null, null], [null, null]]),
+    ...amPm('due', [[3, 2], [4, 3], [null, null], [null, null], [null, null]]),
+  ]);
+  const s = amPmSectionStats([row('open'), row('due', { dueSoon: true })], MON_FRI, lookup, undefined, '2026-09-30');
+  assert.equal(s.openNow, 7);
+  assert.equal(s.dueSoonNow, 3);
+  assert.equal(s.headline, 7);
+  const empty = amPmSectionStats([row('open')], MON_FRI, new Map(), undefined, '2026-09-30');
+  assert.equal(empty.headline, null, 'nothing typed is not 0 open');
 });
 
-test('section headline: buckets = mean of row scores; inbox = score of the team average; chargebacks = Comp total', () => {
+test('Chargeback Outcomes: $ and # per outcome per day, week totals per outcome', () => {
   const lookup = buildLookup([
-    ...amPm('a', [[10, 0], [null, null], [null, null], [null, null], [null, null]]), // comp 10 → 6
-    ...amPm('b', [[3, 1], [null, null], [null, null], [null, null], [null, null]]), // comp 2 → 4
+    { rowId: 'wins', date: MON_FRI[0], slot: 'usd', value: 99 },
+    { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 1 },
+    { rowId: 'wins', date: MON_FRI[2], slot: 'usd', value: 150.5 },
+    { rowId: 'wins', date: MON_FRI[2], slot: 'count', value: 2 },
+    { rowId: 'losses', date: MON_FRI[1], slot: 'count', value: 0 },
   ]);
-  const buckets = amPmSectionStats(['a', 'b'], MON_FRI, lookup, 'bucket', '2026-10-02');
-  assert.equal(buckets.headline, 5);
-  assert.equal(buckets.compTotal, 12);
-  assert.deepEqual(buckets.dayTotals[0], { date: MON_FRI[0], am: 13, pm: 1 });
-  assert.deepEqual(buckets.dayTotals[1], { date: MON_FRI[1], am: null, pm: null });
+  const s = amountCountSectionStats(['wins', 'losses', 'prearb'], MON_FRI, lookup);
+  assert.deepEqual(s.rows.get('wins')?.usd, [99, null, 150.5, null, null]);
+  assert.equal(s.rows.get('wins')?.weekUsd, 249.5);
+  assert.equal(s.rows.get('wins')?.weekCount, 3);
+  assert.equal(s.rows.get('losses')?.weekCount, 0, 'a typed 0 is a real 0');
+  assert.equal(s.rows.get('losses')?.weekUsd, null);
+  assert.equal(s.rows.get('prearb')?.weekCount, null);
+  assert.equal(s.weekCount, 3);
+});
 
-  const inbox = amPmSectionStats(['a', 'b'], MON_FRI, lookup, 'inbox', '2026-10-02');
-  assert.equal(inbox.teamPmAverage, 0.5);
-  assert.equal(inbox.headline, 9.5);
+test('Payroll Problems: log lines add up per person and day; the old grid counts as "No type"; nothing is —', () => {
+  const lookup = buildLookup([
+    { rowId: 'grace', date: MON_FRI[0], slot: 'day', value: 4 }, // typed into the old grid
+    { rowId: 'carla', date: MON_FRI[0], slot: 'day', value: 0 }, // a typed 0 is a real 0
+  ]);
+  const logs = [
+    { date: MON_FRI[0], rowId: 'grace', typeId: 'acct', count: 2 },
+    { date: MON_FRI[1], rowId: 'grace', typeId: 'score', count: 1 },
+    { date: MON_FRI[1], rowId: 'carla', typeId: 'acct', count: 51 },
+    { date: '2026-10-03', rowId: 'grace', typeId: 'acct', count: 9 }, // Saturday: not on the board
+    { date: MON_FRI[2], rowId: 'ghost', typeId: 'acct', count: 9 }, // not a row of this section
+  ];
+  const s = problemsWeekStats(['grace', 'carla', 'alivia'], logs, lookup, MON_FRI);
+  assert.deepEqual(s.rows.get('grace')?.byDay, [6, 1, null, null, null]);
+  assert.deepEqual(s.rows.get('carla')?.byDay, [0, 51, null, null, null]);
+  assert.equal(s.rows.get('alivia')?.week, null);
+  assert.deepEqual(s.byDay, [6, 52, null, null, null]);
+  assert.equal(s.week, 58);
+  assert.deepEqual(s.byType, [
+    { typeId: 'acct', count: 53 },
+    { typeId: UNTYPED_PROBLEMS, count: 4 },
+    { typeId: 'score', count: 1 },
+  ]);
+  assert.equal(problemsWeekStats(['alivia'], [], new Map(), MON_FRI).week, null, 'nothing logged is not 0 problems');
+});
 
-  const cb = amPmSectionStats(['a', 'b'], MON_FRI, lookup, undefined, '2026-10-02');
-  assert.equal(cb.headline, 12);
+test('No Meeting Streak: calendar days since any meeting was ticked; 0 on the day; none ever = null', () => {
+  assert.equal(noMeetingStreak('2026-10-02', '2026-10-06'), 4);
+  assert.equal(noMeetingStreak('2026-10-06', '2026-10-06'), 0);
+  assert.equal(noMeetingStreak('2026-09-22', '2026-10-06'), 14, 'across weeks: it never resets on a Monday');
+  assert.equal(noMeetingStreak(null, '2026-10-06'), null);
+  assert.equal(daysBetween('2026-02-27', '2026-03-02'), 3);
 });
 
 test("a section's totals include EVERY row (the sheet's WTD total dropped its last rep)", () => {

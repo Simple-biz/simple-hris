@@ -5,24 +5,38 @@
 
 import type { PreviewVerdict } from './bonus-preview';
 import type { PayrollEvent } from './payroll-cycle';
-import type { CollectionEntry, StoredEntry } from './scoring';
-import type { SectionKey, SectionSetting } from './sections';
+import type { CollectionEntry, ProblemEntry, StoredEntry } from './scoring';
+import type { CustomSection, RowSectionKey, SectionSetting, Weekday } from './sections';
 
 export interface BoardRow {
   id: string;
-  sectionKey: SectionKey;
+  sectionKey: RowSectionKey;
+  /** Set on a custom section's row only (section_key 'custom'). */
+  customSectionId: string | null;
   label: string;
   /** Set when the row IS an HRIS person. */
   workEmail: string | null;
   sortOrder: number;
   /** Archived rows appear only for weeks they have numbers in, and are read-only. */
   archived: boolean;
+  /** Buckets only: the weekday a weekday Collections bucket is worked. Its score is Pending until that day's PM. */
+  bucketDay: Weekday | null;
+  /** Open Disputes only: this line counts the disputes due in the next 7 days, and is called out. */
+  dueSoon: boolean;
 }
 
 export interface BoardMember {
   workEmail: string;
   addedAt: string;
   addedBy: string;
+}
+
+/** A Payroll Problems type (accounting_scoreboard_problem_types). Archived types stay for old lines. */
+export interface ProblemType {
+  id: string;
+  label: string;
+  sortOrder: number;
+  archived: boolean;
 }
 
 export interface BoardPayload {
@@ -33,11 +47,19 @@ export interface BoardPayload {
   today: string;
   viewer: { email: string; isManager: boolean };
   settings: SectionSetting[];
+  /** Live custom sections, switched on or off (archived ones are not sent). */
+  customSections: CustomSection[];
   rows: BoardRow[];
   /** This week's and last week's entries. */
   entries: StoredEntry[];
-  /** This week's and last week's live collections. */
+  /** This week's and last week's live collections, each with its Payment Verified tick. */
   collections: CollectionEntry[];
+  /** This week's and last week's live payroll problem lines. */
+  problems: ProblemEntry[];
+  /** Every problem type, live first; archived ones are sent so old lines still print their type. */
+  problemTypes: ProblemType[];
+  /** PM Buckets: the latest day any meeting was ticked, ever (the No Meeting Streak counts from it). */
+  lastMeetingDate: string | null;
   history: {
     allTimeByRow: Record<string, number>;
     record: { weekStart: string; points: number } | null;

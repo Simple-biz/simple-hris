@@ -8,15 +8,19 @@ end of the week. It lives at `/accounting-scoreboard`, and on `ACCOUNTING_SCOREB
 (`accounting-bonus.vercel.app`) it is the whole site. Built 2026-10-01 (session `9fe90c48`) on Kane's
 *"just nextjs typescript … basically its in this project … just on a different domain"*. The analysis it
 starts from, covering what every sheet section measures, who is in it and the sheet's own bugs, is
-`docs/notes/2026-10-01-accounting-scoreboard-analysis.md`.
+`docs/notes/2026-10-01-accounting-scoreboard-analysis.md`. **Round 3** (2026-10-06, session `48c8828b`) built
+Carla's email "SCOREBOARD UPDATES" (2026-10-02), forwarded by Kane: her Buckets score, Payment Verified on
+collections, PM Buckets' No Meeting Streak, Chargebacks split into Open Disputes and Outcomes, a Problem Type on
+every payroll problem, and custom sections.
 
 ## Key files
 
 | Piece | File |
 | --- | --- |
 | Tables, guards, lock-down | `references/sql/create/2026-10-01_accounting_scoreboard.sql` |
-| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` |
-| The 10 sections (kind, days, slots, goals) | `src/lib/accounting-scoreboard/sections.ts` |
+| Round 3: custom sections, row flags, Outcomes slots, Payment Verified, the problem log and types | `references/sql/create/2026-10-06_accounting_scoreboard_round3.sql` |
+| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` |
+| The 11 built-in sections (kind, days, slots, goals), custom sections, tabs | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
 | One headline and one stop light per section | `src/lib/accounting-scoreboard/board.ts` |
@@ -27,15 +31,17 @@ starts from, covering what every sheet section measures, who is in it and the sh
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
 | Member check, reads and writes | `src/lib/accounting-scoreboard/server.ts` (server-only) |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
-| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board · `entries` PUT · `collections` POST/DELETE · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
+| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
-| UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
-| Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
+| UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `ProblemsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
+| Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring with Carla's reference code as the oracle, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
 
 ## Who may open it: the board's member list, never an HRIS role
 
 - **Managers** are the `admin` and `accounting` roles. They see Setup (rows, section switches and
-  goals, extra members) and may delete anyone's logged collection.
+  goals, their own custom sections, the Payroll Problems types, extra members), may delete anyone's
+  logged collection or problem, and may uncheck anyone's Payment Verified tick. Carla's "Admins should be
+  able to add new types" means these managers: the board has no other admin.
 - **Members** are everyone whose work email, or one of its alternates (`expandWorkEmailAliases`, the
   same identity bridge RBAC uses), is on a live **person row**, plus anyone on
   `accounting_scoreboard_members`. A member may edit any cell, as on the sheet, because one person
@@ -75,36 +81,135 @@ starts from, covering what every sheet section measures, who is in it and the sh
 
 ## Sections and scoring
 
-The sections, their days and their goals are code (`sections.ts`), pinned to the SQL CHECKs by
-`sections.test.ts`. A manager can switch any section off, and its rows and numbers are kept, or
+The built-in sections, their days and their goals are code (`sections.ts`), pinned to the SQL CHECKs by
+`sections.test.ts`, which reads the CHECKs in force from the round-3 SQL and also pins that round 3 only
+added to the 2026-10-01 lists. A manager can switch any section off, and its rows and numbers are kept, or
 override its goal. Carla asked to track less than the sheet does, so the switch exists instead of a
-hard-coded subset.
+hard-coded subset. Managers can also add sections of their own (§ Custom sections).
 
 | Section | Kind | Days | Score / headline | Goal |
 |---|---|---|---|---|
-| Accounting Buckets | AM/PM | Mon–Fri | Comp = Σ(AM − PM) → tiers <0 → 1, 0 → 2, 1–5 → 4, 6–10 → 6, 11–15 → 8, >15 → 10; headline = average row score | ≥ 8 |
-| Collections | log | Mon–Fri | team points | ≥ 85 |
-| PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average | — |
+| Accounting Buckets | AM/PM | Mon–Fri | **Carla's rule** (§ Buckets): Score = 10 × Completed ÷ (Completed + Open); headline = the overall, 10 × Σ Completed ÷ Σ(Completed + Open) over the scored buckets | ≥ 8 |
+| Collections | log (+ Payment Verified) | Mon–Fri | team points | ≥ 85 |
+| PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average; No Meeting Streak in the header | — |
 | Customer Sales Onboarding | daily | Mon–Fri | week total | — |
 | Email Inbox | AM/PM | Mon–Fri | 10 − average PM count (0 → 10, ≥ 9 → 1); headline = score of the team average | ≥ 9 |
-| Chargebacks | AM/PM | Mon–Fri | net cleared Σ(AM − PM) | — |
+| Chargebacks · Open Disputes | AM/PM | Mon–Fri | open now (the latest reading of the lines not marked "due in 7 days"); the due-in-7-days line is called out | — |
+| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | per outcome (Pre-arb, Wins, Losses): week $ and week # | — |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | — |
 | Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
-| Payroll Problems | daily | Mon–Fri | week total | < 20 |
+| Payroll Problems | **log**, one line per problem (or batch) with its type (§ Payroll Problems) | Mon–Fri | week total | < 20 |
+| a manager's custom section | one number a day, or AM/PM scored like Buckets | Mon–Fri | week total, or the Buckets overall | optional |
 
-- **The sheet's formulas are kept exactly**, apart from one deliberate change. The sheet's `SUM`
-  treated a blank PM as 0, so a day with an AM count and no PM was credited as fully cleared
-  (Thursday's bucket showed +68 with nothing typed). **Here a day counts only when both numbers are in.**
-  An AM without a PM shows as *PM pending* today and *PM missing* once the day is over, and is never
-  credited. Do not "fix" a low score by counting those days.
-- The other quirks are the sheet's rules, kept for Carla to change: a day bucket's fill on the day
-  before counts against it, an empty bucket all week scores 2, and the paid tier counts points.
+- **A blank is never a 0.** The sheet's `SUM` treated a blank PM as 0, so a day with an AM count and no PM
+  was credited as fully cleared (Thursday's bucket showed +68 with nothing typed). That cannot happen here:
+  Buckets reads only the numbers somebody typed (§ Buckets), and an AM without a PM still shows as *PM pending*
+  today and *PM missing* once the day is over. Do not "fix" a low score by reading a blank as 0.
+- The scoring rules are Carla's to change. She changed Buckets' on 2026-10-02 (§ Buckets). The paid tier
+  still counts points (Open item 315).
 - **The sheet's seven cell-reference bugs cannot recur** (§ 6 of the analysis): every total is computed
   once over every row. `scoring.test.ts` pins that a total includes the last row (the sheet's WTD dropped
   Shayla, 95 instead of 113).
 - **Absence is not zero** (`ui-standards.md` § 12.5). A cleared cell is a **deleted** entry, never a
-  stored 0, and anything never typed prints "—". Nothing logged is "—", not 0 points.
+  stored 0, and anything never typed prints "—". Nothing logged is "—", not 0 points or 0 problems.
+
+## Buckets: Carla's Completed, Open and Score (2026-10-02)
+
+Carla's email, § 1, replaced the sheet's Comp = Σ(AM − PM) and its tiers. Her reference code is
+`clearedFromReadings` in `scoring.ts`, and `scoring.test.ts` runs her code verbatim as the oracle.
+
+- **Readings** are Mon AM, Mon PM, Tue AM … Fri PM in order, **with every blank skipped**.
+- **Completed** = the sum of every decrease between back-to-back readings, overnight included (Mon PM →
+  Tue AM). An increase is new work and never counts against it.
+- **Open** = the latest reading.
+- **Score** = 10 × Completed ÷ (Completed + Open), one decimal (`+(…).toFixed(1)`). 80% cleared = 8.0, the goal.
+- A bucket that was **0 all week** is **N/A**: no score, and left out of the overall. A bucket with nothing
+  typed is "—".
+- A **weekday Collections bucket** (the row's `bucket_day`, set in Setup → Rows; seeded 2026-10-06 on
+  "Mon (Collections)" … "Fri (Collections)") is **Pending** until its own day's PM reading is in, and is left
+  out of the overall. Once its day is over with no PM it says **PM missing** (the board's existing word for
+  that state), still left out. A bucket's day is marked on the row, not read from its label, so a rename
+  keeps it.
+- **Overall** (the section headline, the Overview card and the goal) = 10 × Σ Completed ÷ Σ(Completed + Open)
+  over the scored buckets only. It replaced the average of the row scores.
+- What changed from the old rule, on purpose: a drop across a missing PM now counts, because both ends are
+  real readings (Mon AM 50, Mon PM blank, Tue AM 40 → 10 completed); the old rule dropped that whole day. A
+  blank is still never read as 0.
+- **Seen on the first real week** (2026-10-06): a weekday bucket refilled late in the week for next week shows
+  that refill as Open (last week's "Mon (Collections)": 94 completed, 76 open on Friday PM → 5.5). That is
+  Carla's formula as written; whether her day buckets should stop at their own day is hers to say.
+
+## Chargebacks: Open Disputes and Outcomes
+
+Carla's email, § 4, split the tab in two. Both sections sit on the one Chargebacks tab.
+
+- **Open Disputes** keeps its AM/PM grid. Its headline is how many are open **now**: the latest reading of
+  every line not marked "due in 7 days". The line that counts the disputes due in the next 7 days is marked
+  on the row (`due_soon`, Setup → Rows; seeded on "Disputes due in 7 days") and is **called out**: an amber
+  chip in the header, an amber line in the grid, and a line on the Overview card. It is part of "open", so it
+  is never added to it, and this grid has no Day total (adding the lines would double count).
+- **Outcomes** (section `chargeback_outcomes`) holds Pre-arb, Wins and Losses: per day, the **dollar amount**
+  (`usd`, dollars and cents) and the **number of chargebacks** (`count`, a whole number). Carla's example:
+  one dispute won for $99 → Wins: $99 / 1. Each outcome has its week $ and week #. There is **no total across
+  outcomes**: a win plus a loss means nothing.
+- Outcomes shows inside the Chargebacks tab while Open Disputes is on. If Open Disputes is switched off,
+  Outcomes takes a tab of its own, so it never disappears silently (`tabSections`). It has its own switch.
+- The old AM/PM rows Pre-arb, Wins and Losses were **archived, not deleted**, on 2026-10-06. They still show,
+  read-only, for the weeks that hold their numbers (all 0s typed on Oct 5), and then drop away.
+- **Not built:** Carla's 2026-10-01 meeting asks (pre-arbitrations as negative amounts, "won chargebacks as
+  negative losses", a net total, two-weeks-ago dates; Open item 317 (a)). Her 2026-10-02 email does not ask
+  for them, so they wait for her to confirm.
+
+## PM Buckets: the No Meeting Streak
+
+Carla's email, § 3. The tab's header shows **"No meeting streak N days"**: the calendar days since the last
+day **any** PM meeting was ticked, counted to today (US Eastern). It is all time: it runs across weeks and
+drops to 0 only on a day a meeting is ticked. Unticking the only meeting on a day moves it back to the one
+before. It is **computed from the ticks, never stored** (`noMeetingStreak`; the board reads the latest
+ticked day through the row's section, archived PM rows included, because the meeting happened). A tick
+re-reads it at once instead of waiting for the next refresh. It turns amber once a week has gone by. Before
+any meeting was ever ticked it reads "—".
+
+## Payroll Problems: a log, every problem with its type
+
+Carla's email, § 5. The daily count grid became a **log** on 2026-10-06, because a type belongs to each
+problem, not to a person's day total.
+
+- A line is a day (Mon–Fri), a person (a row of the section), a **Problem Type** and how many (a whole number
+  1–1000, default 1; one person logged 51 in a day on the old grid). A person's day and the week add up from
+  the log (`problemsWeekStats`), with chips per type.
+- **Append-only**, like the collections log: a trigger refuses every UPDATE except the one soft delete, and
+  only the person who logged a line, or a manager, may delete it.
+- **Types** are a list managers keep under Setup → Problem types. Carla's starting list (Account Error,
+  Scoreboard Error, Other) was seeded by the migration. A type is archived, never deleted: it leaves the
+  dropdown and every line already logged keeps it.
+- **The counts typed into the old grid still count**, as **"No type"** (22 entries, 2026-09-28 → 10-05). They
+  are read, never written: the grid takes no writes now (`problem_log` has no slots).
+- **Nothing logged is "—", not 0 problems**: the board cannot tell "no problems" from "nobody logged". So a
+  clean week has no stop light, the same rule as the collections log.
+
+## Custom sections
+
+Carla's email, § 6: "Add a button to create new sections". A manager adds one under **Setup → Sections →
+Add section** (`accounting_scoreboard_custom_sections`).
+
+- **"Your own sections" sit at the TOP of Setup → Sections**, the Add form first, above the scoreboard's
+  built-in sections, and **a new section lands at the top of them** (Kane, 2026-10-06: *"Setup - Your own
+  sections and created sections please PUT it on top and when a section gets added it will be placed at the
+  top"*). `createCustomSection` gives it one below the lowest live sort order, and `boardSections` lists the
+  lowest first, so the newest is first in Setup and first among the custom tabs (pinned in `sections.test.ts`).
+
+- A custom section has a **name** (unique among live ones), one of **two kinds** and an optional **goal**:
+  - **One number a day**: the headline is the week total; the goal is "at least" or "below".
+  - **Start and end of day**: AM/PM readings scored exactly like Buckets (§ Buckets); the goal is a 0–10 score
+    to reach.
+- It gets a tab, an Overview card and a menu entry, after the built-ins (newest first). Its rows are added under Setup →
+  Rows like any section (`section_key 'custom'` + `custom_section_id`; uniqueness of a label or person is per
+  custom section). Numbers are typed into its grid; the same write rules apply.
+- It can be renamed, switched off, given or cleared a goal, or **removed (archived, never deleted)**: its
+  rows and numbers stay in the tables. A removed section's rows take no writes.
+- Built-in sections stay code. A custom section can never become a payroll, collections or log section.
 
 ## Payroll Timing fills itself, from the Payroll Wizard
 
@@ -217,6 +322,14 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   manager, may delete it.
 - A rep row archived mid-week still shows, read-only, for every week it has numbers in. Removing a rep
   never makes a collection drop out of a team total. Rows are archived, never deleted or un-archived.
+- **Payment Verified** (Carla's email, § 2): every log line has a tick. Any member may tick it, and it saves
+  and shows **who** ticked it: the label of their own person row on the board, else their roster nickname,
+  else their email handle, kept with the tick and their session email. Only whoever ticked it, or a manager,
+  may uncheck it. The tick lives in its **own table** (`accounting_scoreboard_collection_verifications`, one
+  live tick per collection), so the append-only log line is never updated and its trigger is untouched.
+  Unchecking stamps the tick (`unverified_at/by`) and never deletes it, and a stamped tick cannot change
+  again: ticking again adds a new one, so the history of who verified and who took it back is kept. It does
+  not touch points, totals or the bonus preview.
 
 ## The bonus preview (display only)
 
@@ -246,7 +359,11 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   old single message blamed decimals for a range error. The Collections form checks the same rules before
   it sends and shows one line under the form naming the field, whose box gets the red `aria-invalid`
   border, so an error never pushes the boxes out of line.
-- **Payroll Timing takes no writes**: it has no slots, so `entryAllowed()` refuses every one.
+- **Chargeback Outcomes' cells**: `usd` is dollars and cents (at most 2 decimals) under the table's 100,000
+  ceiling, the same as every other box; `count` is a whole number (refused in `validate.ts` and by the CHECK
+  `acct_sb_entries_count_whole`).
+- **Payroll Timing and Payroll Problems take no grid writes**: neither has slots, so `entryAllowed()` refuses
+  every one. Problems go to the log (`POST /problems`).
 - `entryAllowed()` refuses a slot the row's section does not have, or a day that section does not keep.
   Archived rows are read-only.
 - A row with a work email **is** that HRIS person, so the address must be on `active_employees`.
@@ -317,6 +434,14 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   2026-10-01 against the real `ScoreboardApp`, bundled with a mocked board GET, with 26 scripted checks at
   390, 700, 1024 and 1360 px, light and dark, and under reduced motion.
 
+- **Round 3 was verified 2026-10-06** in headless Chromium on the real `ScoreboardApp`, fed this week's board as
+  `readBoard()` returns it from production (read-only), plus local fixtures for the states production does not
+  hold yet: a verified line, problem lines, a custom section and an outcome. 69 scripted checks passed at 1360 px
+  light and dark and at 390 px: Pending, N/A, the overall, the due-in-7-days callout, Outcomes on the Chargebacks
+  tab, the streak, the verify call, the problem form and chips, a custom section scored like Buckets, Setup's
+  areas, no page-wide horizontal scroll, and no console errors. A separate check confirmed "Your own sections"
+  sits on top. **Not clicked through signed in.**
+
 ## Live refresh
 
 - A background refresh runs every 45 s while the tab is visible, and on focus. It **never runs while a
@@ -330,6 +455,8 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
 - The sheet's status strip (Working / Lunch / Break) and the per-person task checklists (Carla's
   Tracker). Both are outside the bonus and can come later.
 - Per-person or per-section bonuses after Carla's revamp, and any write to pay (Item 315).
+- Charts. Carla's § 6 says "sections/charts"; a custom section is a tab, a grid and an Overview card, the same
+  as a built-in one. No chart type was built.
 
 ## Deploy notes
 
@@ -352,6 +479,17 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
      checked without signing in, and on 2026-10-01 he saw `redirect_uri_mismatch` there. If that comes
      back, this is the step to re-check.
   4. The push. **Measured:** every commit is on origin/main.
+- **Round 3 migration: APPLIED 2026-10-06** by session `48c8828b` on Kane's *"run the migration i give you my
+  permission"*. Dry run 133/133, then `--apply` 133/133 (committed), then `--verify` 133/133; the 2026-10-01
+  `--verify` re-passed after it. Before committing, the script wrote the 9 rows its data steps change to
+  `docs/audits/backups/accounting-scoreboard-round3-rows-2026-10-06T18-04-22-038Z.json` (gitignored). Read back
+  through the app's own `readBoard()` against production: the five weekday buckets carry their day, "Disputes
+  due in 7 days" is flagged, Outcomes holds Pre-arb / Wins / Losses, the old three are archived, the three
+  types are live, and the anon key is refused (`42501`) on all four new tables. The script holds the table
+  locks for about 15 s (the pooler is ~240 ms away, so its checks and controls run batched) and sets
+  `lock_timeout = 10s`. Re-check any time with
+  `node --import tsx scripts/apply-accounting-scoreboard-round3-migration.mts --verify`.
+- **The round-3 code needs that migration**, which is applied. **The push: PENDING** (Kane).
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.

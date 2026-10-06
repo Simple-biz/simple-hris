@@ -3352,7 +3352,7 @@ a URL.
 
 Carla's team scoreboard at `/accounting-scoreboard` (and the whole site on `ACCOUNTING_SCOREBOARD_HOST`).
 Governing doc: [accounting-scoreboard.md](../features/accounting-scoreboard.md). Tables `accounting_scoreboard_*`,
-migration `references/sql/create/2026-10-01_accounting_scoreboard.sql` (**applied** 2026-10-01). **Every route gates on the
+migrations `references/sql/create/2026-10-01_accounting_scoreboard.sql` (**applied** 2026-10-01) and `2026-10-06_accounting_scoreboard_round3.sql` (**applied** 2026-10-06: custom sections, Chargeback Outcomes, Payment Verified, the Payroll Problems log). **Every route gates on the
 board's MEMBER list, not an HRIS role** (`resolveAccess` in `src/lib/accounting-scoreboard/server.ts`): members are live
 person rows + `accounting_scoreboard_members`; `accounting` / `admin` are managers. Errors are `{ error, code }`:
 `401 auth_required`, `403 not_member | not_manager`, `503 not_set_up` (tables missing), `400 bad_request`, `409`, `422 refused`.
@@ -3362,7 +3362,7 @@ Every `*_by` is the session email. Nothing here writes pay.
 
 Members. The board for one week (default: this week, US Eastern): rows (live, plus archived rows that have numbers in the
 two weeks shown), this and last week's entries and collections, all-time points per rep and the record week, section
-switches, the Dancing Queen preview candidate, and `payrollEvents` (the Payroll Wizard's Start Processing stamps, `dispatch.lock_acquired` with
+switches, `customSections`, `problems` (this and last week's live Payroll Problems lines) and `problemTypes` (archived ones too, so an old line keeps its type), `lastMeetingDate` (the latest day any PM meeting was ticked, ever), each collection's `verified` (`{ by, name, at }` or null), each row's `customSectionId`, `bucketDay` and `dueSoon`, the Dancing Queen preview candidate, and `payrollEvents` (the Payroll Wizard's Start Processing stamps, `dispatch.lock_acquired` with
 the cycle it was on, plus pay-cycle closes/reopens, from `audit_log` starting three weeks before the week with no upper bound;
 action, time, cycle file and period only, each with its `cycleStart` Sunday) and `firstClosedPeriodEnd` (the period end of
 the first cycle ever closed, or null). Members list for managers only. All lists paged.
@@ -3370,16 +3370,36 @@ the first cycle ever closed, or null). Members list for managers only. All lists
 ### `PUT /api/accounting-scoreboard/entries`
 
 Members. `{ rowId, date, slot, value | null }`: set or clear one cell (`null` deletes; 0 is a real count). Counts 0–100,000,
-≤ 2 decimals; refused: a future date, a slot or weekday the row's section does not keep, an archived row, any Payroll Timing write.
+≤ 2 decimals; Chargeback Outcomes' `usd` is dollars and cents under the same 100,000 ceiling and its `count` a whole number.
+Refused: a future date, a slot or weekday the row's section does not keep, an archived row, a row of an archived custom section,
+any Payroll Timing write, and any Payroll Problems write (its grid is read-only since 2026-10-06; problems go to the log).
 
 ### `POST /api/accounting-scoreboard/collections` · `DELETE ?id=`
 
 Members. POST `{ rowId, date (Mon–Fri), businessName, points (WHOLE number 0–100), amountUsd? (≤ 2 decimals) }` → 201. DELETE soft-deletes
 (the logger or a manager only). The log is append-only: a trigger refuses every other UPDATE.
 
+### `POST /api/accounting-scoreboard/collections/verify`
+
+Members. `{ collectionId, verified: boolean }` → `{ verified: { by, name, at } | null }`. Payment Verified (Carla, 2026-10-02): any member
+ticks it, stamped with the session email and the board name for them; only whoever ticked it, or a manager, unchecks it (`403 not_owner`).
+The tick lives in `accounting_scoreboard_collection_verifications` (one live tick per collection; an uncheck is a stamp, never a delete).
+The collection row itself is never updated.
+
+### `POST /api/accounting-scoreboard/problems` · `DELETE ?id=`
+
+Members. POST `{ rowId (a Payroll Problems row), date (Mon–Fri), typeId (a live type), count? (whole, 1–1000, default 1) }` → 201.
+DELETE soft-deletes (the logger or a manager only). Append-only like the collections log.
+
+### `POST /api/accounting-scoreboard/problem-types` · `PATCH`
+
+Managers. POST `{ label }` (1–60 characters, unique among live types); PATCH `{ id, archived: true }` (never deleted or brought back).
+
 ### `POST /api/accounting-scoreboard/rows` · `PATCH`
 
-Managers. POST `{ sectionKey, label, workEmail? }` (a work email must be on `active_employees`); PATCH `{ id, label?, sortOrder?, archived?: true }` (never un-archived).
+Managers. POST `{ sectionKey, customSectionId?, label, workEmail? }` (a work email must be on `active_employees`; `sectionKey: 'custom'`
+needs a live `customSectionId`); PATCH `{ id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon? }` (never un-archived;
+`bucketDay` 'mon'…'fri' | null on a Buckets row only; `dueSoon` on an Open Disputes row only).
 
 ### `POST /api/accounting-scoreboard/members` · `DELETE ?email=`
 
@@ -3388,6 +3408,12 @@ Managers. Extra members (removal is a stamp).
 ### `PATCH /api/accounting-scoreboard/sections`
 
 Managers. `{ sectionKey, enabled?, goal? }` (`goal: null` = the sheet's goal; a goal-less section cannot get one).
+
+### `POST /api/accounting-scoreboard/custom-sections` · `PATCH`
+
+Managers. POST `{ title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below' }` → 201; PATCH `{ id, title?, enabled?,
+goal? (null clears), goalDirection?, archived?: true }`. An `am_pm` section is scored like Buckets, so its goal is a 0–10 score "at
+least"; a `daily` one totals its week. Titles are unique among live custom sections. Archived, never deleted.
 
 ### `GET /api/accounting-scoreboard/roster`
 
@@ -3400,7 +3426,7 @@ Managers. The people picker: `{ people: [{ name, department, workEmail }] }` fro
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3449,8 +3475,12 @@ of cells — the matches were not re-run).
 |---|---|---|---|
 | `/api/accounting-scoreboard` | GET | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/collections` | POST, DELETE | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/collections/verify` | POST | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/custom-sections` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/entries` | PUT | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/members` | POST, DELETE | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/problem-types` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/problems` | POST, DELETE | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/roster` | GET | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/rows` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/sections` | PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |

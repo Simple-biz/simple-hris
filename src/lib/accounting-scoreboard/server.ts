@@ -22,8 +22,21 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
-import { isSectionKey, type SectionKey, type SectionSetting, type Slot } from './sections';
+import {
+  CUSTOM_KINDS,
+  MON_FRI,
+  isRowSectionKey,
+  isSectionKey,
+  type CustomKind,
+  type CustomSection,
+  type GoalDirection,
+  type SectionKey,
+  type SectionSetting,
+  type Slot,
+  type Weekday,
+} from './sections';
 import { addDays, easternToUtc, todayEastern, weekStartOf } from './week';
+import { shortNameFromRoster } from './names';
 import {
   PAYROLL_EVENT_ACTIONS,
   firstClosedPeriodEnd,
@@ -31,13 +44,17 @@ import {
   type PayrollAuditRow,
   type PayrollEvent,
 } from './payroll-cycle';
-import { collectionsHistory, type CollectionEntry, type StoredEntry } from './scoring';
+import { collectionsHistory, type CollectionEntry, type ProblemEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
-import type { BoardMember, BoardPayload, BoardRow, RosterPerson } from './types';
+import type { BoardMember, BoardPayload, BoardRow, ProblemType, RosterPerson } from './types';
 import {
+  customGoal,
   entryAllowed,
   type CollectionCreate,
+  type CustomSectionCreate,
+  type CustomSectionPatch,
   type EntryWrite,
+  type ProblemCreate,
   type RowCreate,
   type RowPatch,
   type SectionPatch,
@@ -50,6 +67,11 @@ const COLLECTIONS = 'accounting_scoreboard_collections';
 const COLLECTION_WEEKS = 'accounting_scoreboard_collection_weeks';
 const MEMBERS = 'accounting_scoreboard_members';
 const SECTIONS_TABLE = 'accounting_scoreboard_sections';
+// Round 3 (references/sql/create/2026-10-06_accounting_scoreboard_round3.sql).
+const CUSTOM_SECTIONS = 'accounting_scoreboard_custom_sections';
+const VERIFICATIONS = 'accounting_scoreboard_collection_verifications';
+const PROBLEM_TYPES = 'accounting_scoreboard_problem_types';
+const PROBLEMS = 'accounting_scoreboard_problems';
 
 export const MANAGER_ROLES: readonly string[] = ['admin', 'accounting'];
 
@@ -93,15 +115,18 @@ export async function readJson(req: Request): Promise<unknown> {
   }
 }
 
-/** PostgREST / Postgres "relation does not exist": the migration has not been applied yet. */
+/**
+ * PostgREST / Postgres "relation (or column) does not exist": a migration has not been applied yet.
+ * Round 3's new columns (custom_section_id, bucket_day, due_soon) and tables fail the same way.
+ */
 function isMissingTable(message: string | undefined): boolean {
-  return !!message && /does not exist|schema cache|PGRST205|42P01/i.test(message);
+  return !!message && /does not exist|schema cache|PGRST205|PGRST200|42P01|42703/i.test(message);
 }
 
 const NOT_SET_UP = fail(
   503,
   'not_set_up',
-  'The Accounting Scoreboard tables are not set up yet. The migrations have to be applied first (scripts/apply-accounting-scoreboard-migration.mts, then scripts/apply-accounting-scoreboard-backfill-migration.mts).',
+  'The Accounting Scoreboard tables are not set up yet. The migrations have to be applied first (scripts/apply-accounting-scoreboard-migration.mts, scripts/apply-accounting-scoreboard-backfill-migration.mts, then scripts/apply-accounting-scoreboard-round3-migration.mts).',
 );
 
 function dbFailure(error: { message?: string; code?: string } | null | undefined, fallback: string): Failure {
@@ -163,12 +188,16 @@ export async function resolveAccess(level: 'member' | 'manager'): Promise<Result
 type RowRecord = {
   id: string;
   section_key: string;
+  custom_section_id: string | null;
   label: string;
   work_email: string | null;
   sort_order: number;
   archived_at: string | null;
+  bucket_day: string | null;
+  due_soon: boolean;
 };
 type EntryRecord = { row_id: string; entry_date: string; slot: Slot; value: number | string };
+type VerificationRecord = { verified_by: string; verified_by_name: string; verified_at: string };
 type CollectionRecord = {
   id: string;
   entry_date: string;
@@ -178,17 +207,44 @@ type CollectionRecord = {
   amount_usd: number | string | null;
   created_by: string;
   created_at: string;
+  /** Embedded: the live verification (unverified_at is null), at most one by the unique index. */
+  verifications?: VerificationRecord[] | null;
+};
+type ProblemRecord = {
+  id: string;
+  entry_date: string;
+  row_id: string;
+  type_id: string;
+  problem_count: number;
+  created_by: string;
+  created_at: string;
+};
+type ProblemTypeRecord = { id: string; label: string; sort_order: number; archived_at: string | null };
+type CustomSectionRecord = {
+  id: string;
+  title: string;
+  kind: string;
+  goal: number | string | null;
+  goal_direction: string | null;
+  enabled: boolean;
+  sort_order: number;
+  archived_at: string | null;
 };
 
 function mapRow(r: RowRecord): BoardRow | null {
-  if (!isSectionKey(r.section_key)) return null;
+  if (!isRowSectionKey(r.section_key)) return null;
+  if (r.section_key === 'custom' && !r.custom_section_id) return null;
+  const bucketDay = (MON_FRI as readonly string[]).includes(r.bucket_day ?? '') ? (r.bucket_day as Weekday) : null;
   return {
     id: r.id,
     sectionKey: r.section_key,
+    customSectionId: r.section_key === 'custom' ? r.custom_section_id : null,
     label: r.label,
     workEmail: r.work_email,
     sortOrder: r.sort_order,
     archived: r.archived_at !== null,
+    bucketDay,
+    dueSoon: r.due_soon === true,
   };
 }
 
@@ -197,6 +253,7 @@ function mapEntry(r: EntryRecord): StoredEntry {
 }
 
 function mapCollection(r: CollectionRecord): CollectionEntry {
+  const v = (r.verifications ?? [])[0];
   return {
     id: r.id,
     date: r.entry_date,
@@ -206,11 +263,43 @@ function mapCollection(r: CollectionRecord): CollectionEntry {
     amountUsd: r.amount_usd === null ? null : Number(r.amount_usd),
     createdBy: r.created_by,
     createdAt: r.created_at,
+    verified: v ? { by: v.verified_by, name: v.verified_by_name, at: v.verified_at } : null,
   };
 }
 
-const ROW_COLS = 'id, section_key, label, work_email, sort_order, archived_at';
+function mapProblem(r: ProblemRecord): ProblemEntry {
+  return {
+    id: r.id,
+    date: r.entry_date,
+    rowId: r.row_id,
+    typeId: r.type_id,
+    count: Number(r.problem_count),
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+  };
+}
+
+function mapCustomSection(r: CustomSectionRecord): CustomSection | null {
+  if (!(CUSTOM_KINDS as readonly string[]).includes(r.kind)) return null;
+  const direction = r.goal_direction === 'at_least' || r.goal_direction === 'below' ? (r.goal_direction as GoalDirection) : null;
+  const goal = r.goal === null || direction === null ? null : Number(r.goal);
+  return {
+    id: r.id,
+    title: r.title,
+    kind: r.kind as CustomKind,
+    goal,
+    goalDirection: goal === null ? null : direction,
+    enabled: r.enabled,
+    sortOrder: r.sort_order,
+  };
+}
+
+const ROW_COLS = 'id, section_key, custom_section_id, label, work_email, sort_order, archived_at, bucket_day, due_soon';
 const COLLECTION_COLS = 'id, entry_date, row_id, business_name, points, amount_usd, created_by, created_at';
+/** The collection plus its live Payment Verified tick, embedded (no `.in()` of ids: the URL would outgrow PostgREST). */
+const COLLECTION_WITH_VERIFIED = `${COLLECTION_COLS}, verifications:${VERIFICATIONS}(verified_by, verified_by_name, verified_at)`;
+const PROBLEM_COLS = 'id, entry_date, row_id, type_id, problem_count, created_by, created_at';
+const CUSTOM_COLS = 'id, title, kind, goal, goal_direction, enabled, sort_order, archived_at';
 
 async function readBonusCandidates(): Promise<PreviewVerdict> {
   const sb = client();
@@ -250,7 +339,7 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
   // weeks back. No upper bound: a past cycle started or closed late still lands on its own week.
   const eventsFrom = easternToUtc(addDays(weekStart, -21), 0).toISOString();
 
-  const [liveRows, entries, collections, history, settings, bonus, payroll, closes] = await Promise.all([
+  const [liveRows, entries, collections, history, settings, bonus, payroll, closes, problems, problemTypes, customs, lastMeeting] = await Promise.all([
     selectAllPaged<RowRecord>((from, to) =>
       sb.from(ROWS).select(ROW_COLS).is('archived_at', null).order('id').range(from, to),
     ),
@@ -268,8 +357,9 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
     selectAllPaged<CollectionRecord>((from, to) =>
       sb
         .from(COLLECTIONS)
-        .select(COLLECTION_COLS)
+        .select(COLLECTION_WITH_VERIFIED)
         .is('deleted_at', null)
+        .is('verifications.unverified_at', null)
         .gte('entry_date', lastWeekStart)
         .lte('entry_date', weekEnd)
         .order('id')
@@ -312,12 +402,41 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
         .order('id')
         .range(from, to),
     ),
+    // Payroll Problems: this week's and last week's live log lines.
+    selectAllPaged<ProblemRecord>((from, to) =>
+      sb
+        .from(PROBLEMS)
+        .select(PROBLEM_COLS)
+        .is('deleted_at', null)
+        .gte('entry_date', lastWeekStart)
+        .lte('entry_date', weekEnd)
+        .order('id')
+        .range(from, to),
+    ),
+    // Every problem type: archived ones too, so an old line still prints its type.
+    selectAllPaged<ProblemTypeRecord>((from, to) =>
+      sb.from(PROBLEM_TYPES).select('id, label, sort_order, archived_at').order('id').range(from, to),
+    ),
+    selectAllPaged<CustomSectionRecord>((from, to) =>
+      sb.from(CUSTOM_SECTIONS).select(CUSTOM_COLS).is('archived_at', null).order('id').range(from, to),
+    ),
+    // PM Buckets' No Meeting Streak: the latest day any PM meeting was ticked, ever (archived PM
+    // rows included: the meeting happened). One row, through the row's section, no id list.
+    sb
+      .from(ENTRIES)
+      .select('entry_date, row:accounting_scoreboard_rows!inner(section_key)')
+      .eq('slot', 'mtg')
+      .eq('value', 1)
+      .eq('row.section_key', 'pm_buckets')
+      .order('entry_date', { ascending: false })
+      .limit(1),
   ]);
 
-  for (const r of [liveRows, entries, collections, history, payroll, closes]) {
+  for (const r of [liveRows, entries, collections, history, payroll, closes, problems, problemTypes, customs]) {
     if (r.error) return dbFailure({ message: r.error }, 'Could not read the scoreboard');
   }
   if (settings.error) return dbFailure(settings.error, 'Could not read the scoreboard');
+  if (lastMeeting.error) return dbFailure(lastMeeting.error, 'Could not read the PM meetings');
 
   // A row archived mid-week still shows (read-only) for the weeks it has numbers in, so no
   // collection or count silently drops out of a team total.
@@ -329,6 +448,7 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
   const referenced = new Set<string>([
     ...entries.rows.map((e) => e.row_id),
     ...collections.rows.map((c) => c.row_id),
+    ...problems.rows.map((p) => p.row_id),
   ]);
   const missing = [...referenced].filter((id) => !rows.has(id));
   if (missing.length) {
@@ -377,11 +497,19 @@ export async function readBoard(viewer: Viewer, weekStart: string): Promise<Resu
           enabled: s.enabled,
           goal: s.goal === null ? null : Number(s.goal),
         })),
+      customSections: customs.rows.map(mapCustomSection).filter((c): c is CustomSection => c !== null),
       rows: [...rows.values()].sort(
         (a, b) => Number(a.archived) - Number(b.archived) || a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
       ),
       entries: entries.rows.map(mapEntry),
       collections: collections.rows.map(mapCollection),
+      problems: problems.rows.map(mapProblem),
+      problemTypes: problemTypes.rows
+        .map(
+          (t): ProblemType => ({ id: t.id, label: t.label, sortOrder: t.sort_order, archived: t.archived_at !== null }),
+        )
+        .sort((a, b) => Number(a.archived) - Number(b.archived) || a.sortOrder - b.sortOrder || a.label.localeCompare(b.label)),
+      lastMeetingDate: ((lastMeeting.data ?? []) as { entry_date: string }[])[0]?.entry_date ?? null,
       history: { allTimeByRow: Object.fromEntries(hist.allTimeByRow), record: hist.record, liveSince },
       members,
       bonus,
@@ -410,11 +538,30 @@ async function readLiveRow(id: string): Promise<Result<BoardRow>> {
   return { ok: true, value: row };
 }
 
+/** A live custom section, or a refusal that says why it cannot take numbers. */
+async function readLiveCustomSection(id: string): Promise<Result<CustomSection>> {
+  const { data, error } = await client().from(CUSTOM_SECTIONS).select(CUSTOM_COLS).eq('id', id).maybeSingle();
+  if (error) return dbFailure(error, 'Could not read the section');
+  const rec = data as CustomSectionRecord | null;
+  const section = rec ? mapCustomSection(rec) : null;
+  if (!rec || !section) return fail(404, 'not_found', 'That section is not on the scoreboard.');
+  if (rec.archived_at) return fail(409, 'archived', 'That section was removed from the scoreboard; its numbers are read-only.');
+  return { ok: true, value: section };
+}
+
 /** Set or clear one cell. A cleared cell is deleted, never stored as 0. */
 export async function writeEntry(viewer: Viewer, w: EntryWrite): Promise<Result<StoredEntry | null>> {
   const row = await readLiveRow(w.rowId);
   if (!row.ok) return row;
-  const allowed = entryAllowed(row.value.sectionKey, w.slot, w.date);
+  let target: Parameters<typeof entryAllowed>[0];
+  if (row.value.sectionKey === 'custom') {
+    const custom = await readLiveCustomSection(row.value.customSectionId ?? '');
+    if (!custom.ok) return custom;
+    target = { title: custom.value.title, kind: custom.value.kind, days: MON_FRI };
+  } else {
+    target = row.value.sectionKey;
+  }
+  const allowed = entryAllowed(target, w.slot, w.date);
   if (!allowed.ok) return fail(422, 'refused', allowed.error);
 
   const sb = client();
@@ -495,6 +642,101 @@ export async function deleteCollection(viewer: Viewer, id: string): Promise<Resu
   return { ok: true, value: { id } };
 }
 
+/**
+ * The name printed beside a Payment Verified tick: the label of the viewer's own person row on the
+ * board (what the team calls them: "Carla"), else their roster nickname, else their email handle.
+ */
+async function displayNameFor(viewer: Viewer): Promise<Result<string>> {
+  const sb = client();
+  const own = await sb.from(ROWS).select('label').in('work_email', viewer.aliases).is('archived_at', null).limit(1);
+  if (own.error) return dbFailure(own.error, 'Could not read your name');
+  const label = ((own.data ?? []) as { label: string }[])[0]?.label;
+  if (label) return { ok: true, value: label };
+  for (const col of ['Work Email', 'Alternate Work Email', 'Alternate Work Email 2']) {
+    const { data, error } = await sb.from('active_employees').select('"Name"').in(col, viewer.aliases).limit(1);
+    if (error) return dbFailure(error, 'Could not read your name');
+    const name = shortNameFromRoster(((data ?? []) as { Name: string | null }[])[0]?.Name ?? '');
+    if (name) return { ok: true, value: name.slice(0, 120) };
+  }
+  return { ok: true, value: viewer.email.split('@')[0] };
+}
+
+type LiveVerification = { id: string } & VerificationRecord;
+
+async function readLiveVerification(collectionId: string): Promise<Result<LiveVerification | null>> {
+  const { data, error } = await client()
+    .from(VERIFICATIONS)
+    .select('id, verified_by, verified_by_name, verified_at')
+    .eq('collection_id', collectionId)
+    .is('unverified_at', null)
+    .maybeSingle();
+  if (error) return dbFailure(error, 'Could not read the verification');
+  return { ok: true, value: (data as LiveVerification | null) ?? null };
+}
+
+const asVerified = (v: VerificationRecord): NonNullable<CollectionEntry['verified']> => ({
+  by: v.verified_by,
+  name: v.verified_by_name,
+  at: v.verified_at,
+});
+
+/**
+ * Payment Verified (Carla, 2026-10-02). Any member may tick it, and the tick stores who did it. Only
+ * the person who ticked it, or a manager, may take it back; taking it back stamps the line and never
+ * deletes it. The collection itself is never touched (the log is append-only).
+ */
+export async function setVerified(
+  viewer: Viewer,
+  collectionId: string,
+  verified: boolean,
+): Promise<Result<CollectionEntry['verified']>> {
+  const sb = client();
+  const { data: coll, error: collErr } = await sb
+    .from(COLLECTIONS)
+    .select('id, deleted_at')
+    .eq('id', collectionId)
+    .maybeSingle();
+  if (collErr) return dbFailure(collErr, 'Could not read the collection');
+  const rec = coll as { id: string; deleted_at: string | null } | null;
+  if (!rec || rec.deleted_at) return fail(404, 'not_found', 'That collection is not on the log.');
+
+  const live = await readLiveVerification(collectionId);
+  if (!live.ok) return live;
+
+  if (verified) {
+    if (live.value) return { ok: true, value: asVerified(live.value) };
+    const name = await displayNameFor(viewer);
+    if (!name.ok) return name;
+    const { data, error } = await sb
+      .from(VERIFICATIONS)
+      .insert({ collection_id: collectionId, verified_by: viewer.email, verified_by_name: name.value })
+      .select('verified_by, verified_by_name, verified_at')
+      .single();
+    if (error?.code === '23505') {
+      // Someone ticked it a moment earlier: theirs stands.
+      const again = await readLiveVerification(collectionId);
+      if (!again.ok) return again;
+      return { ok: true, value: again.value ? asVerified(again.value) : null };
+    }
+    if (error) return dbFailure(error, 'Could not save the verification');
+    return { ok: true, value: asVerified(data as VerificationRecord) };
+  }
+
+  if (!live.value) return { ok: true, value: null };
+  if (!viewer.isManager && !viewer.aliases.includes(live.value.verified_by.toLowerCase())) {
+    return fail(403, 'not_owner', `Only ${live.value.verified_by_name}, who verified it, or Accounting can uncheck it.`);
+  }
+  const { data, error } = await sb
+    .from(VERIFICATIONS)
+    .update({ unverified_at: new Date().toISOString(), unverified_by: viewer.email })
+    .eq('id', live.value.id)
+    .is('unverified_at', null)
+    .select('id');
+  if (error) return dbFailure(error, 'Could not uncheck the verification');
+  if (!(data ?? []).length) return fail(409, 'conflict', 'That verification just changed. Refresh and try again.');
+  return { ok: true, value: null };
+}
+
 /** A person row must be someone on the active HRIS roster; anyone else is a named row. */
 async function rosterHasEmail(email: string): Promise<Result<boolean>> {
   const sb = client();
@@ -514,6 +756,10 @@ async function rosterHasEmail(email: string): Promise<Result<boolean>> {
 }
 
 export async function createRow(viewer: Viewer, r: RowCreate): Promise<Result<BoardRow>> {
+  if (r.sectionKey === 'custom') {
+    const custom = await readLiveCustomSection(r.customSectionId ?? '');
+    if (!custom.ok) return custom;
+  }
   if (r.workEmail) {
     const onRoster = await rosterHasEmail(r.workEmail);
     if (!onRoster.ok) return onRoster;
@@ -526,18 +772,15 @@ export async function createRow(viewer: Viewer, r: RowCreate): Promise<Result<Bo
     }
   }
   const sb = client();
-  const { data: last } = await sb
-    .from(ROWS)
-    .select('sort_order')
-    .eq('section_key', r.sectionKey)
-    .is('archived_at', null)
-    .order('sort_order', { ascending: false })
-    .limit(1);
+  let lastQuery = sb.from(ROWS).select('sort_order').eq('section_key', r.sectionKey).is('archived_at', null);
+  if (r.customSectionId) lastQuery = lastQuery.eq('custom_section_id', r.customSectionId);
+  const { data: last } = await lastQuery.order('sort_order', { ascending: false }).limit(1);
   const nextOrder = ((last ?? [])[0] as { sort_order?: number } | undefined)?.sort_order ?? -1;
   const { data, error } = await sb
     .from(ROWS)
     .insert({
       section_key: r.sectionKey,
+      custom_section_id: r.customSectionId,
       label: r.label,
       work_email: r.workEmail,
       sort_order: Math.min(nextOrder + 1, 10000),
@@ -556,6 +799,20 @@ export async function patchRow(viewer: Viewer, p: RowPatch): Promise<Result<Boar
   const update: Record<string, unknown> = {};
   if (p.label !== undefined) update.label = p.label;
   if (p.sortOrder !== undefined) update.sort_order = p.sortOrder;
+  // The two row flags belong to one section each (the SQL CHECKs acct_sb_rows_bucket_day_valid and
+  // acct_sb_rows_due_soon_valid say the same; this says it in words).
+  if (p.bucketDay !== undefined) {
+    if (current.value.sectionKey !== 'buckets') {
+      return fail(422, 'refused', 'Only an Accounting Buckets row is worked on a weekday.');
+    }
+    update.bucket_day = p.bucketDay;
+  }
+  if (p.dueSoon !== undefined) {
+    if (current.value.sectionKey !== 'chargebacks') {
+      return fail(422, 'refused', 'Only an Open Disputes line can be marked "due in 7 days".');
+    }
+    update.due_soon = p.dueSoon;
+  }
   if (p.archived) {
     update.archived_at = new Date().toISOString();
     update.archived_by = viewer.email;
@@ -645,4 +902,151 @@ export async function readRoster(): Promise<Result<RosterPerson[]>> {
   }
   out.sort((a, b) => a.department.localeCompare(b.department) || a.name.localeCompare(b.name));
   return { ok: true, value: out };
+}
+
+// ---------------------------------------------------------------------------
+// Payroll Problems: the log and its types (Carla, 2026-10-02)
+// ---------------------------------------------------------------------------
+
+/** Log problems for a person on a day, with their type. Any member, stamped with the session email. */
+export async function logProblem(viewer: Viewer, p: ProblemCreate): Promise<Result<ProblemEntry>> {
+  const row = await readLiveRow(p.rowId);
+  if (!row.ok) return row;
+  if (row.value.sectionKey !== 'payroll_problems') return fail(422, 'refused', 'Pick a person from the Payroll Problems section.');
+  const sb = client();
+  const { data: type, error: typeErr } = await sb.from(PROBLEM_TYPES).select('id, archived_at').eq('id', p.typeId).maybeSingle();
+  if (typeErr) return dbFailure(typeErr, 'Could not read the problem type');
+  const t = type as { id: string; archived_at: string | null } | null;
+  if (!t) return fail(422, 'refused', 'That problem type does not exist.');
+  if (t.archived_at) return fail(422, 'refused', 'That problem type was removed. Pick another one.');
+  const { data, error } = await sb
+    .from(PROBLEMS)
+    .insert({ entry_date: p.date, row_id: p.rowId, type_id: p.typeId, problem_count: p.count, created_by: viewer.email })
+    .select(PROBLEM_COLS)
+    .single();
+  if (error) return dbFailure(error, 'Could not log the problem');
+  return { ok: true, value: mapProblem(data as ProblemRecord) };
+}
+
+/** Soft-delete a logged problem. Only the person who logged it, or a manager. The table refuses any other edit. */
+export async function deleteProblem(viewer: Viewer, id: string): Promise<Result<{ id: string }>> {
+  const sb = client();
+  const { data: existing, error: readErr } = await sb.from(PROBLEMS).select('id, created_by, deleted_at').eq('id', id).maybeSingle();
+  if (readErr) return dbFailure(readErr, 'Could not read the problem');
+  const rec = existing as { id: string; created_by: string; deleted_at: string | null } | null;
+  if (!rec || rec.deleted_at) return fail(404, 'not_found', 'That problem is not on the log.');
+  if (!viewer.isManager && !viewer.aliases.includes(rec.created_by.toLowerCase())) {
+    return fail(403, 'not_owner', 'Only the person who logged it, or Accounting, can delete a problem.');
+  }
+  const { data, error } = await sb
+    .from(PROBLEMS)
+    .update({ deleted_at: new Date().toISOString(), deleted_by: viewer.email })
+    .eq('id', id)
+    .is('deleted_at', null)
+    .select('id');
+  if (error) return dbFailure(error, 'Could not delete the problem');
+  if (!(data ?? []).length) return fail(404, 'not_found', 'That problem is not on the log.');
+  return { ok: true, value: { id } };
+}
+
+/** Managers add a problem type ("Admins should be able to add new types"). */
+export async function addProblemType(viewer: Viewer, label: string): Promise<Result<ProblemType>> {
+  const sb = client();
+  const { data: last } = await sb
+    .from(PROBLEM_TYPES)
+    .select('sort_order')
+    .is('archived_at', null)
+    .order('sort_order', { ascending: false })
+    .limit(1);
+  const next = ((last ?? [])[0] as { sort_order?: number } | undefined)?.sort_order ?? -1;
+  const { data, error } = await sb
+    .from(PROBLEM_TYPES)
+    .insert({ label, sort_order: Math.min(next + 1, 10000), created_by: viewer.email })
+    .select('id, label, sort_order, archived_at')
+    .single();
+  if (error?.code === '23505') return fail(409, 'conflict', `"${label}" is already a problem type.`);
+  if (error) return dbFailure(error, 'Could not add the problem type');
+  const t = data as ProblemTypeRecord;
+  return { ok: true, value: { id: t.id, label: t.label, sortOrder: t.sort_order, archived: false } };
+}
+
+/** Archive a type: it leaves the dropdown, and every line already logged keeps it. Never deleted. */
+export async function archiveProblemType(viewer: Viewer, id: string): Promise<Result<{ id: string }>> {
+  const { data, error } = await client()
+    .from(PROBLEM_TYPES)
+    .update({ archived_at: new Date().toISOString(), archived_by: viewer.email })
+    .eq('id', id)
+    .is('archived_at', null)
+    .select('id');
+  if (error) return dbFailure(error, 'Could not remove the problem type');
+  if (!(data ?? []).length) return fail(404, 'not_found', 'That problem type is not on the list.');
+  return { ok: true, value: { id } };
+}
+
+// ---------------------------------------------------------------------------
+// Custom sections (Carla, 2026-10-02: "a button to create new sections")
+// ---------------------------------------------------------------------------
+
+/**
+ * A new custom section goes to the TOP of the managers' own sections (Kane, 2026-10-06: "when a section
+ * gets added it will be placed at the top"): one below the lowest live sort order, so the newest is first
+ * in Setup and first among the custom tabs.
+ */
+export async function createCustomSection(viewer: Viewer, c: CustomSectionCreate): Promise<Result<CustomSection>> {
+  const sb = client();
+  const { data: first, error: orderErr } = await sb
+    .from(CUSTOM_SECTIONS)
+    .select('sort_order')
+    .is('archived_at', null)
+    .order('sort_order', { ascending: true })
+    .limit(1);
+  if (orderErr) return dbFailure(orderErr, 'Could not read the sections');
+  const lowest = ((first ?? [])[0] as { sort_order?: number } | undefined)?.sort_order ?? 1;
+  const { data, error } = await sb
+    .from(CUSTOM_SECTIONS)
+    .insert({
+      title: c.title,
+      kind: c.kind,
+      goal: c.goal,
+      goal_direction: c.goalDirection,
+      sort_order: Math.max(lowest - 1, -10000),
+      created_by: viewer.email,
+      updated_by: viewer.email,
+    })
+    .select(CUSTOM_COLS)
+    .single();
+  if (error?.code === '23505') return fail(409, 'conflict', `There is already a section called "${c.title}".`);
+  if (error) return dbFailure(error, 'Could not create the section');
+  const section = mapCustomSection(data as CustomSectionRecord);
+  return section ? { ok: true, value: section } : fail(500, 'db_error', 'The section came back unreadable.');
+}
+
+/** Rename, switch on/off, set or clear the goal, or archive (never deleted: its rows and numbers stay). */
+export async function patchCustomSection(viewer: Viewer, p: CustomSectionPatch): Promise<Result<CustomSection>> {
+  const current = await readLiveCustomSection(p.id);
+  if (!current.ok) return current;
+  const update: Record<string, unknown> = { updated_by: viewer.email, updated_at: new Date().toISOString() };
+  if (p.title !== undefined) update.title = p.title;
+  if (p.enabled !== undefined) update.enabled = p.enabled;
+  if ('goal' in p) {
+    const goal = customGoal(current.value.kind, p.goal, p.goalDirection);
+    if (!goal.ok) return fail(400, 'bad_request', goal.error);
+    update.goal = goal.value.goal;
+    update.goal_direction = goal.value.goalDirection;
+  }
+  if (p.archived) {
+    update.archived_at = new Date().toISOString();
+    update.archived_by = viewer.email;
+  }
+  const { data, error } = await client()
+    .from(CUSTOM_SECTIONS)
+    .update(update)
+    .eq('id', p.id)
+    .is('archived_at', null)
+    .select(CUSTOM_COLS)
+    .single();
+  if (error?.code === '23505') return fail(409, 'conflict', `There is already a section called "${p.title}".`);
+  if (error) return dbFailure(error, 'Could not change the section');
+  const section = mapCustomSection(data as CustomSectionRecord);
+  return section ? { ok: true, value: section } : fail(500, 'db_error', 'The section came back unreadable.');
 }

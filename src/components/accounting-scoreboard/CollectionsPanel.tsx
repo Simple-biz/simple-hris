@@ -3,7 +3,9 @@
 /**
  * Collections: the log (one line per collected account), the per-rep points table, the podium,
  * the record, and the Dancing Queen preview. The log replaces the sheet's "Collection Count" tab
- * and the hard-coded DATE() formulas that summed it.
+ * and the hard-coded DATE() formulas that summed it. Each log line carries a "Payment Verified"
+ * tick (Carla, 2026-10-02) that saves and shows who ticked it; it lives in its own table, so the
+ * append-only log line is never edited.
  *
  * The preview is DISPLAY ONLY. HRIS still pays the bonus from the five day totals typed into the
  * KPI calculator, and whether those should be points or accounts is an open money ruling
@@ -16,7 +18,7 @@
 
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Crown, Loader2, Medal, Trash2 } from 'lucide-react';
+import { BadgeCheck, Crown, Loader2, Medal, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,6 +60,8 @@ interface Props {
   rows: BoardRow[];
   onLog: (c: NewCollection) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
+  /** Payment Verified: tick or untick one logged collection. */
+  onVerify: (id: string, verified: boolean) => Promise<boolean>;
 }
 
 const TH = cn(TINY_CAPS, 'whitespace-nowrap px-2 py-2 text-zinc-500 dark:text-zinc-400');
@@ -73,7 +77,7 @@ const PODIUM = [
   { tone: 'from-orange-400 to-orange-700', Icon: Medal, label: '3rd' },
 ] as const;
 
-export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Props) {
+export function CollectionsPanel({ section, board, rows, onLog, onDelete, onVerify }: Props) {
   const reduce = useReducedMotion() ?? false;
   const dates = useMemo(() => datesFor(board.weekStart, section.days), [board.weekStart, section.days]);
   const lastDates = useMemo(() => datesFor(board.lastWeekStart, section.days), [board.lastWeekStart, section.days]);
@@ -416,7 +420,9 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete }: Prop
                   entry={c}
                   rep={labelOf.get(c.rowId) ?? '—'}
                   canDelete={board.viewer.isManager || c.createdBy.toLowerCase() === board.viewer.email}
+                  canUnverify={board.viewer.isManager || c.verified?.by.toLowerCase() === board.viewer.email}
                   onDelete={onDelete}
+                  onVerify={onVerify}
                   reduce={reduce}
                 />
               ))}
@@ -436,17 +442,25 @@ function LogLine({
   entry,
   rep,
   canDelete,
+  canUnverify,
   onDelete,
+  onVerify,
   reduce,
 }: {
   entry: CollectionEntry;
   rep: string;
   canDelete: boolean;
+  /** Whoever ticked it, or a manager (the server checks the same). */
+  canUnverify: boolean;
   onDelete: (id: string) => Promise<boolean>;
+  onVerify: (id: string, verified: boolean) => Promise<boolean>;
   reduce: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const verified = entry.verified;
+  const lockedOn = verified !== null && !canUnverify;
   const h = dayHeader(entry.date);
   return (
     <motion.li
@@ -474,6 +488,44 @@ function LogLine({
       <span className="hidden w-24 shrink-0 truncate font-mono text-[11px] text-zinc-400 sm:block" title={entry.createdBy}>
         {handle(entry.createdBy)}
       </span>
+      {/* Payment Verified (Carla, 2026-10-02): the tick saves and shows who checked it. */}
+      <label
+        className={cn(
+          'flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors sm:min-w-36',
+          verified
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+            : 'border-zinc-200 text-zinc-500 hover:border-orange-200 hover:text-orange-800 dark:border-zinc-800 dark:hover:border-orange-900 dark:hover:text-orange-200',
+          lockedOn || verifying ? 'cursor-default' : 'cursor-pointer',
+        )}
+        title={
+          verified
+            ? `Payment verified by ${verified.name} (${verified.by})${lockedOn ? '. Only they, or Accounting, can uncheck it.' : ''}`
+            : 'Tick once the payment is confirmed'
+        }
+      >
+        <input
+          type="checkbox"
+          className="size-3.5 accent-emerald-600"
+          checked={verified !== null}
+          disabled={verifying || lockedOn}
+          aria-label={`Payment verified: ${entry.businessName}`}
+          onChange={async (e) => {
+            setVerifying(true);
+            await onVerify(entry.id, e.target.checked);
+            setVerifying(false);
+          }}
+        />
+        {verifying ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : verified ? (
+          <>
+            <BadgeCheck className="size-3.5" />
+            <span className="max-w-28 truncate">{verified.name}</span>
+          </>
+        ) : (
+          'Payment verified'
+        )}
+      </label>
       {canDelete ? (
         confirming ? (
           <span className="flex items-center gap-1">

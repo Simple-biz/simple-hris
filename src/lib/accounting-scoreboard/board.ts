@@ -4,15 +4,19 @@
  * Pure. Governing doc: docs/features/accounting-scoreboard.md § Scoring, § Stop light.
  */
 
-import type { ResolvedSection } from './sections';
+import type { BoardSection } from './sections';
 import { datesFor } from './week';
 import {
+  amountCountSectionStats,
   amPmSectionStats,
   collectionsWeekStats,
   dailySectionStats,
+  problemsWeekStats,
   timeSpanSectionHours,
+  type AmPmRowMeta,
   type CollectionEntry,
   type EntryLookup,
+  type ProblemEntry,
 } from './scoring';
 import { cycleLight, cycleWeek, type PayrollEvent } from './payroll-cycle';
 import { goalLight, weekPace, type Light } from './stoplight';
@@ -21,6 +25,8 @@ import { goalLight, weekPace, type Light } from './stoplight';
 export interface BoardContext {
   lookup: EntryLookup;
   collections: readonly Pick<CollectionEntry, 'date' | 'rowId' | 'points'>[];
+  /** The payroll problem log (this week and last). */
+  problems: readonly Pick<ProblemEntry, 'date' | 'rowId' | 'typeId' | 'count'>[];
   payrollEvents: readonly PayrollEvent[];
   /** The period end of the first cycle ever closed; cycles that ended before it predate Close Pay Cycle. */
   firstClosedPeriodEnd: string | null;
@@ -30,36 +36,47 @@ export interface BoardContext {
   nowIso: string;
 }
 
+/** What a headline needs from a section, so a built-in and a custom section share one path. */
+export type HeadlineSection = Pick<BoardSection, 'kind' | 'days' | 'score' | 'goal'>;
+
 /**
- * - buckets / inbox → the section's 1–10 score
- * - chargebacks     → net cleared, Σ(AM − PM)
+ * - buckets / inbox → the section's 0–10 score (buckets: Carla's overall, 10 × Σ completed ÷
+ *   Σ(completed + open) over the scored buckets)
+ * - open disputes   → how many are open now (the latest reading of the lines not marked due-soon)
+ * - outcomes        → chargebacks counted this week, across Pre-arb, Wins and Losses
  * - collections     → team points
  * - PM buckets      → Σ of the PMs' daily averages (the sheet's WTD AVG total)
  * - payroll timing  → the cycle score, once both checks are decided
+ * - payroll problems → the week's problems (log + the old grid's counts)
  * - other daily     → the team's week total
  */
 export function sectionHeadline(
-  section: ResolvedSection,
-  rowIds: readonly string[],
+  section: HeadlineSection,
+  rows: readonly AmPmRowMeta[],
   ctx: BoardContext,
   weekStart: string,
 ): number | null {
   const dates = datesFor(weekStart, section.days);
+  const ids = rows.map((r) => r.id);
   switch (section.kind) {
     case 'am_pm':
-      return amPmSectionStats(rowIds, dates, ctx.lookup, section.score, ctx.today).headline;
+      return amPmSectionStats(rows, dates, ctx.lookup, section.score, ctx.today).headline;
     case 'daily':
-      return dailySectionStats(rowIds, dates, ctx.lookup).weekTotal;
+      return dailySectionStats(ids, dates, ctx.lookup).weekTotal;
     case 'daily_flag':
-      return dailySectionStats(rowIds, dates, ctx.lookup).averageTotal;
+      return dailySectionStats(ids, dates, ctx.lookup).averageTotal;
     case 'time_span':
-      return timeSpanSectionHours(rowIds, dates, ctx.lookup).total;
+      return timeSpanSectionHours(ids, dates, ctx.lookup).total;
     case 'collections': {
-      const s = collectionsWeekStats(rowIds, ctx.collections, dates);
+      const s = collectionsWeekStats(ids, ctx.collections, dates);
       return s.week.accounts === 0 ? null : s.week.points;
     }
     case 'payroll_cycle':
       return cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso, ctx.firstClosedPeriodEnd).score;
+    case 'amount_count':
+      return amountCountSectionStats(ids, dates, ctx.lookup).weekCount;
+    case 'problem_log':
+      return problemsWeekStats(ids, ctx.problems, ctx.lookup, dates).week;
   }
 }
 
@@ -73,14 +90,14 @@ export interface SectionSummary {
 }
 
 export function summarizeSection(
-  section: ResolvedSection,
-  rowIds: readonly string[],
+  section: HeadlineSection,
+  rows: readonly AmPmRowMeta[],
   ctx: BoardContext,
   weekStart: string,
   lastWeekStart: string,
 ): SectionSummary {
-  const headline = sectionHeadline(section, rowIds, ctx, weekStart);
-  const lastHeadline = sectionHeadline(section, rowIds, ctx, lastWeekStart);
+  const headline = sectionHeadline(section, rows, ctx, weekStart);
+  const lastHeadline = sectionHeadline(section, rows, ctx, lastWeekStart);
   if (section.kind === 'payroll_cycle') {
     // A cycle's light comes from its two checks, so "started on time, close not due yet" is green
     // even though the score is not decided.

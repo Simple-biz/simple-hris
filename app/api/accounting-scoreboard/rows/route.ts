@@ -14,12 +14,15 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * POST  /api/accounting-scoreboard/rows  { sectionKey, label, workEmail? }   (managers)
- * PATCH /api/accounting-scoreboard/rows  { id, label?, sortOrder?, archived?: true }   (managers)
+ * POST  /api/accounting-scoreboard/rows  { sectionKey, customSectionId?, label, workEmail? }   (managers)
+ * PATCH /api/accounting-scoreboard/rows  { id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon? }   (managers)
  *
  * A row with a work email IS that HRIS person and makes them a member, so the email must be on the
  * active roster. Anyone else (a queue, an inbox, someone not on the roster) is a named row.
  * Rows are archived, never deleted or un-archived: a logged collection keeps its rep.
+ * A custom section's row is sectionKey 'custom' plus its customSectionId (a live custom section).
+ * bucketDay ('mon'…'fri' | null) marks a weekday Collections bucket: Buckets rows only. dueSoon marks
+ * the Open Disputes line that counts the disputes due in 7 days: Chargebacks rows only.
  */
 export async function POST(req: Request) {
   try {

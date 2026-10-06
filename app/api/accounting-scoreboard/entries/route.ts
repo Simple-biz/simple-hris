@@ -18,8 +18,9 @@ export const runtime = 'nodejs';
  *
  * Set or clear one cell. `value: null` deletes the entry; a 0 is a real count. Any member may
  * edit any cell, as on the sheet, and each write is stamped with the SESSION email. Refused: a
- * future date, a slot the row's section does not have, a day that section does not keep, and an
- * archived row.
+ * future date, a slot the row's section does not have, a day that section does not keep, an
+ * archived row, and a row of an archived custom section. Chargeback Outcomes takes `usd` (dollars
+ * and cents) and `count` (a whole number); Payroll Problems takes nothing here (its log does).
  */
 export async function PUT(req: Request) {
   try {

@@ -15,25 +15,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
-import { AlertTriangle, ChevronLeft, ChevronRight, LayoutGrid, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
+import { AlertTriangle, Archive, ChevronLeft, ChevronRight, LayoutGrid, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { resolveSections, type ResolvedSection, type SectionKey, type Slot } from '@/lib/accounting-scoreboard/sections';
-import { addDays, formatEasternDateTime, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
-import { buildLookup, entryKey, type StoredEntry } from '@/lib/accounting-scoreboard/scoring';
+import {
+  boardSections,
+  hostedSections,
+  resolveSections,
+  rowSectionId,
+  tabSections,
+  type BoardSection,
+  type Slot,
+} from '@/lib/accounting-scoreboard/sections';
+import { addDays, datesFor, formatEasternDateTime, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
+import { amPmSectionStats, buildLookup, entryKey, type ProblemEntry, type StoredEntry } from '@/lib/accounting-scoreboard/scoring';
 import { summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
 import { cycleWeek } from '@/lib/accounting-scoreboard/payroll-cycle';
 import { LIGHT_LABEL } from '@/lib/accounting-scoreboard/stoplight';
 import { goalText } from '@/lib/accounting-scoreboard/scoring';
-import type { BoardPayload } from '@/lib/accounting-scoreboard/types';
-import { api, EASE_TAB, Flash, fmtNum, fmtScore, LIGHT_STYLE, SECTION_ICON, SlidingPill, StopLight, TINY_CAPS } from './shared';
+import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
+import { api, EASE_TAB, Flash, fmtNum, fmtScore, LIGHT_STYLE, sectionIcon, SlidingPill, StopLight, TINY_CAPS } from './shared';
 import { PayrollCyclePanel } from './PayrollCyclePanel';
 import { SectionGrid } from './SectionGrid';
 import { CollectionsPanel, type NewCollection } from './CollectionsPanel';
+import { ProblemsPanel, type NewProblem } from './ProblemsPanel';
 import { SetupPanel } from './SetupPanel';
 import { SECTIONS_NAV_ID, SectionsDrawer, type DrawerItem } from './SectionsDrawer';
 
-type Tab = 'overview' | SectionKey | 'setup';
+/** 'overview', 'setup', or a section's board id (a built-in key, or `custom:<uuid>`). */
+type Tab = string;
 
 const REFRESH_MS = 45_000;
 
@@ -126,25 +136,29 @@ export default function ScoreboardApp() {
     editing.current = Math.max(0, editing.current + delta);
   }, []);
 
-  const sections = useMemo(() => resolveSections(board?.settings ?? []), [board?.settings]);
-  const enabled = useMemo(() => sections.filter((s) => s.enabled), [sections]);
+  const resolved = useMemo(() => resolveSections(board?.settings ?? []), [board?.settings]);
+  const sections = useMemo(
+    () => boardSections(board?.settings ?? [], board?.customSections ?? []),
+    [board?.settings, board?.customSections],
+  );
+  // Every section that is on gets a tab, except one shown inside its host's tab (Outcomes inside Chargebacks).
+  const tabs = useMemo(() => tabSections(sections), [sections]);
   const lookup = useMemo(() => buildLookup(board?.entries ?? []), [board?.entries]);
 
   // A tab whose section was just switched off falls back to the overview.
-  const activeTab: Tab =
-    tab === 'overview' || tab === 'setup' || enabled.some((s) => s.key === tab) ? tab : 'overview';
+  const activeTab: Tab = tab === 'overview' || tab === 'setup' || tabs.some((s) => s.id === tab) ? tab : 'overview';
 
   // The mobile menu: the same tabs as the tab row, each section with its stop light for the week on
   // screen, from the summaries the Overview cards use.
   const menuItems = useMemo<DrawerItem<Tab>[]>(() => {
     if (!board) return [];
     const items: DrawerItem<Tab>[] = [{ key: 'overview', label: 'Overview', icon: LayoutGrid, light: null }];
-    summarizeAll(board, enabled, lookup, new Date().toISOString()).forEach(({ section, summary }, i) => {
-      items.push({ key: section.key, label: section.tab, icon: SECTION_ICON[section.key], light: summary.light, divided: i === 0 });
+    summarizeAll(board, tabs, lookup, new Date().toISOString()).forEach(({ section, summary }, i) => {
+      items.push({ key: section.id, label: section.tab, icon: sectionIcon(section), light: summary.light, divided: i === 0 });
     });
     if (board.viewer.isManager) items.push({ key: 'setup', label: 'Setup', icon: Settings2, light: null, divided: true });
     return items;
-  }, [board, enabled, lookup]);
+  }, [board, tabs, lookup]);
 
   const saveEntry = useCallback(
     async (rowId: string, date: string, slot: Slot, value: number | null): Promise<boolean> => {
@@ -162,9 +176,59 @@ export default function ScoreboardApp() {
         const rest = prev.entries.filter((e) => entryKey(e.rowId, e.date, e.slot) !== key);
         return { ...prev, entries: res.data.entry ? [...rest, res.data.entry] : rest };
       });
+      // A meeting tick moves the all-time No Meeting Streak, which is read from every week, not just
+      // the two loaded: re-read it now instead of waiting for the next refresh.
+      if (slot === 'mtg') void load(week, true);
       return true;
     },
-    [],
+    [load, week],
+  );
+
+  const verifyCollection = useCallback(async (id: string, verified: boolean): Promise<boolean> => {
+    const res = await api<{ verified: BoardPayload['collections'][number]['verified'] }>(
+      '/api/accounting-scoreboard/collections/verify',
+      { method: 'POST', body: JSON.stringify({ collectionId: id, verified }) },
+    );
+    if (!res.ok) {
+      toast.error(res.error);
+      return false;
+    }
+    setBoard((prev) =>
+      prev ? { ...prev, collections: prev.collections.map((c) => (c.id === id ? { ...c, verified: res.data.verified } : c)) } : prev,
+    );
+    return true;
+  }, []);
+
+  const logProblem = useCallback(
+    async (p: NewProblem): Promise<boolean> => {
+      const res = await api<{ problem: ProblemEntry }>('/api/accounting-scoreboard/problems', {
+        method: 'POST',
+        body: JSON.stringify(p),
+      });
+      if (!res.ok) {
+        toast.error(res.error);
+        return false;
+      }
+      setBoard((prev) => (prev ? { ...prev, problems: [...prev.problems, res.data.problem] } : prev));
+      toast.success(p.count === 1 ? 'Problem logged' : `${p.count} problems logged`);
+      void load(week, true);
+      return true;
+    },
+    [load, week],
+  );
+
+  const deleteProblem = useCallback(
+    async (id: string): Promise<boolean> => {
+      const res = await api(`/api/accounting-scoreboard/problems?id=${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        toast.error(res.error);
+        return false;
+      }
+      setBoard((prev) => (prev ? { ...prev, problems: prev.problems.filter((p) => p.id !== id) } : prev));
+      void load(week, true);
+      return true;
+    },
+    [load, week],
   );
 
   const logCollection = useCallback(
@@ -228,11 +292,12 @@ export default function ScoreboardApp() {
   }
 
   if (!board) return null;
-  const rowsFor = (key: SectionKey) => board.rows.filter((r) => r.sectionKey === key);
+  const rowsFor = (sectionId: string): BoardRow[] => board.rows.filter((r) => rowSectionId(r) === sectionId);
   const isThisWeek = week === null;
+  const activeSection = tabs.find((s) => s.id === activeTab) ?? null;
 
   // Tab order for the slide direction: Overview, the sections that are on, Setup.
-  const order: Tab[] = ['overview', ...enabled.map((s) => s.key), 'setup'];
+  const order: Tab[] = ['overview', ...tabs.map((s) => s.id), 'setup'];
   const selectTab = (next: Tab) => {
     if (next === activeTab) return;
     setDir(order.indexOf(next) >= order.indexOf(activeTab) ? 1 : -1);
@@ -242,8 +307,28 @@ export default function ScoreboardApp() {
     setDir(direction);
     setWeek(next);
   };
-  const activeLabel =
-    activeTab === 'overview' ? 'Overview' : activeTab === 'setup' ? 'Setup' : enabled.find((s) => s.key === activeTab)!.tab;
+  const activeLabel = activeTab === 'overview' ? 'Overview' : activeTab === 'setup' ? 'Setup' : (activeSection?.tab ?? 'Overview');
+
+  /** A grid section's panel, plus any section shown inside its tab (Outcomes under Open Disputes). */
+  const gridPanel = (section: BoardSection) => (
+    <div className="space-y-8">
+      {[section, ...hostedSections(sections, section)].map((s) => (
+        <SectionGrid
+          key={s.id}
+          section={s}
+          rows={rowsFor(s.id)}
+          weekStart={board.weekStart}
+          lastWeekStart={board.lastWeekStart}
+          today={board.today}
+          lookup={lookup}
+          isManager={board.viewer.isManager}
+          onSave={saveEntry}
+          onEditing={onEditing}
+          lastMeetingDate={board.lastMeetingDate}
+        />
+      ))}
+    </div>
+  );
 
   return (
     <Shell>
@@ -335,6 +420,15 @@ export default function ScoreboardApp() {
                 ) : null}
               </AnimatePresence>
             </span>
+            {/* The sheet's "Totals - History", kept as typed (accounting-scoreboard-backfill.md; Open item 319). */}
+            <a
+              href="/accounting-scoreboard/archive"
+              aria-label="Archive: the sheet's Totals - History"
+              title="Archive: the sheet's Totals - History, kept as typed"
+              className="inline-flex size-8 items-center justify-center rounded-md border border-zinc-200 text-zinc-500 transition-colors hover:bg-orange-50 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60 dark:border-zinc-800 dark:hover:bg-orange-950/30 dark:hover:text-orange-200"
+            >
+              <Archive className="size-4" />
+            </a>
           </div>
         </header>
 
@@ -362,8 +456,8 @@ export default function ScoreboardApp() {
           <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
             Overview
           </SlidingPill>
-          {enabled.map((s) => (
-            <SlidingPill key={s.key} layoutId="acct-sb-section-tab" active={activeTab === s.key} onClick={() => selectTab(s.key)}>
+          {tabs.map((s) => (
+            <SlidingPill key={s.id} layoutId="acct-sb-section-tab" active={activeTab === s.id} onClick={() => selectTab(s.id)}>
               {s.tab}
             </SlidingPill>
           ))}
@@ -387,38 +481,38 @@ export default function ScoreboardApp() {
                 exit="exit"
                 transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
               >
-                {activeTab === 'overview' ? (
-                  <Overview board={board} sections={enabled} lookup={lookup} onOpen={selectTab} />
-                ) : activeTab === 'setup' ? (
+                {activeTab === 'setup' ? (
                   <SetupPanel board={board} sections={sections} onChanged={() => void load(week, true)} />
-                ) : activeTab === 'payroll_timing' ? (
+                ) : !activeSection ? (
+                  <Overview board={board} sections={tabs} lookup={lookup} onOpen={selectTab} />
+                ) : activeSection.kind === 'payroll_cycle' ? (
                   <PayrollCyclePanel
-                    section={enabled.find((s) => s.key === 'payroll_timing')!}
+                    section={resolved.find((s) => s.key === 'payroll_timing')!}
                     weekStart={board.weekStart}
                     today={board.today}
                     events={board.payrollEvents}
                     firstClosedPeriodEnd={board.firstClosedPeriodEnd}
                   />
-                ) : activeTab === 'collections' ? (
+                ) : activeSection.kind === 'collections' ? (
                   <CollectionsPanel
-                    section={enabled.find((s) => s.key === 'collections')!}
+                    section={resolved.find((s) => s.key === 'collections')!}
                     board={board}
                     rows={rowsFor('collections')}
                     onLog={logCollection}
                     onDelete={deleteCollection}
+                    onVerify={verifyCollection}
+                  />
+                ) : activeSection.kind === 'problem_log' ? (
+                  <ProblemsPanel
+                    section={activeSection}
+                    board={board}
+                    rows={rowsFor(activeSection.id)}
+                    lookup={lookup}
+                    onLog={logProblem}
+                    onDelete={deleteProblem}
                   />
                 ) : (
-                  <SectionGrid
-                    section={enabled.find((s) => s.key === activeTab)!}
-                    rows={rowsFor(activeTab)}
-                    weekStart={board.weekStart}
-                    lastWeekStart={board.lastWeekStart}
-                    today={board.today}
-                    lookup={lookup}
-                    isManager={board.viewer.isManager}
-                    onSave={saveEntry}
-                    onEditing={onEditing}
-                  />
+                  gridPanel(activeSection)
                 )}
               </motion.div>
             </AnimatePresence>
@@ -454,19 +548,25 @@ function Shell({ children }: { children: ReactNode }) {
  * Every section's headline and stop light for the week on screen. The Overview cards and the mobile
  * menu both read it, so the two can never disagree.
  */
-function summarizeAll(board: BoardPayload, sections: ResolvedSection[], lookup: ReturnType<typeof buildLookup>, nowIso: string) {
+function summarizeAll(board: BoardPayload, sections: BoardSection[], lookup: ReturnType<typeof buildLookup>, nowIso: string) {
   const ctx: BoardContext = {
     lookup,
     collections: board.collections,
+    problems: board.problems,
     payrollEvents: board.payrollEvents,
     firstClosedPeriodEnd: board.firstClosedPeriodEnd,
     today: board.today,
     nowIso,
   };
   return sections.map((s) => {
-    const rowCount = s.kind === 'payroll_cycle' ? null : board.rows.filter((r) => r.sectionKey === s.key && !r.archived).length;
-    const ids = board.rows.filter((r) => r.sectionKey === s.key).map((r) => r.id);
-    return { section: s, rowCount, summary: summarizeSection(s, ids, ctx, board.weekStart, board.lastWeekStart) };
+    const rows = board.rows.filter((r) => rowSectionId(r) === s.id);
+    const rowCount = s.kind === 'payroll_cycle' ? null : rows.filter((r) => !r.archived).length;
+    // Open Disputes' card also says how many are due in the next 7 days (Carla's call-out).
+    const dueSoon =
+      s.kind === 'am_pm' && !s.score
+        ? amPmSectionStats(rows, datesFor(board.weekStart, s.days), lookup, undefined, board.today).dueSoonNow
+        : null;
+    return { section: s, rowCount, dueSoon, summary: summarizeSection(s, rows, ctx, board.weekStart, board.lastWeekStart) };
   });
 }
 
@@ -483,7 +583,7 @@ export function Overview({
   onOpen,
 }: {
   board: BoardPayload;
-  sections: ResolvedSection[];
+  sections: BoardSection[];
   lookup: ReturnType<typeof buildLookup>;
   onOpen: (tab: Tab) => void;
 }) {
@@ -512,15 +612,16 @@ export function Overview({
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {cards.map(({ section, rowCount, summary }) => (
+        {cards.map(({ section, rowCount, dueSoon, summary }) => (
           <OverviewCard
-            key={section.key}
+            key={section.id}
             section={section}
             summary={summary}
             rowCount={rowCount}
+            dueSoon={dueSoon}
             scope={board.weekStart}
             cycleStartedAt={section.kind === 'payroll_cycle' ? cycle.startedAt : null}
-            onOpen={() => onOpen(section.key)}
+            onOpen={() => onOpen(section.id)}
           />
         ))}
       </div>
@@ -532,22 +633,25 @@ function OverviewCard({
   section,
   summary,
   rowCount,
+  dueSoon,
   scope,
   cycleStartedAt,
   onOpen,
 }: {
-  section: ResolvedSection;
+  section: BoardSection;
   summary: SectionSummary;
   rowCount: number | null;
+  /** Open Disputes only: the latest "due in 7 days" reading. */
+  dueSoon: number | null;
   scope: string;
   cycleStartedAt: string | null;
   onOpen: () => void;
 }) {
   const reduce = useReducedMotion() ?? false;
-  const Icon = SECTION_ICON[section.key];
+  const Icon = sectionIcon(section);
   const tone = LIGHT_STYLE[summary.light];
   const isCycle = section.kind === 'payroll_cycle';
-  const fmt = isCycle ? (n: number | null) => (n === null ? '—' : `${n}%`) : section.goal?.measure === 'avg_score' ? fmtScore : fmtNum;
+  const fmt = isCycle ? (n: number | null) => (n === null ? '—' : `${n}%`) : section.goal?.measure === 'score' ? fmtScore : fmtNum;
 
   // Payroll Timing is only scored once Friday's close is decided; until then the card shows when this
   // week's cycle started, so it is never a blank "—" while processing is under way.
@@ -572,9 +676,11 @@ function OverviewCard({
             <Icon className="size-5" />
           </span>
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{section.title}</div>
+            <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              {section.key === 'chargebacks' ? 'Chargebacks' : section.title}
+            </div>
             <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-              {section.goal ? `Goal ${goalText(section.goal)}` : 'No goal on the sheet'}
+              {section.goal ? `Goal ${goalText(section.goal)}` : section.key === 'custom' ? 'No goal set' : 'No goal on the sheet'}
               {rowCount !== null ? ` · ${rowCount} ${section.rowNoun}${rowCount === 1 ? '' : 's'}` : ' · from HRIS'}
             </div>
           </div>
@@ -596,6 +702,11 @@ function OverviewCard({
         </span>
         <span className="text-sm text-zinc-500 dark:text-zinc-400">{unit}</span>
       </div>
+      {dueSoon !== null ? (
+        <div className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+          <span className="font-mono tabular-nums">{fmtNum(dueSoon)}</span> due in the next 7 days
+        </div>
+      ) : null}
 
       <div className="mt-4 flex items-center justify-between gap-2 border-t border-black/5 pt-3 text-xs dark:border-white/10">
         <span className={cn('font-semibold', tone.text)}>{LIGHT_LABEL[summary.light]}</span>
@@ -608,13 +719,17 @@ function OverviewCard({
   );
 }
 
-function headlineUnit(s: ResolvedSection): string {
+function headlineUnit(s: BoardSection): string {
+  if (s.key === 'custom') return s.kind === 'am_pm' ? 'score' : 'this week';
   switch (s.key) {
     case 'buckets':
+      return 'overall score';
     case 'inbox':
       return 'avg score';
     case 'chargebacks':
-      return 'net cleared';
+      return 'open disputes';
+    case 'chargeback_outcomes':
+      return 'chargebacks';
     case 'collections':
       return 'points';
     case 'pm_buckets':

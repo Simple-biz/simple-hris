@@ -4,11 +4,17 @@ import assert from 'node:assert/strict';
 import {
   entryAllowed,
   parseCollectionCreate,
+  parseCustomSectionCreate,
+  parseCustomSectionPatch,
   parseEntryWrite,
   parseMemberWrite,
+  parseProblemCreate,
+  parseProblemTypeArchive,
+  parseProblemTypeCreate,
   parseRowCreate,
   parseRowPatch,
   parseSectionPatch,
+  parseVerifyWrite,
 } from './validate';
 
 const TODAY = '2026-10-01';
@@ -106,7 +112,7 @@ test('collections: refused lines', () => {
 test('rows: create a person row or a named row; patch label, order or archive', () => {
   assert.deepEqual(parseRowCreate({ sectionKey: 'inbox', label: ' Payroll  Simple.biz ' }), {
     ok: true,
-    value: { sectionKey: 'inbox', label: 'Payroll Simple.biz', workEmail: null },
+    value: { sectionKey: 'inbox', customSectionId: null, label: 'Payroll Simple.biz', workEmail: null },
   });
   const person = parseRowCreate({ sectionKey: 'collections', label: 'April', workEmail: ' April@Simple.biz ' });
   assert.equal(person.ok && person.value.workEmail, 'april@simple.biz');
@@ -132,4 +138,84 @@ test('members and section switches', () => {
   assert.equal(parseSectionPatch({ sectionKey: 'chargebacks', goal: 5 }).ok, false, 'no goal is invented for a goal-less section');
   assert.equal(parseSectionPatch({ sectionKey: 'inbox', enabled: 'no' }).ok, false);
   assert.equal(parseSectionPatch({ sectionKey: 'inbox' }).ok, false);
+});
+
+test('Chargeback Outcomes cells: dollars and cents in usd, a whole number in count, only on that section', () => {
+  assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'usd', value: 99.5 }, TODAY).ok, true);
+  assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'count', value: 1 }, TODAY).ok, true);
+  assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'count', value: 1.5 }, TODAY).ok, false, 'a count is whole');
+  assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'usd', value: 9.999 }, TODAY).ok, false);
+  assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'usd', value: 100001 }, TODAY).ok, false, 'the table ceiling');
+  assert.equal(entryAllowed('chargeback_outcomes', 'usd', '2026-09-28').ok, true);
+  assert.equal(entryAllowed('chargeback_outcomes', 'am', '2026-09-28').ok, false);
+  assert.equal(entryAllowed('chargebacks', 'usd', '2026-09-28').ok, false);
+  assert.equal(entryAllowed('payroll_problems', 'day', '2026-09-28').ok, false, 'Payroll Problems is a log now');
+  const custom = { title: 'Refunds', kind: 'daily' as const, days: ['mon', 'tue', 'wed', 'thu', 'fri'] as const };
+  assert.equal(entryAllowed(custom, 'day', '2026-09-28').ok, true);
+  assert.equal(entryAllowed(custom, 'am', '2026-09-28').ok, false);
+  assert.equal(entryAllowed(custom, 'day', '2026-09-27').ok, false, 'no Sunday');
+});
+
+test('rows: a custom row names its custom section; a bucket day and the due-soon flag patch', () => {
+  const CUSTOM = '11111111-1111-4111-8111-111111111111';
+  const c = parseRowCreate({ sectionKey: 'custom', customSectionId: CUSTOM, label: 'Line 1' });
+  assert.equal(c.ok && c.value.customSectionId, CUSTOM);
+  assert.equal(parseRowCreate({ sectionKey: 'custom', label: 'Line 1' }).ok, false, 'a custom row needs its section');
+  assert.equal(parseRowCreate({ sectionKey: 'inbox', customSectionId: CUSTOM, label: 'X' }).ok, false);
+  assert.deepEqual(parseRowPatch({ id: ROW, bucketDay: 'wed' }), { ok: true, value: { id: ROW, bucketDay: 'wed' } });
+  assert.deepEqual(parseRowPatch({ id: ROW, bucketDay: null }), { ok: true, value: { id: ROW, bucketDay: null } });
+  assert.equal(parseRowPatch({ id: ROW, bucketDay: 'sat' }).ok, false);
+  assert.deepEqual(parseRowPatch({ id: ROW, dueSoon: true }), { ok: true, value: { id: ROW, dueSoon: true } });
+  assert.equal(parseRowPatch({ id: ROW, dueSoon: 'yes' }).ok, false);
+});
+
+test('Payment Verified: a collection id and a true/false', () => {
+  assert.deepEqual(parseVerifyWrite({ collectionId: ROW, verified: true }), { ok: true, value: { collectionId: ROW, verified: true } });
+  assert.equal(parseVerifyWrite({ collectionId: ROW, verified: 'yes' }).ok, false);
+  assert.equal(parseVerifyWrite({ collectionId: 'x', verified: true }).ok, false);
+});
+
+test('Payroll Problems: a person, a weekday, a type and a whole count 1–1000 (default 1)', () => {
+  const TYPE = '22222222-2222-4222-8222-222222222222';
+  assert.deepEqual(parseProblemCreate({ rowId: ROW, date: '2026-09-29', typeId: TYPE }, TODAY), {
+    ok: true,
+    value: { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 1 },
+  });
+  assert.equal(parseProblemCreate({ rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 51 }, TODAY).ok, true);
+  const bad: unknown[] = [
+    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 0 },
+    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 1.5 },
+    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 1001 },
+    { rowId: ROW, date: '2026-09-27', typeId: TYPE }, // Sunday
+    { rowId: ROW, date: '2026-10-02', typeId: TYPE }, // future
+    { rowId: ROW, date: '2026-09-29' }, // no type
+  ];
+  for (const b of bad) assert.equal(parseProblemCreate(b, TODAY).ok, false, JSON.stringify(b));
+  assert.deepEqual(parseProblemTypeCreate({ label: '  Bank   Error ' }), { ok: true, value: { label: 'Bank Error' } });
+  assert.equal(parseProblemTypeCreate({ label: '' }).ok, false);
+  assert.equal(parseProblemTypeArchive({ id: TYPE, archived: true }).ok, true);
+  assert.equal(parseProblemTypeArchive({ id: TYPE, archived: false }).ok, false, 'a type is never brought back');
+});
+
+test('custom sections: a name, one of two kinds, and a goal that fits the kind', () => {
+  assert.deepEqual(parseCustomSectionCreate({ title: ' Refunds ', kind: 'daily' }), {
+    ok: true,
+    value: { title: 'Refunds', kind: 'daily', goal: null, goalDirection: null },
+  });
+  assert.deepEqual(parseCustomSectionCreate({ title: 'Refunds', kind: 'daily', goal: 20, goalDirection: 'below' }), {
+    ok: true,
+    value: { title: 'Refunds', kind: 'daily', goal: 20, goalDirection: 'below' },
+  });
+  assert.deepEqual(parseCustomSectionCreate({ title: 'Queue', kind: 'am_pm', goal: 8 }), {
+    ok: true,
+    value: { title: 'Queue', kind: 'am_pm', goal: 8, goalDirection: 'at_least' },
+  });
+  assert.equal(parseCustomSectionCreate({ title: 'Queue', kind: 'am_pm', goal: 11 }).ok, false, 'a score goal is 0–10');
+  assert.equal(parseCustomSectionCreate({ title: 'Queue', kind: 'am_pm', goal: 8, goalDirection: 'below' }).ok, false);
+  assert.equal(parseCustomSectionCreate({ title: 'Refunds', kind: 'daily', goal: 20 }).ok, false, 'say at least or below');
+  assert.equal(parseCustomSectionCreate({ title: 'Refunds', kind: 'time' }).ok, false);
+  assert.equal(parseCustomSectionCreate({ title: '', kind: 'daily' }).ok, false);
+  assert.equal(parseCustomSectionPatch({ id: ROW, enabled: false }).ok, true);
+  assert.equal(parseCustomSectionPatch({ id: ROW, archived: false }).ok, false);
+  assert.equal(parseCustomSectionPatch({ id: ROW }).ok, false);
 });

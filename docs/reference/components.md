@@ -2067,6 +2067,9 @@ item 328). The table was not re-counted or re-diffed against the tree on this da
 **2026-10-05:** `common/RefreshProgressDialog.tsx` was added with the table refresh modal (Sep 29 log item 354). No other
 `.tsx` or hook was added or deleted by that change. The table was not re-counted or re-diffed against the tree on this date.
 
+**2026-10-06:** `accounting-scoreboard/ProblemsPanel.tsx` was added with the scoreboard's round 3 (Sep 29 log item 379). No other
+`.tsx` or hook was added or deleted by that change. The table was not re-counted or re-diffed against the tree on this date.
+
 **Mentioned in** is a name- or path-string match against `docs/features/` and this file. A mention is
 not a description. **58 files are named in no feature doc and nowhere above** (2026-09-22; 56 cells read "no doc" on
 2026-09-29, a count of cells — the matches were not re-run).
@@ -2085,6 +2088,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/accounting-scoreboard/ArchivePanel.tsx` | component | [accounting-scoreboard-backfill](../features/accounting-scoreboard-backfill.md) |
 | `src/components/accounting-scoreboard/CollectionsPanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting-scoreboard/PayrollCyclePanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
+| `src/components/accounting-scoreboard/ProblemsPanel.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting-scoreboard/ScoreboardApp.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting-scoreboard/SectionGrid.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `src/components/accounting-scoreboard/SectionsDrawer.tsx` | component | [accounting-scoreboard](../features/accounting-scoreboard.md) |

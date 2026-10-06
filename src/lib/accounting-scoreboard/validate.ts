@@ -6,7 +6,22 @@
  * Pure. Session-derived fields (who, today) are passed in, never read from the body.
  */
 
-import { isSectionKey, sectionDef, slotsFor, type SectionKey, type Slot } from './sections';
+import {
+  CUSTOM_KINDS,
+  MON_FRI,
+  SLOTS,
+  SLOTS_BY_KIND,
+  isRowSectionKey,
+  isSectionKey,
+  sectionDef,
+  type CustomKind,
+  type GoalDirection,
+  type RowSectionKey,
+  type SectionDef,
+  type SectionKey,
+  type Slot,
+  type Weekday,
+} from './sections';
 import { isIsoDate, weekdayOf } from './week';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -19,6 +34,10 @@ export const EARLIEST_DATE = '2024-01-01';
 
 function obj(body: unknown): Record<string, unknown> | null {
   return body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+}
+
+function isSlot(value: unknown): value is Slot {
+  return typeof value === 'string' && (SLOTS as readonly string[]).includes(value);
 }
 
 export function isUuid(value: unknown): value is string {
@@ -62,8 +81,8 @@ export function parseEntryWrite(body: unknown, today: string): Parsed<EntryWrite
   const date = boardDate(b.date, today);
   if (!date.ok) return date;
   const slot = b.slot;
-  if (slot !== 'am' && slot !== 'pm' && slot !== 'day' && slot !== 'mtg' && slot !== 'start' && slot !== 'end') {
-    return { ok: false, error: 'slot must be am, pm, day, mtg, start or end' };
+  if (!isSlot(slot)) {
+    return { ok: false, error: `slot must be one of ${SLOTS.join(', ')}` };
   }
   if (b.value === null) return { ok: true, value: { rowId: b.rowId, date: date.value, slot, value: null } };
   if (slot === 'mtg') {
@@ -77,9 +96,29 @@ export function parseEntryWrite(body: unknown, today: string): Parsed<EntryWrite
       ? { ok: false, error: 'A time is whole minutes after midnight (0–1440)' }
       : { ok: true, value: { rowId: b.rowId, date: date.value, slot, value: t } };
   }
+  if (slot === 'count') {
+    // How many chargebacks: a whole number (the SQL CHECK acct_sb_entries_count_whole).
+    const problem = numberProblem(b.value, MAX_COUNT, 'A number of chargebacks');
+    if (problem) return { ok: false, error: problem };
+    if (!Number.isInteger(b.value)) return { ok: false, error: 'A number of chargebacks is a whole number' };
+    return { ok: true, value: { rowId: b.rowId, date: date.value, slot, value: b.value as number } };
+  }
+  if (slot === 'usd') {
+    const problem = numberProblem(b.value, MAX_COUNT, 'A dollar amount');
+    if (problem) {
+      return {
+        ok: false,
+        error: problem.endsWith('decimals') ? 'A dollar amount is dollars and cents, like 99.00 (at most 2 decimals)' : problem,
+      };
+    }
+    return { ok: true, value: { rowId: b.rowId, date: date.value, slot, value: Math.round((b.value as number) * 100) / 100 } };
+  }
   const count = numberProblem(b.value, MAX_COUNT, 'A count');
   if (count) return { ok: false, error: count };
-  return { ok: true, value: { rowId: b.rowId, date: date.value, slot, value: Math.round((b.value as number) * 100) / 100 } };
+  return {
+    ok: true,
+    value: { rowId: b.rowId, date: date.value, slot, value: Math.round((b.value as number) * 100) / 100 },
+  };
 }
 
 /** The largest number one AM/PM/day box takes. Measured 2026-10-01: the biggest entered was 94. */
@@ -94,10 +133,17 @@ function numberProblem(value: unknown, max: number, what: string): string | null
   return null;
 }
 
-/** Does this cell exist on the board? Run after the row's section is read from the database. */
-export function entryAllowed(section: SectionKey, slot: Slot, date: string): Parsed<true> {
-  const def = sectionDef(section);
-  if (!slotsFor(section).includes(slot)) {
+/**
+ * Does this cell exist on the board? Run after the row's section is read from the database. A
+ * custom section passes its own shape (its kind and Mon–Fri); a built-in one passes its key.
+ */
+export function entryAllowed(
+  section: SectionKey | Pick<SectionDef, 'title' | 'kind' | 'days'>,
+  slot: Slot,
+  date: string,
+): Parsed<true> {
+  const def = typeof section === 'string' ? sectionDef(section) : section;
+  if (!SLOTS_BY_KIND[def.kind].includes(slot)) {
     return { ok: false, error: `${def.title} has no "${slot}" number` };
   }
   if (!def.days.includes(weekdayOf(date))) {
@@ -156,7 +202,9 @@ export const MAX_POINTS = 100;
 export const MAX_AMOUNT_USD = 10_000_000;
 
 export interface RowCreate {
-  sectionKey: SectionKey;
+  sectionKey: RowSectionKey;
+  /** Required for a custom section's row (sectionKey 'custom'), refused on any other. */
+  customSectionId: string | null;
   label: string;
   workEmail: string | null;
 }
@@ -170,7 +218,14 @@ export function cleanLabel(value: unknown): string | null {
 export function parseRowCreate(body: unknown): Parsed<RowCreate> {
   const b = obj(body);
   if (!b) return { ok: false, error: 'Expected a JSON object' };
-  if (!isSectionKey(b.sectionKey)) return { ok: false, error: 'Unknown section' };
+  if (!isRowSectionKey(b.sectionKey)) return { ok: false, error: 'Unknown section' };
+  let customSectionId: string | null = null;
+  if (b.sectionKey === 'custom') {
+    if (!isUuid(b.customSectionId)) return { ok: false, error: 'customSectionId must be a custom section id' };
+    customSectionId = b.customSectionId;
+  } else if (b.customSectionId !== undefined && b.customSectionId !== null) {
+    return { ok: false, error: 'Only a custom section row names a customSectionId' };
+  }
   const label = cleanLabel(b.label);
   if (!label) return { ok: false, error: 'A name of 1–80 characters is required' };
   let workEmail: string | null = null;
@@ -178,7 +233,7 @@ export function parseRowCreate(body: unknown): Parsed<RowCreate> {
     workEmail = normalizeEmail(b.workEmail);
     if (!workEmail) return { ok: false, error: 'That is not an email address' };
   }
-  return { ok: true, value: { sectionKey: b.sectionKey, label, workEmail } };
+  return { ok: true, value: { sectionKey: b.sectionKey, customSectionId, label, workEmail } };
 }
 
 export interface RowPatch {
@@ -186,6 +241,10 @@ export interface RowPatch {
   label?: string;
   sortOrder?: number;
   archived?: true;
+  /** Buckets only (checked against the row's section on the server): null clears it. */
+  bucketDay?: Weekday | null;
+  /** Open Disputes only (checked on the server). */
+  dueSoon?: boolean;
 }
 
 export function parseRowPatch(body: unknown): Parsed<RowPatch> {
@@ -208,7 +267,23 @@ export function parseRowPatch(body: unknown): Parsed<RowPatch> {
     if (b.archived !== true) return { ok: false, error: 'archived can only be true (rows are never un-archived)' };
     out.archived = true;
   }
-  if (out.label === undefined && out.sortOrder === undefined && out.archived === undefined) {
+  if (b.bucketDay !== undefined) {
+    if (b.bucketDay !== null && !(MON_FRI as readonly unknown[]).includes(b.bucketDay)) {
+      return { ok: false, error: 'bucketDay is mon, tue, wed, thu, fri or null' };
+    }
+    out.bucketDay = b.bucketDay as Weekday | null;
+  }
+  if (b.dueSoon !== undefined) {
+    if (typeof b.dueSoon !== 'boolean') return { ok: false, error: 'dueSoon is true or false' };
+    out.dueSoon = b.dueSoon;
+  }
+  if (
+    out.label === undefined &&
+    out.sortOrder === undefined &&
+    out.archived === undefined &&
+    out.bucketDay === undefined &&
+    out.dueSoon === undefined
+  ) {
     return { ok: false, error: 'Nothing to change' };
   }
   return { ok: true, value: out };
@@ -248,5 +323,162 @@ export function parseSectionPatch(body: unknown): Parsed<SectionPatch> {
     }
   }
   if (out.enabled === undefined && out.goal === undefined) return { ok: false, error: 'Nothing to change' };
+  return { ok: true, value: out };
+}
+
+// ---------------------------------------------------------------------------
+// Collections: Payment Verified
+// ---------------------------------------------------------------------------
+
+export function parseVerifyWrite(body: unknown): Parsed<{ collectionId: string; verified: boolean }> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.collectionId)) return { ok: false, error: 'collectionId must be a collection id' };
+  if (typeof b.verified !== 'boolean') return { ok: false, error: 'verified is true or false' };
+  return { ok: true, value: { collectionId: b.collectionId, verified: b.verified } };
+}
+
+// ---------------------------------------------------------------------------
+// Payroll Problems: the log and its types
+// ---------------------------------------------------------------------------
+
+/** The most problems one log line records (the SQL CHECK acct_sb_prob_count_range). */
+export const MAX_PROBLEMS_PER_LINE = 1000;
+
+export interface ProblemCreate {
+  rowId: string;
+  date: string;
+  typeId: string;
+  count: number;
+}
+
+export function parseProblemCreate(body: unknown, today: string): Parsed<ProblemCreate> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.rowId)) return { ok: false, error: 'Pick the person who handled it' };
+  const date = boardDate(b.date, today);
+  if (!date.ok) return date;
+  if (!sectionDef('payroll_problems').days.includes(weekdayOf(date.value))) {
+    return { ok: false, error: 'Payroll problems are kept Monday to Friday' };
+  }
+  if (!isUuid(b.typeId)) return { ok: false, error: 'Pick a problem type' };
+  const count = b.count === undefined ? 1 : b.count;
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > MAX_PROBLEMS_PER_LINE) {
+    return { ok: false, error: `How many is a whole number from 1 to ${MAX_PROBLEMS_PER_LINE}` };
+  }
+  return { ok: true, value: { rowId: b.rowId, date: date.value, typeId: b.typeId, count } };
+}
+
+export function cleanTypeLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const label = value.trim().replace(/\s+/g, ' ');
+  return label.length >= 1 && label.length <= 60 ? label : null;
+}
+
+export function parseProblemTypeCreate(body: unknown): Parsed<{ label: string }> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  const label = cleanTypeLabel(b.label);
+  if (!label) return { ok: false, error: 'A type name of 1–60 characters is required' };
+  return { ok: true, value: { label } };
+}
+
+export function parseProblemTypeArchive(body: unknown): Parsed<{ id: string }> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.id)) return { ok: false, error: 'id must be a problem type id' };
+  if (b.archived !== true) return { ok: false, error: 'archived can only be true (a type is never deleted or brought back)' };
+  return { ok: true, value: { id: b.id } };
+}
+
+// ---------------------------------------------------------------------------
+// Custom sections
+// ---------------------------------------------------------------------------
+
+export interface CustomSectionCreate {
+  title: string;
+  kind: CustomKind;
+  goal: number | null;
+  goalDirection: GoalDirection | null;
+}
+
+export function cleanSectionTitle(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const title = value.trim().replace(/\s+/g, ' ');
+  return title.length >= 1 && title.length <= 60 ? title : null;
+}
+
+/**
+ * A goal for a custom section of `kind`: an AM/PM section is scored 0–10, so its goal is a score
+ * to reach (at least, at most 10); a one-number-a-day section's goal is a week total, at least or below.
+ */
+export function customGoal(
+  kind: CustomKind,
+  goal: unknown,
+  direction: unknown,
+): Parsed<{ goal: number | null; goalDirection: GoalDirection | null }> {
+  if (goal === null || goal === undefined || goal === '') return { ok: true, value: { goal: null, goalDirection: null } };
+  const max = kind === 'am_pm' ? 10 : 100000;
+  const g = money2(goal, 0, max);
+  if (g === null) return { ok: false, error: `A goal is 0–${max.toLocaleString('en-US')} with at most 2 decimals` };
+  if (kind === 'am_pm') {
+    if (direction !== undefined && direction !== null && direction !== 'at_least') {
+      return { ok: false, error: 'A scored section’s goal is a score to reach (at least)' };
+    }
+    return { ok: true, value: { goal: g, goalDirection: 'at_least' } };
+  }
+  if (direction !== 'at_least' && direction !== 'below') return { ok: false, error: 'Say whether the goal is "at least" or "below"' };
+  return { ok: true, value: { goal: g, goalDirection: direction } };
+}
+
+export function parseCustomSectionCreate(body: unknown): Parsed<CustomSectionCreate> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  const title = cleanSectionTitle(b.title);
+  if (!title) return { ok: false, error: 'A section name of 1–60 characters is required' };
+  if (typeof b.kind !== 'string' || !(CUSTOM_KINDS as readonly string[]).includes(b.kind)) {
+    return { ok: false, error: `kind is ${CUSTOM_KINDS.join(' or ')}` };
+  }
+  const kind = b.kind as CustomKind;
+  const goal = customGoal(kind, b.goal, b.goalDirection);
+  if (!goal.ok) return goal;
+  return { ok: true, value: { title, kind, ...goal.value } };
+}
+
+export interface CustomSectionPatch {
+  id: string;
+  title?: string;
+  enabled?: boolean;
+  /** Raw: checked against the section's kind on the server (customGoal). null clears the goal. */
+  goal?: unknown;
+  goalDirection?: unknown;
+  archived?: true;
+}
+
+export function parseCustomSectionPatch(body: unknown): Parsed<CustomSectionPatch> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.id)) return { ok: false, error: 'id must be a custom section id' };
+  const out: CustomSectionPatch = { id: b.id };
+  if (b.title !== undefined) {
+    const title = cleanSectionTitle(b.title);
+    if (!title) return { ok: false, error: 'A section name of 1–60 characters is required' };
+    out.title = title;
+  }
+  if (b.enabled !== undefined) {
+    if (typeof b.enabled !== 'boolean') return { ok: false, error: 'enabled is true or false' };
+    out.enabled = b.enabled;
+  }
+  if (b.goal !== undefined) {
+    out.goal = b.goal;
+    out.goalDirection = b.goalDirection;
+  }
+  if (b.archived !== undefined) {
+    if (b.archived !== true) return { ok: false, error: 'archived can only be true (a section is never brought back)' };
+    out.archived = true;
+  }
+  if (out.title === undefined && out.enabled === undefined && !('goal' in out) && out.archived === undefined) {
+    return { ok: false, error: 'Nothing to change' };
+  }
   return { ok: true, value: out };
 }
