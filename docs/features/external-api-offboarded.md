@@ -167,18 +167,17 @@ violation into a **503 naming the migration script**, not a 500 (`SCOPE_MIGRATIO
 
 ## Not verified
 
-No key holding `offboarded.read` exists yet, so the route has not answered a real call. That
-needs the migration. The pipeline was run read-only over the full production ledger, and the panel was
+No key holding `offboarded.read` exists yet, so the route has not answered a real call. The
+migration is applied (2026-10-07); the first real call needs the push and a key with Offboarded ticked. The pipeline was run read-only over the full production ledger, and the panel was
 typechecked but **not clicked through signed in** (Admin needs SSO). Local `curl` against the dev
 server was deliberately skipped: even a denied call writes a production `external_api_requests` row,
 which the panel would show as an unattributed (key-guessing) call.
 
 ## Deploy notes
 
-- **Migration PENDING (Kane runs it)**: `scripts/Apply External API offboarded scope migration.cmd`
-  (a rehearsal that always rolls back, then type `APPLY`). The rehearsal passed against production on
-  2026-10-07: all 7 controls held and the one client (OMS, roster-only) kept its scopes. It changes
-  only `external_api_clients_scopes_known`. No row, no table.
+- **Migration APPLIED 2026-10-07** (Kane: *"apply it!"*) with `scripts/apply-external-api-offboarded-scope-migration.mts --apply`,
+  then re-checked with `--verify`: all 8 object checks and 7 controls passed, and the one client (OMS, roster-only)
+  kept its scopes. It changes only `external_api_clients_scopes_known`. No row, no table.
 - Order does not matter: before the ALTER, the route and tool exist but no key can hold the scope,
   and ticking Offboarded gives the 503 above.
 - **Push PENDING** (Kane).
