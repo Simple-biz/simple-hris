@@ -276,14 +276,17 @@ period's locked-in figures to OMS. `useOmsReturn({ sourceFile, weekStart })` is 
 machine (`closed → preparing → ready → sending → sent | error`). `open()` runs the GET (the
 server-built preview + OMS's newest copy), and `send(aliases)` runs the POST. The tab
 contributes only `aliases`, OMS's own address per person from the current pull; the server
-rebuilds every row and every peso. The dialog shows an HRIS → OMS strip with dots streaming
-only while the request is out, and a bar driven by `predictedProgress` from rAF that never
-fills on the estimate. It reaches 100% and ticks the rows only on OMS's ack, all together
+rebuilds every row and every peso. The dialog shows an HRIS → OMS strip whose connector IS
+the progress bar. At rest it is a thin neutral rail, with no empty track under it. Dots stream
+only while the request is out, and the fill is driven by `predictedProgress` from rAF and never
+completes on the estimate. It reaches 100% and ticks the rows only on OMS's ack, all together
 (one insert). A failure sends the rows back to queued. The dialog also shows People /
 Regular h / OT h / Amount tiles (`AnimatedNumber`) and notices for: not set up, not locked,
 verdicts, hours without an amount, and OMS's latest send. It can't be dismissed while
-sending; reduced motion gets crossfades only. Mounted by `OrphanageOmsPanel`; **the button
-that opens it is PENDING** (see the feature doc's Deploy notes). Doc:
+sending; reduced motion gets crossfades only. The shell is `sm:max-w-[520px]`, height-capped, and
+a list with no fixed max-height; Amount takes the wide tile, and its figure is never truncated.
+Mounted by `OrphanageOmsPanel`, and opened by its **Send to OMS** button, which was wired 2026-10-03
+in `f082ba96` (on origin) and is pinned by `oms-panel-wiring.test.ts`. Doc:
 [orphanage-oms-pull.md § Sending to OMS](../features/orphanage-oms-pull.md#sending-to-oms).
 
 ---

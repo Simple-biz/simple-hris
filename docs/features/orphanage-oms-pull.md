@@ -181,7 +181,11 @@ exactly **one** way, described here, and nowhere else.
 | **Audited once per send**: `wizard.orphanage_oms_returned` (push_id, OMS table, week, source file, count, total, cycle_locked, verdict counts, the unsent emails, and up to 300 rows as sent). | OMS holds the rows; the HRIS keeps its own proof of what it sent and who pressed the button. |
 
 **The modal carries the loading, and the motion may not lie.** Opening it runs the GET
-(the same builder as the send, so the preview IS what goes). While the POST is out, rows
+(the same builder as the send, so the preview IS what goes). **The bar is the connector
+between the HRIS and OMS chips**, not a second track under them. At rest it is a thin
+neutral rail. Until 2026-10-07 an empty track sat under the strip and read as a stalled
+loader; Kane's request that day was *"Fix the modal"*. The OMS chip's icon stays neutral, because rose is this modal's failure colour.
+While the POST is out, rows
 stream HRIS → OMS and the bar eases toward 90% on an estimate (`predictedProgress`, the
 [[payroll-wizard-step-load-progress]] rule: an estimate never fills the bar). Only OMS's
 ack takes the bar to 100% and ticks the rows — together, because the insert is one
@@ -189,6 +193,16 @@ statement. A failure turns the bar rose and sends every row back to queued. A **
 is ambiguous (the insert may have landed), and the modal says so: reopen to read OMS's
 newest copy before sending again. The modal cannot be dismissed while sending. "OMS already
 holds a send for this week" is read back **from OMS**, not from our audit row.
+
+**The figures are never cut.** The shell is `sm:max-w-[520px]` and keeps the primitive's phone
+gutter. A base-only `max-w-md` lost to the primitive's `sm:max-w-sm` (384px), and on
+2026-10-07 that clipped the Amount tile to "₱313,299.9" ([[dialog-content-no-height-cap]]).
+The four tiles sit 2×2 on phones. From `sm:` up, Amount takes the wide column, and the
+numbers are `whitespace-nowrap` and never truncated. The height is capped
+(`max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh]`) with shrink-0 chrome. The row list has no
+fixed max-height: it fills what the cap leaves, scrolls, and shrinks to a 7.5rem floor, and
+past that floor the body scrolls. The Send button stays reachable at every window height
+([responsive-design.md § Dialogs and modals](../design/responsive-design.md)).
 
 **What looks like a bug and is not:** the GET answers 200 even when sending is not set
 up — the preview is real either way and the modal names the missing piece. The probe
