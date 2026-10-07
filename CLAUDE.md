@@ -45,8 +45,9 @@ only fires on a code commit. So, before the session ends:
 
 - A **finding** (security hole, false premise, money contradiction) → a memory entry **and** a
   row in the newest session log's Open items (start a new log if that one is days old).
-- A **meeting** → `docs/meetings/YYYY-MM-DD-<slug>.md`, its `docs/README.md` row, and
-  wikilinks in every INDEX row it touches.
+- A **meeting** → use the **`meeting-notes`** skill: `docs/meetings/YYYY-MM-DD-<slug>.md`, its
+  `docs/README.md` row, wikilinks in every INDEX row it touches, and an Open items row for
+  every ask, contradiction and money question the call raised.
 - A **brief left waiting on Kane** (a `blueprint` `NEEDS` line or hard stop, or a `hardening`
   conflict) → one Open items line naming the session id and what is outstanding.
 - Then **commit it**, by explicit path. Doc work left in the working tree is invisible to the
