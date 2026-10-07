@@ -44,11 +44,15 @@ export function goalLight(goal: GoalRule | undefined, value: number | null, pace
     return 'red';
   }
 
-  // "below": a running total can only grow, so going over the FULL goal is final, whatever the pace.
-  const redLine = goal.value * (2 - AMBER_BAND);
-  if (value >= redLine) return 'red';
-  if (value >= goal.value) return 'amber';
-  if (p === 0) return 'none';
+  // "below": judged against the allowance so far (goal × pace). A running total can only grow, so going
+  // over the FULL goal is final: it is never green again, and never better than being over pace. (Until
+  // 2026-10-07 a paced week over the full goal returned amber before the pace check: 15 of 20 by
+  // Wednesday read Behind while 21 read Close, so more problems looked better.)
+  if (p === 0) {
+    // Before any day is over there is no allowance yet: only the full goal can be judged.
+    if (value < goal.value) return 'none';
+    return value < goal.value * (2 - AMBER_BAND) ? 'amber' : 'red';
+  }
   const allowance = goal.value * p;
   if (value < allowance) return 'green';
   if (value < allowance * (2 - AMBER_BAND)) return 'amber';

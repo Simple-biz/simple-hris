@@ -66,7 +66,15 @@ import {
 } from '@/lib/accounting-scoreboard/scoring';
 import { summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
 import { cycleWeek } from '@/lib/accounting-scoreboard/payroll-cycle';
-import { LIGHT_LABEL } from '@/lib/accounting-scoreboard/stoplight';
+import { LIGHT_LABEL, weekPace, type Light } from '@/lib/accounting-scoreboard/stoplight';
+import {
+  cardScore,
+  cycleCardScore,
+  teamLight,
+  teamScore,
+  type CardScore,
+  type TeamScore,
+} from '@/lib/accounting-scoreboard/team-score';
 import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
 import {
@@ -382,7 +390,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   const menuItems = useMemo<DrawerItem<Tab>[]>(() => {
     if (!board) return [];
     const items: DrawerItem<Tab>[] = [{ key: 'overview', label: 'Overview', icon: LayoutGrid, light: null }];
-    summarizeAll(board, tabs, lookup, new Date().toISOString()).forEach(({ section, summary }, i) => {
+    summarizeAll(board, tabs, lookup, new Date().toISOString(), sections).forEach(({ section, summary }, i) => {
       items.push({ key: section.id, label: section.tab, icon: sectionIcon(section), light: summary.light, divided: i === 0 });
     });
     if (board.viewer.isManager) items.push({ key: 'setup', label: 'Setup', icon: Settings2, light: null, divided: true });
@@ -736,7 +744,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
                 {activeTab === 'setup' ? (
                   <SetupPanel board={board} sections={sections} onChanged={() => void load(week, true)} />
                 ) : !activeSection ? (
-                  <Overview board={board} sections={cardSections} lookup={lookup} onOpen={openCard} />
+                  <Overview board={board} sections={cardSections} all={sections} lookup={lookup} onOpen={openCard} />
                 ) : activeSection.kind === 'payroll_cycle' ? (
                   withHosted(
                     activeSection,
@@ -807,10 +815,17 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 /**
- * Every section's headline and stop light for the week on screen. The Overview cards and the mobile
- * menu both read it, so the two can never disagree.
+ * Every section's headline, stop light and Team Score card score for the week on screen. The Overview
+ * cards, the Team Score and the mobile menu all read it, so none of them can disagree. `all` is every
+ * section on the board: a card's group is the tab its grid sits on (tabIdFor).
  */
-function summarizeAll(board: BoardPayload, sections: BoardSection[], lookup: ReturnType<typeof buildLookup>, nowIso: string) {
+function summarizeAll(
+  board: BoardPayload,
+  sections: BoardSection[],
+  lookup: ReturnType<typeof buildLookup>,
+  nowIso: string,
+  all: readonly BoardSection[],
+) {
   const ctx: BoardContext = {
     lookup,
     collections: board.collections,
@@ -828,14 +843,119 @@ function summarizeAll(board: BoardPayload, sections: BoardSection[], lookup: Ret
     // many are due in the next 7 days (her 2026-10-02 call-out). Outcomes' card is the win ratio.
     const disputes = s.key === 'chargebacks' ? amPmSectionStats(rows, dates, lookup, s.score, board.today) : null;
     const wins = s.kind === 'amount_count' ? winRatio(rows, dates, lookup) : null;
+    const summary = summarizeSection(s, rows, ctx, board.weekStart, board.lastWeekStart);
+    // Carla's Team Score (2026-10-07): the card's % of goal, on the same pace as its light. A past week is
+    // judged on its full goal (pace 1), as its light is.
+    const isCycle = s.kind === 'payroll_cycle';
+    const cycleOf = (weekStart: string) => cycleWeek(board.payrollEvents, weekStart, nowIso, board.firstClosedPeriodEnd);
+    const card: CardScore = isCycle ? cycleCardScore(cycleOf(board.weekStart)) : cardScore(s.goal, summary.headline, weekPace(dates, board.today));
+    const lastCard: CardScore = isCycle ? cycleCardScore(cycleOf(board.lastWeekStart)) : cardScore(s.goal, summary.lastHeadline, 1);
+    const groupId = tabIdFor(all, s);
+    const groupLabel = all.find((x) => x.id === groupId)?.tab ?? s.tab;
     return {
       section: s,
       rowCount,
       disputes: disputes ? { openNow: disputes.openNow, dueSoon: disputes.dueSoonNow } : null,
       wins,
-      summary: summarizeSection(s, rows, ctx, board.weekStart, board.lastWeekStart),
+      summary,
+      card,
+      lastCard,
+      groupId,
+      groupLabel,
     };
   });
+}
+
+/** A 0–100 Team Score or group score: one decimal at most ("88.5", "100", "15.6"). */
+function fmtTeam(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return '—';
+  return (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+}
+
+/** The hero tile's own tint (not a button, so no hover). */
+const TEAM_TILE: Record<Light, string> = {
+  green: 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-900/70 dark:bg-emerald-950/25',
+  amber: 'border-amber-200 bg-amber-50/70 dark:border-amber-900/70 dark:bg-amber-950/25',
+  red: 'border-rose-200 bg-rose-50/80 dark:border-rose-900/70 dark:bg-rose-950/30',
+  none: 'border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950',
+};
+
+/**
+ * Carla's Team Score (spec of 2026-10-07): one 0–100 number for every tab with a goal, beside the on
+ * track / close / behind count, with last week's and the score of each tab that counts. The math is
+ * team-score.ts; its bands are its own (90+ On track, 75–89.9 Close, below 75 Behind).
+ */
+function TeamScoreTile({
+  team,
+  last,
+  tally,
+  scope,
+}: {
+  team: TeamScore;
+  last: TeamScore;
+  tally: Record<'green' | 'amber' | 'red', number>;
+  scope: string;
+}) {
+  return (
+    <section aria-label="Team Score" className={cn('rounded-2xl border p-5 shadow-sm', TEAM_TILE[team.light])}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-4">
+          <StopLight light={team.light} className="mt-1" />
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Team Score</h3>
+            <div className="mt-2 flex items-baseline gap-2">
+              <span
+                className={cn(
+                  'font-mono text-6xl font-semibold leading-none tracking-tight tabular-nums',
+                  team.score === null ? 'text-zinc-300 dark:text-zinc-700' : LIGHT_STYLE[team.light].number,
+                )}
+              >
+                <Flash value={team.score} scope={scope}>
+                  {fmtTeam(team.score)}
+                </Flash>
+              </span>
+              <span className="text-sm text-zinc-500 dark:text-zinc-400">/ 100</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span className={cn('font-semibold', team.score === null ? 'text-zinc-500 dark:text-zinc-400' : LIGHT_STYLE[team.light].text)}>
+                {team.score === null ? 'Waiting on data' : LIGHT_LABEL[team.light]}
+              </span>
+              <span className="text-zinc-500 dark:text-zinc-400">
+                Last week{' '}
+                <span className={cn('font-mono font-semibold tabular-nums', LIGHT_STYLE[last.light].text)}>{fmtTeam(last.score)}</span>
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs" aria-label="How the sections are doing">
+          {(['green', 'amber', 'red'] as const).map((l) => (
+            <span key={l} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold', LIGHT_STYLE[l].chip)}>
+              <span className={cn('size-2 rounded-full', LIGHT_STYLE[l].dot)} />
+              {tally[l]} {LIGHT_LABEL[l].toLowerCase()}
+            </span>
+          ))}
+        </div>
+      </div>
+      {team.groups.length ? (
+        <ul className="mt-4 flex flex-wrap gap-1.5 border-t border-black/5 pt-3 dark:border-white/10" aria-label="Score by tab">
+          {team.groups.map((g) => (
+            <li
+              key={g.groupId}
+              className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium', LIGHT_STYLE[teamLight(g.score)].chip)}
+            >
+              {g.label}
+              <span className="font-mono font-semibold tabular-nums">{fmtTeam(g.score)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-3 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+        Each goal&rsquo;s % of target, capped at 100 and judged on the same pace as its card, averaged by tab, then across the{' '}
+        {team.groups.length} tab{team.groups.length === 1 ? '' : 's'} with a goal. A card with no numbers or no goal is left out, never
+        counted as 0. 90+ is on track, 75–89.9 close.
+      </p>
+    </section>
+  );
 }
 
 /**
@@ -847,38 +967,35 @@ function summarizeAll(board: BoardPayload, sections: BoardSection[], lookup: Ret
 export function Overview({
   board,
   sections,
+  all,
   lookup,
   onOpen,
 }: {
   board: BoardPayload;
+  /** The cards, in order (overviewSections). */
   sections: BoardSection[];
+  /** Every section on the board, to find the tab (the Team Score group) each card sits on. */
+  all: readonly BoardSection[];
   lookup: ReturnType<typeof buildLookup>;
   onOpen: (tab: Tab) => void;
 }) {
   const nowIso = new Date().toISOString();
-  const cards = summarizeAll(board, sections, lookup, nowIso);
+  const cards = summarizeAll(board, sections, lookup, nowIso, all);
   const tally = { green: 0, amber: 0, red: 0 };
   for (const c of cards) if (c.summary.light !== 'none') tally[c.summary.light]++;
   const cycle = cycleWeek(board.payrollEvents, board.weekStart, nowIso, board.firstClosedPeriodEnd);
+  const team = teamScore(cards.map((c) => ({ groupId: c.groupId, groupLabel: c.groupLabel, card: c.card })));
+  const lastTeam = teamScore(cards.map((c) => ({ groupId: c.groupId, groupLabel: c.groupLabel, card: c.lastCard })));
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">This week at a glance</h2>
-          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Every number adds itself up from what the team typed. This week&rsquo;s totals are judged on pace.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-xs" aria-label="How the sections are doing">
-          {(['green', 'amber', 'red'] as const).map((l) => (
-            <span key={l} className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold', LIGHT_STYLE[l].chip)}>
-              <span className={cn('size-2 rounded-full', LIGHT_STYLE[l].dot)} />
-              {tally[l]} {LIGHT_LABEL[l].toLowerCase()}
-            </span>
-          ))}
-        </div>
+      <div>
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">This week at a glance</h2>
+        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+          Every number adds itself up from what the team typed. This week&rsquo;s totals are judged on pace.
+        </p>
       </div>
+      <TeamScoreTile team={team} last={lastTeam} tally={tally} scope={board.weekStart} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map(({ section, rowCount, disputes, wins, summary }) => (
           <OverviewCard
@@ -930,6 +1047,15 @@ function OverviewCard({
   const showStart = isCycle && summary.headline === null && cycleStartedAt !== null;
   const big = showStart ? formatEasternDateTime(cycleStartedAt!).split(' ').slice(1).join(' ') : fmt(summary.headline);
   const unit = showStart ? 'started' : headlineUnit(section);
+  // Carla's spec: a card with nothing typed says so ("Waiting on data"), and one with no goal is "Not scored".
+  const statusWord =
+    summary.light !== 'none'
+      ? LIGHT_LABEL[summary.light]
+      : summary.headline === null && !showStart
+        ? 'Waiting on data'
+        : !section.goal
+          ? 'Not scored'
+          : LIGHT_LABEL.none;
 
   return (
     <motion.button
@@ -985,14 +1111,16 @@ function OverviewCard({
         </div>
       ) : null}
       {wins ? (
-        <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+        // Carla's spec: the sample size shows, so one decided chargeback reads as the small sample it is.
+        <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400" title="Wins ÷ (wins + losses), by the number of chargebacks">
           <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.won)}</span> won ·{' '}
-          <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.lost)}</span> lost, by count
+          <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.lost)}</span> lost{' '}
+          <span className="font-mono tabular-nums">(n = {(wins.won ?? 0) + (wins.lost ?? 0)})</span>
         </div>
       ) : null}
 
       <div className="mt-4 flex items-center justify-between gap-2 border-t border-black/5 pt-3 text-xs dark:border-white/10">
-        <span className={cn('font-semibold', tone.text)}>{LIGHT_LABEL[summary.light]}</span>
+        <span className={cn('font-semibold', summary.light === 'none' ? 'text-zinc-500 dark:text-zinc-400' : tone.text)}>{statusWord}</span>
         <span className="text-zinc-500 dark:text-zinc-400">
           Last week{' '}
           <span className={cn('font-mono font-semibold tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>{fmt(summary.lastHeadline)}</span>

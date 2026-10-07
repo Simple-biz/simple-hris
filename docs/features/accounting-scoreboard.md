@@ -27,6 +27,7 @@ every payroll problem, and custom sections.
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
 | One headline and one stop light per section | `src/lib/accounting-scoreboard/board.ts` |
 | The stop light (green / amber / red, paced) | `src/lib/accounting-scoreboard/stoplight.ts` |
+| The Team Score (card → group → team, its bands) | `src/lib/accounting-scoreboard/team-score.ts` (+ `.test.ts`, Carla's worked example) |
 | Payroll Timing from the Wizard (cycle match, deadlines, no_record, score) | `src/lib/accounting-scoreboard/payroll-cycle.ts` |
 | Dancing Queen preview | `src/lib/accounting-scoreboard/bonus-preview.ts` |
 | Host rule for the domain | `src/lib/accounting-scoreboard/host.ts`, called from `proxy.ts` |
@@ -369,8 +370,13 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   **none** = no numbers, no goal, or too early to call. Absence is never a colour.
 - **This week's running totals are judged on PACE**, against goal × the share of the section's days that are
   over (Thursday = 3 of 5). Without it every Monday is red. A past week is judged on the full goal. Scores,
-  averages (PM Buckets) and percentages (the win ratio) are never paced. For a "below" goal, going over the FULL
-  goal is final whatever the pace.
+  averages (PM Buckets) and percentages (the win ratio) are never paced.
+- **A "below" running total is judged against its allowance so far** (goal × pace): green under it, amber under
+  120% of it, red past that. Going over the FULL goal is final: it is never green again, and it is never better
+  than being over pace. Before any day is over (Monday) only the full goal is judged. **Fixed 2026-10-07**
+  (session `728157e2`): the full-goal check used to run first and return amber, so by Wednesday 15 of 20 problems
+  read Behind while 21 read Close, and more problems looked better. A past week reads as before. The test walks
+  every count at every pace to check that a higher count never reads better.
 - Payroll Timing's light comes from its checks: every judged check on time = green, none = red, a mix =
   amber, and a `no_record` check is left out. So a cycle that started on time is green until Friday decides the close.
 - An Overview card shows the light as a real stop light (a dark housing, the live lamp glows) **and** the
@@ -378,6 +384,46 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   never with a thick side border (the craft floor). Each card carries its KPI's own icon (`SECTION_ICON`)
   and a 5xl number (Kane, same day: *"make the numbers bigger … add like icons that match the kpi card"*).
   Until Payroll Timing is scored, its card shows when this week's cycle started.
+- A card's word when its light is off (Carla's spec, 2026-10-07): **Waiting on data** when nothing is typed,
+  **Not scored** when it has no goal, else *No call yet* (too early). Outcomes' card shows its sample size,
+  "0 won · 1 lost (n = 1)".
+
+## Team Score (Carla's spec, 2026-10-07)
+
+Carla's "Accounting Scoreboard — Team Score & Overview Edits Spec" (Oct 7, 2026, forwarded by Kane): one **Team
+Score (0–100)** at the top of the Overview, beside the on track / close / behind count, with last week's. It
+rolls up every tab with a goal (`team-score.ts`). It is **display only**: it pays no one.
+
+- **Card score** (0–100, "% of goal", **capped at 100** so one strong card can't hide a weak one), on the
+  **same pace as the card's light**, so the score and the light always agree (her rule):
+  - at least, a score, average or ratio (Buckets, Inbox, Open Disputes, Outcomes): MIN(actual ÷ goal, 1) × 100
+  - at least, a running week total (Collections, Compliance): MIN(actual ÷ (goal × pace), 1) × 100
+  - below, an average (PM Buckets): MIN(goal ÷ actual, 1) × 100; 0 scores 100
+  - below, a running week total (Payroll Problems): MIN(goal × pace ÷ actual, 1) × 100; 0 scores 100.
+    **CHOSEN, not her table:** her table gives Payroll Problems the unpaced form, which on 10-07 read 100 while its
+    card said Close (9 problems against an allowance of 8 by Wednesday). Her own rule is that the two agree, so
+    it is paced: 8 ÷ 9 = 88.9. That moves her worked 88.5 to **87.1**.
+  - Payroll Timing (her "On time = 100, late = 0"): the share of its **judged** checks that were on time,
+    weighted like the cycle score (start 25, close 75). Started on time with the close still ahead = 100 (her
+    example); both judged = the cycle score itself (last week: 25); nothing judged or `no_record` = left out.
+- **Left out, never 0:** a card with nothing typed ("Waiting on data"), no goal ("Not scored"; an "at least 0"
+  goal counts as none), or nothing to judge yet: a running total under its full goal on Monday, when its pace
+  goal is 0 and its light says "No call yet".
+- **Group** = the tab the card's grid sits on (`tabIdFor`). Its score is the mean of its scored cards, so
+  Chargebacks (Open Disputes + Outcomes) counts once. A tab with no scored card drops out. A goal set later
+  (Sales — Payments, a custom section) joins on its own.
+- **Team Score** = Σ wᵍ × groupᵍ ÷ Σ wᵍ, every weight 1 (`GROUP_WEIGHTS` is empty; no Setup control), one
+  decimal. **Its bands are its own**: 90–100 On track (green), 75–89.9 Close (amber), below 75 Behind (red).
+- **Last week** is computed the same way on last week's final numbers, on the full goal (no pace). Browsing back
+  with the week arrows shows that week's score the same way.
+- The tile lists each counted tab with its score, coloured by the same bands, so what pulls it down is visible.
+- **Measured on production, 2026-10-07 14:25Z** (read-only, `readBoard()`): every one of Carla's worked numbers
+  matched the app's own (Buckets 7.4, Collections 90, PM Buckets 29.33, Inbox 9.8, Open Disputes 2.5 against her
+  goal of 8, Outcomes 0 won · 1 lost, Compliance 13, Payroll Timing started on time, Payroll Problems 9). The
+  Team Score read **87.1 (Close)**, and last week **76.5**. `team-score.test.ts` replays both 87.1 and her 88.5.
+- **Not built (NEEDS Carla):** the spec's "nine fixes to the Overview cards" (edits 1–9) and its open
+  questions. The PDF refers to "edit 5" and "open question 3", but its three pages hold neither. Only what its
+  edge-case list states was built: "Waiting on data", "Not scored", and the "(n = N)" sample size.
 
 ## Weeks and days
 

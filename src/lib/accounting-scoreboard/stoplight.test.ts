@@ -41,6 +41,22 @@ test('a below goal: under is green, a little over amber, 20% over red; going ove
   assert.equal(goalLight(problems, 3, 0), 'none');
 });
 
+test('a paced below goal never reads better with more (found 2026-10-07: 21 of 20 by Wednesday was Close, 15 Behind)', () => {
+  assert.equal(goalLight(problems, 15, 0.4), 'red');
+  assert.equal(goalLight(problems, 21, 0.4), 'red', 'over the full goal is not better than over pace');
+  assert.equal(goalLight(problems, 21, 1), 'amber', 'a finished week a little over is still amber');
+  assert.equal(goalLight(problems, 21, 0), 'amber', 'Monday: only the full goal can be judged');
+  const order = { green: 0, none: 0, amber: 1, red: 2 } as const;
+  for (const p of [0.2, 0.4, 0.6, 0.8, 1]) {
+    let worst = 0;
+    for (let v = 0; v <= 40; v++) {
+      const l = order[goalLight(problems, v, p)];
+      assert.ok(l >= worst, `pace ${p}: ${v} problems read better than fewer`);
+      worst = l;
+    }
+  }
+});
+
 test('absence is not a colour', () => {
   assert.equal(goalLight(collections, null), 'none');
   assert.equal(goalLight(undefined, 5), 'none');
