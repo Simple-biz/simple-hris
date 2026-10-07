@@ -70,6 +70,7 @@ class FakeAudio {
 }
 
 type Player = typeof import('./carla-song');
+type SigninSong = Player['SIGNIN_SONGS'][number];
 type Status = ReturnType<Player['getCarlaSongState']>['status'];
 
 const RUN_KEY = 'carla_song_run_v2';
@@ -122,14 +123,22 @@ function advance(t: TestContext, ms: number): void {
 /** Let settled play() promises run their handlers (setImmediate is not mocked). */
 const flush = () => new Promise<void>((r) => setImmediate(r));
 
+// Every real row is installed today, so this uses its own table: the guard
+// must hold for the next person added before their cut lands.
+const PENDING_TABLE: SigninSong[] = [
+  {
+    email: 'pending@simple.biz',
+    clip: { status: 'pending', src: '/sounds/pending-song.mp3' },
+    title: 'Pending',
+    artist: 'Nobody',
+    thumb: '/pending-thumb.jpg',
+  },
+];
+
 test('class 1: a pending clip is inert — nothing fetched, no pill, a warning naming the file', async (t) => {
   const { m, pillEverShown, warns, status } = await setup(t);
-  const pending = m.SIGNIN_SONGS.find((s) => s.clip.status === 'pending');
-  if (!pending) {
-    t.skip('no pending rows');
-    return;
-  }
-  m.startCarlaSongIfEligible(pending.email);
+  const pending = PENDING_TABLE[0];
+  m.startCarlaSongIfEligible(pending.email, PENDING_TABLE);
   assert.equal(FakeAudio.made.length, 0);
   assert.equal(status(), 'idle');
   assert.equal(pillEverShown(), false);
@@ -251,7 +260,13 @@ test('class 7: someone else signing in stops the live run; the same person again
   FakeAudio.made[0].resolvePlay();
   await flush();
   m.startCarlaSongIfEligible('aliviah@simple.biz');
-  assert.equal(status(), 'done', "Carla's song never carries over to Aliviah");
+  const aliviah = FakeAudio.made[FakeAudio.made.length - 1];
+  assert.equal(aliviah.src, '/sounds/aliviah-song.mp3', "Aliviah gets her own song, never Carla's");
+  assert.equal(m.getCarlaSongState().song?.email, 'aliviah@simple.biz');
+  assert.equal(status(), 'starting');
+  aliviah.resolvePlay();
+  await flush();
+  assert.equal(status(), 'playing');
 });
 
 test('class 8: the jam bubble treats a starting song as a playing one', async (t) => {

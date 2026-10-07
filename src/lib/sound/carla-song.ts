@@ -71,19 +71,25 @@ export const SIGNIN_SONGS: readonly SigninSong[] = [
   },
   {
     email: ALIVIAH_SONG_EMAIL,
-    // PENDING (item 386): Kane supplies the track; the 40s cut lands here.
-    clip: { status: 'pending', src: '/sounds/aliviah-song.mp3' },
+    // Chorus 2 from 1:44.95 (docs/features/login-carla-song.md § The clips).
+    clip: { status: 'installed', src: '/sounds/aliviah-song.mp3' },
     title: 'Impostor Syndrome',
     artist: 'Sidney Gish',
     thumb: '/aliviah-song-thumb.jpg',
   },
 ];
 
-/** The song for this email, or null — trims and case-folds, nothing looser. */
-export function signinSongFor(email: string | null | undefined): SigninSong | null {
+/**
+ * The song for this email, or null — trims and case-folds, nothing looser.
+ * `table` exists for tests (a pending row once every real row is installed).
+ */
+export function signinSongFor(
+  email: string | null | undefined,
+  table: readonly SigninSong[] = SIGNIN_SONGS,
+): SigninSong | null {
   const e = (email ?? '').trim().toLowerCase();
   if (!e) return null;
-  return SIGNIN_SONGS.find((s) => s.email === e) ?? null;
+  return table.find((s) => s.email === e) ?? null;
 }
 
 /** Total audible run, including the fade tail. */
@@ -429,9 +435,12 @@ function start(song: SigninSong, t0Ms?: number, muted = false): void {
  * than once). No-ops for anyone not in `SIGNIN_SONGS`; a `pending` clip warns
  * and plays nothing.
  */
-export function startCarlaSongIfEligible(email: string | null | undefined): void {
+export function startCarlaSongIfEligible(
+  email: string | null | undefined,
+  table: readonly SigninSong[] = SIGNIN_SONGS,
+): void {
   if (typeof window === 'undefined') return;
-  const song = signinSongFor(email);
+  const song = signinSongFor(email, table);
   if (isCarlaSongActive()) {
     if (song && state.song === song) return;
     finish();

@@ -1,7 +1,7 @@
 # Login sign-in songs (per person: Carla, Aliviah)
 
 > **Status:** Carla's shipped 2026-07-30 (`eec5a4c` → `e499ab4` → `2967bf9` → `1ea603a` → `1f6fc03`).
-> Aliviah's added 2026-10-07, clip **PENDING** (item 386); player hardened the same day. Per-person easter egg. No DB, no API, no migration.
+> Aliviah's added 2026-10-07; player hardened and her clip installed the same day (item 386). Per-person easter egg. No DB, no API, no migration.
 
 When a person listed in **`SIGNIN_SONGS`** (`src/lib/sound/carla-song.ts`) signs in, a 30-second
 clip of **their** song plays right after the login intro video hands off to their dashboard, with
@@ -23,14 +23,15 @@ one `SIGNIN_SONGS` row, its own clip and its own cover art. The pinning test is
 | Email | Song | Clip | Cover art |
 |---|---|---|---|
 | `carla@simple.biz` | Anri, "I Can't Stop The Loneliness" (1983) | `public/sounds/carla-song.mp3` (installed) | `public/carla-song-thumb.jpg`, `.svg` fallback |
-| `aliviah@simple.biz` | Sidney Gish, "Impostor Syndrome" (*No Dogs Allowed*, 2017) | `public/sounds/aliviah-song.mp3`, row is **`pending`** (cut not in the repo) | `public/aliviah-song-thumb.jpg` (album art from Bandcamp, 600×600), no fallback |
+| `aliviah@simple.biz` | Sidney Gish, "Impostor Syndrome" (*No Dogs Allowed*, 2017) | `public/sounds/aliviah-song.mp3` (installed) | `public/aliviah-song-thumb.jpg` (album art from Bandcamp, 600×600), no fallback |
 
 Each row's clip is `installed` (the cut is committed) or `pending` (it is not). A pending row
 is inert: the player fetches nothing, plays nothing, shows **no pill**, and logs a console
-warning naming the missing file. Until Aliviah's cut lands, that is her sign-in.
+warning naming the missing file. A new person's row stays `pending` until their cut is committed.
+No real row is pending today, so class 1's test below uses its own table.
 
-The first pushed build (`ce1d5cd4`) broke that. Her row pointed straight at the missing file and
-the player raised the pill before it knew the audio loaded, so she saw *"Now playing · Impostor
+Before the hardening, Aliviah's row on `ce1d5cd4` pointed straight at a missing file, and the
+player raised the pill before it knew the audio had loaded. She saw *"Now playing · Impostor
 Syndrome"* over silence until the 404 came back. This was reproduced in headless Chromium on
 2026-10-07, and is class 1 and class 2 below.
 
@@ -94,15 +95,33 @@ lead-in. Loudness-normalized to **−14 LUFS**, with a 0.3s anti-click fade-in a
 deliberately **no baked fade-out** (the player owns the 26→30s fade; a baked one would
 double-fade).
 
-**Aliviah's: PENDING (item 386).** `public/sounds/aliviah-song.mp3` does not exist yet. Kane
-supplies the track; the session can't source the audio. *No Dogs Allowed* is "name your price" on
-Sidney Gish's Bandcamp (checked 2026-10-07). Cut it the same way as
-Carla's: per-second loudness sweep plus a vocal-presence check, pick the strongest sustained 30s
-(the chorus), export 40s, loudnorm **−14 LUFS** / TP −1.5, 0.3s fade-in, **no fade-out**.
-Commit only `aliviah-song.mp3`, and in the same commit flip her row's `clip.status` to
-`'installed'`. The suite fails until the row and the disk agree. Keep the raw purchased file **outside the repo**, for example in
-Downloads. Nothing in `.gitignore` covers `public/sounds/`, and item 175 is what happens when a
-raw track sits there.
+**Aliviah's.** `public/sounds/aliviah-song.mp3` is a **40-second cut** starting at **1:44.95**, the
+second chorus, installed 2026-10-07.
+- **Source:** Kane supplied `Sidney Gish - Impostor Syndrome (Lyrics).mp3`. It is 294.5s, which
+  matches Bandcamp's 294.3s, so it is not sped up. It is about 120 kbps, a lyric-video rip rather
+  than the Bandcamp download. That is lower fidelity, but fine for a 30s clip.
+- **Finding the chorus:** a per-second loudness sweep, a mid/side vocal-presence check, and a
+  chroma repetition map.
+  - The section that repeats most strongly starts at **0:38.4**: loudness −20 → −15 dB, vocal
+    presence 8 → 24.
+  - It comes back at **1:45.2** (similarity 0.78), and each pass lasts about 29s.
+  - Chorus 2 was picked because it is fuller than chorus 1. Its 30-second run is wall-to-wall,
+    −13 to −16 dB every second, with no dips.
+- **The cut:** −14.2 LUFS integrated, true peak −1.7 dBFS, 192 kbps, 961,767 bytes, metadata
+  stripped, 0.3s fade-in, no fade-out.
+- **Alternates** live **outside the repo** in `C:\Users\Kane\Downloads\aliviah-song-candidates\`:
+  - `A-chorus2-104.95s` is the installed one.
+  - `B-chorus1-38.15s` is the first chorus.
+  - `C-section-170.65s` is the loud new section at 2:50. It is not the chorus.
+
+  To swap, copy one over `aliviah-song.mp3` and commit that file only. The raw track stays in
+  Downloads. Nothing in `.gitignore` covers `public/sounds/`, and item 175 is what happens when a
+  raw track sits there.
+
+**Adding a person.** Their row starts `pending`. Cut their clip the same way (strongest sustained
+30s, export 40s, loudnorm **−14 LUFS** / TP −1.5, 0.3s fade-in, **no fade-out**). Commit only the
+cut, and in the same commit flip the row's `clip.status` to `'installed'`. The suite fails until
+the row and the disk agree.
 
 > **Repo hygiene:** only each person's 40s clip should be committed. The full purchased track and the
 > alternate cuts in `public/sounds/carla-song-candidates/` (`A-final-chorus-163s` — the
@@ -133,20 +152,23 @@ the dashboard's heaviest mount.
 | `app/layout.tsx` | mounts the toast on every document (this is what makes resume work) |
 | `app/login/page.tsx` | starts the run at the intro hand-off |
 | `public/sounds/carla-song.mp3`, `public/carla-song-thumb.jpg` | Carla's committed clip + cover art |
-| `public/sounds/aliviah-song.mp3` (**PENDING**), `public/aliviah-song-thumb.jpg` | Aliviah's clip + cover art |
+| `public/sounds/aliviah-song.mp3`, `public/aliviah-song-thumb.jpg` | Aliviah's committed clip + cover art |
 
 **Manual test:** dev server → super-admin sign-in as `carla@simple.biz` → intro video →
 audio starts with the toast at the hand-off → switch dashboards mid-clip (keeps playing) →
-fades out at 30s. Repeat as `aliviah@simple.biz` once her clip lands: Sidney Gish / *Impostor
-Syndrome* with the *No Dogs Allowed* cover. Before then, expect silence, no toast, and the
-console warning.
+fades out at 30s. Repeat as `aliviah@simple.biz`: Sidney Gish / *Impostor Syndrome* with the
+*No Dogs Allowed* cover, starting on the second chorus.
 
-**Verified 2026-10-07 in headless Chromium**, using the real player bundle and Carla's real clip.
+**Verified 2026-10-07 in headless Chromium**, using the real player bundle and the real clips.
 The harness ran from the session scratchpad and is not committed:
-- A fresh start goes `starting → playing` and is 1.97s in after 2s.
-- A resume at 10s is at 10.00 the moment it plays.
+- Carla's fresh start goes `starting → playing` and is 1.97s in after 2s.
+- Carla's resume at 10s is at 10.00 the moment it plays.
 - A 404 clip never shows the pill, and logs the error.
-- Aliviah's pending row requests nothing.
-- A full run is 30.02s from first sound to done.
+- A pending row requests nothing. This was checked before Aliviah's cut was installed.
+- Carla's full run is 30.02s from first sound to done.
+- Aliviah's sign-in reaches `playing` showing *Impostor Syndrome / Sidney Gish*, and is 1.95s
+  further on after 2s.
+- Aliviah's resume at 12s is at 12.00 the moment it plays, and her full run is 30.02s.
+- Carla's sign-in still plays her own clip.
 
 **Not verified** through the real login flow, signed in.

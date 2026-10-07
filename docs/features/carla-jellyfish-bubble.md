@@ -99,7 +99,7 @@ top-centre the sign-in pill (`z-[200]`), and top-right the sonner stack. 110 flo
 dashboard switch loader (100), so it stays visible while she switches dashboards. It sits below
 the collab and cobrowse chrome (120/130).
 
-Animations are transform/opacity only (the sign-in pill's rule, `login-carla-song.md:121`), and
+Animations are transform/opacity only (the sign-in pill's rule, `login-carla-song.md:140`), and
 all of them (arrival, bob, ripple, rising air bubbles, the playing wobble, the meter) are off
 under `prefers-reduced-motion`. The jellyfish is an inline SVG because lucide has no jellyfish.
 Its gradient id comes from `useId()` with every non-`[A-Za-z0-9_-]` character stripped, because

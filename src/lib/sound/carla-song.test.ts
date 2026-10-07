@@ -29,7 +29,7 @@ test('each person has their own song', () => {
   const aliviah = signinSongFor(ALIVIAH_SONG_EMAIL);
   assert.equal(aliviah?.title, 'Impostor Syndrome');
   assert.equal(aliviah?.artist, 'Sidney Gish');
-  assert.equal(aliviah?.clip.src, '/sounds/aliviah-song.mp3');
+  assert.deepEqual(aliviah?.clip, { status: 'installed', src: '/sounds/aliviah-song.mp3' });
 });
 
 test('table emails are lower-case and unique, and no two people share a clip', () => {
