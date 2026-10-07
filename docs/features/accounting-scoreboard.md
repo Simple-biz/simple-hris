@@ -677,14 +677,17 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   `lock_timeout = 10s`. Re-check any time with
   `node --import tsx scripts/apply-accounting-scoreboard-round3-migration.mts --verify`.
 - **The round-3 code needs that migration**, which is applied. **The push: PENDING** (Kane).
-- **Win/loss flags + 0 payroll problems migration (2026-10-07): PENDING Kane's go.**
+- **Win/loss flags + 0 payroll problems migration: APPLIED 2026-10-07 ~14:10 UTC** by session `48c8828b` on Kane's *"run
+  this"*, sent with the board's live error. The code (`0b8748f6`) had been pushed BEFORE the migration ran, so until then
+  every board read in production answered "not set up yet" (the deploy order below was not followed).
   `2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql` adds `rows.outcome` and its CHECK, flags the live
-  "Wins"/"Losses" (`--apply` backs those 2 rows up first), and moves `acct_sb_prob_count_range` from 1–1000 to 0–1000.
-  **Apply it BEFORE pushing this code:** the board selects `rows.outcome`, and until the column exists every board
-  read answers "not set up yet". Run `node --import tsx scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts`
-  (dry, rolled back), then `--apply`, then `--verify`. It has not been run, not even dry (session `728157e2`). After it,
-  the round-3 `--verify` checks that a count of **-1** is refused; it checked 0 before, and was changed in the same
-  commit.
+  "Wins"/"Losses", and moves `acct_sb_prob_count_range` from 1–1000 to 0–1000. Dry run 38/38 (rolled back), then `--apply`
+  38/38 (committed, after backing up the 2 flagged rows to
+  `docs/audits/backups/accounting-scoreboard-outcomes-rows-2026-10-07T14-09-57-021Z.json`, gitignored), then `--verify`
+  38/38. The round-3 `--verify` (now refusing a count of -1) re-passed 133/133, and the Shown in `--verify` re-passed.
+  `readBoard()` against production then answered for a manager and a member (105 rows; Wins = win, Losses = loss, Pre-arb =
+  neither). **Deploy order for any later scoreboard migration: apply it, THEN push.** The board selects every new column,
+  and a missing one makes every read answer 503.
 - **Shown in migration: APPLIED 2026-10-07** by session `728157e2` on Kane's *"I approve run it please I cant run it on my
   end"*. `2026-10-07_accounting_scoreboard_custom_section_host.sql` adds one nullable column and its CHECK. It has no data
   step, so there was nothing to back up. Dry run 21/21 (rolled back), then `--apply` 21/21 (committed), then `--verify`
