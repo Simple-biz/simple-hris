@@ -630,12 +630,16 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   `lock_timeout = 10s`. Re-check any time with
   `node --import tsx scripts/apply-accounting-scoreboard-round3-migration.mts --verify`.
 - **The round-3 code needs that migration**, which is applied. **The push: PENDING** (Kane).
-- **Shown in migration (2026-10-07): PENDING Kane's go.** `2026-10-07_accounting_scoreboard_custom_section_host.sql` adds
-  one nullable column and its CHECK, with no data step, so there is nothing to back up. **Apply it BEFORE pushing this
-  code:** the board selects `host_section_key`, and until the column exists every board read answers "not set up yet"
-  (`isMissingTable`). Run `node --import tsx scripts/apply-accounting-scoreboard-custom-host-migration.mts` (a dry run,
-  rolled back), then `--apply`, then `--verify`. It has not been run, dry or otherwise (session `728157e2`). Then Carla
-  adds "Sales - Projects Onboarded" herself: Setup → Sections, Shown in = Sales Onboarding tab, then its lines under Rows.
+- **Shown in migration: APPLIED 2026-10-07** by session `728157e2` on Kane's *"I approve run it please I cant run it on my
+  end"*. `2026-10-07_accounting_scoreboard_custom_section_host.sql` adds one nullable column and its CHECK. It has no data
+  step, so there was nothing to back up. Dry run 21/21 (rolled back), then `--apply` 21/21 (committed), then `--verify`
+  21/21; the round-3 `--verify` re-passed after it. The checks include the live CHECK listing exactly `HOST_SECTION_KEYS`,
+  four refusals (Outcomes, `custom`, an unknown key, a tab label), and the table still service-role only. Read back through
+  PostgREST: the board's exact custom-section select answers (0 rows), and the anon key is refused (`42501`). Re-check any
+  time with `node --import tsx scripts/apply-accounting-scoreboard-custom-host-migration.mts --verify`. The column has to
+  exist before this code is deployed: the board selects `host_section_key`, and a missing column makes every board read
+  answer "not set up yet" (`isMissingTable`). **The push: PENDING** (Kane). After it, Carla adds "Sales - Projects
+  Onboarded" herself: Setup → Sections, Shown in = Sales Onboarding tab, then its lines under Rows.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.
