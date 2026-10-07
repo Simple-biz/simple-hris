@@ -247,7 +247,12 @@ the Sunday); if OMS keys the week differently, the column env var changes, not t
 ### Send to OMS — PENDING, three steps outside this repo
 
 1. **PENDING — the OMS team creates the table in THEIR project** (this file is the contract;
-   `oms-return.test.ts` fails if the column list below drifts from `OMS_RETURN_COLUMNS`):
+   `oms-return.test.ts` fails if the column list below drifts from `OMS_RETURN_COLUMNS`).
+   **The file to send their dev** is `references/sql/external/oms/2026-10-07_hris_orphanage_returns.sql`
+   (2026-10-07): the same columns, also test-pinned, plus the concrete access block. Our key is an
+   `sb_secret_` (service_role) key, so it turns RLS on, revokes anon/authenticated, grants
+   `service_role` SELECT + INSERT and revokes its UPDATE/DELETE/TRUNCATE, which makes append-only hold
+   in their database too. The generic shape:
 
 ```sql
 create table public.hris_orphanage_returns (

@@ -145,6 +145,15 @@ test('the DDL handed to the OMS team names every column the writer inserts — a
   assert.deepEqual(declared, [...OMS_RETURN_COLUMNS]);
 });
 
+test('the SQL file sent to the OMS dev names every column the writer inserts, and no other', () => {
+  const file = readFileSync(path.join(process.cwd(), 'references/sql/external/oms/2026-10-07_hris_orphanage_returns.sql'), 'utf8');
+  const declared = [...file.matchAll(/^\s{2}([a-z_]+)\s+(?:uuid|timestamptz|text|date|numeric|boolean)\b/gm)].map((x) => x[1]);
+  assert.deepEqual(declared, [...OMS_RETURN_COLUMNS]);
+  // Append-only on their side too: the HRIS key may never UPDATE or DELETE there.
+  assert.match(file, /revoke update, delete, truncate on public\.hris_orphanage_returns from service_role/);
+  assert.match(file, /grant select, insert on public\.hris_orphanage_returns to service_role/);
+});
+
 test('an OMS error becomes a sentence naming what is missing and whose job it is', async () => {
   const { describeOmsReturnError } = await import('./oms-return-write');
   assert.match(describeOmsReturnError('t', { code: '42P01', message: 'relation "t" does not exist' }, 'read'), /no table named "t"/);
