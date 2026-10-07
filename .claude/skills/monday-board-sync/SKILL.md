@@ -127,6 +127,10 @@ are ours (`[HRIS] ` prefix), and Roadmap & Epics is 208 of which 37 are ours (`H
 ### 2. Establish what actually shipped
 `sprint-evidence.mts` gathers the mechanical part: commit range, per-commit file lists, the
 ancestor-of-`origin/main` check per sha, and detection of new `.sql` / `apply-*.mjs` / n8n files.
+It also prints the commits **Kane ruled off the board** (`KANE_EXCLUDED`, full shas, his ruling
+quoted). That is real work with no row and no SP. Never cluster those commits into a row, and never
+add to that list on your own: only Kane rules work off the board. The first entries are the three
+sign-in song commits from 2026-10-07 (item 386).
 
 Then **cluster by file overlap, never by commit message.** This is not optional pedantry — in one
 78-commit range: `488cf44` "HSL Weekend Hours Fix" contained no code at all, `02dc5aa` "Massiv

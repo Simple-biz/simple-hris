@@ -9,6 +9,7 @@
  *   • whether each sha is an ancestor of origin/main       → In Progress vs Pending Deploy
  *   • whether it adds a migration or an n8n workflow        → forces Pending Deploy
  *   • which files are pure noise (settings/build artefacts) → no board row warranted
+ *   • which commits Kane ruled OFF the board (KANE_EXCLUDED)  → no board row, no SP
  *   • which plan names already exist, so a near-miss cannot become a duplicate row
  *
  * What it deliberately does NOT do is cluster the commits. Grouping is judgement and must be done by
@@ -73,6 +74,28 @@ console.log(`\n${commits.length} commits in range\n`);
 const NOISE = /^(\.claude\/settings|tsconfig\.tsbuildinfo|next-env\.d\.ts|\.next\/|package-lock\.json$)/;
 const isNoise = (c: Commit) => c.files.length > 0 && c.files.every((f) => NOISE.test(f));
 
+/**
+ * Real work Kane ruled OFF the SP board: no row, no SP, never a bonus. Each entry is a FULL sha and
+ * quotes his ruling with its date. Exact commits only, never a path or message pattern, so a ruling
+ * can't swallow later work on the same files. Only Kane adds to this list.
+ */
+const KANE_EXCLUDED: ReadonlyArray<{ sha: string; ruling: string }> = [
+  {
+    sha: 'ce1d5cd400f52e6a0390d477bde88a4ff18a09c7',
+    ruling: `Kane 2026-10-07 "lets ignore this in SP bonus monday": Aliviah's sign-in song (item 386)`,
+  },
+  {
+    sha: '676302388b2f7763c6e4074a1056edc9b3aef45e',
+    ruling: `Kane 2026-10-07 "lets ignore this in SP bonus monday": sign-in song player hardening (item 386)`,
+  },
+  {
+    sha: 'f6871f96cfd61d1f8b6434ad08308d6c54dbf7d4',
+    ruling: `Kane 2026-10-07 "lets ignore this in SP bonus monday": Aliviah's sign-in song clip (item 386)`,
+  },
+];
+/** `c.sha` is git's abbreviated sha (%h); an entry matches when its full sha starts with it. */
+const exclusionFor = (c: Commit) => KANE_EXCLUDED.find((e) => c.sha.length >= 7 && e.sha.startsWith(c.sha));
+
 const pushedCache = new Map<string, boolean>();
 const isPushed = (sha: string) => {
   if (!originMain) return false;
@@ -88,10 +111,16 @@ const isPushed = (sha: string) => {
 };
 
 const noise: Commit[] = [];
+const excluded: { c: Commit; ruling: string }[] = [];
 console.log(`${'sha'.padEnd(9)} ${'date'.padEnd(11)} ${'push'} ${'files'.padStart(5)} ${'+lines'.padStart(7)}  blockers / subject`);
 for (const c of commits) {
   if (isNoise(c)) {
     noise.push(c);
+    continue;
+  }
+  const ex = exclusionFor(c);
+  if (ex) {
+    excluded.push({ c, ruling: ex.ruling });
     continue;
   }
   const blockers: string[] = [];
@@ -115,7 +144,12 @@ if (noise.length) {
   for (const c of noise) console.log(`  ${c.sha} ${c.date} ${c.subject.slice(0, 70)}`);
 }
 
-const unpushed = commits.filter((c) => !isNoise(c) && !isPushed(c.sha));
+if (excluded.length) {
+  console.log(`\nexcluded by Kane (real work ruled OFF the board — NO row, NO SP): ${excluded.length}`);
+  for (const { c, ruling } of excluded) console.log(`  ${c.sha} ${c.date} ${c.subject.slice(0, 60)}\n            ${ruling}`);
+}
+
+const unpushed = commits.filter((c) => !isNoise(c) && !exclusionFor(c) && !isPushed(c.sha));
 console.log(`\nunpushed non-noise commits: ${unpushed.length}${unpushed.length ? ' → anything built on these is In Progress, not Pending Deploy' : ''}`);
 
 // Every un-run external step in the repo. A row whose feature depends on one of these is not Done.

@@ -231,6 +231,21 @@ carried three and named a department that was a different commit, `0b66a8e` "HSL
 offboarding n8n workflow, and `5eb398a`'s weekend-OT pricing was **reversed** by `e0028b8` — so one
 row must describe the current rule rather than two contradictory rows.
 
+### Work Kane rules off the board
+
+Some real work earns no row and no SP: Kane decides what is bonus-eligible. His rulings live in
+`KANE_EXCLUDED` in `sprint-evidence.mts`. Each entry is a **full sha** with his words and the date.
+The evidence run prints those commits in their own section, *"excluded by Kane — NO row, NO SP"*,
+leaves them out of the per-commit list a pass clusters from, and leaves them out of the unpushed
+count.
+
+An entry is exact commits only, never a path or message pattern, so a ruling cannot swallow later
+work on the same files. Only Kane adds to the list.
+
+| Ruled | Commits | Work | Kane |
+|---|---|---|---|
+| 2026-10-07 | `ce1d5cd4` · `67630238` · `f6871f96` | Aliviah's sign-in song: the table, the player hardening, her clip (item 386) | *"this is all good lets ignore this in SP bonus monday please"* |
+
 ## A sprint label is a claim about dates, and it is now checked (2026-08-13)
 
 Sprint windows are **board facts** — they are in the group titles: `Sprint 26 · Aug 4-15 · Backlog
