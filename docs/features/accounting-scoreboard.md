@@ -19,7 +19,8 @@ every payroll problem, and custom sections.
 | --- | --- |
 | Tables, guards, lock-down | `references/sql/create/2026-10-01_accounting_scoreboard.sql` |
 | Round 3: custom sections, row flags, Outcomes slots, Payment Verified, the problem log and types | `references/sql/create/2026-10-06_accounting_scoreboard_round3.sql` |
-| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` |
+| A custom section shown inside a built-in tab (`host_section_key`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_custom_section_host.sql` |
+| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` |
 | The 11 built-in sections (kind, days, slots, goals), custom sections, tabs | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
@@ -94,7 +95,7 @@ hard-coded subset. Managers can also add sections of their own (§ Custom sectio
 | Accounting Buckets | AM/PM | Mon–Fri | **Carla's rule** (§ Buckets): Score = 10 × Completed ÷ (Completed + Open); headline = the overall, 10 × Σ Completed ÷ Σ(Completed + Open) over the scored buckets | ≥ 8 |
 | Collections | log (+ Payment Verified) | Mon–Fri | team points | ≥ 85 |
 | PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average; No Meeting Streak in the header | — |
-| Customer Sales Onboarding | daily | Mon–Fri | week total | — |
+| Sales — Payments (the Sales Onboarding tab; "Customer Sales Onboarding" until 2026-10-07) | daily | Mon–Fri | week total | — |
 | Email Inbox | AM/PM | Mon–Fri | 10 − average PM count (0 → 10, ≥ 9 → 1); headline = score of the team average | ≥ 9 |
 | Chargebacks · Open Disputes | AM/PM | Mon–Fri | open now (the latest reading of the lines not marked "due in 7 days"); the due-in-7-days line is called out | — |
 | Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | per outcome (Pre-arb, Wins, Losses): week $ and week # | — |
@@ -102,7 +103,7 @@ hard-coded subset. Managers can also add sections of their own (§ Custom sectio
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | — |
 | Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
 | Payroll Problems | **log**, one line per problem (or batch) with its type (§ Payroll Problems) | Mon–Fri | week total | < 20 |
-| a manager's custom section | one number a day, or AM/PM scored like Buckets | Mon–Fri | week total, or the Buckets overall | optional |
+| a manager's custom section | one number a day, or AM/PM scored like Buckets; a tab of its own or shown inside a built-in tab | Mon–Fri | week total, or the Buckets overall | optional |
 
 - **A blank is never a 0.** The sheet's `SUM` treated a blank PM as 0, so a day with an AM count and no PM
   was credited as fully cleared (Thursday's bucket showed +68 with nothing typed). That cannot happen here:
@@ -206,12 +207,45 @@ Add section** (`accounting_scoreboard_custom_sections`).
   - **One number a day**: the headline is the week total; the goal is "at least" or "below".
   - **Start and end of day**: AM/PM readings scored exactly like Buckets (§ Buckets); the goal is a 0–10 score
     to reach.
-- It gets a tab, an Overview card and a menu entry, after the built-ins (newest first). Its rows are added under Setup →
-  Rows like any section (`section_key 'custom'` + `custom_section_id`; uniqueness of a label or person is per
-  custom section). Numbers are typed into its grid; the same write rules apply.
+- It gets a tab, an Overview card and a menu entry, after the built-ins (newest first), **or it is shown inside a
+  built-in section's tab** (§ Shown in). Its rows are added under Setup → Rows like any section (`section_key 'custom'`
+  + `custom_section_id`; uniqueness of a label or person is per custom section). Numbers are typed into its grid; the
+  same write rules apply.
 - It can be renamed, switched off, given or cleared a goal, or **removed (archived, never deleted)**: its
   rows and numbers stay in the tables. A removed section's rows take no writes.
 - Built-in sections stay code. A custom section can never become a payroll, collections or log section.
+
+### Shown in: a custom section inside a built-in tab (2026-10-07)
+
+Carla, 2026-10-07 (forwarded by Kane, with screenshots of the Chargebacks and Sales Onboarding tabs): the Sales
+Onboarding tab should hold two sections the way Chargebacks holds Open Disputes and Outcomes. They are **"Sales -
+Payments"**, the section already tracked, and a new **"Sales - Projects Onboarded"**. She asked: *"Do I build it like
+Sales Onboarding - Projects onboarded, then it would add to the correct tab?"* No. **A section's name never decides
+where it is shown.** A name-prefix rule would break on a renamed tab, and it would swallow any title that happened to
+start with a tab's label.
+
+- **The built-in `onboarding` section is titled "Sales — Payments"** (it was the sheet's "Customer Sales Onboarding").
+  The tab keeps its name, Sales Onboarding. Its Overview unit is "payments", and its help line says what is typed. Its
+  live lines are Carla's own, "Scheduled" and "Urgent" (created 2026-10-01). **Known quirk:** the weeks before 2026-10-01
+  hold the sheet's per-closer *customers onboarded* counts (the archived closer rows, `sheet-import`), and they now show
+  under the new title. Whether those weeks belong to Payments or to Projects Onboarded is Carla's call.
+- **Shown in** (Setup → Sections, on the Add form and on each of your own sections) is **"Its own tab"** (the default,
+  and every section made before this) or a built-in section's tab. It is stored as
+  `accounting_scoreboard_custom_sections.host_section_key`, and can be changed at any time; the rows and numbers do not
+  move.
+- **A host is any built-in section that has a tab of its own** (`HOST_SECTION_KEYS`; Outcomes is excluded because it is
+  itself shown inside Chargebacks). The SQL CHECK `acct_sb_custom_host_valid` lists the same keys: `sections.test.ts`
+  pins them, the apply script compares the live CHECK against the code, and `validate.ts` refuses anything else (an
+  unknown key, `chargeback_outcomes`, `custom`, or a tab's label) before the database sees it.
+- **Inside the host's tab** its grid sits under the host's own panel, after any built-in hosted section (Outcomes),
+  newest first. This works under every panel: under a grid, the Collections log, Payroll Timing or Payroll Problems.
+- **It keeps its Overview card**, placed right after its host's card, and the card opens the host's tab
+  (`overviewSections`, `tabIdFor`). It has its own number and goal, so moving its grid never hides its stop light.
+  Outcomes still has no card: it has no single number. It has **no tab and no phone-menu entry** of its own.
+- **It never disappears silently** (the Outcomes rule): if its host is switched off, it takes a tab of its own. If it is
+  switched off itself, it shows nowhere, like any section.
+- Setup names a hosted section with its tab: "Sales Onboarding — Sales - Projects Onboarded", as for "Chargebacks —
+  Outcomes" (`sectionLabel`).
 
 ## Payroll Timing fills itself, from the Payroll Wizard
 
@@ -436,6 +470,12 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   2026-10-01 against the real `ScoreboardApp`, bundled with a mocked board GET, with 26 scripted checks at
   390, 700, 1024 and 1360 px, light and dark, and under reduced motion.
 
+- **Shown in was verified 2026-10-07** in headless Chromium on the real `ScoreboardApp`, fed the 2026-10-06 production
+  board plus fixtures (Carla's section shown in Sales Onboarding, one under Collections, one with its own tab). 62
+  scripted checks passed at 1360 px light and dark and at 390 px. They covered: the renamed card, the hosted card right
+  after its host and opening the host's tab, no tab or menu entry for a hosted section, Payments above Projects
+  Onboarded on one tab, a grid under the Collections log, the Shown in pickers, the POST and PATCH bodies, the Rows
+  picker's label, no page-wide horizontal scroll, and no console errors. **Not clicked through signed in.**
 - **Round 3 was verified 2026-10-06** in headless Chromium on the real `ScoreboardApp`, fed this week's board as
   `readBoard()` returns it from production (read-only), plus local fixtures for the states production does not
   hold yet: a verified line, problem lines, a custom section and an outcome. 69 scripted checks passed at 1360 px
@@ -590,6 +630,12 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   `lock_timeout = 10s`. Re-check any time with
   `node --import tsx scripts/apply-accounting-scoreboard-round3-migration.mts --verify`.
 - **The round-3 code needs that migration**, which is applied. **The push: PENDING** (Kane).
+- **Shown in migration (2026-10-07): PENDING Kane's go.** `2026-10-07_accounting_scoreboard_custom_section_host.sql` adds
+  one nullable column and its CHECK, with no data step, so there is nothing to back up. **Apply it BEFORE pushing this
+  code:** the board selects `host_section_key`, and until the column exists every board read answers "not set up yet"
+  (`isMissingTable`). Run `node --import tsx scripts/apply-accounting-scoreboard-custom-host-migration.mts` (a dry run,
+  rolled back), then `--apply`, then `--verify`. It has not been run, dry or otherwise (session `728157e2`). Then Carla
+  adds "Sales - Projects Onboarded" herself: Setup → Sections, Shown in = Sales Onboarding tab, then its lines under Rows.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.

@@ -28,8 +28,10 @@ import { Button } from '@/components/ui/button';
 import {
   boardSections,
   hostedSections,
+  overviewSections,
   resolveSections,
   rowSectionId,
+  tabIdFor,
   tabSections,
   type BoardSection,
   type Slot,
@@ -344,8 +346,11 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     () => boardSections(board?.settings ?? [], board?.customSections ?? []),
     [board?.settings, board?.customSections],
   );
-  // Every section that is on gets a tab, except one shown inside its host's tab (Outcomes inside Chargebacks).
+  // Every section that is on gets a tab, except one shown inside its host's tab (Outcomes inside
+  // Chargebacks, a custom section a manager put inside a built-in tab).
   const tabs = useMemo(() => tabSections(sections), [sections]);
+  // A custom section shown inside another tab keeps its Overview card, right after its host's.
+  const cardSections = useMemo(() => overviewSections(sections), [sections]);
   const lookup = useMemo(() => buildLookup(board?.entries ?? []), [board?.entries]);
 
   // A tab whose section was just switched off falls back to the overview.
@@ -526,26 +531,35 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   };
   const activeLabel = activeTab === 'overview' ? 'Overview' : activeTab === 'setup' ? 'Setup' : (activeSection?.tab ?? 'Overview');
 
-  /** A grid section's panel, plus any section shown inside its tab (Outcomes under Open Disputes). */
-  const gridPanel = (section: BoardSection) => (
+  const sectionGrid = (s: BoardSection) => (
+    <SectionGrid
+      key={s.id}
+      section={s}
+      rows={rowsFor(s.id)}
+      weekStart={board.weekStart}
+      lastWeekStart={board.lastWeekStart}
+      today={board.today}
+      lookup={lookup}
+      isManager={board.viewer.isManager}
+      onSave={saveEntry}
+      onEditing={onEditing}
+      lastMeetingDate={board.lastMeetingDate}
+    />
+  );
+  /**
+   * A tab's panel, then every section shown inside it (Outcomes under Open Disputes; a custom section
+   * under any built-in section a manager put it in, whatever that section's own panel is).
+   */
+  const withHosted = (section: BoardSection, panel: ReactNode) => (
     <div className="space-y-8">
-      {[section, ...hostedSections(sections, section)].map((s) => (
-        <SectionGrid
-          key={s.id}
-          section={s}
-          rows={rowsFor(s.id)}
-          weekStart={board.weekStart}
-          lastWeekStart={board.lastWeekStart}
-          today={board.today}
-          lookup={lookup}
-          isManager={board.viewer.isManager}
-          onSave={saveEntry}
-          onEditing={onEditing}
-          lastMeetingDate={board.lastMeetingDate}
-        />
-      ))}
+      {panel}
+      {hostedSections(sections, section).map(sectionGrid)}
     </div>
   );
+  const openCard = (id: string) => {
+    const s = sections.find((x) => x.id === id);
+    selectTab(s ? tabIdFor(sections, s) : id);
+  };
 
   return (
     <Shell>
@@ -701,35 +715,44 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
                 {activeTab === 'setup' ? (
                   <SetupPanel board={board} sections={sections} onChanged={() => void load(week, true)} />
                 ) : !activeSection ? (
-                  <Overview board={board} sections={tabs} lookup={lookup} onOpen={selectTab} />
+                  <Overview board={board} sections={cardSections} lookup={lookup} onOpen={openCard} />
                 ) : activeSection.kind === 'payroll_cycle' ? (
-                  <PayrollCyclePanel
-                    section={resolved.find((s) => s.key === 'payroll_timing')!}
-                    weekStart={board.weekStart}
-                    today={board.today}
-                    events={board.payrollEvents}
-                    firstClosedPeriodEnd={board.firstClosedPeriodEnd}
-                  />
+                  withHosted(
+                    activeSection,
+                    <PayrollCyclePanel
+                      section={resolved.find((s) => s.key === 'payroll_timing')!}
+                      weekStart={board.weekStart}
+                      today={board.today}
+                      events={board.payrollEvents}
+                      firstClosedPeriodEnd={board.firstClosedPeriodEnd}
+                    />,
+                  )
                 ) : activeSection.kind === 'collections' ? (
-                  <CollectionsPanel
-                    section={resolved.find((s) => s.key === 'collections')!}
-                    board={board}
-                    rows={rowsFor('collections')}
-                    onLog={logCollection}
-                    onDelete={deleteCollection}
-                    onVerify={verifyCollection}
-                  />
+                  withHosted(
+                    activeSection,
+                    <CollectionsPanel
+                      section={resolved.find((s) => s.key === 'collections')!}
+                      board={board}
+                      rows={rowsFor('collections')}
+                      onLog={logCollection}
+                      onDelete={deleteCollection}
+                      onVerify={verifyCollection}
+                    />,
+                  )
                 ) : activeSection.kind === 'problem_log' ? (
-                  <ProblemsPanel
-                    section={activeSection}
-                    board={board}
-                    rows={rowsFor(activeSection.id)}
-                    lookup={lookup}
-                    onLog={logProblem}
-                    onDelete={deleteProblem}
-                  />
+                  withHosted(
+                    activeSection,
+                    <ProblemsPanel
+                      section={activeSection}
+                      board={board}
+                      rows={rowsFor(activeSection.id)}
+                      lookup={lookup}
+                      onLog={logProblem}
+                      onDelete={deleteProblem}
+                    />,
+                  )
                 ) : (
-                  gridPanel(activeSection)
+                  withHosted(activeSection, sectionGrid(activeSection))
                 )}
               </motion.div>
             </AnimatePresence>
@@ -955,7 +978,7 @@ function headlineUnit(s: BoardSection): string {
     case 'payroll_timing':
       return 'cycle score';
     case 'onboarding':
-      return 'onboarded';
+      return 'payments';
     case 'compliance':
       return 'done';
     case 'cancellations':

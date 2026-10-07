@@ -176,12 +176,15 @@ export const SECTIONS: readonly SectionDef[] = [
   },
   {
     key: 'onboarding',
-    title: 'Customer Sales Onboarding',
+    // Carla, 2026-10-07: this section is "Sales - Payments" (its live lines are Scheduled and Urgent);
+    // "Sales - Projects Onboarded" is a custom section shown in this tab. It was "Customer Sales
+    // Onboarding" (the sheet's name; the weeks before 2026-10-01 hold its per-closer counts).
+    title: 'Sales — Payments',
     tab: 'Sales Onboarding',
     kind: 'daily',
     days: MON_FRI,
     rowNoun: 'line',
-    help: 'Customers onboarded for each closer that day.',
+    help: 'Sales payments each day, one number per line.',
   },
   {
     key: 'inbox',
@@ -317,6 +320,18 @@ export const CUSTOM_KIND_LABEL: Record<CustomKind, string> = {
   am_pm: 'Start and end of day, scored like Buckets',
 };
 
+/**
+ * The built-in sections a custom section may be shown inside (Carla, 2026-10-07: "Sales - Projects
+ * Onboarded" on the Sales Onboarding tab). Every built-in that has a tab of its own, so not one that
+ * is itself shown inside another (Outcomes). The SQL CHECK acct_sb_custom_host_valid lists the same
+ * keys (pinned in sections.test.ts).
+ */
+export const HOST_SECTION_KEYS = SECTIONS.filter((s) => s.hostTab === undefined).map((s) => s.key);
+
+export function isHostSectionKey(value: unknown): value is SectionKey {
+  return isSectionKey(value) && HOST_SECTION_KEYS.includes(value);
+}
+
 /** A row of accounting_scoreboard_custom_sections, as the board reads it. */
 export interface CustomSection {
   id: string;
@@ -327,6 +342,8 @@ export interface CustomSection {
   goalDirection: GoalDirection | null;
   enabled: boolean;
   sortOrder: number;
+  /** The built-in tab it is shown inside; null = a tab of its own. */
+  hostSectionKey: SectionKey | null;
 }
 
 /**
@@ -376,7 +393,13 @@ export function customBoardSection(c: CustomSection): BoardSection {
         ? 'A reading at the start (AM) and end (PM) of each day. Score = 10 × completed ÷ (completed + open).'
         : 'One number a day for each line.',
     enabled: c.enabled,
+    hostTab: c.hostSectionKey ?? undefined,
   };
+}
+
+/** How Setup names a section: a hosted one says whose tab it sits in ("Chargebacks — Outcomes"). */
+export function sectionLabel(s: Pick<BoardSection, 'title' | 'hostTab'>): string {
+  return s.hostTab ? `${sectionDef(s.hostTab).tab} — ${s.title}` : s.title;
 }
 
 /**
@@ -400,7 +423,26 @@ export function tabSections(sections: readonly BoardSection[]): BoardSection[] {
   return sections.filter((s) => s.enabled && !(s.hostTab && on.has(s.hostTab)));
 }
 
-/** The enabled sections shown inside `host`'s tab. */
+/**
+ * The enabled sections shown inside `host`'s tab, under the host: the built-in ones first (Outcomes),
+ * then the custom ones, newest first (the board order).
+ */
 export function hostedSections(sections: readonly BoardSection[], host: BoardSection): BoardSection[] {
   return sections.filter((s) => s.enabled && s.hostTab !== undefined && s.hostTab === host.id);
+}
+
+/**
+ * The Overview's cards: one per tab, each followed by the CUSTOM sections shown inside it. A custom
+ * section has its own number and goal, so moving its grid into another tab never takes its card away.
+ * A built-in hosted section (Outcomes) has no single number, so it has no card.
+ */
+export function overviewSections(sections: readonly BoardSection[]): BoardSection[] {
+  return tabSections(sections).flatMap((t) => [t, ...hostedSections(sections, t).filter((s) => s.key === 'custom')]);
+}
+
+/** The tab a section's grid is on: its own, or its host's while it sits inside the host's tab. */
+export function tabIdFor(sections: readonly BoardSection[], section: BoardSection): string {
+  const tabs = tabSections(sections);
+  if (tabs.some((t) => t.id === section.id)) return section.id;
+  return tabs.find((t) => t.id === section.hostTab)?.id ?? section.id;
 }

@@ -15,14 +15,16 @@ export const runtime = 'nodejs';
 
 /**
  * POST  /api/accounting-scoreboard/custom-sections
- *       { title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below' }   (managers)
+ *       { title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below', hostSectionKey? }   (managers)
  * PATCH /api/accounting-scoreboard/custom-sections
- *       { id, title?, enabled?, goal? (null clears), goalDirection?, archived?: true }    (managers)
+ *       { id, title?, enabled?, goal? (null clears), goalDirection?, hostSectionKey? (null = own tab), archived?: true }
  *
  * Carla, 2026-10-02: "Add a button to create new sections". A custom section gets a tab and an
- * Overview card of its own. Its rows are added under Setup → Rows like any section, and its numbers
- * are typed into its grid (PUT /entries). An AM/PM section is scored like Accounting Buckets (0–10,
- * goal "at least"); a one-number-a-day section totals its week. Archived, never deleted.
+ * Overview card of its own, or (Carla, 2026-10-07) is shown inside a built-in section's tab
+ * (`hostSectionKey`, e.g. 'onboarding'), keeping its Overview card. Its rows are added under Setup →
+ * Rows like any section, and its numbers are typed into its grid (PUT /entries). An AM/PM section is
+ * scored like Accounting Buckets (0–10, goal "at least"); a one-number-a-day section totals its week.
+ * Archived, never deleted.
  */
 export async function POST(req: Request) {
   try {

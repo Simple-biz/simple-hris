@@ -200,15 +200,15 @@ test('Payroll Problems: a person, a weekday, a type and a whole count 1–1000 (
 test('custom sections: a name, one of two kinds, and a goal that fits the kind', () => {
   assert.deepEqual(parseCustomSectionCreate({ title: ' Refunds ', kind: 'daily' }), {
     ok: true,
-    value: { title: 'Refunds', kind: 'daily', goal: null, goalDirection: null },
+    value: { title: 'Refunds', kind: 'daily', goal: null, goalDirection: null, hostSectionKey: null },
   });
   assert.deepEqual(parseCustomSectionCreate({ title: 'Refunds', kind: 'daily', goal: 20, goalDirection: 'below' }), {
     ok: true,
-    value: { title: 'Refunds', kind: 'daily', goal: 20, goalDirection: 'below' },
+    value: { title: 'Refunds', kind: 'daily', goal: 20, goalDirection: 'below', hostSectionKey: null },
   });
   assert.deepEqual(parseCustomSectionCreate({ title: 'Queue', kind: 'am_pm', goal: 8 }), {
     ok: true,
-    value: { title: 'Queue', kind: 'am_pm', goal: 8, goalDirection: 'at_least' },
+    value: { title: 'Queue', kind: 'am_pm', goal: 8, goalDirection: 'at_least', hostSectionKey: null },
   });
   assert.equal(parseCustomSectionCreate({ title: 'Queue', kind: 'am_pm', goal: 11 }).ok, false, 'a score goal is 0–10');
   assert.equal(parseCustomSectionCreate({ title: 'Queue', kind: 'am_pm', goal: 8, goalDirection: 'below' }).ok, false);
@@ -218,4 +218,26 @@ test('custom sections: a name, one of two kinds, and a goal that fits the kind',
   assert.equal(parseCustomSectionPatch({ id: ROW, enabled: false }).ok, true);
   assert.equal(parseCustomSectionPatch({ id: ROW, archived: false }).ok, false);
   assert.equal(parseCustomSectionPatch({ id: ROW }).ok, false);
+});
+
+test("custom sections: shown inside a built-in tab only when hostSectionKey says so, never by the section's name", () => {
+  // Carla, 2026-10-07: "Sales - Projects Onboarded" under Sales Onboarding.
+  const hosted = parseCustomSectionCreate({ title: 'Sales - Projects Onboarded', kind: 'daily', hostSectionKey: 'onboarding' });
+  assert.equal(hosted.ok && hosted.value.hostSectionKey, 'onboarding');
+  const named = parseCustomSectionCreate({ title: 'Sales Onboarding - Projects Onboarded', kind: 'daily' });
+  assert.equal(named.ok && named.value.hostSectionKey, null, 'a name that starts with a tab label is still a tab of its own');
+  assert.equal(parseCustomSectionCreate({ title: 'X', kind: 'daily', hostSectionKey: null }).ok, true);
+  for (const bad of ['chargeback_outcomes', 'custom', 'Sales Onboarding', 'sales_onboarding', '', 7, true]) {
+    assert.equal(parseCustomSectionCreate({ title: 'X', kind: 'daily', hostSectionKey: bad }).ok, false, String(bad));
+    assert.equal(parseCustomSectionPatch({ id: ROW, hostSectionKey: bad }).ok, false, String(bad));
+  }
+  assert.deepEqual(parseCustomSectionPatch({ id: ROW, hostSectionKey: 'chargebacks' }), {
+    ok: true,
+    value: { id: ROW, hostSectionKey: 'chargebacks' },
+  });
+  assert.deepEqual(
+    parseCustomSectionPatch({ id: ROW, hostSectionKey: null }),
+    { ok: true, value: { id: ROW, hostSectionKey: null } },
+    'null moves it back to a tab of its own, and counts as a change',
+  );
 });

@@ -3414,9 +3414,11 @@ Managers. `{ sectionKey, enabled?, goal? }` (`goal: null` = the sheet's goal; a 
 
 ### `POST /api/accounting-scoreboard/custom-sections` · `PATCH`
 
-Managers. POST `{ title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below' }` → 201; PATCH `{ id, title?, enabled?,
-goal? (null clears), goalDirection?, archived?: true }`. An `am_pm` section is scored like Buckets, so its goal is a 0–10 score "at
-least"; a `daily` one totals its week. Titles are unique among live custom sections. Archived, never deleted.
+Managers. POST `{ title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below', hostSectionKey? }` → 201; PATCH `{ id,
+title?, enabled?, goal? (null clears), goalDirection?, hostSectionKey? (null = a tab of its own), archived?: true }`. An `am_pm` section
+is scored like Buckets, so its goal is a 0–10 score "at least"; a `daily` one totals its week. Titles are unique among live custom
+sections. Archived, never deleted. `hostSectionKey` (2026-10-07) shows the section inside a built-in section's tab: any built-in key
+with a tab of its own (not `chargeback_outcomes`; 400 otherwise; CHECK `acct_sb_custom_host_valid`). The title never decides it.
 
 ### `GET /api/accounting-scoreboard/roster`
 

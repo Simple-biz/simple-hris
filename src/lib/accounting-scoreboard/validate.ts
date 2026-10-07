@@ -11,6 +11,7 @@ import {
   MON_FRI,
   SLOTS,
   SLOTS_BY_KIND,
+  isHostSectionKey,
   isRowSectionKey,
   isSectionKey,
   sectionDef,
@@ -400,6 +401,18 @@ export interface CustomSectionCreate {
   kind: CustomKind;
   goal: number | null;
   goalDirection: GoalDirection | null;
+  /** The built-in tab it is shown inside; null = a tab of its own. */
+  hostSectionKey: SectionKey | null;
+}
+
+/**
+ * Where a custom section is shown: absent or null = a tab of its own; otherwise a built-in section
+ * that has a tab of its own (HOST_SECTION_KEYS). A section's name never decides it.
+ */
+export function parseHostSectionKey(value: unknown): Parsed<SectionKey | null> {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (!isHostSectionKey(value)) return { ok: false, error: 'hostSectionKey is a built-in tab, or null for a tab of its own' };
+  return { ok: true, value };
 }
 
 export function cleanSectionTitle(value: unknown): string | null {
@@ -442,7 +455,9 @@ export function parseCustomSectionCreate(body: unknown): Parsed<CustomSectionCre
   const kind = b.kind as CustomKind;
   const goal = customGoal(kind, b.goal, b.goalDirection);
   if (!goal.ok) return goal;
-  return { ok: true, value: { title, kind, ...goal.value } };
+  const host = parseHostSectionKey(b.hostSectionKey);
+  if (!host.ok) return host;
+  return { ok: true, value: { title, kind, ...goal.value, hostSectionKey: host.value } };
 }
 
 export interface CustomSectionPatch {
@@ -452,6 +467,8 @@ export interface CustomSectionPatch {
   /** Raw: checked against the section's kind on the server (customGoal). null clears the goal. */
   goal?: unknown;
   goalDirection?: unknown;
+  /** null moves it back to a tab of its own. */
+  hostSectionKey?: SectionKey | null;
   archived?: true;
 }
 
@@ -473,11 +490,22 @@ export function parseCustomSectionPatch(body: unknown): Parsed<CustomSectionPatc
     out.goal = b.goal;
     out.goalDirection = b.goalDirection;
   }
+  if (b.hostSectionKey !== undefined) {
+    const host = parseHostSectionKey(b.hostSectionKey);
+    if (!host.ok) return host;
+    out.hostSectionKey = host.value;
+  }
   if (b.archived !== undefined) {
     if (b.archived !== true) return { ok: false, error: 'archived can only be true (a section is never brought back)' };
     out.archived = true;
   }
-  if (out.title === undefined && out.enabled === undefined && !('goal' in out) && out.archived === undefined) {
+  if (
+    out.title === undefined &&
+    out.enabled === undefined &&
+    !('goal' in out) &&
+    out.hostSectionKey === undefined &&
+    out.archived === undefined
+  ) {
     return { ok: false, error: 'Nothing to change' };
   }
   return { ok: true, value: out };

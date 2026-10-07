@@ -25,6 +25,7 @@ import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
 import {
   CUSTOM_KINDS,
   MON_FRI,
+  isHostSectionKey,
   isRowSectionKey,
   isSectionKey,
   type CustomKind,
@@ -230,6 +231,7 @@ type CustomSectionRecord = {
   enabled: boolean;
   sort_order: number;
   archived_at: string | null;
+  host_section_key: string | null;
 };
 
 function mapRow(r: RowRecord): BoardRow | null {
@@ -292,6 +294,7 @@ function mapCustomSection(r: CustomSectionRecord): CustomSection | null {
     goalDirection: goal === null ? null : direction,
     enabled: r.enabled,
     sortOrder: r.sort_order,
+    hostSectionKey: isHostSectionKey(r.host_section_key) ? r.host_section_key : null,
   };
 }
 
@@ -300,7 +303,7 @@ const COLLECTION_COLS = 'id, entry_date, row_id, business_name, points, amount_u
 /** The collection plus its live Payment Verified tick, embedded (no `.in()` of ids: the URL would outgrow PostgREST). */
 const COLLECTION_WITH_VERIFIED = `${COLLECTION_COLS}, verifications:${VERIFICATIONS}(verified_by, verified_by_name, verified_at)`;
 const PROBLEM_COLS = 'id, entry_date, row_id, type_id, problem_count, created_by, created_at';
-const CUSTOM_COLS = 'id, title, kind, goal, goal_direction, enabled, sort_order, archived_at';
+const CUSTOM_COLS = 'id, title, kind, goal, goal_direction, enabled, sort_order, archived_at, host_section_key';
 
 async function readBonusCandidates(): Promise<PreviewVerdict> {
   const sb = client();
@@ -1054,6 +1057,7 @@ export async function createCustomSection(viewer: Viewer, c: CustomSectionCreate
       kind: c.kind,
       goal: c.goal,
       goal_direction: c.goalDirection,
+      host_section_key: c.hostSectionKey,
       sort_order: Math.max(lowest - 1, -10000),
       created_by: viewer.email,
       updated_by: viewer.email,
@@ -1066,7 +1070,10 @@ export async function createCustomSection(viewer: Viewer, c: CustomSectionCreate
   return section ? { ok: true, value: section } : fail(500, 'db_error', 'The section came back unreadable.');
 }
 
-/** Rename, switch on/off, set or clear the goal, or archive (never deleted: its rows and numbers stay). */
+/**
+ * Rename, switch on/off, set or clear the goal, show it inside a built-in tab or back in its own, or
+ * archive (never deleted: its rows and numbers stay).
+ */
 export async function patchCustomSection(viewer: Viewer, p: CustomSectionPatch): Promise<Result<CustomSection>> {
   const current = await readLiveCustomSection(p.id);
   if (!current.ok) return current;
@@ -1079,6 +1086,7 @@ export async function patchCustomSection(viewer: Viewer, p: CustomSectionPatch):
     update.goal = goal.value.goal;
     update.goal_direction = goal.value.goalDirection;
   }
+  if (p.hostSectionKey !== undefined) update.host_section_key = p.hostSectionKey;
   if (p.archived) {
     update.archived_at = new Date().toISOString();
     update.archived_by = viewer.email;

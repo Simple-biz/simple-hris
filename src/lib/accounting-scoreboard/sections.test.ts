@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   CUSTOM_KINDS,
+  HOST_SECTION_KEYS,
   MON_FRI,
   ROW_SECTION_KEYS,
   SECTIONS,
@@ -21,11 +22,15 @@ import {
   customBoardSection,
   hostedSections,
   isRowSectionKey,
+  isHostSectionKey,
   isSectionKey,
+  overviewSections,
   resolveSections,
   rowSectionId,
   sectionDef,
+  sectionLabel,
   slotsFor,
+  tabIdFor,
   tabSections,
   type CustomSection,
 } from './sections';
@@ -34,6 +39,8 @@ const read = (file: string) => readFileSync(path.join(process.cwd(), 'references
 /** The 2026-10-01 tables, and round 3 (2026-10-06), which re-declares the section and slot CHECKs. */
 const BASE_SQL = read('2026-10-01_accounting_scoreboard.sql');
 const ROUND3_SQL = read('2026-10-06_accounting_scoreboard_round3.sql');
+/** 2026-10-07: where a custom section is shown (accounting_scoreboard_custom_sections.host_section_key). */
+const HOST_SQL = read('2026-10-07_accounting_scoreboard_custom_section_host.sql');
 
 /** The quoted values of the CHECK declared as `<declared> <name> check (… in (…))`. */
 function checkList(sql: string, constraint: string, declared = 'add constraint'): string[] {
@@ -144,6 +151,7 @@ const CUSTOM: CustomSection = {
   goalDirection: 'at_least',
   enabled: true,
   sortOrder: 0,
+  hostSectionKey: null,
 };
 
 test('a custom section renders like a built-in one: its own id, Mon–Fri, its kind and its goal', () => {
@@ -189,4 +197,68 @@ test('custom sections: the newest (lowest sort order, given by createCustomSecti
   const newer = { ...CUSTOM, id: '44444444-4444-4444-8444-444444444444', title: 'Newer', sortOrder: -1 };
   const custom = boardSections([], [older, newer]).filter((s) => s.key === 'custom');
   assert.deepEqual(custom.map((s) => s.title), ['Newer', 'Older']);
+});
+
+test('hosts: the CHECK lists exactly HOST_SECTION_KEYS = every built-in with a tab of its own (not Outcomes)', () => {
+  assert.deepEqual([...checkList(HOST_SQL, 'acct_sb_custom_host_valid')].sort(), [...HOST_SECTION_KEYS].sort());
+  assert.deepEqual(
+    [...HOST_SECTION_KEYS].sort(),
+    SECTIONS.filter((s) => s.hostTab === undefined)
+      .map((s) => s.key)
+      .sort(),
+  );
+  assert.ok(!isHostSectionKey('chargeback_outcomes'), 'a section shown inside another tab hosts nothing');
+  assert.ok(!isHostSectionKey('custom'));
+  assert.ok(isHostSectionKey('onboarding'));
+});
+
+test('Sales Onboarding (Carla, 2026-10-07): the built-in is Sales — Payments; Projects Onboarded is a custom section shown under it', () => {
+  assert.equal(sectionDef('onboarding').title, 'Sales — Payments');
+  assert.equal(sectionDef('onboarding').tab, 'Sales Onboarding', 'the tab keeps its name');
+
+  const projects: CustomSection = {
+    ...CUSTOM,
+    id: '55555555-5555-4555-8555-555555555555',
+    title: 'Sales - Projects Onboarded',
+    kind: 'daily',
+    goal: null,
+    goalDirection: null,
+    hostSectionKey: 'onboarding',
+  };
+  const all = boardSections([], [CUSTOM, projects]);
+  const p = all.find((s) => s.customId === projects.id)!;
+  const host = all.find((s) => s.id === 'onboarding')!;
+
+  assert.ok(!tabSections(all).some((s) => s.id === p.id), 'no tab of its own while Sales Onboarding is on');
+  assert.deepEqual(hostedSections(all, host).map((s) => s.id), [p.id], 'its grid sits under Sales — Payments');
+  assert.equal(tabIdFor(all, p), 'onboarding', 'its Overview card opens the Sales Onboarding tab');
+  assert.equal(tabIdFor(all, host), 'onboarding');
+  assert.equal(sectionLabel(p), 'Sales Onboarding — Sales - Projects Onboarded');
+  assert.equal(sectionLabel(all.find((s) => s.id === 'chargeback_outcomes')!), 'Chargebacks — Outcomes', 'unchanged for Outcomes');
+
+  // Its card follows its host's; Outcomes (no single number) still has none.
+  const cards = overviewSections(all).map((s) => s.id);
+  assert.equal(cards[cards.indexOf('onboarding') + 1], p.id);
+  assert.ok(!cards.includes('chargeback_outcomes'));
+  assert.ok(cards.includes(`custom:${CUSTOM.id}`), 'a custom section with its own tab keeps its card');
+
+  // Never disappears silently: with Sales Onboarding off, it takes a tab of its own.
+  const hostOff = boardSections([{ sectionKey: 'onboarding', enabled: false, goal: null }], [projects]);
+  const alone = hostOff.find((s) => s.customId === projects.id)!;
+  assert.ok(tabSections(hostOff).some((s) => s.id === alone.id));
+  assert.equal(tabIdFor(hostOff, alone), alone.id);
+  assert.equal(overviewSections(hostOff).filter((s) => s.id === alone.id).length, 1, 'one card, never two');
+
+  // Switched off itself: no grid, no card.
+  const off = boardSections([], [{ ...projects, enabled: false }]);
+  assert.deepEqual(hostedSections(off, off.find((s) => s.id === 'onboarding')!), []);
+  assert.ok(!overviewSections(off).some((s) => s.customId === projects.id));
+});
+
+test('hosted sections: the built-in ones first, then custom ones newest first', () => {
+  const a: CustomSection = { ...CUSTOM, id: '66666666-6666-4666-8666-666666666666', title: 'Older', sortOrder: 0, hostSectionKey: 'chargebacks' };
+  const b: CustomSection = { ...CUSTOM, id: '77777777-7777-4777-8777-777777777777', title: 'Newer', sortOrder: -1, hostSectionKey: 'chargebacks' };
+  const all = boardSections([], [a, b]);
+  const host = all.find((s) => s.id === 'chargebacks')!;
+  assert.deepEqual(hostedSections(all, host).map((s) => s.title), ['Outcomes', 'Newer', 'Older']);
 });

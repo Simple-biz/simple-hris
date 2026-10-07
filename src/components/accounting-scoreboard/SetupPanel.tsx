@@ -23,9 +23,11 @@ import { Switch } from '@/components/ui/switch';
 import {
   CUSTOM_KIND_LABEL,
   CUSTOM_KINDS,
+  HOST_SECTION_KEYS,
   MON_FRI,
   WEEKDAY_LABEL,
   sectionDef,
+  sectionLabel,
   type BoardSection,
   type CustomKind,
   type GoalDirection,
@@ -127,7 +129,7 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
 
   async function patchCustom(
     id: string,
-    body: { enabled?: boolean; title?: string; goal?: number | null; goalDirection?: GoalDirection | null; archived?: true },
+    body: CustomPatchBody,
   ): Promise<boolean> {
     setBusy(id);
     const res = await api('/api/accounting-scoreboard/custom-sections', { method: 'PATCH', body: JSON.stringify({ id, ...body }) });
@@ -145,8 +147,8 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
         <div>
           <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Your own sections</h3>
           <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Each one gets a tab and an Overview card. Add its rows under Rows, like any section. Removing one hides it;
-            its numbers are kept.
+            Each one gets an Overview card, and a tab of its own or a place under one of the scoreboard&rsquo;s tabs
+            (&ldquo;Shown in&rdquo;). Add its rows under Rows, like any section. Removing one hides it; its numbers are kept.
           </p>
         </div>
         <NewSectionForm onCreated={onChanged} />
@@ -175,7 +177,7 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
                 />
                 <div className="min-w-0 flex-1">
                   <div className={cn('text-sm font-medium', s.enabled ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-400 line-through')}>
-                    {s.hostTab ? `${s.tab} — ${s.title}` : s.title}
+                    {sectionLabel(s)}
                   </div>
                   <div className="text-xs text-zinc-500">{s.help}</div>
                 </div>
@@ -208,7 +210,7 @@ function CustomSectionLine({
 }: {
   section: BoardSection;
   busy: boolean;
-  onPatch: (body: { enabled?: boolean; title?: string; goal?: number | null; goalDirection?: GoalDirection | null; archived?: true }) => Promise<boolean>;
+  onPatch: (body: CustomPatchBody) => Promise<boolean>;
 }) {
   const [title, setTitle] = useState(section.title);
   const [confirming, setConfirming] = useState(false);
@@ -241,6 +243,20 @@ function CustomSectionLine({
         />
         <span className="text-[11px] text-zinc-500">{CUSTOM_KIND_LABEL[kind]}</span>
       </div>
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-zinc-500">Shown in</span>
+        <SmoothSelect
+          value={section.hostTab ?? OWN_TAB}
+          onChange={(v) => void onPatch({ hostSectionKey: v === OWN_TAB ? null : (v as SectionKey) })}
+          options={HOST_OPTIONS}
+          disabled={busy}
+          accent="orange"
+          align="start"
+          portal
+          aria-label={`Where ${section.title} is shown`}
+          triggerClassName="h-8 text-xs"
+        />
+      </div>
       <CustomGoalEditor
         key={`${section.id}:${section.goal?.value ?? ''}:${section.goal?.direction ?? ''}`}
         kind={kind}
@@ -271,6 +287,25 @@ function CustomSectionLine({
 const DIRECTION_OPTIONS = [
   { value: 'at_least', label: 'at least' },
   { value: 'below', label: 'below' },
+];
+
+type CustomPatchBody = {
+  enabled?: boolean;
+  title?: string;
+  goal?: number | null;
+  goalDirection?: GoalDirection | null;
+  hostSectionKey?: SectionKey | null;
+  archived?: true;
+};
+
+/**
+ * Where a custom section is shown (Carla, 2026-10-07: "Sales - Projects Onboarded" under Sales
+ * Onboarding). Picked here, never read from the section's name.
+ */
+const OWN_TAB = '';
+const HOST_OPTIONS = [
+  { value: OWN_TAB, label: 'Its own tab' },
+  ...HOST_SECTION_KEYS.map((k) => ({ value: k, label: `${sectionDef(k).tab} tab` })),
 ];
 
 /** A custom section's goal: an AM/PM section's is a 0–10 score to reach; a daily one's is a week total, at least or below. */
@@ -343,6 +378,7 @@ function NewSectionForm({ onCreated }: { onCreated: () => void }) {
   const [kind, setKind] = useState<CustomKind>('daily');
   const [goal, setGoal] = useState('');
   const [direction, setDirection] = useState<GoalDirection>('at_least');
+  const [host, setHost] = useState<string>(OWN_TAB);
   const [busy, setBusy] = useState(false);
 
   async function create() {
@@ -354,19 +390,25 @@ function NewSectionForm({ onCreated }: { onCreated: () => void }) {
         kind,
         goal: goal.trim() === '' ? null : Number(goal),
         goalDirection: goal.trim() === '' ? null : kind === 'am_pm' ? 'at_least' : direction,
+        hostSectionKey: host === OWN_TAB ? null : host,
       }),
     });
     setBusy(false);
     if (!res.ok) return toast.error(res.error);
-    toast.success(`Added ${title.trim()}. Add its rows under Rows.`);
+    toast.success(
+      host === OWN_TAB
+        ? `Added ${title.trim()}. Add its rows under Rows.`
+        : `Added ${title.trim()} under the ${sectionDef(host as SectionKey).tab} tab. Add its rows under Rows.`,
+    );
     setTitle('');
     setGoal('');
+    setHost(OWN_TAB);
     onCreated();
   }
 
   return (
     <form
-      className="grid gap-3 rounded-xl border border-orange-100 bg-orange-50/40 p-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(12rem,16rem)] lg:grid-cols-[minmax(12rem,1fr)_16rem_auto_auto] lg:items-end dark:border-orange-950/60 dark:bg-orange-950/10"
+      className="grid gap-3 rounded-xl border border-orange-100 bg-orange-50/40 p-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(12rem,16rem)] xl:grid-cols-[minmax(12rem,1fr)_15rem_12rem_auto_auto] xl:items-end dark:border-orange-950/60 dark:bg-orange-950/10"
       onSubmit={(e) => {
         e.preventDefault();
         if (title.trim()) void create();
@@ -386,6 +428,19 @@ function NewSectionForm({ onCreated }: { onCreated: () => void }) {
           align="start"
           portal
           aria-label="What is typed"
+          triggerClassName="text-sm"
+        />
+      </div>
+      <div className="grid min-w-0 gap-1">
+        <span className={cn(TINY_CAPS, 'text-zinc-500')}>Shown in</span>
+        <SmoothSelect
+          value={host}
+          onChange={setHost}
+          options={HOST_OPTIONS}
+          accent="orange"
+          align="start"
+          portal
+          aria-label="Shown in"
           triggerClassName="text-sm"
         />
       </div>
@@ -536,7 +591,7 @@ function RowsArea({ board, sections, onChanged }: Props) {
             value={section.id}
             onChange={setSectionId}
             options={sections.map((s) => {
-              const name = s.hostTab ? `${s.tab} — ${s.title}` : s.title;
+              const name = sectionLabel(s);
               return { value: s.id, label: s.enabled ? name : `${name} (off)` };
             })}
             accent="orange"
