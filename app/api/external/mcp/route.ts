@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { admitExternalCall } from '@/lib/external-api/serve';
-import { buildMcpServer } from '@/lib/external-api/mcp-server';
-import type { GmlReadOutcome } from '@/lib/external-api/gml-read';
-import { readActiveGmlRows } from '@/lib/supabase/external-api-db';
+import { buildMcpServer, type McpToolOutcome } from '@/lib/external-api/mcp-server';
+import { EXTERNAL_SCOPES } from '@/lib/external-api/scopes';
+import { readActiveGmlRows, readOffboardedLedgerRows } from '@/lib/supabase/external-api-db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -20,6 +20,10 @@ export const runtime = 'nodejs';
  * `row_count` is what the tool returned. A new server + transport is built per
  * request and closed after it — nothing is kept between calls, so a revoke, an
  * expiry or a narrowed grant is honoured on the next POST.
+ *
+ * The gate admits a key holding ANY known scope; which query tools then exist is the
+ * key's own scopes (`toolsFor` in mcp-server.ts) — a roster-only key never sees
+ * `query_offboarded`, a leavers-only key never sees the roster tool (2026-10-07).
  *
  * GET and DELETE are 405: no server-initiated stream and no session to end.
  * The SSO proxy lets `/api/external/*` through; `admitExternalCall` is the gate.
@@ -62,7 +66,7 @@ export async function POST(req: NextRequest) {
     body = null;
   }
 
-  const admitted = await admitExternalCall(req, { method: 'POST', path: PATH, query });
+  const admitted = await admitExternalCall(req, { scopes: EXTERNAL_SCOPES, method: 'POST', path: PATH, query });
   if (!admitted.ok) return NextResponse.json(admitted.body, { status: admitted.status, headers: admitted.headers });
   const { client, grant, rateHeaders, log, touch } = admitted;
 
@@ -76,11 +80,13 @@ export async function POST(req: NextRequest) {
   const server = buildMcpServer({
     clientName: client.name,
     system: client.system,
+    scopes: Array.isArray(client.scopes) ? client.scopes : [],
     grant,
     rateLimitPerMinute: client.rate_limit_per_minute,
     expiresAt: client.expires_at,
     readRows: readActiveGmlRows,
-    onToolResult: (_tool, _args, outcome: GmlReadOutcome | null) => {
+    readOffboardedRows: readOffboardedLedgerRows,
+    onToolResult: (_tool, _args, outcome: McpToolOutcome | null) => {
       if (outcome && outcome.ok) rowCount = outcome.data.length;
       if (outcome && !outcome.ok) toolDenial = outcome.denial;
     },

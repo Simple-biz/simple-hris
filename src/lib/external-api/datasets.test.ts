@@ -4,11 +4,14 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { ALWAYS_COLUMNS, GML_CATALOG, NEVER_COLUMNS } from './catalog';
 import { MCP_TOOL_NAMES } from './mcp-server';
+import { OFFBOARDED_COLUMNS, OFFBOARDED_NEVER } from './offboarded';
+import { EXTERNAL_SCOPES } from './scopes';
 import {
   DATASETS,
   DATASET_DOMAINS,
   GLOBAL_MASTER_LIST_DATASET,
   LIVE_DATASETS,
+  OFFBOARDED_DATASET,
   datasetBySlug,
   type Dataset,
 } from './datasets';
@@ -85,6 +88,19 @@ test('the live scopes are exactly the scopes the SQL CHECK allows — both direc
   // A scope in the CHECK with no live page = a dataset keys can hold that the catalog calls planned.
   // A live page whose scope the CHECK refuses = a dataset the catalog calls reachable that no key can hold.
   assert.deepEqual(live, sql);
+});
+
+test('the scopes the gate and admin routes accept are exactly the live scopes (and so the SQL CHECK)', () => {
+  assert.deepEqual([...EXTERNAL_SCOPES].sort(), LIVE_DATASETS.map((d) => d.scope).sort());
+});
+
+test('the Offboarded page names exactly the columns the API serves — never retyped out of step', () => {
+  assert.deepEqual(['id', ...OFFBOARDED_DATASET.fields.map((x) => x.name)], [...OFFBOARDED_COLUMNS]);
+  assert.deepEqual([...OFFBOARDED_DATASET.always], ['id']);
+  assert.equal(OFFBOARDED_DATASET.neverServed, OFFBOARDED_NEVER);
+  for (const col of ['personal_email', 'off_boarded_note', 'off_boarded_by']) {
+    assert.ok(!OFFBOARDED_DATASET.fields.some((x) => x.name === col), `${col} must not be offered`);
+  }
 });
 
 test('every live dataset names a REST route that exists on disk', () => {

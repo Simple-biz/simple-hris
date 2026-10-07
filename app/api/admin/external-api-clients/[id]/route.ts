@@ -4,10 +4,12 @@ import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { auditFrom } from '@/lib/audit/context';
 import { generateApiKey, hashApiKey, keyPrefix, readPepper } from '@/lib/external-api/keys';
 import { normalizeGrant, hiddenCount } from '@/lib/external-api/grants';
+import { SCOPE_MIGRATION_PENDING, normalizeScopes } from '@/lib/external-api/scopes';
 import { expiresAtFor, parseExpiryOption } from '@/lib/external-api/expiry';
 import { parseRateLimit, RATE_LIMIT_CEILING, RATE_LIMIT_FLOOR } from '@/lib/external-api/rate-limit';
 import {
   getClient,
+  isScopeCheckRefusal,
   updateExternalApiClient,
   type ExternalApiClientPatch,
 } from '@/lib/supabase/external-api-db';
@@ -22,7 +24,8 @@ export const runtime = 'nodejs';
  *   { action: 'restore' }  → the SAME key works again (nothing was re-issued). An EXPIRED
  *                            key stays dead until its expiry is extended with 'update'.
  *   { action: 'rotate' }   → new key, same client id + history; old key dead. Returns api_key ONCE.
- *   { action: 'update', name?, system?, contact_email?, granted_columns?, expiry?, rate_limit_per_minute? }
+ *   { action: 'update', name?, system?, contact_email?, scopes?, granted_columns?, expiry?, rate_limit_per_minute? }
+ *                          → scopes: the datasets, at least one (absent = unchanged) — 2026-10-07
  *                          → granted_columns: null = whole table, list = only these (absent = unchanged)
  *                            expiry: '1d' | '15d' | '30d' | 'never', counted from NOW (absent = unchanged)
  *                            rate_limit_per_minute: 1..600 (absent = unchanged)
@@ -56,6 +59,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     name?: unknown;
     system?: unknown;
     contact_email?: unknown;
+    scopes?: unknown;
     granted_columns?: unknown;
     expiry?: unknown;
     rate_limit_per_minute?: unknown;
@@ -141,6 +145,19 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         patch.contact_email = contact ? contact.toLowerCase() : null;
         changes.contact_email = patch.contact_email;
       }
+      if (body.scopes !== undefined) {
+        const scopes = normalizeScopes(body.scopes);
+        if (!scopes.ok) return NextResponse.json({ error: scopes.error }, { status: 400 });
+        const was = Array.isArray(before.scopes) ? before.scopes : [];
+        if (JSON.stringify(scopes.scopes) !== JSON.stringify(was)) {
+          patch.scopes = scopes.scopes;
+          changes.scopes = scopes.scopes;
+          changes.was_scopes = was;
+          // Named so the audit row reads as a widening at a glance.
+          changes.added_scopes = scopes.scopes.filter((s) => !was.includes(s));
+          changes.removed_scopes = was.filter((s) => !(scopes.scopes as string[]).includes(s));
+        }
+      }
       if (body.granted_columns !== undefined) {
         const grant = normalizeGrant(body.granted_columns);
         if (!grant.ok) return NextResponse.json({ error: grant.error }, { status: 400 });
@@ -180,7 +197,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
 
   const updated = await updateExternalApiClient(id, patch);
-  if (updated.error !== null) return NextResponse.json({ error: updated.error }, { status: 500 });
+  if (updated.error !== null) {
+    if (isScopeCheckRefusal(updated.error)) return NextResponse.json({ error: SCOPE_MIGRATION_PENDING }, { status: 503 });
+    return NextResponse.json({ error: updated.error }, { status: 500 });
+  }
 
   void insertAuditLog({
     ...auditFrom(req, authz),

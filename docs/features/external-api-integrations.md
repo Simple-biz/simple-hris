@@ -188,10 +188,20 @@ The MCP route needed no proxy change — it is under the same prefix.
 
 ## One table = one route — still the rule
 
-The Sep 16 rule stands: the only scope is `global_master_list.read`, and **adding a table
-means a new scope in the SQL CHECK, a new catalog, and a new route (and MCP tool) that
-honours it** — never widening this one. Kane's model ("they only need Global Master List")
-kept v1 to this table; the catalog is where the next one goes.
+The Sep 16 rule stands: **adding a table means a new scope in the SQL CHECK, a new catalog,
+and a new route (and MCP tool) that honours it**, never widening this one. Kane's model
+("they only need Global Master List") kept v1 to this table.
+
+**The second scope shipped 2026-10-07 under exactly this rule:** `offboarded.read`. It is the
+leavers ledger at `GET /api/external/v1/offboarded` and the MCP tool `query_offboarded`, opt-in
+per key via the panel's new *Datasets* step. It is documented in
+[external-api-offboarded.md](./external-api-offboarded.md). Two things changed here with it:
+`authenticateExternalRequest` now takes the route's accepted scopes as a **required** argument (the
+`REQUIRED_SCOPE` constant is gone; no default, pinned by `scopes.test.ts`), and MCP registers a query
+tool only for a scope the key holds. A roster-only key still sees exactly two tools and the same
+`describe_access` payload. *Off-boarded people are unreachable* below is still true **of this route**.
+A key that also holds `offboarded.read` can read who left from the other one, and the panel says so
+when both are ticked.
 
 Every dataset that could be next — and the ones that never will be — is documented on the
 **Data catalog** tab beside this one (`integrations-data-catalog.md`, 2026-09-25). That tab is

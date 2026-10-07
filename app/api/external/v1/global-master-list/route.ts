@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { parseGmlQuery } from '@/lib/external-api/gml-query';
 import { executeGmlRead } from '@/lib/external-api/gml-read';
 import { admitExternalCall } from '@/lib/external-api/serve';
+import { GML_SCOPE } from '@/lib/external-api/scopes';
 import { readActiveGmlRows } from '@/lib/supabase/external-api-db';
 
 export const dynamic = 'force-dynamic';
@@ -42,7 +43,7 @@ function queryRecord(params: URLSearchParams): Record<string, unknown> | null {
 export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
 
-  const admitted = await admitExternalCall(req, { method: 'GET', path: PATH, query: queryRecord(params) });
+  const admitted = await admitExternalCall(req, { scopes: [GML_SCOPE], method: 'GET', path: PATH, query: queryRecord(params) });
   if (!admitted.ok) return NextResponse.json(admitted.body, { status: admitted.status, headers: admitted.headers });
   const { client, grant, rateHeaders, log, touch } = admitted;
 

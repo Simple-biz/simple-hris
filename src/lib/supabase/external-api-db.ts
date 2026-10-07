@@ -3,6 +3,7 @@ import 'server-only';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import type { GmlRow } from '@/lib/external-api/gml-query';
+import { OFFBOARDED_SELECT, OFFBOARDED_TABLE, type OffboardedLedgerRow } from '@/lib/external-api/offboarded';
 
 /**
  * Data access for the external read API — the client registry, the per-call
@@ -146,6 +147,8 @@ export type NewExternalApiClient = {
   contact_email: string | null;
   key_prefix: string;
   key_hash: string;
+  /** Validated by `normalizeScopes` in the route; the SQL CHECK enumerates the same list. */
+  scopes: string[];
   granted_columns: string[] | null;
   expires_at: string | null;
   rate_limit_per_minute: number;
@@ -157,7 +160,7 @@ export async function createExternalApiClient(input: NewExternalApiClient): Prom
   if (!supabase) return fail(NO_CLIENT);
   const { data, error } = await supabase
     .from(EXTERNAL_API_CLIENTS_TABLE)
-    .insert({ ...input, scopes: ['global_master_list.read'] })
+    .insert(input)
     .select(PUBLIC_COLUMNS)
     .single();
   if (error) return fail(error);
@@ -172,6 +175,7 @@ export type ExternalApiClientPatch = Partial<
     | 'contact_email'
     | 'key_prefix'
     | 'key_hash'
+    | 'scopes'
     | 'granted_columns'
     | 'expires_at'
     | 'rate_limit_per_minute'
@@ -339,4 +343,29 @@ export async function readActiveGmlRows(select: string): Promise<{ rows: GmlRow[
         .order('id', { ascending: true })
         .range(from, to) as unknown as PromiseLike<{ data: GmlRow[] | null; error: { message: string } | null }>,
   );
+}
+
+/**
+ * Every row of the leavers ledger (`offboarded_sheet`) for the `offboarded.read` scope —
+ * the fixed `OFFBOARDED_SELECT` (never `*`; `personal_email`, the note and the actor are
+ * not selected at all), ordered by id. Paged: 4,446 rows on 2026-10-07 and it only grows
+ * (memory/postgrest-1000-cap-sweep.md). The not-a-departure exclusion and every filter run
+ * in `applyOffboardedQuery`, so this read stays a plain mirror of the ledger.
+ */
+export async function readOffboardedLedgerRows(): Promise<{ rows: OffboardedLedgerRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  return selectAllPaged<OffboardedLedgerRow>(
+    (from, to) =>
+      supabase
+        .from(OFFBOARDED_TABLE)
+        .select(OFFBOARDED_SELECT)
+        .order('id', { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: OffboardedLedgerRow[] | null; error: { message: string } | null }>,
+  );
+}
+
+/** A write the scopes CHECK refused — the 2026-10-07 ALTER has not been applied yet. */
+export function isScopeCheckRefusal(error: string | null | undefined): boolean {
+  return !!error && error.includes('external_api_clients_scopes_known');
 }

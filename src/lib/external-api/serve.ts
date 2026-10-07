@@ -2,6 +2,7 @@ import 'server-only';
 
 import { authenticateExternalRequest, messageForDenial, type ExternalDenial } from './authenticate';
 import { normalizeGrant, type Grant } from './grants';
+import type { ExternalScope } from './scopes';
 import { clampRateLimit, decideFromWindow, RATE_LIMIT_WINDOW_MS, type RateDecision } from './rate-limit';
 import {
   countRecentCalls,
@@ -14,7 +15,8 @@ import { clientIp } from '@/lib/audit/context';
 /**
  * The gate every external call passes — REST and MCP alike.
  *
- *   1. who is calling           authenticateExternalRequest (hash → row → revoked / expired / scope)
+ *   1. who is calling           authenticateExternalRequest (hash → row → revoked / expired / scope —
+ *                               the key must hold one of `info.scopes`, which the route names)
  *   2. what it may see          the row's granted_columns, normalised (a corrupt grant REFUSES)
  *   3. how often                countRecentCalls over the last 60 s + decideFromWindow, with
  *                               the row's own rate_limit_per_minute — ONE budget for both routes
@@ -26,6 +28,8 @@ import { clientIp } from '@/lib/audit/context';
  */
 
 export type ExternalCallInfo = {
+  /** The scopes this route serves — the key must hold at least one. Required: no default. */
+  scopes: readonly ExternalScope[];
   method: 'GET' | 'POST';
   path: string;
   query: Record<string, unknown> | null;
@@ -89,7 +93,7 @@ export async function admitExternalCall(request: Request, info: ExternalCallInfo
   };
 
   // 1. Who.
-  const auth = await authenticateExternalRequest(request);
+  const auth = await authenticateExternalRequest(request, info.scopes);
   if (!auth.ok) {
     return deny(null, auth.keyPrefix, auth.status, auth.denial, messageForDenial(auth.denial), {
       'WWW-Authenticate': WWW_AUTHENTICATE,

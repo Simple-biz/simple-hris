@@ -9,8 +9,9 @@
  * on the brief (audit item 218): planned datasets are SHOWN, labelled not reachable;
  * Bank Info never offers a full account, routing or SWIFT number; and this file stays
  * DOCUMENTATION — Phase A's `resources/*.ts` registry
- * (`docs/superpowers/plans/2026-09-21-external-api-resources-and-writes.md`) replaces
- * it when a second dataset actually ships.
+ * (`docs/superpowers/plans/2026-09-21-external-api-resources-and-writes.md`) was to
+ * replace it when a second dataset shipped. The second one (Offboarded, 2026-10-07)
+ * shipped ahead of Phase A as its own scope + route, so this file still documents both.
  *
  * Rules this file owns:
  *
@@ -22,7 +23,8 @@
  *    "yes, pull bank info" when no key can.
  *  - **The GML fields ARE `catalog.ts`**, imported by reference — never retyped. The
  *    catalog is what the picker offers and the API serves; a second copy here would
- *    document columns the API does not have.
+ *    document columns the API does not have. The Offboarded page's field names are
+ *    pinned to `OFFBOARDED_COLUMNS` (`offboarded.ts`) by the test for the same reason.
  *  - **Planned fields are proposals.** Names and the final list are decided when the
  *    dataset is built (under `blueprint`, as a new scope + catalog + route —
  *    `external-api-integrations.md` § One table = one route).
@@ -33,6 +35,8 @@
  * Pure: the client bundle imports it.
  */
 import { ALWAYS_COLUMNS, GML_CATALOG, GML_TABLE_KEY, GML_TABLE_LABEL, NEVER_COLUMNS, type CatalogGroup } from './catalog';
+import { OFFBOARDED_LABEL, OFFBOARDED_NEVER, OFFBOARDED_TABLE } from './offboarded';
+import { GML_SCOPE, OFFBOARDED_SCOPE } from './scopes';
 
 // ─── Areas ────────────────────────────────────────────────────────────────────
 
@@ -162,7 +166,7 @@ export const GLOBAL_MASTER_LIST_DATASET: LiveDataset = {
   summary: 'The active roster: who works here, in which department, and how to reach them.',
   sources: [GML_TABLE_KEY],
   sensitivity: 'personal',
-  scope: 'global_master_list.read',
+  scope: GML_SCOPE,
   restPath: '/api/external/v1/global-master-list',
   mcpTool: 'query_global_master_list',
   grain:
@@ -187,46 +191,72 @@ export const GLOBAL_MASTER_LIST_DATASET: LiveDataset = {
   ],
 };
 
+export const OFFBOARDED_DATASET: LiveDataset = {
+  slug: 'offboarded',
+  label: OFFBOARDED_LABEL,
+  domain: 'people',
+  status: 'live',
+  summary: 'Who left, when, from which department, and the reason category.',
+  sources: [`${OFFBOARDED_TABLE} (the ledger HR → Offboarding → Offboarded lists)`],
+  sensitivity: 'personal',
+  scope: OFFBOARDED_SCOPE,
+  restPath: '/api/external/v1/offboarded',
+  mcpTool: 'query_offboarded',
+  grain:
+    'One row per recorded departure. A re-hire who left twice has two rows. A row says the departure was recorded, not that the person is gone today. For current status, read the Global Master List.',
+  leavers: 'This dataset is the leavers. Temporary pauses, and labels that say the person is still here, are never served.',
+  filters: ['email', 'department', 'reason', 'since', 'until', 'search', 'limit', 'cursor'],
+  paging:
+    'limit 1–500 (default 100). Follow page.next_cursor until it is null. The cursor is the ledger id, which only grows, so a stored cursor fetches only departures recorded since.',
+  fields: [
+    f('name', 'identity', 'Name as recorded on the offboarding'),
+    f('work_email', 'contact', 'Company email at the time they left'),
+    f('department', 'work', 'Department they left from'),
+    f('start_date', 'work', 'First day, YYYY-MM-DD (null when the stored text does not parse)'),
+    f('off_boarded_at', 'status', 'When they left, as stored'),
+    f('reason', 'status', 'Reason category: ncns · resigned · end_of_contract · performance · attendance · time_manipulation · policy_violation · no_show · declined_offer · rescheduled · other (null = not recorded)'),
+    f('origin', 'system', 'hris = offboarded in the HRIS; google_sheet = carried over from the retired Offboarded sheet'),
+  ],
+  always: ['id'],
+  neverServed: OFFBOARDED_NEVER,
+  caveats: [
+    {
+      kind: 'note',
+      text: 'Every key holding this dataset receives all of these fields. There is no per-field grant on it yet, and personal email, the HR note and who processed it are never read.',
+      ref: 'external-api-offboarded.md § Fixed fields',
+    },
+    {
+      kind: 'note',
+      text: 'The reason goes out as a category, never as the stored label. Some stored labels are whole sentences of performance commentary about a named person.',
+      ref: 'external-api-offboarded.md § The reason is a category',
+    },
+    {
+      kind: 'note',
+      text: 'A row is history, not status. Measured 2026-10-07: 193 rows share a work email with someone on the active roster. 65 of those carry the same personal email (re-hires); the rest are recycled work emails now held by someone else.',
+      ref: 'memory rehire-invisible-offboard-reuse · active-roster-cannot-say-who-left',
+    },
+    {
+      kind: 'note',
+      text: 'HR → Restore deletes a person’s ledger row, and the API does not announce removals. A system mirroring this list should re-read it in full to see them.',
+      ref: 'external-api-offboarded.md § Removals',
+    },
+    {
+      kind: 'open',
+      text: 'Measured 2026-10-07: 774 of 4,446 rows have no departure date and 3,354 (the 2026-06-09 sheet snapshot) have no department. since / until never match an undated row.',
+      ref: 'memory offboarded-tab-merged-origin-column',
+    },
+    {
+      kind: 'open',
+      text: 'Measured 2026-10-07: 6 departures stamped on the master list have no ledger row, so they are not served. 22 leavers skipped by the 2026-08-28 import on a recycled work email are missing too.',
+      ref: 'external-api-offboarded.md § Source · memory offboarded-tab-merged-origin-column',
+    },
+  ],
+};
+
 export const DATASETS: readonly Dataset[] = [
   // ── People & roster ─────────────────────────────────────────────────────────
   GLOBAL_MASTER_LIST_DATASET,
-  {
-    slug: 'offboarded',
-    label: 'Offboarded',
-    domain: 'people',
-    status: 'planned',
-    summary: 'Who left, when, from which department, and the reason category.',
-    sources: ['global_master_list (off_boarded_* stamps)', 'offboarded_sheet (leavers before 2026-04-21)'],
-    sensitivity: 'personal',
-    grain: 'One row per departure. A re-hire who left twice has two rows.',
-    leavers: 'This dataset is the leavers.',
-    fields: [
-      f('name', 'identity', 'Full name'),
-      f('work_email', 'contact', 'Company email at the time they left'),
-      f('department', 'work', 'Department they left from'),
-      f('start_date', 'work', 'First day'),
-      f('off_boarded_at', 'status', 'Date they left'),
-      f('off_boarded_reason', 'status', 'Reason category (resigned, terminated, temporary pause …)'),
-    ],
-    neverServed: ['off_boarded_note', 'off_boarded_by', 'personal contact and home address'],
-    caveats: [
-      {
-        kind: 'note',
-        text: 'The master list starts 2026-04-21. About 2,532 earlier leavers exist only on offboarded_sheet, so the dataset needs both sources or it silently starts in April.',
-        ref: 'memory ledger-only-leaver-no-master-row',
-      },
-      {
-        kind: 'note',
-        text: 'Temporary pause is an offboard reason but the person is suspended, not gone. Decide whether it is served as a departure.',
-        ref: 'memory temporary-pause-offboard-reason',
-      },
-      {
-        kind: 'open',
-        text: 'Some re-hires still carry an old off-boarded stamp and would read as departed.',
-        ref: 'memory rehire-invisible-offboard-reuse',
-      },
-    ],
-  },
+  OFFBOARDED_DATASET,
   {
     slug: 'departments',
     label: 'Departments & teams',

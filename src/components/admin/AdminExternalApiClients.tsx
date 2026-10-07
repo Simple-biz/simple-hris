@@ -25,6 +25,17 @@ import { GML_CATALOG, GML_TABLE_LABEL, GROUP_LABELS, OFFERABLE_COLUMNS, SENSITIV
 import { hiddenCount, normalizeGrant, visibleColumns, type Grant } from '@/lib/external-api/grants';
 import { EXPIRY_LABELS, EXPIRY_OPTIONS, describeExpiry, isExpired, type ExpiryOption } from '@/lib/external-api/expiry';
 import { RATE_LIMIT_CEILING, RATE_LIMIT_DEFAULT, RATE_LIMIT_FLOOR, parseRateLimit } from '@/lib/external-api/rate-limit';
+import {
+  DEFAULT_SCOPES,
+  EXTERNAL_SCOPES,
+  GML_SCOPE,
+  OFFBOARDED_SCOPE,
+  SCOPE_DESCRIPTIONS,
+  SCOPE_LABELS,
+  holdsScope,
+  type ExternalScope,
+} from '@/lib/external-api/scopes';
+import { OFFBOARDED_COLUMNS, REASON_CATEGORIES } from '@/lib/external-api/offboarded';
 import { useAdminCachedState } from '@/hooks/useAdminCachedState';
 import { ADMIN_CACHE_KEYS } from '@/lib/admin/tab-cache';
 import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
@@ -33,8 +44,10 @@ import { countOf } from '@/lib/refresh-progress/refresh-progress';
 /**
  * Admin → Webhooks & Integrations → Integrations.
  *
- * The registry of OUTSIDE systems allowed to read the Global Master List — by
- * plain HTTP query or by MCP, with the same key — and the log of what they did.
+ * The registry of OUTSIDE systems allowed to read the Global Master List and,
+ * since 2026-10-07, the Offboarded list — by plain HTTP query or by MCP, with the
+ * same key — and the log of what they did. Which of the two a key reads is its
+ * SCOPES (the Datasets step); the roster is the default, leavers are opt-in.
  *
  * Kane, 2026-09-17: *"they only need Global Master List — I can give them the
  * whole table or hide some of those columns to protect data … give them the
@@ -112,12 +125,14 @@ type ListResponse = {
   configured: boolean;
   migration_applied: boolean;
   rest_path?: string;
+  offboarded_rest_path?: string;
   mcp_path?: string;
   error?: string;
 };
 
 const REST_PATH_FALLBACK = '/api/external/v1/global-master-list';
 const MCP_PATH_FALLBACK = '/api/external/mcp';
+const OFFBOARDED_PATH_FALLBACK = '/api/external/v1/offboarded';
 const DEFAULT_EXPIRY: ExpiryOption = '30d';
 
 function fmtWhen(iso: string | null): string {
@@ -234,6 +249,7 @@ export default function AdminExternalApiClients() {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const restUrl = `${origin}${data?.rest_path ?? REST_PATH_FALLBACK}`;
   const mcpUrl = `${origin}${data?.mcp_path ?? MCP_PATH_FALLBACK}`;
+  const offboardedUrl = `${origin}${data?.offboarded_rest_path ?? OFFBOARDED_PATH_FALLBACK}`;
 
   const act = async (client: ClientView, action: 'revoke' | 'restore' | 'rotate') => {
     setBusyId(client.id);
@@ -284,9 +300,9 @@ export default function AdminExternalApiClients() {
         <div className="min-w-0">
           <h2 className="text-lg font-medium tracking-tight">External access</h2>
           <p className="mt-1 max-w-[68ch] text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-            One key per outside system that reads the {GML_TABLE_LABEL}. Choose the columns it may see, how long the key
-            lives and how often it may call. It works over HTTP and MCP with the same key, and stops on its next call the
-            moment you revoke it.
+            One key per outside system that reads the {GML_TABLE_LABEL}, the Offboarded list, or both. Choose what it may
+            see, how long the key lives and how often it may call. It works over HTTP and MCP with the same key, and stops on
+            its next call the moment you revoke it.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -316,8 +332,14 @@ export default function AdminExternalApiClients() {
 
       {/* Endpoints strip */}
       <dl className="mt-5 divide-y divide-zinc-200 border-y border-zinc-200 text-sm dark:divide-zinc-800 dark:border-zinc-800">
-        <EndpointRow label="REST" method="GET" url={restUrl} note="?department · ?email · ?search · ?limit ≤ 500 · ?cursor" />
-        <EndpointRow label="MCP" method="POST" url={mcpUrl} note="tools: describe_access · query_global_master_list" />
+        <EndpointRow label="Roster" method="GET" url={restUrl} note="?department · ?email · ?search · ?limit ≤ 500 · ?cursor" />
+        <EndpointRow
+          label="Leavers"
+          method="GET"
+          url={offboardedUrl}
+          note="?email · ?department · ?reason · ?since · ?until · ?search · ?limit ≤ 500 · ?cursor"
+        />
+        <EndpointRow label="MCP" method="POST" url={mcpUrl} note="tools: describe_access · query_global_master_list · query_offboarded (each only for a key that holds it)" />
         <div className="flex flex-col gap-1 py-2.5 sm:flex-row sm:items-center">
           <dt className="w-16 shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">Auth</dt>
           <dd className="min-w-0 font-mono text-[12.5px] text-zinc-700 dark:text-zinc-300">Authorization: Bearer hris_live_…</dd>
@@ -396,7 +418,7 @@ export default function AdminExternalApiClients() {
                 <Th>Client</Th>
                 <Th>Key</Th>
                 <Th>Status</Th>
-                <Th>Columns</Th>
+                <Th>Access</Th>
                 <Th>Expires</Th>
                 <Th align="right">Limit</Th>
                 <Th align="right">7-day calls</Th>
@@ -472,15 +494,21 @@ export default function AdminExternalApiClients() {
                         {meta.label}
                       </span>
                     </td>
-                    <td className="px-3 py-3 align-top" title={hidden > 0 ? `Hidden: ${hiddenNames.join(', ')}` : undefined}>
-                      {hidden === 0 ? (
-                        'Whole table'
-                      ) : (
-                        <>
-                          {OFFERABLE_COLUMNS.length - hidden} of {OFFERABLE_COLUMNS.length}
-                          <span className="text-zinc-500 dark:text-zinc-400"> · {hidden} hidden</span>
-                        </>
+                    <td className="px-3 py-3 align-top" title={holdsScope(c.scopes, GML_SCOPE) && hidden > 0 ? `Hidden: ${hiddenNames.join(', ')}` : undefined}>
+                      {holdsScope(c.scopes, GML_SCOPE) && (
+                        <div>
+                          <span className="text-zinc-500 dark:text-zinc-400">Roster · </span>
+                          {hidden === 0 ? (
+                            'whole table'
+                          ) : (
+                            <>
+                              {OFFERABLE_COLUMNS.length - hidden} of {OFFERABLE_COLUMNS.length}
+                              <span className="text-zinc-500 dark:text-zinc-400"> · {hidden} hidden</span>
+                            </>
+                          )}
+                        </div>
                       )}
+                      {holdsScope(c.scopes, OFFBOARDED_SCOPE) && <div>Offboarded</div>}
                     </td>
                     <td className="px-3 py-3 align-top" title={c.expires_at ?? 'Does not expire'}>
                       {describeExpiry(c.expires_at)}
@@ -547,8 +575,9 @@ export default function AdminExternalApiClients() {
       <p className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
         <span>
-          Keys are stored only as a salted hash, so a key cannot be shown again after it is issued. Off-boarded people are never
-          returned. A hidden column is neither returned nor filterable. Every call, allowed or denied, is logged with its IP and
+          Keys are stored only as a salted hash, so a key cannot be shown again after it is issued. The roster never returns
+          off-boarded people; the Offboarded list is a separate dataset a key reads only when you tick it. A hidden column is
+          neither returned nor filterable. Every call, allowed or denied, is logged with its IP and
           user-agent, and the rate limit is counted from that log so it holds on every server.
         </span>
       </p>
@@ -572,7 +601,7 @@ export default function AdminExternalApiClients() {
         }}
       />
 
-      <HandOffDialog issued={issued} onClose={() => setIssued(null)} restUrl={restUrl} mcpUrl={mcpUrl} />
+      <HandOffDialog issued={issued} onClose={() => setIssued(null)} restUrl={restUrl} offboardedUrl={offboardedUrl} mcpUrl={mcpUrl} />
 
       <CallsDialog client={callsFor} onClose={() => setCallsFor(null)} />
 
@@ -582,7 +611,7 @@ export default function AdminExternalApiClients() {
             <DialogTitle>Rotate {confirmRotate?.name}&apos;s key?</DialogTitle>
             <DialogDescription>
               A new key is issued and shown once. The current key (<code className="font-mono text-xs">{confirmRotate?.key_prefix}…</code>)
-              stops working immediately. The client, its columns, expiry, limit and history stay.
+              stops working immediately. The client, its datasets, columns, expiry, limit and history stay.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -701,6 +730,52 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 // ─── The three access controls ────────────────────────────────────────────────
+
+/**
+ * Which datasets the key reads (its scopes). The roster is the default; the leavers list is
+ * opt-in. Ticking it says out loud what that means for this key.
+ */
+function DatasetPicker({ value, onChange }: { value: ExternalScope[]; onChange: (next: ExternalScope[]) => void }) {
+  const toggle = (s: ExternalScope) =>
+    onChange(value.includes(s) ? value.filter((x) => x !== s) : EXTERNAL_SCOPES.filter((x) => x === s || value.includes(x)));
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="divide-y divide-zinc-200 rounded-md border border-zinc-200 dark:divide-zinc-800 dark:border-zinc-800">
+        {EXTERNAL_SCOPES.map((s) => {
+          const on = value.includes(s);
+          return (
+            <label key={s} className="flex cursor-pointer items-start gap-3 px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => toggle(s)}
+                className="mt-0.5 h-4 w-4 rounded accent-zinc-900 dark:accent-zinc-100"
+              />
+              <span className="min-w-0">
+                <span className={cn('block text-sm font-medium', !on && 'text-zinc-500 dark:text-zinc-400')}>{SCOPE_LABELS[s]}</span>
+                <span className="block text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{SCOPE_DESCRIPTIONS[s]}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {value.length === 0 && <p className="text-xs text-rose-600 dark:text-rose-400">Pick at least one dataset.</p>}
+      {value.includes(OFFBOARDED_SCOPE) && (
+        <p className="text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+          {value.includes(GML_SCOPE)
+            ? 'This key will see who left. The roster still returns active people only, but the Offboarded list names every recorded departure.'
+            : 'This key will see every recorded departure: name, work email, department, dates and reason category.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function datasetSummary(scopes: readonly string[]): string {
+  return EXTERNAL_SCOPES.filter((s) => scopes.includes(s))
+    .map((s) => SCOPE_LABELS[s])
+    .join(' · ');
+}
 
 const GROUP_ORDER: CatalogGroup[] = ['identity', 'work', 'contact', 'address', 'photo', 'system'];
 
@@ -838,6 +913,7 @@ function CreateClientDialog({
   const [name, setName] = useState('');
   const [system, setSystem] = useState('');
   const [contact, setContact] = useState('');
+  const [scopes, setScopes] = useState<ExternalScope[]>([...DEFAULT_SCOPES]);
   const [ticked, setTicked] = useState<string[]>([...OFFERABLE_COLUMNS]);
   const [expiry, setExpiry] = useState<ExpiryOption | 'keep'>(DEFAULT_EXPIRY);
   const [limit, setLimit] = useState(String(RATE_LIMIT_DEFAULT));
@@ -849,6 +925,7 @@ function CreateClientDialog({
       setName('');
       setSystem('');
       setContact('');
+      setScopes([...DEFAULT_SCOPES]);
       setTicked([...OFFERABLE_COLUMNS]);
       setExpiry(DEFAULT_EXPIRY);
       setLimit(String(RATE_LIMIT_DEFAULT));
@@ -857,12 +934,21 @@ function CreateClientDialog({
   }, [open]);
 
   const limitOk = parseRateLimit(limit) !== null;
-  const columnsOk = ticked.length > 0;
-  const canSubmit = !!name.trim() && !!system.trim() && limitOk && columnsOk && expiry !== 'keep';
+  const readsRoster = scopes.includes(GML_SCOPE);
+  const scopesOk = scopes.length > 0;
+  // Columns are the roster's grant; a key that does not read the roster has none to pick.
+  const columnsOk = !readsRoster || ticked.length > 0;
+  const canSubmit = !!name.trim() && !!system.trim() && limitOk && scopesOk && columnsOk && expiry !== 'keep';
 
   const submit = async () => {
     if (!canSubmit) {
-      toast.error(!columnsOk ? 'Pick at least one column, or leave the whole table on' : 'Name, system, a valid limit and an expiry are required');
+      toast.error(
+        !scopesOk
+          ? 'Pick at least one dataset'
+          : !columnsOk
+            ? 'Pick at least one column, or leave the whole table on'
+            : 'Name, system, a valid limit and an expiry are required',
+      );
       return;
     }
     setSaving(true);
@@ -874,7 +960,9 @@ function CreateClientDialog({
           name: name.trim(),
           system: system.trim(),
           contact_email: contact.trim() || null,
-          granted_columns: tickedToGrantBody(ticked),
+          scopes,
+          // Not reading the roster: store the default (whole table) rather than a list nobody uses.
+          granted_columns: readsRoster ? tickedToGrantBody(ticked) : null,
           expiry,
           rate_limit_per_minute: parseRateLimit(limit),
         }),
@@ -894,6 +982,7 @@ function CreateClientDialog({
   // last step is a read-back — nothing is created until it is confirmed.
   const STEPS: Array<{ id: CreateStep; label: string }> = [
     { id: 'who', label: 'Who' },
+    { id: 'datasets', label: 'Datasets' },
     { id: 'columns', label: 'Columns' },
     { id: 'access', label: 'Access' },
     { id: 'confirm', label: 'Confirm' },
@@ -901,6 +990,7 @@ function CreateClientDialog({
   const stepIndex = STEPS.findIndex((s) => s.id === step);
   const stepOk: Record<CreateStep, boolean> = {
     who: !!name.trim() && !!system.trim() && (!contact.trim() || contact.includes('@')),
+    datasets: scopesOk,
     columns: columnsOk,
     access: limitOk && expiry !== 'keep',
     confirm: canSubmit,
@@ -988,11 +1078,23 @@ function CreateClientDialog({
             </div>
           )}
 
-          {step === 'columns' && (
-            <Field label="Columns they may read" hint="Whole table by default. Untick a column to hide it from this key.">
-              <ColumnPicker ticked={ticked} onChange={setTicked} />
+          {step === 'datasets' && (
+            <Field label="Datasets they may read" hint="The roster is ticked by default. The Offboarded list is opt-in.">
+              <DatasetPicker value={scopes} onChange={setScopes} />
             </Field>
           )}
+
+          {step === 'columns' &&
+            (readsRoster ? (
+              <Field label="Roster columns they may read" hint="Whole table by default. Untick a column to hide it from this key.">
+                <ColumnPicker ticked={ticked} onChange={setTicked} />
+              </Field>
+            ) : (
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                This key does not read the {GML_TABLE_LABEL}, so there are no roster columns to choose. The Offboarded list has
+                fixed fields: {OFFBOARDED_COLUMNS.join(', ')}.
+              </p>
+            ))}
 
           {step === 'access' && (
             <div className="grid gap-5 sm:grid-cols-2">
@@ -1017,8 +1119,13 @@ function CreateClientDialog({
                     {contact.trim() ? ` · ${contact.trim()}` : ''}
                   </span>
                 </SummaryRow>
-                <SummaryRow label="Columns" onEdit={() => setStep('columns')}>
-                  {hidden === 0 ? (
+                <SummaryRow label="Datasets" onEdit={() => setStep('datasets')}>
+                  {datasetSummary(scopes)}
+                </SummaryRow>
+                <SummaryRow label="Roster columns" onEdit={() => setStep('columns')}>
+                  {!readsRoster ? (
+                    <span className="text-zinc-500 dark:text-zinc-400">Does not read the roster</span>
+                  ) : hidden === 0 ? (
                     'Whole table'
                   ) : (
                     <>
@@ -1070,7 +1177,7 @@ function CreateClientDialog({
   );
 }
 
-type CreateStep = 'who' | 'columns' | 'access' | 'confirm';
+type CreateStep = 'who' | 'datasets' | 'columns' | 'access' | 'confirm';
 
 function SummaryRow({ label, onEdit, children }: { label: string; onEdit: () => void; children: React.ReactNode }) {
   return (
@@ -1094,6 +1201,7 @@ function EditClientDialog({ client, onClose, onSaved }: { client: ClientView | n
   const [name, setName] = useState('');
   const [system, setSystem] = useState('');
   const [contact, setContact] = useState('');
+  const [scopes, setScopes] = useState<ExternalScope[]>([]);
   const [ticked, setTicked] = useState<string[]>([]);
   const [expiry, setExpiry] = useState<ExpiryOption | 'keep'>('keep');
   const [limit, setLimit] = useState('');
@@ -1104,6 +1212,7 @@ function EditClientDialog({ client, onClose, onSaved }: { client: ClientView | n
       setName(client.name);
       setSystem(client.system);
       setContact(client.contact_email ?? '');
+      setScopes(EXTERNAL_SCOPES.filter((s) => holdsScope(client.scopes, s)));
       setTicked(grantToTicked(client.granted_columns));
       setExpiry('keep');
       setLimit(String(client.rate_limit_per_minute));
@@ -1113,19 +1222,30 @@ function EditClientDialog({ client, onClose, onSaved }: { client: ClientView | n
   if (!client) return null;
 
   const limitOk = parseRateLimit(limit) !== null;
-  const columnsOk = ticked.length > 0;
-  const canSubmit = !!name.trim() && !!system.trim() && limitOk && columnsOk;
+  const readsRoster = scopes.includes(GML_SCOPE);
+  const scopesOk = scopes.length > 0;
+  const columnsOk = !readsRoster || ticked.length > 0;
+  const canSubmit = !!name.trim() && !!system.trim() && limitOk && scopesOk && columnsOk;
 
   const submit = async () => {
     if (!canSubmit) {
-      toast.error(!columnsOk ? 'Pick at least one column, or set the whole table' : 'Name, system and a valid limit are required');
+      toast.error(
+        !scopesOk
+          ? 'Pick at least one dataset'
+          : !columnsOk
+            ? 'Pick at least one column, or set the whole table'
+            : 'Name, system and a valid limit are required',
+      );
       return;
     }
     const body: Record<string, unknown> = { action: 'update' };
     if (name.trim() !== client.name) body.name = name.trim();
     if (system.trim() !== client.system) body.system = system.trim();
     if ((contact.trim() || null) !== client.contact_email) body.contact_email = contact.trim() || null;
-    const nextGrant = tickedToGrantBody(ticked);
+    const wasScopes = EXTERNAL_SCOPES.filter((s) => holdsScope(client.scopes, s));
+    if (JSON.stringify(scopes) !== JSON.stringify(wasScopes)) body.scopes = scopes;
+    // The column grant is edited only while the key reads the roster; dropping the roster leaves it as stored.
+    const nextGrant = readsRoster ? tickedToGrantBody(ticked) : client.granted_columns;
     const sameGrant =
       (nextGrant === null && client.granted_columns === null) ||
       (nextGrant !== null && client.granted_columns !== null && JSON.stringify(nextGrant) === JSON.stringify(client.granted_columns));
@@ -1177,9 +1297,14 @@ function EditClientDialog({ client, onClose, onSaved }: { client: ClientView | n
           <Field label="Contact email (optional)">
             <Input type="email" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="name@simple.biz" />
           </Field>
-          <Field label="Columns they may read">
-            <ColumnPicker ticked={ticked} onChange={setTicked} />
+          <Field label="Datasets they may read">
+            <DatasetPicker value={scopes} onChange={setScopes} />
           </Field>
+          {readsRoster && (
+            <Field label="Roster columns they may read">
+              <ColumnPicker ticked={ticked} onChange={setTicked} />
+            </Field>
+          )}
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
               label="Key lives for"
@@ -1233,6 +1358,24 @@ function samplePayload(grant: Grant): string {
   );
 }
 
+function sampleOffboardedPayload(): string {
+  const row = {
+    id: 46420,
+    name: 'Last, First',
+    work_email: 'name@simple.biz',
+    department: '<department>',
+    start_date: '2026-01-05',
+    off_boarded_at: '2026-10-07T14:04:38+00:00',
+    reason: 'resigned',
+    origin: 'hris',
+  };
+  return JSON.stringify(
+    { data: [row], page: { limit: 100, max_limit: 500, returned: 1, total: 1, next_cursor: null }, meta: { dataset: 'offboarded', columns: [...OFFBOARDED_COLUMNS] } },
+    null,
+    2,
+  );
+}
+
 function mcpConfig(mcpUrl: string, key: string): string {
   return JSON.stringify(
     { mcpServers: { 'simple-hris': { type: 'http', url: mcpUrl, headers: { Authorization: `Bearer ${key}` } } } },
@@ -1245,11 +1388,13 @@ function HandOffDialog({
   issued,
   onClose,
   restUrl,
+  offboardedUrl,
   mcpUrl,
 }: {
   issued: { client: ClientView; apiKey: string; mode: 'created' | 'rotated' } | null;
   onClose: () => void;
   restUrl: string;
+  offboardedUrl: string;
   mcpUrl: string;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
@@ -1265,29 +1410,47 @@ function HandOffDialog({
   const { client, apiKey } = issued;
   const grant = client.granted_columns;
   const cols = visibleColumns(grant);
+  const readsRoster = holdsScope(client.scopes, GML_SCOPE);
+  const readsLeavers = holdsScope(client.scopes, OFFBOARDED_SCOPE);
   const masked = `${apiKey.slice(0, 16)}…`;
-  const curl = `curl -H "Authorization: Bearer ${apiKey}" "${restUrl}?limit=100"`;
-  const payload = samplePayload(grant);
+  const rosterCurl = `curl -H "Authorization: Bearer ${apiKey}" "${restUrl}?limit=100"`;
+  const leaversCurl = `curl -H "Authorization: Bearer ${apiKey}" "${offboardedUrl}?limit=100"`;
+  const curl = [readsRoster ? rosterCurl : null, readsLeavers ? leaversCurl : null].filter(Boolean).join('\n');
+  const payload = [readsRoster ? samplePayload(grant) : null, readsLeavers ? sampleOffboardedPayload() : null]
+    .filter(Boolean)
+    .join('\n\n');
+  const tools = ['describe_access', ...(readsRoster ? ['query_global_master_list'] : []), ...(readsLeavers ? ['query_offboarded'] : [])];
+  const leaverFilters = `email, department, reason (${REASON_CATEGORIES.join(' | ')}), since, until (YYYY-MM-DD), search, limit (≤500), cursor`;
   const mcp = mcpConfig(mcpUrl, apiKey);
   const expiryLine = client.expires_at
     ? `This key expires ${describeExpiry(client.expires_at)} (${new Date(client.expires_at).toUTCString()}).`
     : 'This key does not expire; we can revoke it at any time.';
   const handOff = [
-    `Simple HRIS — ${GML_TABLE_LABEL} access for ${client.name} (${client.system})`,
+    `Simple HRIS — ${datasetSummary(client.scopes)} access for ${client.name} (${client.system})`,
     '',
     `API key (keep it private): ${apiKey}`,
     `${expiryLine} Limit: ${client.rate_limit_per_minute} calls per minute (HTTP and MCP together).`,
-    '',
-    `Columns you receive: ${cols.join(', ')}`,
-    hiddenCount(grant) > 0 ? `(${hiddenCount(grant)} other columns are not included and cannot be filtered on.)` : '(the whole table)',
-    '',
-    'HTTP:',
-    `  ${curl}`,
-    '  Filters: department, email, search, limit (≤500), cursor. Walk pages with cursor=<next_cursor> until it is null.',
+    ...(readsRoster
+      ? [
+          '',
+          `${GML_TABLE_LABEL} (active people only) — columns you receive: ${cols.join(', ')}`,
+          hiddenCount(grant) > 0 ? `(${hiddenCount(grant)} other columns are not included and cannot be filtered on.)` : '(the whole table)',
+          `  ${rosterCurl}`,
+          '  Filters: department, email, search, limit (≤500), cursor. Walk pages with cursor=<next_cursor> until it is null.',
+        ]
+      : []),
+    ...(readsLeavers
+      ? [
+          '',
+          `Offboarded list (one row per recorded departure; temporary pauses are not included) — fields: ${OFFBOARDED_COLUMNS.join(', ')}`,
+          `  ${leaversCurl}`,
+          `  Filters: ${leaverFilters}. Walk pages with cursor=<next_cursor> until it is null; a stored cursor returns only departures recorded since.`,
+        ]
+      : []),
     '',
     'MCP (Streamable HTTP):',
     mcp,
-    '  Tools: describe_access, query_global_master_list.',
+    `  Tools: ${tools.join(', ')}.`,
     '',
     'Sample response:',
     payload,
@@ -1303,21 +1466,29 @@ function HandOffDialog({
     },
     http: {
       label: 'HTTP',
-      shown: `curl -H "Authorization: Bearer ${masked}" "${restUrl}?limit=100"`,
+      shown: curl.split(apiKey).join(masked),
       copy: curl,
-      hint: 'Filters: department · email · search · limit ≤ 500 · cursor. Walk pages with cursor until next_cursor is null.',
+      hint: [
+        readsRoster ? 'Roster filters: department · email · search · limit ≤ 500 · cursor.' : null,
+        readsLeavers ? 'Offboarded filters: email · department · reason · since · until · search · limit ≤ 500 · cursor.' : null,
+        'Walk pages with cursor until next_cursor is null.',
+      ]
+        .filter(Boolean)
+        .join(' '),
     },
     mcp: {
       label: 'MCP',
       shown: mcp.split(apiKey).join(masked),
       copy: mcp,
-      hint: 'Paste into the MCP client’s server config. Tools: describe_access, query_global_master_list.',
+      hint: `Paste into the MCP client’s server config. Tools: ${tools.join(', ')}.`,
     },
     sample: {
       label: 'Sample response',
       shown: payload,
       copy: payload,
-      hint: `${cols.length} columns, exactly as this key will receive them.`,
+      hint: [readsRoster ? `Roster: ${cols.length} columns` : null, readsLeavers ? `Offboarded: ${OFFBOARDED_COLUMNS.length} fields` : null]
+        .filter(Boolean)
+        .join(' · ') + ', exactly as this key will receive them.',
     },
   };
   const current = VIEWS[view];
@@ -1351,7 +1522,9 @@ function HandOffDialog({
             </span>
             <span className="whitespace-nowrap">
               {client.expires_at ? `expires ${describeExpiry(client.expires_at)}` : 'does not expire'} · {client.rate_limit_per_minute}/min ·{' '}
-              {hiddenCount(grant) === 0 ? 'whole table' : `${cols.length} columns`}
+              {[readsRoster ? (hiddenCount(grant) === 0 ? 'whole table' : `${cols.length} columns`) : null, readsLeavers ? 'offboarded' : null]
+                .filter(Boolean)
+                .join(' · ')}
             </span>
           </div>
           <div className="flex items-center gap-3 px-3 py-2.5">

@@ -3,6 +3,7 @@ import 'server-only';
 import { findClientByKeyHash, type ExternalApiClientRow } from '@/lib/supabase/external-api-db';
 import { bearerToken, constantTimeEqualHex, hashApiKey, keyPrefix, looksLikeApiKey, readPepper } from './keys';
 import { isExpired } from './expiry';
+import { holdsScope, type ExternalScope } from './scopes';
 
 /**
  * Turn `Authorization: Bearer <key>` into a live client row, or a typed denial.
@@ -16,11 +17,16 @@ import { isExpired } from './expiry';
  * table not applied → 503, never a pass. The only 200 path is a hash match on
  * a row whose `revoked_at` is null, whose `expires_at` is null or in the future
  * (2026-09-17 — an unparseable stamp counts as expired), and whose scopes include
- * the read. Expiry is checked on every call against the row, so shortening it in
- * the admin panel takes effect on the next call, like a revoke.
+ * at least one of the scopes the CALLING ROUTE accepts. Expiry is checked on every
+ * call against the row, so shortening it in the admin panel takes effect on the
+ * next call, like a revoke.
+ *
+ * Which scopes a route accepts is the route's argument, REQUIRED, with no default
+ * (2026-10-07, when the second scope `offboarded.read` arrived). Until then this file
+ * exported `REQUIRED_SCOPE = 'global_master_list.read'`; a default in its place would
+ * make a forgotten argument on a future route silently grant the roster to any key.
+ * `scopes.test.ts` pins the signature.
  */
-
-export const REQUIRED_SCOPE = 'global_master_list.read';
 
 export type ExternalDenial =
   | 'missing'
@@ -40,7 +46,7 @@ export const DENIED_MESSAGE = 'Invalid or revoked API key';
 export const UNCONFIGURED_MESSAGE = 'The external API is not configured on this deployment';
 export const UNAVAILABLE_MESSAGE = 'The external API is temporarily unavailable';
 
-export async function authenticateExternalRequest(request: Request): Promise<ExternalAuth> {
+export async function authenticateExternalRequest(request: Request, accepted: readonly ExternalScope[]): Promise<ExternalAuth> {
   const token = bearerToken(request.headers.get('authorization'));
   if (!token) return { ok: false, denial: 'missing', status: 401, keyPrefix: null };
   if (!looksLikeApiKey(token)) return { ok: false, denial: 'malformed', status: 401, keyPrefix: null };
@@ -58,7 +64,8 @@ export async function authenticateExternalRequest(request: Request): Promise<Ext
   if (!constantTimeEqualHex(client.key_hash, hash)) return { ok: false, denial: 'unknown', status: 401, keyPrefix: prefix };
   if (client.revoked_at) return { ok: false, denial: 'revoked', status: 401, keyPrefix: prefix };
   if (isExpired(client.expires_at)) return { ok: false, denial: 'expired', status: 401, keyPrefix: prefix };
-  if (!Array.isArray(client.scopes) || !client.scopes.includes(REQUIRED_SCOPE)) {
+  // An empty `accepted` admits nobody — never everybody.
+  if (accepted.length === 0 || !accepted.some((s) => holdsScope(client.scopes, s))) {
     return { ok: false, denial: 'scope', status: 403, keyPrefix: prefix };
   }
   return { ok: true, client, keyPrefix: prefix };

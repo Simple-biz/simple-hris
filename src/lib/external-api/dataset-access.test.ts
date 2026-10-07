@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GML_CATALOG } from './catalog';
-import { GLOBAL_MASTER_LIST_DATASET, type LiveDataset } from './datasets';
+import { GLOBAL_MASTER_LIST_DATASET, OFFBOARDED_DATASET, type LiveDataset } from './datasets';
 import { accessStateOf, clientAccess, describeAccess, fieldGrantFor, liveCount, type AccessClient } from './dataset-access';
 
 const NOW = Date.parse('2026-09-25T12:00:00Z');
@@ -82,6 +82,18 @@ test('the GML column grant is never applied to another dataset — it is unknown
   const other: LiveDataset = { ...GLOBAL_MASTER_LIST_DATASET, slug: 'x', scope: 'orphanage_pay.read' };
   assert.deepEqual(fieldGrantFor({ granted_columns: ['Name'] }, other), { kind: 'unknown' });
   assert.deepEqual(fieldGrantFor({ granted_columns: null }, other), { kind: 'unknown' });
+});
+
+test('Offboarded has fixed fields: a holder sees the whole dataset whatever its GML column grant says', () => {
+  assert.deepEqual(fieldGrantFor({ granted_columns: ['Name'] }, OFFBOARDED_DATASET), { kind: 'whole' });
+  assert.deepEqual(fieldGrantFor({ granted_columns: null }, OFFBOARDED_DATASET), { kind: 'whole' });
+});
+
+test('a roster-only client is not listed on Offboarded; a client holding both is listed on both', () => {
+  const rosterOnly = client({ id: 'a', name: 'OMS' });
+  const both = client({ id: 'b', name: 'Ops', scopes: ['global_master_list.read', 'offboarded.read'] });
+  assert.deepEqual(clientAccess([rosterOnly, both], OFFBOARDED_DATASET, NOW).map((r) => r.client.name), ['Ops']);
+  assert.deepEqual(clientAccess([rosterOnly, both], GLOBAL_MASTER_LIST_DATASET, NOW).map((r) => r.client.name), ['OMS', 'Ops']);
 });
 
 test('a client list that was not read is UNKNOWN, never "no clients"', () => {

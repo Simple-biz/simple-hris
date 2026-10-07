@@ -82,6 +82,18 @@ unknown.
 scope `fieldGrantFor` returns `unknown` (*"Not recorded"*) rather than applying the GML column list
 to another dataset — that would invent a grant. Phase A's per-scope `granted_fields` replaces it.
 
+## Offboarded went live 2026-10-07
+
+The second live dataset: scope `offboarded.read`, `GET /api/external/v1/offboarded`, MCP
+`query_offboarded`. It is governed by [external-api-offboarded.md](./external-api-offboarded.md). It went
+live as its own scope + route **ahead of Phase A**, so `datasets.ts` still documents both live
+datasets. The live-set pin did what it was built for: the ALTER that added the scope turned
+`datasets.test.ts` red until this page moved to live. `OFFBOARDED_DATASET`'s field names are pinned
+to the API's `OFFBOARDED_COLUMNS`, and `scopes.ts` is pinned equal to the live set. The page's
+planned-era caveats were replaced with 2026-10-07 measurements. The old "starts in April" note
+described the master-list stamps, which the dataset does not read. **Who holds it** reads *Whole
+table* for every holder: the scope has fixed fields and no per-field grant (`fieldGrantFor`).
+
 ## Planned fields are proposals
 
 A planned page's fields are a starting point for the `blueprint` that builds the dataset, not a

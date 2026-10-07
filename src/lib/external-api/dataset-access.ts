@@ -13,14 +13,16 @@
  * answers "who could, and who used to".
  *
  * Field counts come from `granted_columns`, which today is the GML grant and nothing
- * else. For any other scope the grant is reported as unknown rather than guessed —
- * applying the GML column list to another dataset would invent a grant. Phase A's
- * per-scope `granted_fields` replaces this.
+ * else. The Offboarded scope (2026-10-07) has NO per-field grant — every holder receives
+ * its fixed field list — so it is reported as whole, which is a fact, not a guess. Any
+ * other scope is reported as unknown rather than guessed: applying the GML column list
+ * to another dataset would invent a grant. Phase A's per-scope `granted_fields` replaces this.
  *
  * Pure: the client bundle imports it.
  */
 import { isExpired } from './expiry';
 import type { LiveDataset } from './datasets';
+import { GML_SCOPE, OFFBOARDED_SCOPE } from './scopes';
 
 /** The subset of the admin client view this needs. */
 export type AccessClient = {
@@ -50,7 +52,7 @@ export type AccessRow = {
   fields: FieldGrant;
 };
 
-export const GML_SCOPE = 'global_master_list.read';
+export { GML_SCOPE } from './scopes';
 
 export function accessStateOf(c: Pick<AccessClient, 'revoked_at' | 'expires_at'>, nowMs: number = Date.now()): AccessState {
   if (c.revoked_at) return 'revoked';
@@ -60,6 +62,8 @@ export function accessStateOf(c: Pick<AccessClient, 'revoked_at' | 'expires_at'>
 
 /** What of `dataset` this client may see. `null` grant = the whole dataset. */
 export function fieldGrantFor(c: Pick<AccessClient, 'granted_columns'>, dataset: LiveDataset): FieldGrant {
+  // Fixed fields: there is no grant to read, every holder gets the whole dataset.
+  if (dataset.scope === OFFBOARDED_SCOPE) return { kind: 'whole' };
   if (dataset.scope !== GML_SCOPE) return { kind: 'unknown' };
   const grant = c.granted_columns;
   if (grant === null) return { kind: 'whole' };
