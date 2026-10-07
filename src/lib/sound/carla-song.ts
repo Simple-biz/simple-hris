@@ -1,20 +1,23 @@
 'use client';
 
 /**
- * Carla's sign-in serenade — Anri, "I Can't Stop The Loneliness" (1983).
+ * Sign-in songs — one per person, listed in `SIGNIN_SONGS` below. Carla's
+ * (Anri, "I Can't Stop The Loneliness", 1983) was the first; Aliviah's
+ * (Sidney Gish, "Impostor Syndrome") was added 2026-10-07 on Kane's ask.
  *
- * When carla@simple.biz signs in, a ~30-second clip of the song plays right
- * after the Simple login intro video hands off to the app, then fades out.
- * The login page calls `startCarlaSongIfEligible(email)` at the exact
- * intro → dashboard hand-off; everything here lives at module level (same
- * pattern as `ping-chime.ts`'s stage-prepped player) so the audio keeps
+ * When a listed email signs in, a ~30-second clip of THAT person's song plays
+ * right after the Simple login intro video hands off to the app, then fades
+ * out. The gate is the literal email, never a role; anyone not in the table
+ * gets nothing. The login page calls `startCarlaSongIfEligible(email)` at the
+ * exact intro → dashboard hand-off; everything here lives at module level
+ * (same pattern as `ping-chime.ts`'s stage-prepped player) so the audio keeps
  * playing through client-side route changes — including dashboard switches,
  * which go through `router.push` and never reload the page.
  *
  * Full-page-load resilience: the run is also persisted to sessionStorage
- * (start time + mute state). If anything hard-navigates mid-song (e.g. the
- * router's RSC fetch falls back to a browser navigation), the toast — which
- * the root layout mounts on every document — calls
+ * (start time + mute state + whose song). If anything hard-navigates mid-song
+ * (e.g. the router's RSC fetch falls back to a browser navigation), the toast
+ * — which the root layout mounts on every document — calls
  * `resumeCarlaSongIfPending()` and playback picks up at the correct offset,
  * with the fade still landing at 26s and the stop at 30s from the ORIGINAL
  * start. A resume on a fresh document has no user gesture yet, so a blocked
@@ -23,14 +26,50 @@
  * `CarlaSongToast` (mounted once in the root layout) subscribes to this
  * module to show the "Now playing" pill with a mute toggle.
  *
- * Asset: `public/sounds/carla-song.mp3`. If the file is missing the whole
- * feature quietly stands down — play() rejects, we finish(), no toast shows.
+ * Assets: each song's `src` is a committed ~40s CUT, never the full track
+ * (docs/features/login-carla-song.md § The clip). If a file is missing the
+ * feature quietly stands down for that person — play() rejects, we finish(),
+ * no toast shows.
  */
 
 export const CARLA_SONG_EMAIL = 'carla@simple.biz';
-export const CARLA_SONG_SRC = '/sounds/carla-song.mp3';
-export const CARLA_SONG_TITLE = "I Can't Stop The Loneliness";
-export const CARLA_SONG_ARTIST = 'Anri';
+export const ALIVIAH_SONG_EMAIL = 'aliviah@simple.biz';
+
+export interface SigninSong {
+  /** Lower-case, exact. The whole gate. */
+  email: string;
+  src: string;
+  title: string;
+  artist: string;
+  thumb: string;
+  /** Shown if `thumb` fails to load; with none, the pill drops the art. */
+  thumbFallback?: string;
+}
+
+export const SIGNIN_SONGS: readonly SigninSong[] = [
+  {
+    email: CARLA_SONG_EMAIL,
+    src: '/sounds/carla-song.mp3',
+    title: "I Can't Stop The Loneliness",
+    artist: 'Anri',
+    thumb: '/carla-song-thumb.jpg',
+    thumbFallback: '/carla-song-thumb.svg',
+  },
+  {
+    email: ALIVIAH_SONG_EMAIL,
+    src: '/sounds/aliviah-song.mp3',
+    title: 'Impostor Syndrome',
+    artist: 'Sidney Gish',
+    thumb: '/aliviah-song-thumb.jpg',
+  },
+];
+
+/** The song for this email, or null — trims and case-folds, nothing looser. */
+export function signinSongFor(email: string | null | undefined): SigninSong | null {
+  const e = (email ?? '').trim().toLowerCase();
+  if (!e) return null;
+  return SIGNIN_SONGS.find((s) => s.email === e) ?? null;
+}
 
 /** Total audible run, including the fade tail. */
 export const CARLA_SONG_TOTAL_SECONDS = 30;
@@ -48,10 +87,14 @@ export type CarlaSongStatus =
 export interface CarlaSongState {
   status: CarlaSongStatus;
   muted: boolean;
+  /** Whose song the current (or last) run is; null before any run. */
+  song: SigninSong | null;
 }
 
 let el: HTMLAudioElement | null = null;
-let state: CarlaSongState = { status: 'idle', muted: false };
+/** The song `el` was built for — a different person's run rebuilds it. */
+let elSong: SigninSong | null = null;
+let state: CarlaSongState = { status: 'idle', muted: false, song: null };
 const listeners = new Set<() => void>();
 
 let fadeStartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,7 +119,7 @@ export function getCarlaSongState(): CarlaSongState {
 }
 
 /** Stable snapshot for SSR — the song can never be playing during hydration. */
-const SERVER_STATE: CarlaSongState = { status: 'idle', muted: false };
+const SERVER_STATE: CarlaSongState = { status: 'idle', muted: false, song: null };
 export function getCarlaSongServerState(): CarlaSongState {
   return SERVER_STATE;
 }
@@ -84,21 +127,27 @@ export function getCarlaSongServerState(): CarlaSongState {
 /**
  * The current run, persisted per-tab so a hard navigation can't kill the song.
  * `t0` is the epoch ms the 30s window started; `muted` mirrors the toggle so a
- * resume respects it.
+ * resume respects it; `email` says whose song to resume. v1 runs (no email)
+ * are not read — a run lasts 30s, so nothing worth keeping is lost.
  */
-const RUN_KEY = 'carla_song_run_v1';
+const RUN_KEY = 'carla_song_run_v2';
 interface StoredRun {
   t0: number;
   muted: boolean;
+  email: string;
 }
 
-function readRun(): StoredRun | null {
+/** The stored run and its song, or null when absent, malformed, or for an email not in the table. */
+function readRun(): { run: StoredRun; song: SigninSong } | null {
   try {
     const raw = sessionStorage.getItem(RUN_KEY);
     if (!raw) return null;
-    const j = JSON.parse(raw) as { t0?: unknown; muted?: unknown };
+    const j = JSON.parse(raw) as { t0?: unknown; muted?: unknown; email?: unknown };
     if (typeof j?.t0 !== 'number' || !Number.isFinite(j.t0)) return null;
-    return { t0: j.t0, muted: !!j.muted };
+    if (typeof j.email !== 'string') return null;
+    const song = signinSongFor(j.email);
+    if (!song) return null;
+    return { run: { t0: j.t0, muted: !!j.muted, email: song.email }, song };
   } catch {
     return null;
   }
@@ -209,31 +258,48 @@ function installUnlock(): void {
     window.removeEventListener('keydown', unlock);
     unlockInstalled = false;
     if (state.status !== 'blocked') return;
-    const run = readRun();
-    if (run) {
-      const elapsed = (Date.now() - run.t0) / 1000;
+    const stored = readRun();
+    if (stored) {
+      const elapsed = (Date.now() - stored.run.t0) / 1000;
       if (elapsed < CARLA_SONG_TOTAL_SECONDS) {
-        start(elapsed, run.t0, run.muted);
+        start(stored.song, elapsed, stored.run.t0, stored.run.muted);
         return;
       }
       finish();
       return;
     }
-    start();
+    if (state.song) start(state.song);
+    else finish();
   };
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', unlock);
 }
 
+/** Drop an element built for someone else's song, so the next start builds the right one. */
+function releaseElement(): void {
+  if (!el) return;
+  try {
+    el.removeEventListener('ended', finish);
+    el.removeEventListener('error', finish);
+    el.pause();
+  } catch {
+    /* ignore */
+  }
+  el = null;
+  elSong = null;
+}
+
 /**
- * Begin (or resume) playback `offsetSeconds` into the 30s window. `t0Ms`
+ * Begin (or resume) `song` `offsetSeconds` into the 30s window. `t0Ms`
  * anchors the persisted run; omitted for a fresh start.
  */
-function start(offsetSeconds = 0, t0Ms?: number, muted = false): void {
+function start(song: SigninSong, offsetSeconds = 0, t0Ms?: number, muted = false): void {
   try {
     clearTimers();
+    if (el && elSong !== song) releaseElement();
     if (!el) {
-      el = new Audio(CARLA_SONG_SRC);
+      el = new Audio(song.src);
+      elSong = song;
       el.preload = 'auto';
       el.addEventListener('ended', finish);
       // Missing/undecodable asset — stand down without ever showing the toast.
@@ -241,11 +307,11 @@ function start(offsetSeconds = 0, t0Ms?: number, muted = false): void {
     }
     // Persist BEFORE play resolves so a navigation racing the start still
     // finds the run and resumes on the next document.
-    writeRun({ t0: t0Ms ?? Date.now() - offsetSeconds * 1000, muted });
+    writeRun({ t0: t0Ms ?? Date.now() - offsetSeconds * 1000, muted, email: song.email });
     el.volume = VOLUME;
     el.muted = muted;
     // Optimistic: flips to 'blocked' or 'done' below if play() rejects.
-    setState({ status: 'playing', muted });
+    setState({ status: 'playing', muted, song });
     void el
       .play()
       .then(() => {
@@ -276,14 +342,16 @@ function start(offsetSeconds = 0, t0Ms?: number, muted = false): void {
 
 /**
  * The one sign-in entry point — called by the login page right before it
- * navigates into the app. No-ops for everyone but Carla, and won't restart
- * a run that's already going (the hand-off effect can fire more than once).
+ * navigates into the app. No-ops for anyone not in `SIGNIN_SONGS`, and won't
+ * restart a run that's already going (the hand-off effect can fire more than
+ * once).
  */
 export function startCarlaSongIfEligible(email: string | null | undefined): void {
   if (typeof window === 'undefined') return;
-  if ((email ?? '').trim().toLowerCase() !== CARLA_SONG_EMAIL) return;
+  const song = signinSongFor(email);
+  if (!song) return;
   if (state.status === 'playing' || state.status === 'blocked') return;
-  start();
+  start(song);
 }
 
 /**
@@ -296,18 +364,22 @@ export function startCarlaSongIfEligible(email: string | null | undefined): void
 export function resumeCarlaSongIfPending(): void {
   if (typeof window === 'undefined') return;
   if (state.status === 'playing' || state.status === 'blocked') return;
-  const run = readRun();
-  if (!run) return;
+  const stored = readRun();
+  if (!stored) {
+    // Absent, malformed, or for an email no longer listed — never resume it.
+    clearRun();
+    return;
+  }
   if (window.location.pathname.startsWith('/login')) {
     clearRun();
     return;
   }
-  const elapsed = (Date.now() - run.t0) / 1000;
+  const elapsed = (Date.now() - stored.run.t0) / 1000;
   if (elapsed >= CARLA_SONG_TOTAL_SECONDS) {
     clearRun();
     return;
   }
-  start(elapsed, run.t0, run.muted);
+  start(stored.song, elapsed, stored.run.t0, stored.run.muted);
 }
 
 /** Mute keeps the 30s timeline running — unmuting rejoins the song mid-play. */
@@ -319,8 +391,8 @@ export function setCarlaSongMuted(muted: boolean): void {
       /* ignore */
     }
   }
-  const run = readRun();
-  if (run) writeRun({ ...run, muted });
+  const stored = readRun();
+  if (stored) writeRun({ ...stored.run, muted });
   setState({ muted });
 }
 

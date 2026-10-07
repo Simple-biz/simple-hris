@@ -50,9 +50,9 @@ export default async function RootLayout({
             disableTransitionOnChange
           >
             {children}
-            {/* Carla's sign-in song pill — root layout so it survives dashboard
+            {/* Sign-in song pill (per person, SIGNIN_SONGS) — root layout so it survives dashboard
                 switches (client-side navs never remount this layout). Renders
-                null for everyone else / when nothing is playing. */}
+                null for anyone not in the table / when nothing is playing. */}
             <CarlaSongToast />
             {/* Carla's Jellyfish Jam bubble — every 5 active minutes, right edge.
                 Root layout for the same reason as the pill above. Arms nothing

@@ -347,7 +347,7 @@ function LoginPageInner() {
       }
 
       // The SA fast-path skips the intro video, so the serenade starts right at the
-      // hand-off instead. Also makes the feature testable by impersonating Carla.
+      // hand-off instead. Also makes the feature testable by impersonating a listed email.
       startCarlaSongIfEligible(email);
       router.replace(`${VIEW_ROUTES[target]}?email=${encodeURIComponent(email)}`);
     } catch {
@@ -422,9 +422,9 @@ function LoginPageInner() {
       } catch {
         /* ignore */
       }
-      // Carla's serenade — starts her 30s Anri clip exactly as the intro hands off to the app.
+      // Sign-in song — starts the person's 30s clip (SIGNIN_SONGS) exactly as the intro hands off.
       // Module-level audio, so it plays on through this client-side replace and any dashboard
-      // switches after it. No-ops for every other email.
+      // switches after it. No-ops for every email not in the table.
       startCarlaSongIfEligible(session?.user?.email);
       router.replace(destination);
       return;

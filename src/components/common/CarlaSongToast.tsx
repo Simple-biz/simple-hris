@@ -4,8 +4,6 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Volume2, VolumeX, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
-  CARLA_SONG_ARTIST,
-  CARLA_SONG_TITLE,
   CARLA_SONG_TOTAL_SECONDS,
   getCarlaSongElapsedSeconds,
   getCarlaSongServerState,
@@ -16,16 +14,12 @@ import {
   toggleCarlaSongMuted,
 } from '@/lib/sound/carla-song';
 
-// Real cover art can be dropped at public/carla-song-thumb.jpg; until then the
-// committed retro-sunset SVG stands in (and also covers a failed jpg load).
-const THUMB_PRIMARY = '/carla-song-thumb.jpg';
-const THUMB_FALLBACK = '/carla-song-thumb.svg';
-
 /**
- * "Now playing" pill for Carla's sign-in song — mounted ONCE in the root
+ * "Now playing" pill for the sign-in songs — mounted ONCE in the root
  * layout so it survives dashboard switches (client-side navigations never
  * remount the root layout). Renders nothing until the carla-song module
- * actually starts playing, then floats top-center above every dashboard,
+ * actually starts playing, then shows THAT person's song (title, artist and
+ * cover art from `SIGNIN_SONGS`) and floats top-center above every dashboard,
  * including the full-screen switch loader (z-[100]) and the collab chrome
  * (z-[120]). Sound is on by default; the speaker button mutes/unmutes and
  * the ✕ stops the song outright.
@@ -75,9 +69,17 @@ export default function CarlaSongToast() {
     return () => window.clearInterval(t);
   }, [state.status]);
 
-  const [thumbSrc, setThumbSrc] = useState(THUMB_PRIMARY);
+  // Cover art that failed to load this document — the pill steps to the
+  // song's fallback, and with none left it drops the art rather than show a
+  // broken image.
+  const [brokenThumbs, setBrokenThumbs] = useState<ReadonlySet<string>>(() => new Set());
 
-  if (!shown) return null;
+  const song = state.song;
+  if (!shown || !song) return null;
+
+  const thumbSrc = [song.thumb, song.thumbFallback].find(
+    (src): src is string => !!src && !brokenThumbs.has(src),
+  );
 
   const blocked = state.status === 'blocked';
   const progressPct = Math.min(100, (elapsed / CARLA_SONG_TOTAL_SECONDS) * 100);
@@ -92,14 +94,14 @@ export default function CarlaSongToast() {
           leaving && '-translate-y-2 opacity-0',
         )}
       >
-        <img
-          src={thumbSrc}
-          alt={`${CARLA_SONG_TITLE} cover art`}
-          className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-black/5 dark:ring-white/10"
-          onError={() => {
-            if (thumbSrc !== THUMB_FALLBACK) setThumbSrc(THUMB_FALLBACK);
-          }}
-        />
+        {thumbSrc && (
+          <img
+            src={thumbSrc}
+            alt={`${song.title} cover art`}
+            className="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-black/5 dark:ring-white/10"
+            onError={() => setBrokenThumbs((prev) => new Set(prev).add(thumbSrc))}
+          />
+        )}
 
         <div className="min-w-0">
           <div
@@ -118,8 +120,8 @@ export default function CarlaSongToast() {
             )}
           </div>
           <div className="truncate text-[13px] font-semibold leading-5 text-zinc-900 dark:text-zinc-50">
-            {CARLA_SONG_TITLE}
-            <span className="font-normal text-zinc-500 dark:text-zinc-400"> · {CARLA_SONG_ARTIST}</span>
+            {song.title}
+            <span className="font-normal text-zinc-500 dark:text-zinc-400"> · {song.artist}</span>
           </div>
         </div>
 
