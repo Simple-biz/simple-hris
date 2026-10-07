@@ -7,12 +7,12 @@
 import type { BoardSection } from './sections';
 import { datesFor } from './week';
 import {
-  amountCountSectionStats,
   amPmSectionStats,
   collectionsWeekStats,
   dailySectionStats,
   problemsWeekStats,
   timeSpanSectionHours,
+  winRatio,
   type AmPmRowMeta,
   type CollectionEntry,
   type EntryLookup,
@@ -40,10 +40,10 @@ export interface BoardContext {
 export type HeadlineSection = Pick<BoardSection, 'kind' | 'days' | 'score' | 'goal'>;
 
 /**
- * - buckets / inbox → the section's 0–10 score (buckets: Carla's overall, 10 × Σ completed ÷
- *   Σ(completed + open) over the scored buckets)
- * - open disputes   → how many are open now (the latest reading of the lines not marked due-soon)
- * - outcomes        → chargebacks counted this week, across Pre-arb, Wins and Losses
+ * - buckets / inbox / open disputes → the section's 0–10 score (buckets and, since 2026-10-07, Open
+ *   Disputes: Carla's overall, 10 × Σ completed ÷ Σ(completed + open) over the scored lines; the
+ *   "due in 7 days" line is never scored)
+ * - outcomes        → the win ratio, 100 × wins ÷ (wins + losses) by count (Carla, 2026-10-07)
  * - collections     → team points
  * - PM buckets      → Σ of the PMs' daily averages (the sheet's WTD AVG total)
  * - payroll timing  → the cycle score, once both checks are decided
@@ -74,7 +74,7 @@ export function sectionHeadline(
     case 'payroll_cycle':
       return cycleWeek(ctx.payrollEvents, weekStart, ctx.nowIso, ctx.firstClosedPeriodEnd).score;
     case 'amount_count':
-      return amountCountSectionStats(ids, dates, ctx.lookup).weekCount;
+      return winRatio(rows, dates, ctx.lookup).ratio;
     case 'problem_log':
       return problemsWeekStats(ids, ctx.problems, ctx.lookup, dates).week;
   }

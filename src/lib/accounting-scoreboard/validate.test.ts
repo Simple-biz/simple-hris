@@ -135,7 +135,16 @@ test('members and section switches', () => {
   assert.deepEqual(parseSectionPatch({ sectionKey: 'inbox', enabled: false }), { ok: true, value: { sectionKey: 'inbox', enabled: false } });
   assert.deepEqual(parseSectionPatch({ sectionKey: 'collections', goal: 90 }), { ok: true, value: { sectionKey: 'collections', goal: 90 } });
   assert.deepEqual(parseSectionPatch({ sectionKey: 'collections', goal: null }), { ok: true, value: { sectionKey: 'collections', goal: null } });
-  assert.equal(parseSectionPatch({ sectionKey: 'chargebacks', goal: 5 }).ok, false, 'no goal is invented for a goal-less section');
+  // Carla, 2026-10-07: a goal can be set on a section that has none, within its measure's range.
+  assert.deepEqual(parseSectionPatch({ sectionKey: 'chargebacks', goal: 8 }), { ok: true, value: { sectionKey: 'chargebacks', goal: 8 } });
+  assert.equal(parseSectionPatch({ sectionKey: 'chargebacks', goal: 11 }).ok, false, 'a score goal is 0–10');
+  assert.equal(parseSectionPatch({ sectionKey: 'buckets', goal: 11 }).ok, false, 'a score goal is 0–10, sheet goal or not');
+  assert.equal(parseSectionPatch({ sectionKey: 'chargeback_outcomes', goal: 50 }).ok, true);
+  assert.equal(parseSectionPatch({ sectionKey: 'chargeback_outcomes', goal: 101 }).ok, false, 'a win ratio is 0–100%');
+  assert.equal(parseSectionPatch({ sectionKey: 'pm_buckets', goal: 30 }).ok, true);
+  assert.equal(parseSectionPatch({ sectionKey: 'onboarding', goal: 40 }).ok, true);
+  assert.equal(parseSectionPatch({ sectionKey: 'onboarding', goal: -1 }).ok, false);
+  assert.equal(parseSectionPatch({ sectionKey: 'payroll_timing', goal: 120 }).ok, false, 'a cycle score is 0–100%');
   assert.equal(parseSectionPatch({ sectionKey: 'inbox', enabled: 'no' }).ok, false);
   assert.equal(parseSectionPatch({ sectionKey: 'inbox' }).ok, false);
 });
@@ -169,21 +178,34 @@ test('rows: a custom row names its custom section; a bucket day and the due-soon
   assert.equal(parseRowPatch({ id: ROW, dueSoon: 'yes' }).ok, false);
 });
 
+test('rows: a Chargeback Outcomes line counts as a win, a loss or neither (null)', () => {
+  assert.deepEqual(parseRowPatch({ id: ROW, outcome: 'win' }), { ok: true, value: { id: ROW, outcome: 'win' } });
+  assert.deepEqual(parseRowPatch({ id: ROW, outcome: null }), { ok: true, value: { id: ROW, outcome: null } }, 'null clears it, and counts as a change');
+  for (const bad of ['Wins', 'won', 'pre_arb', '', 1, true]) assert.equal(parseRowPatch({ id: ROW, outcome: bad }).ok, false, String(bad));
+});
+
 test('Payment Verified: a collection id and a true/false', () => {
   assert.deepEqual(parseVerifyWrite({ collectionId: ROW, verified: true }), { ok: true, value: { collectionId: ROW, verified: true } });
   assert.equal(parseVerifyWrite({ collectionId: ROW, verified: 'yes' }).ok, false);
   assert.equal(parseVerifyWrite({ collectionId: 'x', verified: true }).ok, false);
 });
 
-test('Payroll Problems: a person, a weekday, a type and a whole count 1–1000 (default 1)', () => {
+test('Payroll Problems: a person, a weekday, a type and a whole count 0–1000 (default 1; 0 since 2026-10-07)', () => {
   const TYPE = '22222222-2222-4222-8222-222222222222';
   assert.deepEqual(parseProblemCreate({ rowId: ROW, date: '2026-09-29', typeId: TYPE }, TODAY), {
     ok: true,
     value: { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 1 },
   });
   assert.equal(parseProblemCreate({ rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 51 }, TODAY).ok, true);
+  // Kane, 2026-10-07: "0 can count as 0 problems".
+  assert.deepEqual(parseProblemCreate({ rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 0 }, TODAY), {
+    ok: true,
+    value: { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 0 },
+  });
   const bad: unknown[] = [
-    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 0 },
+    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: -1 },
+    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: null },
+    { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: '0' },
     { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 1.5 },
     { rowId: ROW, date: '2026-09-29', typeId: TYPE, count: 1001 },
     { rowId: ROW, date: '2026-09-27', typeId: TYPE }, // Sunday

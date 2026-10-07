@@ -6,7 +6,7 @@
 import type { PreviewVerdict } from './bonus-preview';
 import type { PayrollEvent } from './payroll-cycle';
 import type { CollectionEntry, ProblemEntry, StoredEntry } from './scoring';
-import type { CustomSection, RowSectionKey, SectionSetting, Weekday } from './sections';
+import type { CustomSection, Outcome, RowSectionKey, SectionSetting, Weekday } from './sections';
 
 export interface BoardRow {
   id: string;
@@ -23,6 +23,8 @@ export interface BoardRow {
   bucketDay: Weekday | null;
   /** Open Disputes only: this line counts the disputes due in the next 7 days, and is called out. */
   dueSoon: boolean;
+  /** Chargeback Outcomes only: counted as a win or a loss in the win ratio; null = neither (Pre-arb). */
+  outcome: Outcome | null;
 }
 
 export interface BoardMember {

@@ -10,7 +10,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { CalendarX2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { WEEKDAY_LABEL, type BoardSection, type GoalRule, type Slot } from '@/lib/accounting-scoreboard/sections';
+import { WEEKDAY_LABEL, isOutcome, type BoardSection, type GoalRule, type Slot } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader } from '@/lib/accounting-scoreboard/week';
 import {
   amountCountSectionStats,
@@ -18,6 +18,7 @@ import {
   dailySectionStats,
   noMeetingStreak,
   timeSpanSectionHours,
+  winRatio,
   type AmPmRowStats,
   type EntryLookup,
 } from '@/lib/accounting-scoreboard/scoring';
@@ -38,8 +39,10 @@ import {
   TimeCell,
   TINY_CAPS,
   fmtNum,
+  fmtPct,
   fmtScore,
   fmtUsd,
+  goalFormat,
   handle,
   type EditingSignal,
 } from './shared';
@@ -86,6 +89,9 @@ function RowLabel({ row }: { row: BoardRow }) {
             due in 7 days
           </RowTag>
         ) : null}
+        {row.outcome ? (
+          <RowTag title={`Its count is a ${row.outcome} in the win ratio`}>{row.outcome === 'win' ? 'counts as won' : 'counts as lost'}</RowTag>
+        ) : null}
         {row.archived ? <RowTag>removed</RowTag> : null}
       </div>
     </div>
@@ -126,10 +132,15 @@ export function SectionGrid({
     [section, rows, lookup, weekStart, lastWeekStart, today],
   );
 
-  const isOpenDisputes = section.kind === 'am_pm' && !section.score;
-  const unitFormat = section.goal?.measure === 'score' ? fmtScore : fmtNum;
-  const dueSoon = isOpenDisputes ? amPmSectionStats(rows, dates, lookup, undefined, today).dueSoonNow : null;
+  // Open Disputes is scored like Buckets since 2026-10-07 (Carla); how many are open now and the ones due
+  // in 7 days are still called out beside the score.
+  const isOpenDisputes = section.key === 'chargebacks';
+  const unitFormat = goalFormat(section.goal);
+  const disputes = isOpenDisputes ? amPmSectionStats(rows, dates, lookup, section.score, today) : null;
+  const wins = section.kind === 'amount_count' ? winRatio(rows, dates, lookup) : null;
   const streak = section.kind === 'daily_flag' ? noMeetingStreak(lastMeetingDate, today) : null;
+  const CHIP =
+    'inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300';
 
   const header = (
     <SectionHeader
@@ -137,33 +148,44 @@ export function SectionGrid({
       help={section.help}
       right={
         <>
-          {isOpenDisputes ? (
+          {/* A section with no goal still says its number: the chip needs a goal, so print it plain. */}
+          {section.goal ? (
+            <GoalChip goal={section.goal} light={summary.light} value={summary.headline} unitFormat={unitFormat} />
+          ) : isOpenDisputes || wins ? (
+            <span className={CHIP}>
+              <span className="font-mono tabular-nums">{wins ? fmtPct(summary.headline) : fmtScore(summary.headline)}</span>
+              {wins ? 'won' : 'score'}
+            </span>
+          ) : null}
+          {disputes ? (
             <>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
-                <span className="font-mono tabular-nums">{fmtNum(summary.headline)}</span> open now
+              <span className={CHIP}>
+                <span className="font-mono tabular-nums">{fmtNum(disputes.openNow)}</span> open now
               </span>
               {/* Carla, 2026-10-02: the ones due in the next 7 days, called out. */}
               <span
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold',
-                  dueSoon ? LIGHT_STYLE.amber.chip : LIGHT_STYLE.none.chip,
+                  disputes.dueSoonNow ? LIGHT_STYLE.amber.chip : LIGHT_STYLE.none.chip,
                 )}
               >
-                <span className="font-mono tabular-nums">{fmtNum(dueSoon)}</span> due in the next 7 days
+                <span className="font-mono tabular-nums">{fmtNum(disputes.dueSoonNow)}</span> due in the next 7 days
               </span>
             </>
-          ) : section.kind === 'amount_count' ? null : (
-            <GoalChip goal={section.goal} light={summary.light} value={summary.headline} unitFormat={unitFormat} />
-          )}
-          {section.kind === 'daily_flag' ? <NoMeetingStreak days={streak} /> : null}
-          {section.kind === 'amount_count' ? null : (
-            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              Last week{isOpenDisputes ? ' (open)' : ''}{' '}
-              <span className={cn('font-mono tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>
-                {unitFormat(summary.lastHeadline)}
-              </span>
+          ) : null}
+          {wins ? (
+            <span className={CHIP} title="Wins ÷ (wins + losses), by the number of chargebacks. Pre-arb is not decided, so it is left out.">
+              <span className="font-mono tabular-nums">{fmtNum(wins.won)}</span> won ·{' '}
+              <span className="font-mono tabular-nums">{fmtNum(wins.lost)}</span> lost
             </span>
-          )}
+          ) : null}
+          {section.kind === 'daily_flag' ? <NoMeetingStreak days={streak} /> : null}
+          <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+            Last week{' '}
+            <span className={cn('font-mono tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>
+              {(wins ? fmtPct : isOpenDisputes ? fmtScore : unitFormat)(summary.lastHeadline)}
+            </span>
+          </span>
         </>
       }
     />
@@ -394,7 +416,7 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
           );
         })}
       </tbody>
-      {/* Open Disputes has no Day total: "due in 7 days" is part of "open", so adding the lines double counts. */}
+      {/* The Day total leaves out Open Disputes' "due in 7 days" line: it is part of open (scoring.ts). */}
       {rule ? (
         <tfoot className="border-t border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
           <tr>
@@ -429,7 +451,10 @@ function AmPmTable({ section, rows, dates, lastDates, today, lookup, onSave, onE
                 <Flash value={stats.teamPmAverage} scope={scope}>{fmtScore(stats.teamPmAverage)}</Flash>
               </td>
             )}
-            <td className={cn(TD, NUM, 'font-semibold')} title={rule === 'cleared' ? '10 × total completed ÷ total (completed + open), scored buckets only' : undefined}>
+            <td
+              className={cn(TD, NUM, 'font-semibold')}
+              title={rule === 'cleared' ? '10 × total completed ÷ total (completed + open), scored lines only' : undefined}
+            >
               <Flash value={stats.headline} scope={scope}>
                 <ScoreText score={stats.headline} goal={section.goal} />
               </Flash>
@@ -635,12 +660,18 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
 /**
  * Chargeback Outcomes (Carla, 2026-10-02): per outcome, per day, the dollar amount and how many
  * chargebacks ("one dispute won for $99 → Wins: $99 / 1"). Per-outcome week totals only: there is
- * no total across outcomes, because adding a win to a loss means nothing.
+ * no total across outcomes, because adding a win to a loss means nothing. The footer is the week's
+ * win ratio (Carla, 2026-10-07): wins ÷ (wins + losses), by count, from the lines' outcome flags.
  */
 function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
   const ids = rows.map((r) => r.id);
   const stats = amountCountSectionStats(ids, dates, lookup);
   const last = amountCountSectionStats(ids, lastDates, lookup);
+  const ratio = winRatio(rows, dates, lookup);
+  const lastRatio = winRatio(rows, lastDates, lookup);
+  const ratioLight = goalLight(section.goal, ratio.ratio);
+  // A real flag, never "not null": a board cached before 2026-10-07 has no `outcome` on its rows at all.
+  const flagged = rows.some((r) => isOutcome(r.outcome));
   return (
     <table className="table-keep w-full border-collapse text-sm">
       <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -709,6 +740,30 @@ function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSa
           );
         })}
       </tbody>
+      {/* Carla, 2026-10-07: the win ratio, by count. Still no total across outcomes: it is a ratio, not a sum. */}
+      <tfoot className="border-t border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
+        <tr>
+          <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Win ratio</td>
+          <td colSpan={dates.length * 2} className={cn(TD, 'text-[11px] text-zinc-500 dark:text-zinc-400')}>
+            {flagged ? (
+              <>
+                Wins ÷ (wins + losses), by count · <span className="font-mono tabular-nums">{fmtNum(ratio.won)}</span> won,{' '}
+                <span className="font-mono tabular-nums">{fmtNum(ratio.lost)}</span> lost
+              </>
+            ) : (
+              'No line is marked as a win or a loss yet: a manager marks them under Setup → Rows.'
+            )}
+          </td>
+          <td colSpan={2} className={cn(TD, NUM, 'font-semibold')}>
+            <Flash value={ratio.ratio} scope={scope}>
+              <span className={ratioLight === 'none' ? 'text-zinc-800 dark:text-zinc-200' : LIGHT_STYLE[ratioLight].text}>
+                {fmtPct(ratio.ratio)}
+              </span>
+            </Flash>
+          </td>
+          <td colSpan={2} className={cn(TD, NUM, DIM)}>{fmtPct(lastRatio.ratio)}</td>
+        </tr>
+      </tfoot>
     </table>
   );
 }

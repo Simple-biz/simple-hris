@@ -89,3 +89,56 @@ test("buckets: the headline is Carla's overall score; a switched goal is judged 
   const strict = resolveSections([{ sectionKey: 'buckets', enabled: true, goal: 11 }]).find((s) => s.key === 'buckets')!;
   assert.equal(summarizeSection(strict, rows('x'), c, WEEK, LAST).light, 'amber', '10 is within 80% of 11');
 });
+
+test('Open Disputes (2026-10-07): the headline is the Buckets score; it is judged only once a goal is set in Setup', () => {
+  const entries: StoredEntry[] = [
+    { rowId: 'open', date: '2026-09-28', slot: 'am', value: 10 },
+    { rowId: 'open', date: '2026-09-28', slot: 'pm', value: 8 },
+    { rowId: 'open', date: '2026-09-29', slot: 'am', value: 9 },
+    { rowId: 'open', date: '2026-09-29', slot: 'pm', value: 6 },
+    { rowId: 'due', date: '2026-09-28', slot: 'am', value: 3 },
+    { rowId: 'due', date: '2026-09-29', slot: 'pm', value: 1 },
+  ];
+  const r: AmPmRowMeta[] = [
+    { id: 'open', bucketDay: null, dueSoon: false },
+    { id: 'due', bucketDay: null, dueSoon: true },
+  ];
+  const c = ctx({ entries });
+  assert.equal(summarizeSection(sec('chargebacks'), r, c, WEEK, LAST).headline, 4.5);
+  assert.equal(summarizeSection(sec('chargebacks'), r, c, WEEK, LAST).light, 'none', 'no goal set: no call');
+  const withGoal = resolveSections([{ sectionKey: 'chargebacks', enabled: true, goal: 5 }]).find((s) => s.key === 'chargebacks')!;
+  assert.equal(summarizeSection(withGoal, r, c, WEEK, LAST).light, 'amber', '4.5 of a 5 goal is within 80%');
+});
+
+test('Outcomes (2026-10-07): the headline is the win ratio, judged on ≥ 50% and never paced', () => {
+  const r: AmPmRowMeta[] = [
+    { id: 'w', bucketDay: null, dueSoon: false, outcome: 'win' },
+    { id: 'l', bucketDay: null, dueSoon: false, outcome: 'loss' },
+    { id: 'p', bucketDay: null, dueSoon: false, outcome: null },
+  ];
+  const monday = (w: number, l: number): StoredEntry[] => [
+    { rowId: 'w', date: '2026-09-28', slot: 'count', value: w },
+    { rowId: 'l', date: '2026-09-28', slot: 'count', value: l },
+    { rowId: 'p', date: '2026-09-28', slot: 'count', value: 7 },
+  ];
+  // Tuesday: one day of five is over. A paced goal would want 10%; a ratio is judged whole.
+  const even = summarizeSection(sec('chargeback_outcomes'), r, ctx({ today: '2026-09-29', entries: monday(1, 1) }), WEEK, LAST);
+  assert.equal(even.headline, 50);
+  assert.equal(even.light, 'green');
+  const third = summarizeSection(sec('chargeback_outcomes'), r, ctx({ today: '2026-09-29', entries: monday(1, 2) }), WEEK, LAST);
+  assert.equal(third.headline, 33.3);
+  assert.equal(third.light, 'red', '33% is under 80% of 50%');
+  assert.equal(summarizeSection(sec('chargeback_outcomes'), r, ctx(), WEEK, LAST).light, 'none', 'nothing decided: no call');
+});
+
+test("PM Buckets (Carla, 2026-10-07): below 30 on the Σ of the PMs' averages, an average and never paced", () => {
+  const r = rows('a', 'b');
+  const day = (id: string, date: string, value: number): StoredEntry => ({ rowId: id, date, slot: 'day', value });
+  const tue = { today: '2026-09-29' };
+  const over = ctx({ ...tue, entries: [day('a', '2026-09-28', 20), day('a', '2026-09-29', 20), day('b', '2026-09-28', 12)] });
+  const s = summarizeSection(sec('pm_buckets'), r, over, WEEK, LAST);
+  assert.equal(s.headline, 32);
+  assert.equal(s.light, 'amber', 'a little over 30; a paced "below" goal would already be red on Tuesday');
+  const under = ctx({ ...tue, entries: [day('a', '2026-09-28', 20), day('b', '2026-09-28', 5)] });
+  assert.equal(summarizeSection(sec('pm_buckets'), r, under, WEEK, LAST).light, 'green');
+});

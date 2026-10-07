@@ -20,7 +20,8 @@ every payroll problem, and custom sections.
 | Tables, guards, lock-down | `references/sql/create/2026-10-01_accounting_scoreboard.sql` |
 | Round 3: custom sections, row flags, Outcomes slots, Payment Verified, the problem log and types | `references/sql/create/2026-10-06_accounting_scoreboard_round3.sql` |
 | A custom section shown inside a built-in tab (`host_section_key`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_custom_section_host.sql` |
-| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` |
+| Win/loss flags on Outcomes lines (`rows.outcome`) + 0–1000 payroll problems (2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql` |
+| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` · `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts` |
 | The 11 built-in sections (kind, days, slots, goals), custom sections, tabs | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
@@ -87,20 +88,20 @@ every payroll problem, and custom sections.
 The built-in sections, their days and their goals are code (`sections.ts`), pinned to the SQL CHECKs by
 `sections.test.ts`, which reads the CHECKs in force from the round-3 SQL and also pins that round 3 only
 added to the 2026-10-01 lists. A manager can switch any section off, and its rows and numbers are kept, or
-override its goal. Carla asked to track less than the sheet does, so the switch exists instead of a
+set its goal (§ Goals in Setup). Carla asked to track less than the sheet does, so the switch exists instead of a
 hard-coded subset. Managers can also add sections of their own (§ Custom sections).
 
 | Section | Kind | Days | Score / headline | Goal |
 |---|---|---|---|---|
 | Accounting Buckets | AM/PM | Mon–Fri | **Carla's rule** (§ Buckets): Score = 10 × Completed ÷ (Completed + Open); headline = the overall, 10 × Σ Completed ÷ Σ(Completed + Open) over the scored buckets | ≥ 8 |
 | Collections | log (+ Payment Verified) | Mon–Fri | team points | ≥ 85 |
-| PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average; No Meeting Streak in the header | — |
-| Sales — Payments (the Sales Onboarding tab; "Customer Sales Onboarding" until 2026-10-07) | daily | Mon–Fri | week total | — |
+| PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average (an average: never paced); No Meeting Streak in the header | < 30 avg (Carla, 2026-10-07) |
+| Sales — Payments (the Sales Onboarding tab; "Customer Sales Onboarding" until 2026-10-07) | daily | Mon–Fri | week total | none by default; "at least N payments", set in Setup |
 | Email Inbox | AM/PM | Mon–Fri | 10 − average PM count (0 → 10, ≥ 9 → 1); headline = score of the team average | ≥ 9 |
-| Chargebacks · Open Disputes | AM/PM | Mon–Fri | open now (the latest reading of the lines not marked "due in 7 days"); the due-in-7-days line is called out | — |
-| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | per outcome (Pre-arb, Wins, Losses): week $ and week # | — |
+| Chargebacks · Open Disputes | AM/PM | Mon–Fri | **scored like Buckets** since 2026-10-07: the overall 0–10, over the lines not marked "due in 7 days"; open now and the due-in-7-days line are called out beside it | none by default; a 0–10 score, set in Setup |
+| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | **win ratio** = wins ÷ (wins + losses), by count; per outcome: week $ and week # | ≥ 50% (Carla, 2026-10-07) |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
-| Cancellation Call Recordings | daily | Mon–Fri | week total + share | — |
+| Cancellation Call Recordings | daily | Mon–Fri | week total + share | none by default; "at least N reviewed", set in Setup |
 | Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
 | Payroll Problems | **log**, one line per problem (or batch) with its type (§ Payroll Problems) | Mon–Fri | week total | < 20 |
 | a manager's custom section | one number a day, or AM/PM scored like Buckets; a tab of its own or shown inside a built-in tab | Mon–Fri | week total, or the Buckets overall | optional |
@@ -147,17 +148,35 @@ Carla's email, § 1, replaced the sheet's Comp = Σ(AM − PM) and its tiers. He
 
 Carla's email, § 4, split the tab in two. Both sections sit on the one Chargebacks tab.
 
-- **Open Disputes** keeps its AM/PM grid. Its headline is how many are open **now**: the latest reading of
-  every line not marked "due in 7 days". The line that counts the disputes due in the next 7 days is marked
-  on the row (`due_soon`, Setup → Rows; seeded on "Disputes due in 7 days") and is **called out**: an amber
-  chip in the header, an amber line in the grid, and a line on the Overview card. It is part of "open", so it
-  is never added to it, and this grid has no Day total (adding the lines would double count).
+- **Open Disputes** keeps its AM/PM grid and, since 2026-10-07, is **scored like Buckets** (Carla, via Kane:
+  *"Chargebacks Disputes - productivity formula same as the regular buckets"*): Completed, Open and Score per
+  line, and the headline is the overall, 10 × Σ Completed ÷ Σ(Completed + Open) over the scored lines (§ Buckets).
+  Until then the headline was how many are open now. That number is still shown, as a chip beside the score and
+  a line on the Overview card. There is no default goal; a manager sets one in Setup (§ Goals in Setup).
+- The line that counts the disputes due in the next 7 days is marked on the row (`due_soon`, Setup → Rows;
+  seeded on "Disputes due in 7 days") and is **called out**: an amber chip in the header, an amber line in the
+  grid, and a line on the Overview card. **It is part of "open", so it is never added to it, never scored and
+  never in the overall**. Its score cell says *Called out*. The Day total leaves it out: adding it would count those
+  disputes twice. Before 2026-10-07 the grid had no Day total at all, for the same reason.
 - **Outcomes** (section `chargeback_outcomes`) holds Pre-arb, Wins and Losses: per day, the **dollar amount**
   (`usd`, dollars and cents) and the **number of chargebacks** (`count`, a whole number). Carla's example:
   one dispute won for $99 → Wins: $99 / 1. Each outcome has its week $ and week #. There is **no total across
   outcomes**: a win plus a loss means nothing.
+- **The win ratio** (Carla, via Kane, 2026-10-07: *"I need to get a win ratio of 50% or higher each week"*) is
+  Outcomes' headline: **wins ÷ (wins + losses), by COUNT** (the number of chargebacks, never dollars), one
+  decimal. Pre-arb is left out because it is not decided. Its goal is **≥ 50%**, a ratio, so it is never
+  paced. Nothing decided is "—", never 0%; all lost is a real 0%. It shows as the grid's *Win ratio* footer, a
+  header chip ("3 won · 1 lost"), and an Overview card.
+- **What a line counts as is marked on the row** (`rows.outcome`: `win`, `loss` or null, Setup → Rows →
+  "Counts as a win / a loss / Not counted"), **never read from its label**, the same as `bucket_day` and
+  `due_soon`, so a rename keeps it. CHECK `acct_sb_rows_outcome_valid` allows it only on an Outcomes line. The
+  migration flags the live "Wins" and "Losses". Several lines may count as wins, and they add up. With no line
+  marked, the footer says so instead of showing a ratio.
+- CHOSEN (session `728157e2`), not Carla's words: the count, not dollars; Pre-arb left out. If she means
+  dollars, change `winRatio` in `scoring.ts` and its test.
 - Outcomes shows inside the Chargebacks tab while Open Disputes is on. If Open Disputes is switched off,
-  Outcomes takes a tab of its own, so it never disappears silently (`tabSections`). It has its own switch.
+  Outcomes takes a tab of its own, so it never disappears silently (`tabSections`). It has its own switch, and
+  since 2026-10-07 **its own Overview card** (the win ratio is its single number), right after Open Disputes'.
 - The old AM/PM rows Pre-arb, Wins and Losses were **archived, not deleted**, on 2026-10-06. They still show,
   read-only, for the weeks that hold their numbers (all 0s typed on Oct 5), and then drop away.
 - **Not built:** Carla's 2026-10-01 meeting asks (pre-arbitrations as negative amounts, "won chargebacks as
@@ -180,8 +199,12 @@ Carla's email, § 5. The daily count grid became a **log** on 2026-10-06, becaus
 problem, not to a person's day total.
 
 - A line is a day (Mon–Fri), a person (a row of the section), a **Problem Type** and how many (a whole number
-  1–1000, default 1; one person logged 51 in a day on the old grid). A person's day and the week add up from
+  **0–1000**, default 1; one person logged 51 in a day on the old grid). A person's day and the week add up from
   the log (`problemsWeekStats`), with chips per type.
+- **0 is a real "0 problems"** since 2026-10-07. Kane: *"lets not limit it to 1 to 1000 lets start from 0 because
+  0 can count as 0 problems"*. It was 1–1000 (`validate.ts`, the form, and CHECK `acct_sb_prob_count_range`, all
+  three moved together). A 0 line still needs a type, like any line. A week whose only lines are 0s reads **0**,
+  and is green against "< 20". It can still be deleted, like any line.
 - **Append-only**, like the collections log: a trigger refuses every UPDATE except the one soft delete, and
   only the person who logged a line, or a manager, may delete it.
 - **Types** are a list managers keep under Setup → Problem types. Carla's starting list (Account Error,
@@ -189,8 +212,30 @@ problem, not to a person's day total.
   dropdown and every line already logged keeps it.
 - **The counts typed into the old grid still count**, as **"No type"** (22 entries, 2026-09-28 → 10-05). They
   are read, never written: the grid takes no writes now (`problem_log` has no slots).
-- **Nothing logged is "—", not 0 problems**: the board cannot tell "no problems" from "nobody logged". So a
-  clean week has no stop light, the same rule as the collections log.
+- **Nothing logged is still "—", not 0 problems**: the board cannot tell "no problems" from "nobody logged". So a
+  week with no line has no stop light, the same rule as the collections log. To record a clean day, log a 0.
+
+## Goals in Setup: every section can carry one (2026-10-07)
+
+Carla, via Kane: *"for Sections, can you add an edit or button to set a goal for those without one?"* Until then a
+section with no goal on the sheet could never get one (`parseSectionPatch` refused it). Now every built-in section has
+something its goal is judged on, pinned in `sections.test.ts`:
+
+- **A default goal** (`SectionDef.goal`): the sheet's (Buckets ≥ 8, Inbox ≥ 9, Collections ≥ 85, Compliance ≥ 30,
+  Payroll Timing 100%, Payroll Problems < 20), or **Carla's own of 2026-10-07**: **PM Buckets < 30 avg** (*"less
+  than 30 avg in the buckets weekly"*; the headline is the Σ of the PMs' daily averages, which read 24.6 and 28.5 on
+  the weeks of 09-27 and 10-04) and **Outcomes ≥ 50%**. Setup shows the number and *Reset to* it. Carla's numbers
+  are code defaults, so no database row was written for them.
+- **Or a shape a manager fills in** (`SectionDef.goalShape`): Open Disputes (a 0–10 score to reach), Sales —
+  Payments ("at least N payments" a week) and Cancellations ("at least N reviewed"). Setup shows a goal box,
+  empty = no goal, and *Clear*. The direction is fixed in code (CHOSEN: more payments and more reviews are better).
+  The number is stored where an override always was (`accounting_scoreboard_sections.goal`), so no migration was
+  needed.
+- **Ranges by what is measured** (`goalMax`): a score 0–10, a percentage 0–100 (win ratio, cycle score), anything
+  else 0–100,000. The server refuses anything outside them, sheet goals included; before this, a Buckets goal of 11
+  was accepted.
+- **Pace** (§ Stop light): only a week total (`team_week`) is paced. An average (PM Buckets, `average`) and a
+  percentage (`ratio`) are judged whole, like a score.
 
 ## Custom sections
 
@@ -241,7 +286,8 @@ start with a tab's label.
   newest first. This works under every panel: under a grid, the Collections log, Payroll Timing or Payroll Problems.
 - **It keeps its Overview card**, placed right after its host's card, and the card opens the host's tab
   (`overviewSections`, `tabIdFor`). It has its own number and goal, so moving its grid never hides its stop light.
-  Outcomes still has no card: it has no single number. It has **no tab and no phone-menu entry** of its own.
+  Since 2026-10-07 every section shown inside another tab keeps a card, Outcomes included (its win ratio). It has
+  **no tab and no phone-menu entry** of its own.
 - **It never disappears silently** (the Outcomes rule): if its host is switched off, it takes a tab of its own. If it is
   switched off itself, it shows nowhere, like any section.
 - Setup names a hosted section with its tab: "Sales Onboarding — Sales - Projects Onboarded", as for "Chargebacks —
@@ -322,8 +368,9 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
   a "below" goal. Amber is the stop light's middle and ui-standards § 6.3's caution tone. **red** = behind.
   **none** = no numbers, no goal, or too early to call. Absence is never a colour.
 - **This week's running totals are judged on PACE**, against goal × the share of the section's days that are
-  over (Thursday = 3 of 5). Without it every Monday is red. A past week is judged on the full goal. Scores
-  and averages are never paced. For a "below" goal, going over the FULL goal is final whatever the pace.
+  over (Thursday = 3 of 5). Without it every Monday is red. A past week is judged on the full goal. Scores,
+  averages (PM Buckets) and percentages (the win ratio) are never paced. For a "below" goal, going over the FULL
+  goal is final whatever the pace.
 - Payroll Timing's light comes from its checks: every judged check on time = green, none = red, a mix =
   amber, and a `no_record` check is left out. So a cycle that started on time is green until Friday decides the close.
 - An Overview card shows the light as a real stop light (a dark housing, the live lamp glows) **and** the
@@ -630,6 +677,14 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   `lock_timeout = 10s`. Re-check any time with
   `node --import tsx scripts/apply-accounting-scoreboard-round3-migration.mts --verify`.
 - **The round-3 code needs that migration**, which is applied. **The push: PENDING** (Kane).
+- **Win/loss flags + 0 payroll problems migration (2026-10-07): PENDING Kane's go.**
+  `2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql` adds `rows.outcome` and its CHECK, flags the live
+  "Wins"/"Losses" (`--apply` backs those 2 rows up first), and moves `acct_sb_prob_count_range` from 1–1000 to 0–1000.
+  **Apply it BEFORE pushing this code:** the board selects `rows.outcome`, and until the column exists every board
+  read answers "not set up yet". Run `node --import tsx scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts`
+  (dry, rolled back), then `--apply`, then `--verify`. It has not been run, not even dry (session `728157e2`). After it,
+  the round-3 `--verify` checks that a count of **-1** is refused; it checked 0 before, and was changed in the same
+  commit.
 - **Shown in migration: APPLIED 2026-10-07** by session `728157e2` on Kane's *"I approve run it please I cant run it on my
   end"*. `2026-10-07_accounting_scoreboard_custom_section_host.sql` adds one nullable column and its CHECK. It has no data
   step, so there was nothing to back up. Dry run 21/21 (rolled back), then `--apply` 21/21 (committed), then `--verify`

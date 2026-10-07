@@ -3391,7 +3391,7 @@ The collection row itself is never updated.
 
 ### `POST /api/accounting-scoreboard/problems` · `DELETE ?id=`
 
-Members. POST `{ rowId (a Payroll Problems row), date (Mon–Fri), typeId (a live type), count? (whole, 1–1000, default 1) }` → 201.
+Members. POST `{ rowId (a Payroll Problems row), date (Mon–Fri), typeId (a live type), count? (whole, 0–1000, default 1; 0 since 2026-10-07 = a real "0 problems") }` → 201.
 DELETE soft-deletes (the logger or a manager only). Append-only like the collections log.
 
 ### `POST /api/accounting-scoreboard/problem-types` · `PATCH`
@@ -3401,8 +3401,9 @@ Managers. POST `{ label }` (1–60 characters, unique among live types); PATCH `
 ### `POST /api/accounting-scoreboard/rows` · `PATCH`
 
 Managers. POST `{ sectionKey, customSectionId?, label, workEmail? }` (a work email must be on `active_employees`; `sectionKey: 'custom'`
-needs a live `customSectionId`); PATCH `{ id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon? }` (never un-archived;
-`bucketDay` 'mon'…'fri' | null on a Buckets row only; `dueSoon` on an Open Disputes row only).
+needs a live `customSectionId`); PATCH `{ id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon?, outcome? }` (never un-archived;
+`bucketDay` 'mon'…'fri' | null on a Buckets row only; `dueSoon` on an Open Disputes row only; `outcome` 'win' | 'loss' | null on a
+Chargeback Outcomes row only, 2026-10-07, what the line counts as in the win ratio; 422 on any other row).
 
 ### `POST /api/accounting-scoreboard/members` · `DELETE ?email=`
 
@@ -3410,7 +3411,9 @@ Managers. Extra members (removal is a stamp).
 
 ### `PATCH /api/accounting-scoreboard/sections`
 
-Managers. `{ sectionKey, enabled?, goal? }` (`goal: null` = the sheet's goal; a goal-less section cannot get one).
+Managers. `{ sectionKey, enabled?, goal? }` (`goal: null` = the default goal, or no goal on a section that has none by default). Since
+2026-10-07 every built-in section takes a goal, within its measure's range (`goalMax`: a score 0–10, a percentage 0–100, else 0–100,000);
+400 outside it.
 
 ### `POST /api/accounting-scoreboard/custom-sections` · `PATCH`
 

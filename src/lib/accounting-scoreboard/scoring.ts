@@ -27,7 +27,7 @@
  * the browser sends.
  */
 
-import type { GoalRule, ScoreRule, Slot, Weekday } from './sections';
+import type { GoalRule, Outcome, ScoreRule, Slot, Weekday } from './sections';
 import { weekdayOf, weekStartOf } from './week';
 
 export function entryKey(rowId: string, date: string, slot: Slot): string {
@@ -114,13 +114,18 @@ export interface AmPmDay {
   state: AmPmDayState;
 }
 
-/** The row facts the AM/PM math needs besides its id (accounting_scoreboard_rows.bucket_day / due_soon). */
+/** The row facts the section math needs besides its id (accounting_scoreboard_rows.bucket_day / due_soon / outcome). */
 export interface AmPmRowMeta {
   id: string;
   /** A weekday Collections bucket's own day: its score is Pending until that day's PM is in. */
   bucketDay: Weekday | null;
-  /** An Open Disputes line that counts the disputes due in 7 days: called out, never added to the open total. */
+  /**
+   * An Open Disputes line that counts the disputes due in 7 days: called out, never scored, never added
+   * to the open total, the overall or a Day total (it is part of open).
+   */
   dueSoon: boolean;
+  /** A Chargeback Outcomes line: counted as a win or a loss in the win ratio; null = neither (Pre-arb). */
+  outcome?: Outcome | null;
 }
 
 /**
@@ -130,9 +135,11 @@ export interface AmPmRowMeta {
  * - `pending`     a weekday Collections bucket whose own day's PM is not in yet, and that day is
  *                 today or still ahead: "Pending", left out of the overall (Carla)
  * - `pm_missing`  the same bucket once its day is over with no PM: "PM missing", left out
+ * - `due_soon`    Open Disputes' "due in 7 days" line: part of open, so it is called out and never
+ *                 scored or counted in the overall (Carla, 2026-10-02 and 2026-10-07)
  * - `empty`       nothing typed: "—"
  */
-export type RowScoreStatus = 'scored' | 'na' | 'pending' | 'pm_missing' | 'empty';
+export type RowScoreStatus = 'scored' | 'na' | 'pending' | 'pm_missing' | 'due_soon' | 'empty';
 
 export interface AmPmRowStats {
   days: AmPmDay[];
@@ -184,6 +191,9 @@ export function amPmRowStats(
       : { ...base, status: 'scored', score: inboxScore(pmAverage) };
   }
   if (rule === 'cleared') {
+    // The disputes due in 7 days are already counted in the open disputes: scoring them too would
+    // count them twice.
+    if (row.dueSoon) return { ...base, status: cleared ? 'due_soon' : 'empty', score: null };
     // A weekday Collections bucket fills the day before its day and is worked on its day, so it is
     // judged only once its own day's PM is in (Carla, 2026-10-02).
     const ownDate = row.bucketDay ? dates.find((d) => weekdayOf(d) === row.bucketDay) : undefined;
@@ -200,7 +210,7 @@ export function amPmRowStats(
 
 export interface DayTotal {
   date: string;
-  /** Sum over the rows that have a number in; null when nobody typed one. */
+  /** Sum over the rows that have a number in, leaving out a "due in 7 days" line (part of open); null when none. */
   am: number | null;
   pm: number | null;
 }
@@ -219,9 +229,10 @@ export interface AmPmSectionStats {
   dueSoonNow: number | null;
   /**
    * The headline the goal is judged on:
-   * - cleared (buckets) = 10 × Σ Completed ÷ Σ(Completed + Open) over the scored rows (Carla's overall)
+   * - cleared (buckets, Open Disputes since 2026-10-07, AM/PM custom sections) = 10 × Σ Completed ÷
+   *   Σ(Completed + Open) over the scored rows (Carla's overall)
    * - inbox             = inboxScore(teamPmAverage)
-   * - no rule           = openNow (Open Disputes: how many are open now)
+   * - no rule           = openNow (how many are open now)
    */
   headline: number | null;
 }
@@ -239,7 +250,8 @@ export function amPmSectionStats(
   const dayTotals: DayTotal[] = dates.map((date) => {
     const ams: number[] = [];
     const pms: number[] = [];
-    for (const r of rowMeta) {
+    // The "due in 7 days" line is part of open: adding it to the day would count those disputes twice.
+    for (const r of rowMeta.filter((m) => !m.dueSoon)) {
       const am = lookup.get(entryKey(r.id, date, 'am'));
       const pm = lookup.get(entryKey(r.id, date, 'pm'));
       if (am !== undefined) ams.push(am);
@@ -375,6 +387,41 @@ export interface AmountCountRowStats {
  * Per outcome only. There is no team total across outcomes: adding a win to a loss means nothing,
  * and Carla's earlier "won chargebacks as negative losses" was never pinned down (Open item 317 (a)).
  */
+export interface WinRatio {
+  /** Σ this week's chargeback counts on the lines marked "win"; null when none was typed. */
+  won: number | null;
+  /** The same for "loss". */
+  lost: number | null;
+  /**
+   * 100 × won ÷ (won + lost), one decimal. Null when nothing was decided (no count typed, or 0 and 0):
+   * absence is never a 0% (ui-standards § 12.5).
+   */
+  ratio: number | null;
+}
+
+/**
+ * Carla, 2026-10-07: "a win ratio of 50% or higher each week". By COUNT (the number of chargebacks, not
+ * dollars). Pre-arb and any line marked neither are left out: they are not decided. A line counts by its
+ * flag (rows.outcome), never by its label, so a rename keeps it.
+ */
+export function winRatio(
+  rows: readonly Pick<AmPmRowMeta, 'id' | 'outcome'>[],
+  dates: readonly string[],
+  lookup: EntryLookup,
+): WinRatio {
+  const total = (outcome: Outcome): number | null => {
+    const counts = rows
+      .filter((r) => r.outcome === outcome)
+      .flatMap((r) => dates.map((d) => lookup.get(entryKey(r.id, d, 'count'))))
+      .filter((v): v is number => v !== undefined);
+    return counts.length ? sum(counts) : null;
+  };
+  const won = total('win');
+  const lost = total('loss');
+  const decided = (won ?? 0) + (lost ?? 0);
+  return { won, lost, ratio: decided > 0 ? Math.round((1000 * (won ?? 0)) / decided) / 10 : null };
+}
+
 export function amountCountSectionStats(
   rowIds: readonly string[],
   dates: readonly string[],

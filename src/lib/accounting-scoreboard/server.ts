@@ -26,6 +26,7 @@ import {
   CUSTOM_KINDS,
   MON_FRI,
   isHostSectionKey,
+  isOutcome,
   isRowSectionKey,
   isSectionKey,
   type CustomKind,
@@ -197,6 +198,7 @@ type RowRecord = {
   archived_at: string | null;
   bucket_day: string | null;
   due_soon: boolean;
+  outcome: string | null;
 };
 type EntryRecord = { row_id: string; entry_date: string; slot: Slot; value: number | string };
 type VerificationRecord = { verified_by: string; verified_by_name: string; verified_at: string };
@@ -248,6 +250,7 @@ function mapRow(r: RowRecord): BoardRow | null {
     archived: r.archived_at !== null,
     bucketDay,
     dueSoon: r.due_soon === true,
+    outcome: isOutcome(r.outcome) ? r.outcome : null,
   };
 }
 
@@ -298,7 +301,7 @@ function mapCustomSection(r: CustomSectionRecord): CustomSection | null {
   };
 }
 
-const ROW_COLS = 'id, section_key, custom_section_id, label, work_email, sort_order, archived_at, bucket_day, due_soon';
+const ROW_COLS = 'id, section_key, custom_section_id, label, work_email, sort_order, archived_at, bucket_day, due_soon, outcome';
 const COLLECTION_COLS = 'id, entry_date, row_id, business_name, points, amount_usd, created_by, created_at';
 /** The collection plus its live Payment Verified tick, embedded (no `.in()` of ids: the URL would outgrow PostgREST). */
 const COLLECTION_WITH_VERIFIED = `${COLLECTION_COLS}, verifications:${VERIFICATIONS}(verified_by, verified_by_name, verified_at)`;
@@ -847,8 +850,8 @@ export async function patchRow(viewer: Viewer, p: RowPatch): Promise<Result<Boar
   const update: Record<string, unknown> = {};
   if (p.label !== undefined) update.label = p.label;
   if (p.sortOrder !== undefined) update.sort_order = p.sortOrder;
-  // The two row flags belong to one section each (the SQL CHECKs acct_sb_rows_bucket_day_valid and
-  // acct_sb_rows_due_soon_valid say the same; this says it in words).
+  // The three row flags belong to one section each (the SQL CHECKs acct_sb_rows_bucket_day_valid,
+  // acct_sb_rows_due_soon_valid and acct_sb_rows_outcome_valid say the same; this says it in words).
   if (p.bucketDay !== undefined) {
     if (current.value.sectionKey !== 'buckets') {
       return fail(422, 'refused', 'Only an Accounting Buckets row is worked on a weekday.');
@@ -860,6 +863,12 @@ export async function patchRow(viewer: Viewer, p: RowPatch): Promise<Result<Boar
       return fail(422, 'refused', 'Only an Open Disputes line can be marked "due in 7 days".');
     }
     update.due_soon = p.dueSoon;
+  }
+  if (p.outcome !== undefined) {
+    if (current.value.sectionKey !== 'chargeback_outcomes') {
+      return fail(422, 'refused', 'Only a Chargeback Outcomes line counts as a win or a loss.');
+    }
+    update.outcome = p.outcome;
   }
   if (p.archived) {
     update.archived_at = new Date().toISOString();

@@ -11,12 +11,16 @@ import {
   MON_FRI,
   SLOTS,
   SLOTS_BY_KIND,
+  goalMax,
+  goalShapeOf,
   isHostSectionKey,
+  isOutcome,
   isRowSectionKey,
   isSectionKey,
   sectionDef,
   type CustomKind,
   type GoalDirection,
+  type Outcome,
   type RowSectionKey,
   type SectionDef,
   type SectionKey,
@@ -246,6 +250,8 @@ export interface RowPatch {
   bucketDay?: Weekday | null;
   /** Open Disputes only (checked on the server). */
   dueSoon?: boolean;
+  /** Chargeback Outcomes only (checked on the server): null = neither (Pre-arb). */
+  outcome?: Outcome | null;
 }
 
 export function parseRowPatch(body: unknown): Parsed<RowPatch> {
@@ -278,12 +284,17 @@ export function parseRowPatch(body: unknown): Parsed<RowPatch> {
     if (typeof b.dueSoon !== 'boolean') return { ok: false, error: 'dueSoon is true or false' };
     out.dueSoon = b.dueSoon;
   }
+  if (b.outcome !== undefined) {
+    if (b.outcome !== null && !isOutcome(b.outcome)) return { ok: false, error: 'outcome is win, loss or null' };
+    out.outcome = b.outcome;
+  }
   if (
     out.label === undefined &&
     out.sortOrder === undefined &&
     out.archived === undefined &&
     out.bucketDay === undefined &&
-    out.dueSoon === undefined
+    out.dueSoon === undefined &&
+    out.outcome === undefined
   ) {
     return { ok: false, error: 'Nothing to change' };
   }
@@ -301,7 +312,7 @@ export function parseMemberWrite(body: unknown): Parsed<{ workEmail: string }> {
 export interface SectionPatch {
   sectionKey: SectionKey;
   enabled?: boolean;
-  /** null resets to the sheet's goal. */
+  /** null resets to the default goal, or clears a goal a manager set on a section with no default. */
   goal?: number | null;
 }
 
@@ -317,9 +328,15 @@ export function parseSectionPatch(body: unknown): Parsed<SectionPatch> {
   if (b.goal !== undefined) {
     if (b.goal === null) out.goal = null;
     else {
-      if (!sectionDef(b.sectionKey).goal) return { ok: false, error: 'This section has no goal' };
-      const goal = money2(b.goal, 0, 100000);
-      if (goal === null) return { ok: false, error: 'A goal is 0–100000 with at most 2 decimals' };
+      // Every built-in section can carry a goal since 2026-10-07 (Carla: "a button to set a goal for those
+      // without one"); one with no shape cannot, because nothing says what it would be judged on.
+      const shape = goalShapeOf(sectionDef(b.sectionKey));
+      if (!shape) return { ok: false, error: 'This section has no goal' };
+      const max = goalMax(shape);
+      const goal = money2(b.goal, 0, max);
+      if (goal === null) {
+        return { ok: false, error: `A goal is 0–${max.toLocaleString('en-US')}${shape.unit === '%' ? '%' : ''} with at most 2 decimals` };
+      }
       out.goal = goal;
     }
   }
@@ -343,7 +360,12 @@ export function parseVerifyWrite(body: unknown): Parsed<{ collectionId: string; 
 // Payroll Problems: the log and its types
 // ---------------------------------------------------------------------------
 
-/** The most problems one log line records (the SQL CHECK acct_sb_prob_count_range). */
+/**
+ * How many problems one log line records: 0–1000 (the SQL CHECK acct_sb_prob_count_range). 0 is a real
+ * "0 problems" since 2026-10-07 (Kane: "lets not limit it to 1 to 1000 lets start from 0 because 0 can
+ * count as 0 problems"); it was 1–1000. Nothing logged is still "—", never 0.
+ */
+export const MIN_PROBLEMS_PER_LINE = 0;
 export const MAX_PROBLEMS_PER_LINE = 1000;
 
 export interface ProblemCreate {
@@ -364,8 +386,8 @@ export function parseProblemCreate(body: unknown, today: string): Parsed<Problem
   }
   if (!isUuid(b.typeId)) return { ok: false, error: 'Pick a problem type' };
   const count = b.count === undefined ? 1 : b.count;
-  if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > MAX_PROBLEMS_PER_LINE) {
-    return { ok: false, error: `How many is a whole number from 1 to ${MAX_PROBLEMS_PER_LINE}` };
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < MIN_PROBLEMS_PER_LINE || count > MAX_PROBLEMS_PER_LINE) {
+    return { ok: false, error: `How many is a whole number from ${MIN_PROBLEMS_PER_LINE} to ${MAX_PROBLEMS_PER_LINE}` };
   }
   return { ok: true, value: { rowId: b.rowId, date: date.value, typeId: b.typeId, count } };
 }

@@ -451,8 +451,10 @@ async function main(): Promise<void> {
       'acct_sb_prob_person_fk',
     ],
     [
-      'a problem count of 0 is refused',
-      [`INSERT INTO public.accounting_scoreboard_problems (entry_date, row_id, type_id, problem_count, created_by) VALUES ('2000-01-03', ${id('person')}, ${id('ptype')}, 0, ${BY})`],
+      // Was "a count of 0 is refused" (1–1000). Since 2026-10-07 the range is 0–1000 (Kane: "0 can count as
+      // 0 problems"; 2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql), so -1 is the edge now.
+      'a negative problem count is refused',
+      [`INSERT INTO public.accounting_scoreboard_problems (entry_date, row_id, type_id, problem_count, created_by) VALUES ('2000-01-03', ${id('person')}, ${id('ptype')}, -1, ${BY})`],
       'acct_sb_prob_count_range',
     ],
     [

@@ -21,7 +21,7 @@ import type { BoardSection } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader } from '@/lib/accounting-scoreboard/week';
 import { problemsWeekStats, UNTYPED_PROBLEMS, type EntryLookup, type ProblemEntry } from '@/lib/accounting-scoreboard/scoring';
 import { goalLight, weekPace } from '@/lib/accounting-scoreboard/stoplight';
-import { MAX_PROBLEMS_PER_LINE } from '@/lib/accounting-scoreboard/validate';
+import { MAX_PROBLEMS_PER_LINE, MIN_PROBLEMS_PER_LINE } from '@/lib/accounting-scoreboard/validate';
 import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
 import { DIM, EASE_SETTLE, EmptyRows, Flash, GoalChip, LIGHT_STYLE, RowTag, SectionHeader, TINY_CAPS, fmtNum, handle } from './shared';
 
@@ -85,8 +85,9 @@ export function ProblemsPanel({ section, board, rows, lookup, onLog, onDelete }:
     e.preventDefault();
     if (!effectiveRow || !effectiveDate || !effectiveType) return;
     const n = Number(count);
-    if (count.trim() === '' || !Number.isInteger(n) || n < 1 || n > MAX_PROBLEMS_PER_LINE) {
-      setFieldError(`How many is a whole number from 1 to ${MAX_PROBLEMS_PER_LINE}`);
+    // 0 is a real "0 problems" (Kane, 2026-10-07); an empty box is not a 0.
+    if (count.trim() === '' || !Number.isInteger(n) || n < MIN_PROBLEMS_PER_LINE || n > MAX_PROBLEMS_PER_LINE) {
+      setFieldError(`How many is a whole number from ${MIN_PROBLEMS_PER_LINE} to ${MAX_PROBLEMS_PER_LINE}`);
       return;
     }
     setFieldError(null);
@@ -186,7 +187,7 @@ export function ProblemsPanel({ section, board, rows, lookup, onLog, onDelete }:
           <Input
             value={count}
             inputMode="numeric"
-            title="A whole number, usually 1"
+            title="A whole number, usually 1. Log 0 for a day with no problems."
             aria-invalid={fieldError ? true : undefined}
             onChange={(e) => setCount(e.target.value.replace(/[^0-9]/g, ''))}
             className={cn(FIELD, 'text-right font-mono tabular-nums')}

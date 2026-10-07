@@ -55,13 +55,34 @@ import {
   type RefreshProgress,
 } from '@/lib/refresh-progress/refresh-progress';
 import { ScoreboardLoadDialog, type LoadTitles } from './ScoreboardLoadDialog';
-import { amPmSectionStats, buildLookup, entryKey, type ProblemEntry, type StoredEntry } from '@/lib/accounting-scoreboard/scoring';
+import {
+  amPmSectionStats,
+  buildLookup,
+  entryKey,
+  winRatio,
+  type ProblemEntry,
+  type StoredEntry,
+  type WinRatio,
+} from '@/lib/accounting-scoreboard/scoring';
 import { summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
 import { cycleWeek } from '@/lib/accounting-scoreboard/payroll-cycle';
 import { LIGHT_LABEL } from '@/lib/accounting-scoreboard/stoplight';
 import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
-import { api, EASE_TAB, Flash, fmtNum, fmtScore, LIGHT_STYLE, sectionIcon, SlidingPill, StopLight, TINY_CAPS } from './shared';
+import {
+  api,
+  EASE_TAB,
+  Flash,
+  fmtNum,
+  fmtPct,
+  fmtScore,
+  goalFormat,
+  LIGHT_STYLE,
+  sectionIcon,
+  SlidingPill,
+  StopLight,
+  TINY_CAPS,
+} from './shared';
 import { PayrollCyclePanel } from './PayrollCyclePanel';
 import { SectionGrid } from './SectionGrid';
 import { CollectionsPanel, type NewCollection } from './CollectionsPanel';
@@ -802,12 +823,18 @@ function summarizeAll(board: BoardPayload, sections: BoardSection[], lookup: Ret
   return sections.map((s) => {
     const rows = board.rows.filter((r) => rowSectionId(r) === s.id);
     const rowCount = s.kind === 'payroll_cycle' ? null : rows.filter((r) => !r.archived).length;
-    // Open Disputes' card also says how many are due in the next 7 days (Carla's call-out).
-    const dueSoon =
-      s.kind === 'am_pm' && !s.score
-        ? amPmSectionStats(rows, datesFor(board.weekStart, s.days), lookup, undefined, board.today).dueSoonNow
-        : null;
-    return { section: s, rowCount, dueSoon, summary: summarizeSection(s, rows, ctx, board.weekStart, board.lastWeekStart) };
+    const dates = datesFor(board.weekStart, s.days);
+    // Open Disputes' card is its score (Carla, 2026-10-07), and still says how many are open now and how
+    // many are due in the next 7 days (her 2026-10-02 call-out). Outcomes' card is the win ratio.
+    const disputes = s.key === 'chargebacks' ? amPmSectionStats(rows, dates, lookup, s.score, board.today) : null;
+    const wins = s.kind === 'amount_count' ? winRatio(rows, dates, lookup) : null;
+    return {
+      section: s,
+      rowCount,
+      disputes: disputes ? { openNow: disputes.openNow, dueSoon: disputes.dueSoonNow } : null,
+      wins,
+      summary: summarizeSection(s, rows, ctx, board.weekStart, board.lastWeekStart),
+    };
   });
 }
 
@@ -853,13 +880,14 @@ export function Overview({
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {cards.map(({ section, rowCount, dueSoon, summary }) => (
+        {cards.map(({ section, rowCount, disputes, wins, summary }) => (
           <OverviewCard
             key={section.id}
             section={section}
             summary={summary}
             rowCount={rowCount}
-            dueSoon={dueSoon}
+            disputes={disputes}
+            wins={wins}
             scope={board.weekStart}
             cycleStartedAt={section.kind === 'payroll_cycle' ? cycle.startedAt : null}
             onOpen={() => onOpen(section.id)}
@@ -874,7 +902,8 @@ function OverviewCard({
   section,
   summary,
   rowCount,
-  dueSoon,
+  disputes,
+  wins,
   scope,
   cycleStartedAt,
   onOpen,
@@ -882,8 +911,10 @@ function OverviewCard({
   section: BoardSection;
   summary: SectionSummary;
   rowCount: number | null;
-  /** Open Disputes only: the latest "due in 7 days" reading. */
-  dueSoon: number | null;
+  /** Open Disputes only: open now, and the latest "due in 7 days" reading. */
+  disputes: { openNow: number | null; dueSoon: number | null } | null;
+  /** Outcomes only: the week's wins and losses behind the ratio. */
+  wins: WinRatio | null;
   scope: string;
   cycleStartedAt: string | null;
   onOpen: () => void;
@@ -892,7 +923,7 @@ function OverviewCard({
   const Icon = sectionIcon(section);
   const tone = LIGHT_STYLE[summary.light];
   const isCycle = section.kind === 'payroll_cycle';
-  const fmt = isCycle ? (n: number | null) => (n === null ? '—' : `${n}%`) : section.goal?.measure === 'score' ? fmtScore : fmtNum;
+  const fmt = headlineFormat(section);
 
   // Payroll Timing is only scored once Friday's close is decided; until then the card shows when this
   // week's cycle started, so it is never a blank "—" while processing is under way.
@@ -917,11 +948,10 @@ function OverviewCard({
             <Icon className="size-5" />
           </span>
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              {section.key === 'chargebacks' ? 'Chargebacks' : section.title}
-            </div>
+            <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{cardTitle(section)}</div>
             <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
-              {section.goal ? `Goal ${goalText(section.goal)}` : section.key === 'custom' ? 'No goal set' : 'No goal on the sheet'}
+              {/* Every section can take a goal in Setup since 2026-10-07. */}
+              {section.goal ? `Goal ${goalText(section.goal)}` : 'No goal set'}
               {rowCount !== null ? ` · ${rowCount} ${section.rowNoun}${rowCount === 1 ? '' : 's'}` : ' · from HRIS'}
             </div>
           </div>
@@ -943,9 +973,21 @@ function OverviewCard({
         </span>
         <span className="text-sm text-zinc-500 dark:text-zinc-400">{unit}</span>
       </div>
-      {dueSoon !== null ? (
-        <div className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
-          <span className="font-mono tabular-nums">{fmtNum(dueSoon)}</span> due in the next 7 days
+      {disputes ? (
+        <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <span className="font-mono font-semibold tabular-nums">{fmtNum(disputes.openNow)}</span> open now
+          {disputes.dueSoon !== null ? (
+            <span className="font-semibold text-amber-700 dark:text-amber-300">
+              {' · '}
+              <span className="font-mono tabular-nums">{fmtNum(disputes.dueSoon)}</span> due in the next 7 days
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {wins ? (
+        <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.won)}</span> won ·{' '}
+          <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.lost)}</span> lost, by count
         </div>
       ) : null}
 
@@ -960,6 +1002,20 @@ function OverviewCard({
   );
 }
 
+/** How a card's number prints: a cycle score or a win ratio as %, a 0–10 score with one decimal, else by its goal. */
+function headlineFormat(s: BoardSection): (n: number | null) => string {
+  if (s.kind === 'payroll_cycle' || s.kind === 'amount_count') return fmtPct;
+  if (s.score) return fmtScore;
+  return goalFormat(s.goal);
+}
+
+/** A card names its tab where the section's own title would not say it (Chargebacks holds two). */
+function cardTitle(s: BoardSection): string {
+  if (s.key === 'chargebacks') return 'Chargebacks — Open Disputes';
+  if (s.key === 'chargeback_outcomes') return 'Chargebacks — Outcomes';
+  return s.title;
+}
+
 function headlineUnit(s: BoardSection): string {
   if (s.key === 'custom') return s.kind === 'am_pm' ? 'score' : 'this week';
   switch (s.key) {
@@ -968,9 +1024,9 @@ function headlineUnit(s: BoardSection): string {
     case 'inbox':
       return 'avg score';
     case 'chargebacks':
-      return 'open disputes';
+      return 'score';
     case 'chargeback_outcomes':
-      return 'chargebacks';
+      return 'won';
     case 'collections':
       return 'points';
     case 'pm_buckets':

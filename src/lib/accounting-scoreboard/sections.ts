@@ -41,6 +41,17 @@ export type RowSectionKey = (typeof ROW_SECTION_KEYS)[number];
 export const SLOTS = ['am', 'pm', 'day', 'mtg', 'start', 'end', 'usd', 'count'] as const;
 export type Slot = (typeof SLOTS)[number];
 
+/**
+ * What a Chargeback Outcomes line counts as for the win ratio (accounting_scoreboard_rows.outcome; the
+ * SQL CHECK acct_sb_rows_outcome_valid lists the same values). Pre-arb is neither: it is not decided.
+ */
+export const OUTCOMES = ['win', 'loss'] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+
+export function isOutcome(value: unknown): value is Outcome {
+  return typeof value === 'string' && (OUTCOMES as readonly string[]).includes(value);
+}
+
 export const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 export type Weekday = (typeof WEEKDAYS)[number];
 
@@ -94,21 +105,39 @@ export const SLOTS_BY_KIND: Record<SectionKind, readonly Slot[]> = {
 };
 
 /**
- * - `score`      the section's 0–10 score, never paced (buckets: 10 × Σ completed ÷ Σ(completed +
- *                open) over the scored buckets; inbox: the score of the team's average end-of-day
- *                count, the sheet's R59)
- * - `team_week`  the section's whole-team total for the week
+ * - `score`      the section's 0–10 score, never paced (buckets and Open Disputes: 10 × Σ completed ÷
+ *                Σ(completed + open) over the scored lines; inbox: the score of the team's average
+ *                end-of-day count, the sheet's R59)
+ * - `team_week`  the section's whole-team total for the week (the only measure judged on pace)
  * - `cycle_score` Payroll Timing's 0–100 cycle score (payroll-cycle.ts)
+ * - `average`    an average, never paced (PM Buckets: Σ of each PM's daily average)
+ * - `ratio`      a 0–100 percentage, never paced (Outcomes: the win ratio)
  */
-export type GoalMeasure = 'score' | 'team_week' | 'cycle_score';
+export type GoalMeasure = 'score' | 'team_week' | 'cycle_score' | 'average' | 'ratio';
 export type GoalDirection = 'at_least' | 'below';
 
 export interface GoalRule {
   value: number;
   direction: GoalDirection;
   measure: GoalMeasure;
-  /** Printed after the number: "score", "points", "hours". */
+  /** Printed after the number: "score", "points", "hours"; "%" prints as a percent. */
   unit: string;
+}
+
+/** What a goal is judged on, before anyone gives it a number. */
+export type GoalShape = Omit<GoalRule, 'value'>;
+
+/** The highest goal a measure can take: a score is 0–10, a percentage 0–100, anything else the table's 100,000. */
+export function goalMax(shape: Pick<GoalShape, 'measure'>): number {
+  switch (shape.measure) {
+    case 'score':
+      return 10;
+    case 'ratio':
+    case 'cycle_score':
+      return 100;
+    default:
+      return 100000;
+  }
 }
 
 /**
@@ -129,15 +158,23 @@ export interface SectionDef {
   /** The day columns, in order. */
   days: readonly Weekday[];
   score?: ScoreRule;
-  /** The sheet's goal. A manager can override the number (accounting_scoreboard_sections.goal). */
+  /**
+   * The default goal: the sheet's, or Carla's own (2026-10-07: PM Buckets, Outcomes). A manager can
+   * override the number (accounting_scoreboard_sections.goal) and reset it to this.
+   */
   goal?: GoalRule;
+  /**
+   * A section with no default goal: what a goal is judged on once a manager sets one in Setup (Carla,
+   * 2026-10-07: "a button to set a goal for those without one"). Never set together with `goal`.
+   */
+  goalShape?: GoalShape;
   /** What one row is, singular ("bucket", "rep"). */
   rowNoun: string;
   /** One line telling people what to type. */
   help: string;
   /**
-   * Shown inside another section's tab (no tab, Overview card or menu entry of its own) while that
-   * section is on. Chargeback Outcomes sits under Open Disputes on the Chargebacks tab.
+   * Shown inside another section's tab (no tab or menu entry of its own) while that section is on.
+   * Chargeback Outcomes sits under Open Disputes on the Chargebacks tab. It keeps an Overview card.
    */
   hostTab?: SectionKey;
 }
@@ -171,6 +208,9 @@ export const SECTIONS: readonly SectionDef[] = [
     tab: 'PM Buckets',
     kind: 'daily_flag',
     days: MON_FRI,
+    // Carla, 2026-10-07: "Goal is less than 30 avg in the buckets weekly". The headline is the Σ of the
+    // PMs' daily averages (24.6 and 28.5 on the weeks of 09-27 and 10-04), an average: never paced.
+    goal: { value: 30, direction: 'below', measure: 'average', unit: 'avg' },
     rowNoun: 'PM',
     help: "Items waiting in each PM's bucket that day, and whether you met with them.",
   },
@@ -183,6 +223,7 @@ export const SECTIONS: readonly SectionDef[] = [
     tab: 'Sales Onboarding',
     kind: 'daily',
     days: MON_FRI,
+    goalShape: { direction: 'at_least', measure: 'team_week', unit: 'payments' },
     rowNoun: 'line',
     help: 'Sales payments each day, one number per line.',
   },
@@ -203,8 +244,12 @@ export const SECTIONS: readonly SectionDef[] = [
     tab: 'Chargebacks',
     kind: 'am_pm',
     days: MON_FRI,
+    // Carla, 2026-10-07: "productivity formula same as the regular buckets". The "due in 7 days" line
+    // is part of open, so it is called out and never scored or added (scoring.ts).
+    score: 'cleared',
+    goalShape: { direction: 'at_least', measure: 'score', unit: 'score' },
     rowNoun: 'line',
-    help: 'Open disputes at the start (AM) and end (PM) of the day. A line marked "due in 7 days" is called out.',
+    help: 'Open disputes at the start (AM) and end (PM) of the day, scored like Buckets: 10 × completed ÷ (completed + open). The "due in 7 days" line is called out, not scored.',
   },
   {
     key: 'chargeback_outcomes',
@@ -214,8 +259,11 @@ export const SECTIONS: readonly SectionDef[] = [
     // ("one dispute won for $99 → Wins: $99 / 1").
     kind: 'amount_count',
     days: MON_FRI,
+    // Carla, 2026-10-07: "a win ratio of 50% or higher each week". Wins ÷ (wins + losses), by count; a
+    // line counts as a win or a loss by its row flag (rows.outcome), never by its label.
+    goal: { value: 50, direction: 'at_least', measure: 'ratio', unit: '%' },
     rowNoun: 'outcome',
-    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks.',
+    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks. Win ratio = wins ÷ (wins + losses), by count.',
     hostTab: 'chargebacks',
   },
   {
@@ -234,6 +282,7 @@ export const SECTIONS: readonly SectionDef[] = [
     tab: 'Cancellations',
     kind: 'daily',
     days: MON_FRI,
+    goalShape: { direction: 'at_least', measure: 'team_week', unit: 'reviewed' },
     rowNoun: 'rating',
     help: 'Cancellation call recordings reviewed that day, by rating.',
   },
@@ -283,6 +332,15 @@ export function slotsFor(key: SectionKey): readonly Slot[] {
   return SLOTS_BY_KIND[sectionDef(key).kind];
 }
 
+/** What a built-in section's goal is judged on: its default goal's shape, or the one a manager can set. */
+export function goalShapeOf(def: Pick<SectionDef, 'goal' | 'goalShape'>): GoalShape | undefined {
+  if (def.goal) {
+    const { direction, measure, unit } = def.goal;
+    return { direction, measure, unit };
+  }
+  return def.goalShape;
+}
+
 /** A manager's stored switch for one section (accounting_scoreboard_sections). */
 export interface SectionSetting {
   sectionKey: SectionKey;
@@ -292,7 +350,10 @@ export interface SectionSetting {
 
 export interface ResolvedSection extends SectionDef {
   enabled: boolean;
-  /** The goal in force: the manager's override, else the sheet's number. Absent = no goal. */
+  /**
+   * The goal in force: the manager's number, else the default. A section with no default (a `goalShape`)
+   * has a goal only once a manager sets one. Absent = no goal.
+   */
   goal?: GoalRule;
 }
 
@@ -301,8 +362,9 @@ export function resolveSections(settings: readonly SectionSetting[]): ResolvedSe
   const byKey = new Map(settings.map((s) => [s.sectionKey, s]));
   return SECTIONS.map((def) => {
     const s = byKey.get(def.key);
-    const goal =
-      def.goal && s && s.goal !== null && Number.isFinite(s.goal) ? { ...def.goal, value: s.goal } : def.goal;
+    const shape = goalShapeOf(def);
+    const set = s && s.goal !== null && Number.isFinite(s.goal) ? s.goal : null;
+    const goal: GoalRule | undefined = shape && set !== null ? { ...shape, value: set } : def.goal;
     return { ...def, enabled: s ? s.enabled : true, goal };
   });
 }
@@ -432,12 +494,12 @@ export function hostedSections(sections: readonly BoardSection[], host: BoardSec
 }
 
 /**
- * The Overview's cards: one per tab, each followed by the CUSTOM sections shown inside it. A custom
- * section has its own number and goal, so moving its grid into another tab never takes its card away.
- * A built-in hosted section (Outcomes) has no single number, so it has no card.
+ * The Overview's cards: one per tab, each followed by the sections shown inside it. A section shown
+ * inside another tab has its own number and goal (a custom section's total or score; Outcomes' win
+ * ratio since 2026-10-07), so where its grid sits never takes its card away.
  */
 export function overviewSections(sections: readonly BoardSection[]): BoardSection[] {
-  return tabSections(sections).flatMap((t) => [t, ...hostedSections(sections, t).filter((s) => s.key === 'custom')]);
+  return tabSections(sections).flatMap((t) => [t, ...hostedSections(sections, t)]);
 }
 
 /** The tab a section's grid is on: its own, or its host's while it sits inside the host's tab. */

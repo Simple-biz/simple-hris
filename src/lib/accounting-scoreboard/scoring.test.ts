@@ -27,6 +27,7 @@ import {
   timeInputToMinutes,
   timeSpanSectionHours,
   UNTYPED_PROBLEMS,
+  winRatio,
   type AmPmRowMeta,
   type StoredEntry,
 } from './scoring';
@@ -359,4 +360,74 @@ test('goals: at least vs below, and nothing to judge yet', () => {
   assert.equal(goalMet(undefined, 5), null);
   assert.equal(goalText(collections!), '≥ 85 points');
   assert.equal(goalText(problems!), '< 20 problems');
+});
+
+test('Open Disputes scored like Buckets (Carla, 2026-10-07): the "due in 7 days" line is called out, never scored, never in the overall or a Day total', () => {
+  const lookup = buildLookup([
+    ...amPm('open', [[10, 8], [9, 6], [null, null], [null, null], [null, null]]),
+    ...amPm('due', [[3, 2], [4, 3], [null, null], [null, null], [null, null]]),
+  ]);
+  const s = amPmSectionStats([row('open'), row('due', { dueSoon: true })], MON_FRI, lookup, 'cleared', '2026-09-30');
+  // Readings 10, 8, 9, 6: completed 2 + 3 (8 → 9 is new work), open 6 → 10 × 5 ÷ 11 = 4.5.
+  assert.equal(s.rows.get('open')?.score, carlaReference([10, 8, 9, 6]));
+  assert.equal(s.rows.get('open')?.score, 4.5);
+  assert.equal(s.rows.get('due')?.status, 'due_soon');
+  assert.equal(s.rows.get('due')?.score, null);
+  assert.equal(s.rows.get('due')?.open, 3, 'its readings still show');
+  assert.equal(s.completedTotal, 5);
+  assert.equal(s.openTotal, 6);
+  assert.equal(s.headline, 4.5, 'the due-soon line is not in the overall');
+  assert.equal(s.openNow, 6);
+  assert.equal(s.dueSoonNow, 3);
+  assert.deepEqual(
+    s.dayTotals.slice(0, 2).map((d) => [d.am, d.pm]),
+    [
+      [10, 8],
+      [9, 6],
+    ],
+    'Day totals leave the due-soon line out: it is part of open',
+  );
+  const onlyDue = amPmSectionStats([row('due', { dueSoon: true })], MON_FRI, lookup, 'cleared', '2026-09-30');
+  assert.equal(onlyDue.headline, null, 'no scored line = no score, never a 0');
+});
+
+test('win ratio (Carla, 2026-10-07): wins ÷ (wins + losses) by COUNT, flagged lines only, absence is never 0%', () => {
+  const lookup = buildLookup([
+    { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 2 },
+    { rowId: 'wins', date: MON_FRI[0], slot: 'usd', value: 5000 },
+    { rowId: 'wins', date: MON_FRI[2], slot: 'count', value: 1 },
+    { rowId: 'losses', date: MON_FRI[1], slot: 'count', value: 1 },
+    { rowId: 'losses', date: MON_FRI[1], slot: 'usd', value: 10 },
+    { rowId: 'prearb', date: MON_FRI[1], slot: 'count', value: 9 },
+  ]);
+  const rows = [row('wins', { outcome: 'win' }), row('losses', { outcome: 'loss' }), row('prearb', { outcome: null })];
+  assert.deepEqual(winRatio(rows, MON_FRI, lookup), { won: 3, lost: 1, ratio: 75 }, 'Pre-arb is not decided; dollars never weigh in');
+  assert.equal(winRatio(rows.map((r) => ({ ...r, outcome: null })), MON_FRI, lookup).ratio, null, 'nothing flagged = nothing decided');
+  assert.deepEqual(winRatio(rows, MON_FRI, new Map()), { won: null, lost: null, ratio: null });
+  const zeros = buildLookup([
+    { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 0 },
+    { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 0 },
+  ]);
+  assert.deepEqual(winRatio(rows, MON_FRI, zeros), { won: 0, lost: 0, ratio: null }, '0 of 0 decided is not 0%');
+  const third = buildLookup([
+    { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 1 },
+    { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 2 },
+  ]);
+  assert.equal(winRatio(rows, MON_FRI, third).ratio, 33.3);
+  const allLost = buildLookup([{ rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 2 }]);
+  assert.deepEqual(winRatio(rows, MON_FRI, allLost), { won: null, lost: 2, ratio: 0 }, 'all lost is a real 0%');
+  const twoWinLines = [...rows, row('wins2', { outcome: 'win' })];
+  const more = buildLookup([
+    { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 1 },
+    { rowId: 'wins2', date: MON_FRI[0], slot: 'count', value: 1 },
+    { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 2 },
+  ]);
+  assert.equal(winRatio(twoWinLines, MON_FRI, more).ratio, 50, 'every line marked "win" counts');
+});
+
+test('Payroll Problems: a logged 0 is a real 0 problems (Kane, 2026-10-07); nothing logged is still —', () => {
+  const zero = problemsWeekStats(['p'], [{ date: MON_FRI[0], rowId: 'p', typeId: 't', count: 0 }], new Map(), MON_FRI);
+  assert.equal(zero.week, 0);
+  assert.deepEqual(zero.rows.get('p')?.byDay, [0, null, null, null, null]);
+  assert.equal(problemsWeekStats(['p'], [], new Map(), MON_FRI).week, null);
 });

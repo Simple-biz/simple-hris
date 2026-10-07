@@ -62,6 +62,7 @@ export const SCORE_STATUS_TEXT: Record<Exclude<RowScoreStatus, 'scored'>, string
   na: 'N/A',
   pending: 'Pending',
   pm_missing: 'PM missing',
+  due_soon: 'Called out',
   empty: '—',
 };
 
@@ -69,6 +70,7 @@ export const SCORE_STATUS_TITLE: Record<Exclude<RowScoreStatus, 'scored'>, strin
   na: 'Nothing in this bucket all week: no score, and left out of the overall',
   pending: "Waiting for this bucket's own day's PM reading. Left out of the overall until then",
   pm_missing: "This bucket's own day is over and its PM reading was never typed. Left out of the overall",
+  due_soon: 'These disputes are already counted in the open disputes: called out, never scored or added to the overall',
   empty: 'Nothing typed this week',
 };
 
@@ -173,6 +175,19 @@ export async function api<T>(url: string, init?: RequestInit): Promise<ApiResult
 export function fmtNum(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   return Number.isInteger(n) ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+/** A percentage (Outcomes' win ratio): up to one decimal, "—" for absence. */
+export function fmtPct(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return `${(Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 })}%`;
+}
+
+/** How a goal's number prints: a score with one decimal, a percentage with %, anything else as a number. */
+export function goalFormat(goal: Pick<GoalRule, 'measure' | 'unit'> | undefined): (n: number | null) => string {
+  if (goal?.measure === 'score') return fmtScore;
+  if (goal?.measure === 'ratio' || goal?.unit === '%') return fmtPct;
+  return fmtNum;
 }
 
 /** Scores print with one decimal, as the sheet does (8.3, 10.0). */

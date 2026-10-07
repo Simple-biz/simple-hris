@@ -11,6 +11,7 @@ import path from 'node:path';
 import {
   CUSTOM_KINDS,
   HOST_SECTION_KEYS,
+  OUTCOMES,
   MON_FRI,
   ROW_SECTION_KEYS,
   SECTIONS,
@@ -22,7 +23,10 @@ import {
   customBoardSection,
   hostedSections,
   isRowSectionKey,
+  goalMax,
+  goalShapeOf,
   isHostSectionKey,
+  isOutcome,
   isSectionKey,
   overviewSections,
   resolveSections,
@@ -34,6 +38,7 @@ import {
   tabSections,
   type CustomSection,
 } from './sections';
+import { MAX_PROBLEMS_PER_LINE, MIN_PROBLEMS_PER_LINE } from './validate';
 
 const read = (file: string) => readFileSync(path.join(process.cwd(), 'references/sql/create', file), 'utf8');
 /** The 2026-10-01 tables, and round 3 (2026-10-06), which re-declares the section and slot CHECKs. */
@@ -41,6 +46,8 @@ const BASE_SQL = read('2026-10-01_accounting_scoreboard.sql');
 const ROUND3_SQL = read('2026-10-06_accounting_scoreboard_round3.sql');
 /** 2026-10-07: where a custom section is shown (accounting_scoreboard_custom_sections.host_section_key). */
 const HOST_SQL = read('2026-10-07_accounting_scoreboard_custom_section_host.sql');
+/** 2026-10-07: rows.outcome (the win ratio) and the Payroll Problems count, 0–1000. */
+const OUTCOMES_SQL = read('2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql');
 
 /** The quoted values of the CHECK declared as `<declared> <name> check (… in (…))`. */
 function checkList(sql: string, constraint: string, declared = 'add constraint'): string[] {
@@ -98,7 +105,32 @@ test('the sheet goals are kept: buckets ≥ 8, inbox ≥ 9, collections ≥ 85, 
   assert.deepEqual([g('compliance')?.value, g('compliance')?.direction], [30, 'at_least']);
   assert.deepEqual([g('payroll_timing')?.value, g('payroll_timing')?.direction, g('payroll_timing')?.measure], [100, 'at_least', 'cycle_score']);
   assert.deepEqual([g('payroll_problems')?.value, g('payroll_problems')?.direction], [20, 'below']);
-  for (const k of ['chargebacks', 'chargeback_outcomes', 'pm_buckets', 'onboarding', 'cancellations'] as const) assert.equal(g(k), undefined, k);
+  // Carla's own defaults, 2026-10-07: PM Buckets "less than 30 avg", Outcomes "a win ratio of 50% or higher".
+  assert.deepEqual(g('pm_buckets'), { value: 30, direction: 'below', measure: 'average', unit: 'avg' });
+  assert.deepEqual(g('chargeback_outcomes'), { value: 50, direction: 'at_least', measure: 'ratio', unit: '%' });
+  // No default goal (none on the sheet, none from Carla): a manager can set one (§ Setup goals).
+  for (const k of ['chargebacks', 'onboarding', 'cancellations'] as const) {
+    assert.equal(g(k), undefined, k);
+    assert.ok(sectionDef(k).goalShape, `${k} can take a goal`);
+  }
+});
+
+test('every built-in section can carry a goal (Carla, 2026-10-07), and never has a default goal AND a shape', () => {
+  for (const def of SECTIONS) {
+    assert.ok(goalShapeOf(def), `${def.key} has something to judge a goal on`);
+    assert.ok(!(def.goal && def.goalShape), `${def.key}: a default goal already says its shape`);
+  }
+  assert.deepEqual(goalShapeOf(sectionDef('chargebacks')), { direction: 'at_least', measure: 'score', unit: 'score' });
+  assert.equal(goalMax({ measure: 'score' }), 10);
+  assert.equal(goalMax({ measure: 'ratio' }), 100);
+  assert.equal(goalMax({ measure: 'team_week' }), 100000);
+});
+
+test('Open Disputes is scored like Buckets (Carla, 2026-10-07); Outcomes is judged on its win ratio', () => {
+  assert.equal(sectionDef('chargebacks').score, 'cleared');
+  assert.equal(sectionDef('chargeback_outcomes').goal?.measure, 'ratio');
+  assert.ok(isOutcome('win') && isOutcome('loss'));
+  assert.ok(!isOutcome('Wins') && !isOutcome('pre_arb') && !isOutcome(null));
 });
 
 test('slots follow the kind; collections has no grid slot', () => {
@@ -126,12 +158,18 @@ test('resolveSections: missing switch = on with the sheet goal; a switch turns o
     { sectionKey: 'inbox', enabled: false, goal: null },
     { sectionKey: 'collections', enabled: true, goal: 90 },
     { sectionKey: 'chargebacks', enabled: true, goal: 5 },
+    { sectionKey: 'onboarding', enabled: true, goal: null },
   ]);
   assert.equal(set.find((s) => s.key === 'inbox')?.enabled, false);
   assert.equal(set.find((s) => s.key === 'inbox')?.goal?.value, 9, 'a null goal keeps the sheet goal');
   assert.equal(set.find((s) => s.key === 'collections')?.goal?.value, 90);
   assert.equal(set.find((s) => s.key === 'collections')?.goal?.direction, 'at_least');
-  assert.equal(set.find((s) => s.key === 'chargebacks')?.goal, undefined, 'no goal is invented for a goal-less section');
+  // Since 2026-10-07 a section with no default goal takes the one a manager set, on its shape...
+  assert.deepEqual(set.find((s) => s.key === 'chargebacks')?.goal, { direction: 'at_least', measure: 'score', unit: 'score', value: 5 });
+  // ...and none is ever invented: no number set = no goal.
+  assert.equal(set.find((s) => s.key === 'onboarding')?.goal, undefined, 'no goal is invented for a section with no default');
+  assert.equal(plain.find((s) => s.key === 'cancellations')?.goal, undefined);
+  assert.equal(plain.find((s) => s.key === 'pm_buckets')?.goal?.value, 30, "Carla's default");
   assert.deepEqual(set.map((s) => s.key), SECTIONS.map((s) => s.key), 'tab order is kept');
 });
 
@@ -236,10 +274,10 @@ test('Sales Onboarding (Carla, 2026-10-07): the built-in is Sales — Payments; 
   assert.equal(sectionLabel(p), 'Sales Onboarding — Sales - Projects Onboarded');
   assert.equal(sectionLabel(all.find((s) => s.id === 'chargeback_outcomes')!), 'Chargebacks — Outcomes', 'unchanged for Outcomes');
 
-  // Its card follows its host's; Outcomes (no single number) still has none.
+  // Its card follows its host's. Outcomes has its own card since 2026-10-07: the win ratio is its number.
   const cards = overviewSections(all).map((s) => s.id);
   assert.equal(cards[cards.indexOf('onboarding') + 1], p.id);
-  assert.ok(!cards.includes('chargeback_outcomes'));
+  assert.equal(cards[cards.indexOf('chargebacks') + 1], 'chargeback_outcomes');
   assert.ok(cards.includes(`custom:${CUSTOM.id}`), 'a custom section with its own tab keeps its card');
 
   // Never disappears silently: with Sales Onboarding off, it takes a tab of its own.
@@ -261,4 +299,14 @@ test('hosted sections: the built-in ones first, then custom ones newest first', 
   const all = boardSections([], [a, b]);
   const host = all.find((s) => s.id === 'chargebacks')!;
   assert.deepEqual(hostedSections(all, host).map((s) => s.title), ['Outcomes', 'Newer', 'Older']);
+});
+
+test('the outcome CHECK lists exactly OUTCOMES; the problem-count CHECK is MIN–MAX_PROBLEMS_PER_LINE (2026-10-07)', () => {
+  const outcomes = checkList(OUTCOMES_SQL, 'acct_sb_rows_outcome_valid').filter((v) => v !== 'chargeback_outcomes');
+  assert.deepEqual([...outcomes].sort(), [...OUTCOMES].sort());
+  const at = OUTCOMES_SQL.indexOf('add constraint acct_sb_prob_count_range');
+  assert.ok(at >= 0);
+  const m = /between (\d+) and (\d+)/.exec(OUTCOMES_SQL.slice(at));
+  assert.deepEqual([Number(m?.[1]), Number(m?.[2])], [MIN_PROBLEMS_PER_LINE, MAX_PROBLEMS_PER_LINE]);
+  assert.equal(MIN_PROBLEMS_PER_LINE, 0, 'Kane, 2026-10-07: "0 can count as 0 problems"');
 });

@@ -52,3 +52,14 @@ test('weekPace counts the days that are over', () => {
   assert.equal(weekPace(d, '2026-09-28'), 0);
   assert.equal(weekPace(d, '2026-10-05'), 1);
 });
+
+test('averages and ratios are never paced (PM Buckets < 30, Outcomes ≥ 50%; Carla, 2026-10-07)', () => {
+  const pm = sectionDef('pm_buckets').goal!;
+  const wins = sectionDef('chargeback_outcomes').goal!;
+  assert.equal(goalLight(pm, 25, 0.2), 'green');
+  assert.equal(goalLight(pm, 32, 0.2), 'amber');
+  assert.equal(goalLight(pm, 36, 0.2), 'red');
+  assert.equal(goalLight(wins, 50, 0.2), 'green');
+  assert.equal(goalLight(wins, 40, 0.2), 'amber');
+  assert.equal(goalLight(wins, 39.9, 0.2), 'red');
+});

@@ -26,11 +26,14 @@ import {
   HOST_SECTION_KEYS,
   MON_FRI,
   WEEKDAY_LABEL,
+  goalMax,
   sectionDef,
   sectionLabel,
   type BoardSection,
   type CustomKind,
   type GoalDirection,
+  type GoalShape,
+  type Outcome,
   type SectionKey,
   type Weekday,
 } from '@/lib/accounting-scoreboard/sections';
@@ -167,6 +170,7 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
           {builtIn.map((s) => {
             const key = s.key as SectionKey;
             const sheetGoal = sectionDef(key).goal;
+            const shape = sectionDef(key).goalShape;
             return (
               <li key={s.id} className="flex flex-wrap items-center gap-4 px-4 py-3">
                 <Switch
@@ -188,6 +192,16 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
                     resetTo={sheetGoal.value}
                     text={goalText(s.goal)}
                     disabled={busy === s.id}
+                    onSave={(goal) => void patchBuiltIn(key, { goal })}
+                  />
+                ) : shape ? (
+                  // Carla, 2026-10-07: "a button to set a goal for those without one".
+                  <SetGoalEditor
+                    key={`${s.id}:${s.goal?.value ?? ''}`}
+                    shape={shape}
+                    value={s.goal?.value ?? null}
+                    disabled={busy === s.id}
+                    label={s.title}
                     onSave={(goal) => void patchBuiltIn(key, { goal })}
                   />
                 ) : (
@@ -478,6 +492,66 @@ function NewSectionForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+/**
+ * A goal on a built-in section that has no default one: what it is judged on is fixed in code (the
+ * section's `goalShape`: "at least" a week total, or a 0–10 score to reach), so only the number is typed.
+ * Empty = no goal.
+ */
+function SetGoalEditor({
+  shape,
+  value,
+  disabled,
+  label,
+  onSave,
+}: {
+  shape: GoalShape;
+  value: number | null;
+  disabled: boolean;
+  label: string;
+  onSave: (goal: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(value === null ? '' : String(value));
+  const max = goalMax(shape);
+  const commit = () => {
+    if (draft.trim() === '') {
+      if (value !== null) onSave(null);
+      return;
+    }
+    const n = Number(draft);
+    if (!Number.isFinite(n) || n < 0 || n > max) {
+      toast.error(`A goal for ${label} is 0–${max.toLocaleString('en-US')}${shape.unit === '%' ? '%' : ''}.`);
+      return setDraft(value === null ? '' : String(value));
+    }
+    if (n !== value) onSave(n);
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-zinc-500">
+        Goal {shape.direction === 'at_least' ? '≥' : '<'}
+      </span>
+      <Input
+        value={draft}
+        inputMode="decimal"
+        disabled={disabled}
+        placeholder="none"
+        aria-label={`${label} goal`}
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9.]/g, ''))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+        }}
+        onBlur={commit}
+        className="w-20 text-right font-mono tabular-nums"
+      />
+      <span className="text-xs text-zinc-500">{shape.unit}</span>
+      {value !== null ? (
+        <Button size="xs" variant="ghost" disabled={disabled} onClick={() => onSave(null)}>
+          Clear
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 function GoalEditor({
   value,
   resetTo,
@@ -525,6 +599,13 @@ function GoalEditor({
 
 // ---------------------------------------------------------------------------
 
+/** Chargeback Outcomes: what a line counts as in the win ratio (rows.outcome). Pre-arb is neither. */
+const OUTCOME_OPTIONS = [
+  { value: '', label: 'Not counted (e.g. Pre-arb)' },
+  { value: 'win', label: 'Counts as a win' },
+  { value: 'loss', label: 'Counts as a loss' },
+];
+
 const BUCKET_DAY_OPTIONS = [
   { value: '', label: 'Every day' },
   ...MON_FRI.map((d) => ({ value: d, label: `${WEEKDAY_LABEL[d]} bucket` })),
@@ -557,7 +638,7 @@ function RowsArea({ board, sections, onChanged }: Props) {
 
   async function patch(
     id: string,
-    body: { label?: string; sortOrder?: number; archived?: true; bucketDay?: Weekday | null; dueSoon?: boolean },
+    body: { label?: string; sortOrder?: number; archived?: true; bucketDay?: Weekday | null; dueSoon?: boolean; outcome?: Outcome | null },
     refresh = true,
   ) {
     const res = await api('/api/accounting-scoreboard/rows', { method: 'PATCH', body: JSON.stringify({ id, ...body }) });
@@ -626,6 +707,7 @@ function RowsArea({ board, sections, onChanged }: Props) {
                   onArchive={() => patch(r.id, { archived: true })}
                   onBucketDay={r.sectionKey === 'buckets' ? (day) => patch(r.id, { bucketDay: day }) : undefined}
                   onDueSoon={r.sectionKey === 'chargebacks' ? (on) => patch(r.id, { dueSoon: on }) : undefined}
+                  onOutcome={r.sectionKey === 'chargeback_outcomes' ? (o) => patch(r.id, { outcome: o }) : undefined}
                 />
               ))}
             </AnimatePresence>
@@ -689,6 +771,7 @@ function RowLine({
   onArchive,
   onBucketDay,
   onDueSoon,
+  onOutcome,
 }: {
   row: BoardRow;
   first: boolean;
@@ -700,6 +783,8 @@ function RowLine({
   onBucketDay?: (day: Weekday | null) => Promise<boolean>;
   /** Open Disputes: mark the line that counts the disputes due in 7 days. */
   onDueSoon?: (on: boolean) => Promise<boolean>;
+  /** Chargeback Outcomes: mark a line as a win or a loss for the win ratio (Carla, 2026-10-07). */
+  onOutcome?: (outcome: Outcome | null) => Promise<boolean>;
 }) {
   const reduce = useReducedMotion() ?? false;
   const [label, setLabel] = useState(row.label);
@@ -755,6 +840,20 @@ function RowLine({
           <Switch checked={row.dueSoon} onCheckedChange={(on: boolean) => void onDueSoon(on)} aria-label={`${row.label}: due in 7 days`} />
           due in 7 days
         </label>
+      ) : null}
+      {onOutcome ? (
+        <div className="w-52" title="The win ratio is wins ÷ (wins + losses), by count. Pre-arb is not decided, so it counts as neither.">
+          <SmoothSelect
+            value={row.outcome ?? ''}
+            onChange={(v) => void onOutcome(v === '' ? null : (v as Outcome))}
+            options={OUTCOME_OPTIONS}
+            accent="orange"
+            align="start"
+            portal
+            aria-label={`${row.label}: counts in the win ratio as`}
+            triggerClassName="h-8 text-xs"
+          />
+        </div>
       ) : null}
       <Button size="icon-xs" variant="ghost" disabled={first} aria-label="Move up" onClick={() => onMove(-1)}>
         <ArrowUp />
