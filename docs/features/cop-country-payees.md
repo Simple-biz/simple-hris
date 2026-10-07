@@ -4,17 +4,22 @@
 > (`fc25241`). **Extended 2026-09-08** to the **Manager KPI Calculator** and the
 > **Payroll Wizard**, with a shared per-person resolver and a settlement sticker on all
 > three surfaces (Kane: *"COP people will be paid in COP Values, this should reach Payment
-> Dispatch and Payroll Wizard as well"*). Still no migration.
+> Dispatch and Payroll Wizard as well"*). Still no migration. **Extended 2026-10-07** (item
+> 373): a Colombian's RATE may itself be COP-denominated, and they stay on the PHP rails
+> (§0.1). The `--apply` is **PENDING** (§0.1, Deploy).
 
-Colombian staff are paid in Colombian pesos, but there are **no COP Pay Structures in the
-Payment Catalog** — they ride the ordinary **PHP** rails (PHP rate → USD → their bank).
-So the system had no idea who was Colombian, and every figure shown to a human was a
-**peso** amount they never actually receive. Now the figure they *do* receive is the one
-shown, on every surface that shows them money, and the copy button pastes it clean.
+Colombian staff are paid in Colombian pesos, and they ride the ordinary **PHP** rails
+(peso-equivalent → USD → their bank). Most of them hold a **peso** rate. Since 2026-10-07
+three (arturoa@, soniaa@, reinelr@) hold a **COP** rate instead, which the pay engines
+convert to pesos at each cycle's FX (§0.1). Before 2026-07-30 the system had no idea who
+was Colombian, and every figure shown to a human was a **peso** amount they never actually
+receive. Now the figure they *do* receive is the one shown, on every surface that shows
+them money, and the copy button pastes it clean.
 
-> The dedicated **COP tab** in Payment Dispatch is effectively dead for these people:
-> that tab is driven by `payCurrency === 'COP'` (a COP *Pay Structure*), and they have
-> none. Don't "fix" their tab placement — they belong on Kolan/Wires like any PHP payee.
+> The dedicated **COP tab** in Payment Dispatch is dead, and since 2026-10-07 it is
+> unreachable by construction. It lists `payCurrency === 'COP'`, and nothing produces that
+> any more: `dispatchCurrencyForRate` maps a COP-denominated rate to `'PHP'`. Don't "fix"
+> their tab placement. They belong on Kolan/Wires like any PHP payee.
 
 Live spread (verified 2026-09-08 against prod — see §5): **7** non-PHP settled people on
 the master list. Six COP — Maria Canas, Reinel Ruiz, Juan Ruiz, Santiago Marin (Lead Gen),
@@ -48,9 +53,61 @@ at each display boundary — never substituted into storage. This is exactly wha
 Both classes are pinned by `src/lib/payroll/settlement-currency-surfaces.test.ts`, which
 greps the real source of the KPI Calculator and the Wizard.
 
-**`payCurrency` is still never touched**, and that is a payment-safety rule, not tidiness:
-flipping a Colombian's `payCurrency` to `'COP'` moves them out of their Kolan/Wires
-processor queue and into the empty COP tab, i.e. silently unpaid.
+**`payCurrency` is never `'COP'`**, and that is a payment-safety rule, not tidiness: a
+Colombian whose `payCurrency` became `'COP'` would move out of their Kolan/Wires processor
+queue and into the empty COP tab, i.e. silently unpaid. `payCurrency` is the **dispatch**
+currency (which tab), not the rate's denomination, and every write of it from a rate goes
+through `dispatchCurrencyForRate` (`settlement-currency.ts`), pinned by
+`settlement-currency-surfaces.test.ts`.
+
+### 0.1 · A COP-DENOMINATED rate (2026-10-07, item 373)
+
+Kane: *"A"* (the three Colombians' 22,200 / 17,300 are COP, not pesos), then *"B"* (hold
+them as COP and convert every cycle, rather than as a fixed peso rate that drifts with FX).
+
+| Layer | What it does with a COP rate |
+|---|---|
+| **Pay Structure** | an individual structure with `currency: 'COP'` holds the contract figure (22,200 / 33,300; 17,300 / 25,950) |
+| **Pay engines** (`resolve-rate.ts` `toResolved`) | `regPhp = 22,200 × phpPerUnit('COP', fx)`, i.e. the cycle's `usdToPhp / usdToCop`. ≈ ₱427.51/hr at 62.68 / 3254.87. The Wizard uses the per-cycle FX record; `current-pay` uses the globals the Wizard writes through. Nothing new: this is the documented catalog path (`bonus-catalog.md` §5.1) |
+| **Dated history** | `historyMatchesCatalogAsOf` is false for a non-PHP catalog, so the flat catalog override always stands. The old 22,200 row in the peso history can never resurface as ₱22,200 |
+| **Routing** | `payCurrency = dispatchCurrencyForRate('COP') = 'PHP'`: their processor tab, USD hero, and the COP figure from `countryCurrency` on the secondary line and in the copy button, exactly as for a peso-rate Colombian (§2) |
+| **Peso tables** | `syncRateHistory` pushes **only a PESO structure** to `employee_rate_history` / `employee_hourly_rates` / the sheets. A COP save writes none of them (`bonus-catalog.md` §5.3) |
+| **Peso-only rate route** | `POST /api/update-employee-rates` answers **409** for a person whose hourly structure is not PHP: it writes pesos into the structure and would turn 22,200 COP into COP 450 |
+
+**Why it happened (the root cause of item 373).** The Pay Structure editor and the Bonus
+editor both offered PHP / USD / COP, but `upsertPayStructure` and `upsertBonus` (and the
+bonus row mapper) stored anything that was not USD as **PHP**. Carla's 08-28 saves of COP
+figures were stored as ₱22,200/hr and ₱14,000 an appointment, about 52×. Whether COP was
+picked in the editor cannot be read from the data, because the save discarded that choice. The old `!== 'USD'` history gate
+then copied 22,200 into the peso history. Every catalog read and write now narrows through
+`toPayCurrency` (`pay-structure.ts`), which keeps COP. Pinned by
+`src/lib/payment-catalog/pay-currency-storage.test.ts`. A **salary** in COP stays refused
+(`SALARY_CURRENCIES`); widening that is Kane's call.
+
+**Not done, on purpose.** The weeks 08-23 → 09-20 stay exactly as staged
+([[payroll-rule-changes-forward-only]]). HRIS has no `paid` row for any of the three after
+the 08-02 week. Whether those weeks were paid outside HRIS is Kane's question (Open items
+373). arturoa@'s 508,728 Adj. override in the 08-30 additions is untouched for the same
+reason. The guard that would catch a COP figure typed as pesos on a PESO structure
+(a plausibility ceiling) is still unbuilt.
+
+**Gaps that remain.** (1) Screens that read only the peso history or the rates cache (Admin
+→ Rates, the manager's member rate history, the rates CSV export) still show 22,200 for
+these three, labelled as pesos. (2) The Wizard snapshot's stale-rate check
+(`catalogClaimFromStructure`) makes no claim for a non-PHP structure, the same as for USD
+today. So a Wizard tab left open from before the fix can republish 22,200 figures: reload
+every Wizard tab after the change.
+
+**Deploy (PENDING until Kane confirms).** 1. Push and let the commit deploy. 2.
+`node --import tsx scripts/apply-cop-denominated-rates.mts --apply --deployed`. This sets the
+three structures and the "Lead Gen (COP)" bonus to COP, and re-prices that bonus's live-week
+applied row (reinelr@ 3 appts: ₱42,000 → ₱808.81). It backs up first and reads back after.
+Without `--deployed` it refuses. 3. Reload every Payroll Wizard tab, open the Wizard on the
+live week and let it load. Its snapshot is newer than the lock, so Payment Dispatch prices
+the three pending rows from it. **Never Unlock / re-Lock that week:** 226 of its 232 rows
+are paid. Measured 2026-10-07 for the 09-27 week, the expected result is ≈ ₱14,882
+(arturoa@), ₱12,851 (soniaa@) and ₱19,869 (reinelr@, with OT, the bonus and the ₱5,000
+PAB), against ₱667k–₱777k staged.
 
 ---
 
@@ -314,7 +371,10 @@ After deploying, **reload the Payment Dispatch tab** so it refetches pay data.
 
 | Path | Role |
 |---|---|
-| `src/lib/payroll/settlement-currency.ts` | **the shared resolver** + the FX licence (`resolveSettlementRate`, `settlementAmountFromPhp`) |
+| `src/lib/payroll/settlement-currency.ts` | **the shared resolver** + the FX licence (`resolveSettlementRate`, `settlementAmountFromPhp`) + `dispatchCurrencyForRate` (§0.1) |
+| `src/lib/payment-catalog/pay-structure.ts` | `toPayCurrency`: the one narrowing every catalog read/write uses, COP kept (§0.1) |
+| `src/lib/payment-catalog/pay-currency-storage.test.ts` | pins COP storage, the PHP-only history gate, and the rate route's 409 |
+| `scripts/apply-cop-denominated-rates.mts` | item 373's one-off `--apply --deployed` (§0.1 Deploy) |
 | `src/lib/payroll/settlement-currency.test.ts` | the marker rules + both fabrication classes |
 | `src/lib/payroll/settlement-currency-surfaces.test.ts` | source guards: settlement never reaches `computeAmount`/`phpPerUnit`, reads stay paged |
 | `app/api/payroll/settlement-currency/route.ts` | POST emails -> `{ byEmail, rate }`; manager/accounting/admin |

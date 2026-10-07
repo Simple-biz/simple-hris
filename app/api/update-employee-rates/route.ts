@@ -9,6 +9,8 @@ import { getSessionActor } from '@/lib/auth/session-actor';
 import { requireFeatureEdit } from '@/lib/auth/authorize-feature';
 import { deniedResponse } from '@/lib/auth/authorize-email';
 import { rejectWhilePayrollProcessing } from '@/lib/payroll/processing-guard';
+import { listEmployeeStructuresForEmail } from '@/lib/supabase/pay-structures-db';
+import { payBasisOf } from '@/lib/payment-catalog/pay-structure';
 const RATES_TABLE = process.env.NEXT_PUBLIC_SUPABASE_EMPLOYEE_HOURLY_RATES_TABLE?.trim() || 'employee_hourly_rates';
 
 function parseDateOnly(v: unknown): Date | null {
@@ -60,6 +62,33 @@ export async function POST(req: Request) {
         { error: "Regular rate and OT rate are required" },
         { status: 400 }
       );
+    }
+
+    // A person whose individual Pay Structure is in USD or COP has no peso rate to edit here.
+    // This route writes the figure into the peso history, the cache AND that structure, so a
+    // peso typed here would re-denominate it: ₱450 saved over 22,200 COP becomes COP 450, about
+    // ₱8.67/hr. That rate is changed in Payment Catalog → Pay Structure, which keeps the
+    // currency (item 373). Checked before any write, and a failed lookup refuses rather than
+    // guessing.
+    {
+      const { structures, error: lookupErr } = await listEmployeeStructuresForEmail(
+        String(workEmail || personalEmail),
+      );
+      if (lookupErr) {
+        return NextResponse.json(
+          { error: `Could not check this person's Pay Structure: ${lookupErr}` },
+          { status: 500 },
+        );
+      }
+      const foreign = structures.find((st) => payBasisOf(st) !== 'salary' && st.currency !== 'PHP');
+      if (foreign) {
+        return NextResponse.json(
+          {
+            error: `This person's rate is set in ${foreign.currency} in Payment Catalog → Pay Structure. Change it there; this form only takes pesos.`,
+          },
+          { status: 409 },
+        );
+      }
     }
 
     // Effective date — defaults to today (immediate). Past dates are allowed

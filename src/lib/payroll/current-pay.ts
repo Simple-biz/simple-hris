@@ -97,6 +97,7 @@ import { resolveDeptKeyWithRegistry } from "@/lib/departments/registry";
 import { DEPARTMENTS } from "@/lib/payroll/department-bonus";
 import {
   buildSettlementCurrencyByEmail,
+  dispatchCurrencyForRate,
   type OnboardingCountryRow as SettlementOnboardingRow,
 } from "@/lib/payroll/settlement-currency";
 import type { PayCurrency } from "@/lib/payment-catalog/pay-structure";
@@ -155,27 +156,29 @@ export interface CurrentPayEntry {
   /** USD equivalent of totalPayPHP. */
   totalPayUSD: number | null;
   /** Native COP payout (whole pesos), derived from the USD anchor (totalPayUSD ×
-   *  usdToCop). Only meaningful when `payCurrency === 'COP'`; null when totalPayUSD
-   *  is missing. Payment Dispatch reads this for the COP tab. */
+   *  usdToCop); null when totalPayUSD is missing. Payment Dispatch shows it on a
+   *  COP-settled row (`countryCurrency === 'COP'`). `payCurrency` is never 'COP'
+   *  since 2026-10-07 (`dispatchCurrencyForRate`), so the COP tab never reads it. */
   totalPayCOP: number | null;
   hasRate: boolean;
   /**
-   * The currency this employee's EFFECTIVE rate is denominated in (Payment
-   * Catalog). 'USD' / 'COP' when an individual/department structure in that
-   * currency drives their rate; 'PHP' otherwise (sheet rates are always PHP).
-   * Pay math still accumulates in PHP — this only flags who should be PAID in a
-   * non-PHP currency so Payment Dispatch can route them to a dedicated tab. For a
-   * USD employee `totalPayUSD` is their native pay; for COP `totalPayCOP` is
-   * (totalPayPHP is the FX-equivalent in both cases).
+   * The DISPATCH currency: which Payment Dispatch tab this person is paid from.
+   * 'USD' when a USD individual/department structure drives their rate (the US
+   * managers' held lane); 'PHP' otherwise. A COP-denominated rate is 'PHP' here —
+   * `dispatchCurrencyForRate` (settlement-currency.ts) — because its pesos are
+   * already converted at the cycle's FX and the person stays on their processor
+   * rail (Kane, 2026-10-07). Pay math accumulates in PHP either way; for a USD
+   * employee `totalPayUSD` is their native pay.
    */
   payCurrency: PayCurrency;
   /**
    * Currency of the payee's RECEIVING country, from their onboarding paperwork
    * (Colombia → COP, United States → USD, Philippines → PHP). Distinct from
-   * `payCurrency` (the rate's denomination): Colombian staff ride PHP-denominated
-   * sheet rates through the normal processor tabs, but their bank settles in COP
-   * — Payment Dispatch uses this to surface the native COP figure on their rows.
-   * Null when the person has no onboarding submission or an unmapped country.
+   * `payCurrency` (the dispatch tab): Colombian staff are paid through the normal
+   * processor tabs, whether their rate is peso- or COP-denominated, but their bank
+   * settles in COP — Payment Dispatch uses this to surface the native COP figure
+   * on their rows. Null when the person has no onboarding submission or an
+   * unmapped country.
    */
   countryCurrency: PayCurrency | null;
   /**
@@ -1221,16 +1224,19 @@ export async function computeCurrentPay(
         : sheetRate;
     const reg = empCat?.regPhp ?? baseRate?.reg ?? null;
     const ot = empCat?.otPhp ?? baseRate?.ot ?? null;
-    // Effective currency mirrors the rate priority above: an employee USD
-    // structure wins; otherwise an existing sheet rate is PHP; otherwise the
-    // department base's currency; PHP when nothing matched.
-    const payCurrency: PayCurrency = empCat
-      ? empCat.currency
-      : hasSheet
-        ? 'PHP'
-        : deptCat
-          ? deptCat.currency
-          : 'PHP';
+    // Dispatch currency mirrors the rate priority above: an employee structure's
+    // currency wins; otherwise an existing sheet rate is PHP; otherwise the
+    // department base's currency; PHP when nothing matched. A COP-denominated
+    // rate routes as PHP (dispatchCurrencyForRate) — never into the COP tab.
+    const payCurrency: PayCurrency = dispatchCurrencyForRate(
+      empCat
+        ? empCat.currency
+        : hasSheet
+          ? 'PHP'
+          : deptCat
+            ? deptCat.currency
+            : 'PHP',
+    );
 
     // Prorate pay per day using the rate-history table — handles mid-cycle
     // promotions / department transfers where the rate flipped on a specific
@@ -1408,7 +1414,8 @@ export async function computeCurrentPay(
       totalPayUSD: totalPayUSD != null ? Math.round(totalPayUSD * 100) / 100 : null,
       totalPayCOP,
       hasRate: salaryOutcome.kind === 'salary' ? true : salaryOutcome.kind === 'held' ? false : reg != null,
-      payCurrency: salaryOutcome.kind === 'salary' ? salaryOutcome.pay.currency : payCurrency,
+      payCurrency:
+        salaryOutcome.kind === 'salary' ? dispatchCurrencyForRate(salaryOutcome.pay.currency) : payCurrency,
       countryCurrency: countryCurrencyByEmail.get(em) ?? null,
       departmentKey: empDeptKey,
       departmentName: empDeptName,

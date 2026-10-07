@@ -16,6 +16,17 @@ export type PayCurrency = 'PHP' | 'USD' | 'COP';
 export const PAY_CURRENCIES: readonly PayCurrency[] = ['PHP', 'USD', 'COP'];
 
 /**
+ * A stored or submitted currency, narrowed to `PayCurrency`. A legacy row with no currency is
+ * PHP, and so is anything unrecognised. **COP is kept.** Every Payment Catalog read and write
+ * path goes through this one function. Each used to hand-roll `=== 'USD' ? 'USD' : 'PHP'`,
+ * which silently stored a COP rate or bonus as pesos even though the editor offered COP.
+ * That is how 22,200 COP/hr was paid as ₱22,200/hr (item 373, bonus-catalog.md §5.7).
+ */
+export function toPayCurrency(raw: unknown): PayCurrency {
+  return (PAY_CURRENCIES as readonly unknown[]).includes(raw) ? (raw as PayCurrency) : 'PHP';
+}
+
+/**
  * How a structure prices a person (Kane, 2026-10-02 — docs/features/salaried-pay-basis.md):
  *   hourly → `regularRate` × Hubstaff hours, plus OT — every structure before this date.
  *   salary → a flat `salaryAmount` per `salaryPeriod`; Hubstaff hours move no money.
@@ -34,8 +45,9 @@ export const SALARY_PERIODS: readonly SalaryPeriod[] = ['day', 'week', 'month'];
  */
 export const PRICEABLE_SALARY_PERIODS: readonly SalaryPeriod[] = ['week'];
 
-/** A salary can be held in PHP or USD. COP is refused: the structure write path stores COP as
- *  PHP (bonus-catalog.md §5.7, OPEN), which would silently re-denominate a salary. */
+/** A salary can be held in PHP or USD. COP is refused. The write path stopped storing COP as
+ *  PHP on 2026-10-07 (`toPayCurrency`), but no engine has ever priced a COP salary and nobody
+ *  has asked for one (bonus-catalog.md §5.7). Widening this is Kane's call, not a cleanup. */
 export const SALARY_CURRENCIES: readonly PayCurrency[] = ['PHP', 'USD'];
 
 export const SALARY_PERIOD_LABEL: Record<SalaryPeriod, string> = {

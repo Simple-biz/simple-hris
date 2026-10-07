@@ -18,9 +18,12 @@
  * `bonus_catalog_applied.amount` or `pay_php`: those stay PHP-pivot, and the
  * native figure is reconstructed for display/settlement only.
  *
- * `payCurrency` is also untouched. Flipping a Colombian's `payCurrency` to
- * 'COP' would move them out of their Kolan/Wires processor queue and into the
- * empty COP tab, i.e. silently unpaid.
+ * `payCurrency` is never COP. A Colombian whose `payCurrency` became 'COP' would
+ * move out of their Kolan/Wires processor queue and into the empty COP tab,
+ * i.e. silently unpaid. Since 2026-10-07 a rate may be DENOMINATED in COP (an
+ * individual Pay Structure with `currency: 'COP'`, converted to pesos at each
+ * cycle's FX); `dispatchCurrencyForRate` keeps that person on their processor
+ * rail all the same.
  *
  * Docs: `docs/features/cop-country-payees.md`.
  */
@@ -107,6 +110,24 @@ export function buildSettlementCurrencyByEmail(
  */
 export function isNativeSettlement(currency: PayCurrency | null | undefined): boolean {
   return currency != null && currency !== 'PHP';
+}
+
+/**
+ * The `payCurrency` a pay row carries — which Payment Dispatch tab, hero figure and
+ * small-wires reroute it gets — from the currency its RATE is denominated in.
+ *
+ * USD stays USD: the US managers' own held lane. COP routes as **PHP** (Kane,
+ * 2026-10-07, item 373): a COP-denominated rate (the Colombians' 22,200 COP/hr) is
+ * converted to pesos at the cycle's FX by `resolve-rate.ts`, and that person is paid
+ * on their processor rail like every other Colombian. Their bank figure still
+ * reaches the Mark Paid dialog through `countryCurrency`, never through the COP tab,
+ * which nothing feeds and nobody works (cop-country-payees.md §0).
+ *
+ * Every write of `payCurrency` from a rate's currency goes through here; a source
+ * guard in `settlement-currency-surfaces.test.ts` pins it.
+ */
+export function dispatchCurrencyForRate(rateCurrency: PayCurrency): PayCurrency {
+  return rateCurrency === 'COP' ? 'PHP' : rateCurrency;
 }
 
 /**

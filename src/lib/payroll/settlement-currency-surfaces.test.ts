@@ -296,3 +296,26 @@ test('the rates bridge never hand-rolls a snake_case projection', () => {
     );
   }
 });
+
+test('current-pay derives payCurrency through dispatchCurrencyForRate on both paths', () => {
+  // A COP-denominated rate (item 373, Kane 2026-10-07) must never reach Payment
+  // Dispatch as payCurrency 'COP': PayrollDispatch.tsx files that under the COP tab,
+  // off the person's Kolan/Wires queue, i.e. silently unpaid.
+  const src = read('src/lib/payroll/current-pay.ts');
+  assert.ok(
+    src.includes('const payCurrency: PayCurrency = dispatchCurrencyForRate('),
+    'the hourly path derives payCurrency through dispatchCurrencyForRate',
+  );
+  assert.ok(
+    src.includes('dispatchCurrencyForRate(salaryOutcome.pay.currency)'),
+    "the salary path routes the salary's currency through dispatchCurrencyForRate too",
+  );
+  assert.ok(
+    !/\?\s*salaryOutcome\.pay\.currency\s*:/.test(src),
+    "a salary's currency is never assigned to payCurrency raw",
+  );
+  assert.ok(
+    !/const payCurrency: PayCurrency = empCat\b/.test(src),
+    "a structure's currency is never assigned to payCurrency raw",
+  );
+});

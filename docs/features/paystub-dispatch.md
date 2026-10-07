@@ -863,8 +863,10 @@ export.
 
 ## Native COP line for Colombian payees — 2026-07-30
 
-Colombian staff ride the **PHP** rails (no COP Pay Structure exists for them), so their
-statements used to show only pesos. The paystub readers now resolve a display-only
+Colombian staff ride the **PHP** rails, so their statements used to show only pesos. Since
+2026-10-07 three of them hold a COP-denominated rate. The stub prints its peso equivalent at
+the cycle's FX (≈ ₱427.51/hr for 22,200 COP), and the COP line below reconstructs the COP
+figure, so the stub still reconciles in pesos ([cop-country-payees.md §0.1](./cop-country-payees.md)). The paystub readers now resolve a display-only
 `countryCurrency` marker from the hire's **submitted** onboarding `country` —
 `resolveCountryCurrencyForEmails` + `getUsdToCopRate` in
 [`src/lib/payroll/cop-country.ts`](../../src/lib/payroll/cop-country.ts) — and

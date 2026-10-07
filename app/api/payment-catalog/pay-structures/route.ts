@@ -91,13 +91,15 @@ async function syncRateHistory(
   const effective = effectiveDateIso ? (parseDateOnly(effectiveDateIso) ?? today) : today;
   const effectiveIso = fmtIsoDate(effective);
 
-  // USD pay structures are intentionally NOT pushed to the PHP-denominated rate
-  // history / cache / Google Sheet: writing a USD number there would corrupt
-  // them, and the rates sheet sync would later read it back as PHP. The Payment
-  // Catalog overlay (src/lib/payroll/resolve-rate.ts) applies USD rates at
-  // pay-calc time instead. The employee notification below still fires for both
-  // currencies.
-  if (s.currency !== 'USD') {
+  // Only a PESO structure is pushed to the PHP-denominated rate history / cache /
+  // Google Sheet. A USD or COP number written there is read back as pesos by
+  // every history reader and by the rates sheet sync. This gate used to be
+  // `!== 'USD'`, so a COP save wrote 22,200 into the peso history, and that is
+  // how the Colombians' COP rates came to price as pesos (item 373). The Payment
+  // Catalog overlay (src/lib/payroll/resolve-rate.ts) converts USD and COP rates
+  // at pay-calc time instead. The employee notification below still fires for
+  // every currency.
+  if (s.currency === 'PHP') {
     if (supabase) {
       // Supersede rather than stack: clear any still-pending future-dated rows
       // AND any existing row on the SAME effective date. The same-date clause

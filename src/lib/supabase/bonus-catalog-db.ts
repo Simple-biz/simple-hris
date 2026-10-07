@@ -1,6 +1,7 @@
 import { createSupabaseServiceRoleClient } from './server';
 import { selectAllPaged } from './select-all-paged';
 import type { BonusDef, BonusAssignment } from '@/lib/bonus-catalog/types';
+import { toPayCurrency } from '@/lib/payment-catalog/pay-structure';
 import {
   diffAssignment,
   diffBonusFields,
@@ -100,8 +101,9 @@ function mapBonus(r: BonusRow): BonusDef {
     kind: r.kind,
     amount: r.amount == null ? undefined : Number(r.amount),
     formula: r.formula ?? undefined,
-    // Legacy rows (pre-currency) are PHP.
-    currency: r.currency === 'USD' ? 'USD' : 'PHP',
+    // Legacy rows (pre-currency) are PHP. COP is kept: it used to read back as PHP, so a
+    // COP bonus priced 14,000 an appointment as pesos (item 373).
+    currency: toPayCurrency(r.currency),
     // Legacy rows (pre-cadence) pay weekly.
     cadence: r.cadence === 'monthly' ? 'monthly' : 'weekly',
     starred: r.starred ?? false,
@@ -140,7 +142,7 @@ function mapBonusVersion(r: BonusHistoryRow): BonusVersion {
     kind: r.kind,
     amount: r.amount == null ? undefined : Number(r.amount),
     formula: r.formula ?? undefined,
-    currency: r.currency === 'USD' ? 'USD' : r.currency === 'COP' ? 'COP' : 'PHP',
+    currency: toPayCurrency(r.currency),
     cadence: r.cadence === 'monthly' ? 'monthly' : 'weekly',
     changedFields: (r.changed_fields ?? []) as TrackedBonusField[],
     effectiveFrom: r.effective_from,
@@ -235,7 +237,9 @@ export async function upsertBonus(
     kind: bonus.kind,
     amount: bonus.kind === 'flat' ? (Number.isFinite(bonus.amount) ? bonus.amount : 0) : null,
     formula: bonus.kind === 'formula' ? (bonus.formula ?? '') : null,
-    currency: bonus.currency === 'USD' ? 'USD' : 'PHP',
+    // The editor offers PHP / USD / COP. COP used to be stored as PHP ("Lead Gen (COP)",
+    // =Appts*14000, item 373).
+    currency: toPayCurrency(bonus.currency),
     cadence: bonus.cadence === 'monthly' ? 'monthly' : 'weekly',
     starred: !!bonus.starred,
     created_by: actor,

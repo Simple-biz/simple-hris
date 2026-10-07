@@ -892,8 +892,9 @@ send `READINESS_SOURCE` (`payroll_wizard_readiness`, label "Payroll Wizard
   `Set from Payroll Wizard (Readiness) by <actor>` (a normal catalog save
   writes the literal `Set via Payment Catalog`, which the Payment Catalog's
   Rate History panel hides — so a Readiness fix reads back there as a visible
-  "changed from Payroll Wizard" attribution). USD structures are intentionally
-  not pushed to the PHP-denominated history/sheet.
+  "changed from Payroll Wizard" attribution). Only a PESO structure is pushed to
+  the PHP-denominated history/sheet. USD and, since 2026-10-07, COP structures are not
+  (bonus-catalog.md §5.3).
 - **Mark Ready / Lock / reopen** from the embedded calculators
   (`submissionSource={READINESS_SOURCE}`) → audited in the period-status route
   as `payroll.kpi.marked_ready` / `.locked` / `.reopened` with

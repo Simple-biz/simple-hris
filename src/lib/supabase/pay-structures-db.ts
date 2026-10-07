@@ -1,11 +1,10 @@
 import { createSupabaseServiceRoleClient } from './server';
 import {
-  PAY_CURRENCIES,
   SALARY_PERIODS,
+  toPayCurrency,
   resolvePayStructureWriteTargetId,
   type PayStructure,
   type PayStructureSlot,
-  type PayCurrency,
   type SalaryPeriod,
 } from '@/lib/payment-catalog/pay-structure';
 
@@ -67,9 +66,7 @@ function mapRow(r: PayRow): PayStructure {
     // (add_cop_currency.sql) and hardcoding the pair silently re-denominated a
     // Colombian rate as pesos — which a Certificate of Engagement would then
     // print as ₱18,500/hr instead of COP 18,500.
-    currency: ((PAY_CURRENCIES as readonly string[]).includes(r.currency)
-      ? r.currency
-      : 'PHP') as PayCurrency,
+    currency: toPayCurrency(r.currency),
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedBy: r.updated_by,
@@ -229,7 +226,11 @@ export async function upsertPayStructure(
     // never learned the salary basis prices ₱0 rather than a believable hourly figure.
     regular_rate: isSalary ? 0 : Number.isFinite(s.regularRate) ? s.regularRate : 0,
     ot_rate: isSalary ? null : s.otRate != null && Number.isFinite(s.otRate) ? s.otRate : null,
-    currency: s.currency === 'USD' ? 'USD' : 'PHP',
+    // COP is stored as COP (2026-10-07). This line used to coerce every non-USD currency to
+    // PHP, which is how 22,200 COP/hr came to be paid as ₱22,200 (item 373). `syncRateHistory`
+    // keeps every non-PHP structure out of the peso history, so the two ship together
+    // (bonus-catalog.md §5.7).
+    currency: toPayCurrency(s.currency),
     // Once the columns exist they are ALWAYS written, so saving an hourly rate over a salary
     // row really clears the salary (the CHECK refuses an hourly row carrying salary figures).
     ...(salaryColumns === true

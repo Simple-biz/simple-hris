@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSettlementCurrencyByEmail,
+  dispatchCurrencyForRate,
   isNativeSettlement,
   resolveSettlementRate,
   settlementAmountFromPhp,
@@ -157,4 +158,19 @@ test('a null marker never produces a native figure', () => {
   assert.equal(isNativeSettlement(null), false);
   assert.equal(isNativeSettlement(undefined), false);
   assert.equal(settlementAmountFromPhp(1200, null, liveRate), null);
+});
+
+// ── Dispatch currency: a COP-denominated rate stays on the processor rails ─────
+
+test('a COP-denominated rate dispatches as PHP, never into the COP tab', () => {
+  // Kane, 2026-10-07 (item 373): the Colombians' 22,200 COP/hr is converted at the
+  // cycle's FX and they are paid on Kolan/Wires; payCurrency 'COP' would move them
+  // into the COP tab nobody works, i.e. silently unpaid.
+  assert.equal(dispatchCurrencyForRate('COP'), 'PHP');
+});
+
+test('PHP and USD rates keep their dispatch currency', () => {
+  assert.equal(dispatchCurrencyForRate('PHP'), 'PHP');
+  // USD is the US managers' held lane (useDispatchQueue heldUsdRow) — unchanged.
+  assert.equal(dispatchCurrencyForRate('USD'), 'USD');
 });

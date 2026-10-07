@@ -161,8 +161,9 @@ Example: `IF(tickets >= 10, 500, 250) * tickets` -> variables `[tickets]`; with
   Everything above is the bonus's **catalog** currency — what an amount is
   *denominated* in. A payee also has a **settlement** currency — what *they* are
   paid in. A Colombian's KPI bonuses are peso-denominated (catalog PHP) but
-  COP-settled: they ride the ordinary PHP rails because no COP Pay Structures
-  exist. `DeptBonusCalculator.tsx` resolves it per member from their onboarding
+  COP-settled: they ride the ordinary PHP rails. Since 2026-10-07 a Colombian's
+  RATE may be COP-denominated as well, and they still ride the PHP rails
+  (`cop-country-payees.md` §0.1). `DeptBonusCalculator.tsx` resolves it per member from their onboarding
   country and renders **every member-scoped figure on their row** — bonus cells,
   team-bonus share, individual bonuses, row total — in that currency.
   > **Never cross the two axes.** `settledFigure()` calls `computeAmount(...,
@@ -997,14 +998,15 @@ be created there.
 ### 5.3 USD corruption fix (`syncRateHistory` in the pay-structures route)
 
 When an **employee** structure is saved, `POST .../pay-structures` fires
-`syncRateHistory()` (fire-and-forget). For **USD** structures it now **skips**
-all PHP-denominated writes -- the `employee_rate_history` row, the
+`syncRateHistory()` (fire-and-forget). **Only a PESO structure** writes the
+PHP-denominated stores -- the `employee_rate_history` row, the
 `employee_hourly_rates` cache, the Google Sheet rates tab, and the Hogan Pay
-Plan sheet -- because writing a USD number into those PHP fields would corrupt
-them (and the sheet sync would later read it back as PHP). The overlay handles
-USD->PHP at pay-calc time instead. PHP structures still write all of the above.
-The employee `rate.change` notification fires for **both** currencies, and the
-payload now carries `currency`. Department-scoped saves never call
+Plan sheet. A USD or COP structure **skips** all of them, because writing a
+native number into those PHP fields corrupts them (and the sheet sync would later
+read it back as PHP). The overlay converts USD/COP to PHP at pay-calc time
+instead. The gate is `s.currency === 'PHP'`. It was `!== 'USD'` until 2026-10-07,
+which let a COP figure through (§5.7). The employee `rate.change` notification
+fires for **every** currency, and the payload carries `currency`. Department-scoped saves never call
 `syncRateHistory` at all. **A SALARY save never calls it either** (2026-10-02):
 every one of those stores is PHP-per-HOUR, so a weekly amount there is this same
 corruption class. A salary is dated in `employee_salary_history` instead (§5.8).
@@ -1072,20 +1074,28 @@ lookup still compares emails in JS (`listEmployeeStructuresForEmail`), never wit
 a person can still hold one override per department, which is the still-open
 shadow class recorded in `readiness-setrate-cannot-backdate`.
 
-### 5.7 OPEN gap -- COP is silently written as PHP
+### 5.7 COP is stored as COP *(FIXED 2026-10-07, item 373 — was OPEN since 2026-08-04)*
 
-`upsertPayStructure` writes `currency: s.currency === 'USD' ? 'USD' : 'PHP'`. The
-picker offers **COP**, `mapRow` reads it back, and §5 above documents the type as
-`'PHP' | 'USD' | 'COP'` -- but **no COP row has ever been stored**. Live spread as of
-2026-08-04: `{ PHP: 721, USD: 10 }`, zero COP.
+**What the gap cost.** `upsertPayStructure` wrote `currency: s.currency === 'USD' ? 'USD' : 'PHP'`,
+and `upsertBonus` and `mapBonus` did the same for KPI bonuses, while both editors offered
+**COP**. On 2026-08-28 Carla's saves of COP figures were stored as ₱22,200/hr (arturoa@,
+soniaa@), ₱17,300/hr (reinelr@) and "Lead Gen (COP)" =Appts*14000 in **pesos**: about 52×
+their pay. Whether COP was picked cannot be read from the data, because the save
+discarded the choice. Because the
+history gate was `!== 'USD'`, the figures were also copied into the peso history. Six
+weeks were staged at ₱600k–₱1M a person-week and held at Dispatch.
 
-The one-line fix alone would make things **worse**: `syncRateHistory` guards on
-`s.currency !== 'USD'`, so a genuine COP structure would start writing COP numbers
-into the PHP-denominated `employee_rate_history`, `employee_hourly_rates`, the Google
-Sheet rates tab and the Hogan Pay Plan sheet -- exactly the corruption §5.3 was
-written to stop. **Both changes ship together or neither does.** For the same reason
-a **salary** can be held in PHP or USD only. COP is refused for a salary, never
-stored as PHP.
+**The fix, both halves together as this section required.** (1) Every catalog read and
+write narrows through `toPayCurrency` (`pay-structure.ts`), which keeps COP: `mapRow`,
+`upsertPayStructure`, `mapBonus`, `mapBonusVersion`, `upsertBonus`. (2)
+`syncRateHistory` writes the peso stores for a **PHP** structure only (§5.3).
+`POST /api/update-employee-rates` (pesos only) answers 409 for a person whose hourly
+structure is not PHP. The routing half lives in `cop-country-payees.md` §0.1: a COP rate
+dispatches as PHP. All pinned by `src/lib/payment-catalog/pay-currency-storage.test.ts`.
+
+A **salary** can still be held in PHP or USD only. COP is refused, never stored as PHP.
+The original reason (the write path) is gone, but no engine has priced a COP salary and
+nobody has asked for one. Widening `SALARY_CURRENCIES` is Kane's call.
 
 ### 5.8 Salary structures *(added 2026-10-02 — governing doc `salaried-pay-basis.md`)*
 

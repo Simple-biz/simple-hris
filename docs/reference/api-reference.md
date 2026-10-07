@@ -374,6 +374,8 @@ Updates the regular and overtime pay rates for an employee.
 | `otRate` | number/string | Yes |
 | `effectiveDate` | string (YYYY-MM-DD) | No — defaults to today |
 
+**409 for a non-peso rate** *(2026-10-07, item 373)*: this route writes PESOS into the history, the cache and the person's hourly employee Pay Structure. If that structure is in USD or COP, the route refuses with 409 before writing anything ("…set in COP in Payment Catalog → Pay Structure. Change it there; this form only takes pesos."). A failed structure lookup is a 500, not a guess. The check compares emails in JS (`listEmployeeStructuresForEmail`). See [cop-country-payees.md §0.1](../features/cop-country-payees.md).
+
 **Effective-date semantics** *(added 2026-05-15)*:
 - Always inserts a row into `employee_rate_history` with the given `effective_from`. Past dates are allowed (retroactive prorating).
 - If `effectiveDate <= today` → also updates the `employee_hourly_rates."Regular Rate"`/`"OT Rate"` cache + invalidates the rate-profiles cache.

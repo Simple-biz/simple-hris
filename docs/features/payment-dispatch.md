@@ -1809,9 +1809,11 @@ week finished.
 
 ### 12.8 COP-country payees show/copy native COP (2026-07-30)
 
-Colombian staff have **no COP Pay Structure** — they ride the ordinary PHP rails, so the
-COP tab never sees them and their secondary line used to show a peso figure they never
-receive. A display-only `countryCurrency` marker (derived from the hire's **submitted**
+Colombian staff ride the ordinary PHP rails, so the COP tab never sees them, and their
+secondary line used to show a peso figure they never receive. That holds even for the three
+whose rate has been **COP-denominated** since 2026-10-07: `dispatchCurrencyForRate` maps a COP
+rate to `payCurrency: 'PHP'`, so nothing reaches the COP tab
+([cop-country-payees.md §0.1](./cop-country-payees.md)). A display-only `countryCurrency` marker (derived from the hire's **submitted**
 onboarding `country`, never HR's `invite_country`) makes queue rows and the Mark Paid
 dialog show `$COP…` as the small number, with the copy button pasting a **bare integer**
 for the bank field. `payCurrency`, routing, amounts and dispatch records are untouched.
