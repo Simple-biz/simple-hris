@@ -260,12 +260,15 @@ the Sunday); if OMS keys the week differently, the column env var changes, not t
 
 ### Send to OMS — PENDING, three steps outside this repo
 
-> **2026-10-07 — this plan is on hold; OMS will not create the table below.** Their dev answered that OMS
-> already built the return path: `POST /api/hris/payroll-report` (HMAC-signed over the raw body, idempotent
+> **2026-10-07 — this plan is on hold, waiting on Kane.** OMS's dev could not create the table from its name
+> alone and asked for this doc (which carries the DDL), but pointed out first that OMS already built the return path: `POST /api/hris/payroll-report` (HMAC-signed over the raw body, idempotent
 > on `idempotency_key`, lands in their `payroll_report`) and `GET /api/hris/approved-hours`. Measured read-only:
 > `payroll_report` exists in their prod (`xllfslvceolnfzdfgudo`) and holds only rows from their own simulator,
 > and no HRIS code calls either endpoint. Re-pointing Send to OMS at that endpoint is Kane's call and needs
 > OMS's contract (URL, HMAC details, body schema incl. the reg/OT split, idempotency and batch semantics).
+> Kane's either/or: (a) send the DDL and OMS creates the table, no HRIS code change, but it lands in a table
+> nothing on their side reads yet; (b) re-point the sender at their endpoint. Kane set `OMS_RETURN_TABLE`
+> locally on 2026-10-07, so until (a) or (b) the modal reads *"OMS has no table named hris_orphanage_returns"*.
 > Audit item 334.
 
 1. **PENDING — the OMS team creates the table in THEIR project** (this file is the contract;
