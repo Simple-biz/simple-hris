@@ -2349,4 +2349,30 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: "Every table's Refresh keeps its rows and opens a progress modal with one line per real read - 48 buttons", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-03a', name: "Payment Dispatch never pays one person through another person's bank row, and promote never overwrites someone else's payout row", type: 'Bug', sp: 5, done: true, sprint: 'S30', priority: 'Critical' },
   { epic: 'HRIS-15', name: 'No native dropdown or date input is left, and a picker popup a container would clip now escapes it', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+
+  // —── PASS 41 · 2026-10-07 · Oct 6, 16 rows, 77 SP, all Sprint 30 ──────────────────────────────────
+  // Kane: "Push to monday". Range a1a9860d..05b48730, 28 commits, all authored 2026-10-06 (inside S30's
+  // Sep 29-Oct 9) and all ancestors of origin/main (pushed through 05b48730). Clustered by FILE OVERLAP.
+  // Every row is `done: false`: pushed is Pending Deploy until Kane says it is live. Evidence-only
+  // commits: 976c58d9 (the Arriola finding), 7dbd82a3 (the excluded-rows hard stop), 897b5237
+  // (Aliviah's 10-06 email, which names the address letter). No row: 4c081959 / 1e6a1135 / 43fc708f
+  // (pass 40's own staging), e5cfebd3 (item 358 note), 81fb82df + 28f924b0 (item 368, a finding closed
+  // with no code), 2b3a9e87 (a 9-line design-hook waiver). 66f40a60 carries six scoreboard changes, so
+  // it is split in two: the scoring changes and the two new logs. Names are plain ASCII.
+  { epic: 'HRIS-07', name: "Accounting can suspend a member's MESA contribution from an effective date without opting out, and every MESA Action column is the same buttons", type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-07', name: 'MESA saving but not deducted no longer counts opted-out members - saving needs an open account', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-23', name: 'The whole People tab paints from the cache - roster and summary as one entry, the week list, Statistics and Bank changes', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-12', name: "A guarded script retires Mark Arriola's name-in-email ghost master row", type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-30', name: 'SSD Medical Records is scored from its Payment Catalog formula - the colour-team workspace is gone', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: "HRIS vs NPD Export CSV - every row whatever the search or chip, with the person's paystub as Notes on a Mismatch or Not in NPD row", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: 'HRIS vs NPD leaves out anyone configured not to be paid this week - excluded or paused are not rows, and one line counts them', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'HRIS vs NPD says why under every Mismatch, Not in HRIS and Not in NPD row, and Export CSV gains a Why column', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-10', name: 'My Team cold load paints the frame and skeletons only the data - rail entries, counts and roster rows', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-18', name: 'Proof of Residential Address letter - Accounting-only, issued signed from the Signing Queue', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-03b', name: 'An opened paystub in Dispatch Preview Emails has a Refresh - a background re-read of every outside source, with a strip naming the lines that moved', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Accounting Scoreboard round 3 scoring - Buckets 10xC/(C+O), Payment Verified, PM No Meeting Streak, Chargebacks Open Disputes and Outcomes', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Accounting Scoreboard typed Payroll Problems log, and custom sections on top of Setup', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'The Accounting Scoreboard paints from the browser cache - no loader on reload, no wait on a cached week, silent refreshes', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'The Accounting Scoreboard loading modal is accurate - the GET streams each group of reads, and the bar is green only once the board is painted', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
 ];

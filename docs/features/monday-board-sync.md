@@ -2634,3 +2634,41 @@ six negative controls, and both columns read through PostgREST (negative control
 Done, dated **2026-10-06**, the day the migration ran (`dateBasis: 'external'`). The shape is now **16
 created / 16 Done / 69 SP**, and his message approves it. A second `review.mts` at 11:48Z still hit
 `DAILY_LIMIT_EXCEEDED` (`retry_in_seconds` 43,871), so the write still waits for 00:00Z.
+
+**Applied 2026-10-07.** Kane: *"Push to monday"*. Session `04f2bf48`. The 20:03 EDT session cron never
+ran, because its session had closed (`apply-result.json` was still dated 10-04). The budget was alive at
+12:44Z, and `review.mts` minted **`8cb5a8b824a9`** in exactly the approved shape: 16 created, 16 Done, 69
+SP, 0 re-filed. That made it already approved, with no second ask. `apply.mts --apply --only-new` wrote
+16/16, and **`verify-one` read back all 16**: each is Done in Sprint 30, with Est = Actual SP and the
+dated Completed Date. The rows have no epic relation until a full reconcile. Open item 359 is closed.
+
+### Pass 41 — 2026-10-07 — Oct 6's commits, staged Pending Deploy (hash `a5329d0f1366`)
+
+Same session, same message. The range is `a1a9860d..05b48730`: 28 commits, all authored 2026-10-06 and
+all on `origin/main`. Clustered by file overlap, they make **16 rows / 77 SP** in Sprint 30. The cluster
+note is in `hris-plan.ts` and the per-row basis is in `pass.mts`. `selfcheck()` passed, and the plan diff
+is 26 insertions with 0 deletions. `66f40a60` carries six scoreboard changes, so it is split in two:
+the scoring changes, and the Problems log with custom sections.
+
+**All 16 are Pending Deploy.** Kane gave no word on these rows, and pushed is not live. Every external
+step was measured read-only on 2026-10-07:
+
+| Step | State | Row |
+|---|---|---|
+| MESA suspensions migration | APPLIED (the one `--verify` FAIL is "the table starts empty", so suspensions already exist) | clear |
+| Scoreboard round 3 migration | APPLIED (all checks pass) | clear |
+| Address letter migration | **NOT applied**: the type check refuses an `address` row | blocker |
+| PAB forgive backfill | **NOT run**: 19 rows in the dry run | blocker |
+| Arriola ghost stamp | **NOT run, and now refuses**: the ghost row was edited 10-06 16:27Z (item 384) | blocker |
+
+**If Kane closes on his word,** the 13 rows with no open step go Done at 61 SP, dated 2026-10-06. That is
+a different shape, so it needs a re-review. Kane approves either shape by its hash.
+
+**Two findings from the measuring, both for Kane** (Open items 383 and 384):
+- **SSD 09-27 was repriced** under the new Library code 22 minutes after the push, before it went
+  Ready. Item 365's deploy gate said Ready first. It moved from ₱103,449.96 to ₱87,704.49.
+- **The Arriola ghost row now carries `marka@`.** jakec@ wrote it through People, so the stamp script's
+  guards refuse.
+
+The SSD row is not held for the money question: the code is live and in use. The money question has
+its own item.

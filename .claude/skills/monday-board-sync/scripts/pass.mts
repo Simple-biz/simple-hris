@@ -799,14 +799,41 @@
  *   • Start-date restore (item 344): dry run on 10-06 plans 0 DB rows and 0 Sheet cells. CLEAR.
  * Not clicked through by any session (Kane's word is the evidence): the login loader, the picker
  * sweep, PAB bulk Ignore, Profile cold load, MESA (items 357, 351, 345, 350).
+ *
+ * PASS 40 APPLIED 2026-10-07. Kane: "Push to monday". The budget was alive at 12:44Z; review.mts minted
+ * 8cb5a8b824a9 in exactly the approved shape (16 created / 16 Done / 69 SP, 0 re-filed), so no second
+ * ask. `apply.mts --apply --only-new` wrote 16/16, and verify-one read back all 16: Done, Sprint 30,
+ * Est = Actual SP, the dated Completed Date. No epic relation until a full reconcile.
+ *
+ * ── PASS 41 · 2026-10-07 — Oct 6's commits, staged Pending Deploy ──────────────────────────────────
+ * Kane: "Push to monday". a1a9860d..05b48730, 28 commits, all authored 2026-10-06 (inside S30), all
+ * ancestors of origin/main (pushed through 05b48730, 0 ahead). 16 rows / 77 SP (cluster note in
+ * hris-plan.ts). Kane has given no word on these, so every row is Pending Deploy, the honesty gate's
+ * default for pushed-not-confirmed. Every external step in the range was MEASURED read-only on
+ * 2026-10-07, not taken from the docs:
+ *   • MESA suspensions migration (item 360): APPLIED. --verify passes every object, positive and
+ *     negative control; its one FAIL is "the table starts empty", i.e. suspensions already exist.
+ *   • Accounting Scoreboard round 3 migration (item 379): APPLIED, --verify all checks passed.
+ *   • Address letter migration (item 375): NOT APPLIED. document_requests_document_type_check admits
+ *     only paystub / coe / award / other, and an 'address' control row is refused. BLOCKER.
+ *   • PAB forgive backfill (item 363): NOT RUN. The dry run would null 19 stored-hours rows. The doc
+ *     calls it verdict-neutral, but it is an open step in the range. BLOCKER.
+ *   • Arriola ghost stamp (item 364): NOT RUN, and the plan run now REFUSES on 2 guards. jakec@ wrote
+ *     marka@simple.biz, a real Personal Email and Alternate Work Email "tony@simple.biz." onto the ghost
+ *     row 327a7857 at 2026-10-06 16:27Z (people.profile.updated), then returned Carla's offboarding
+ *     request on it. BLOCKER, and a finding.
+ *   • SSD (item 365): live and USED. Carla re-saved all 68 SSD 2026-09-27 rows at 15:07Z with catalog
+ *     inputs, 22 minutes after the push (14:45Z), and the week went Ready at 15:08Z. Its total moved
+ *     from the 10-06 morning's PHP 103,449.96 (code) to PHP 87,704.49. The deploy gate said Ready
+ *     first. That is a money finding for Kane, not a board blocker.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
-export const PASS_DATE = '2026-10-06';
-export const AUDIT_RANGE = '4aa73d38..a1a9860d';
+export const PASS_DATE = '2026-10-07';
+export const AUDIT_RANGE = 'a1a9860d..05b48730';
 export const AUDIT_COMMITS = 28;
 
 /** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
@@ -838,6 +865,12 @@ const KANE_CLOSE_1006 =
   'no external step is open (each was measured read-only on 2026-10-06), and the Completed Date is the ' +
   'last sha\'s commit date.';
 const closed = (what: string) => `${KANE_CLOSE_1006} ${what}`;
+/** Pass 41's standing proof state: Oct 6's commits are pushed, and nobody has said they are live. */
+const ON_MAIN_1007 =
+  'Every sha is an ancestor of origin/main (pushed through 05b48730, 0 ahead on 2026-10-07), and ' +
+  'Vercel deploys main, but Kane has not confirmed it live. It goes Done on his word, with the last ' +
+  'sha\'s commit date (2026-10-06) as the Completed Date.';
+const pd41 = (what: string) => `PENDING DEPLOY. ${what} ${ON_MAIN_1007}`;
 /** Dev tooling has no prod surface, so it goes Done on USE (the pass 17 precedent). */
 const used = (what: string) =>
   `DONE ON USE. Dev tooling with no prod surface (the pass 17 precedent): selfcheck() runs it over the ` +
@@ -868,121 +901,106 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 40 · staged 2026-10-06 · Oct 5's commits, 16 rows / 69 SP, all Sprint 30 ─────────────────
-  // All 16 Done (69 SP). 15 on Kane's word with the last sha's commit date (2026-10-05); the MESA
-  // archive on 2026-10-06, the day Kane ran its migration (measured applied, dateBasis external).
+  // —── PASS 41 · staged 2026-10-07 · Oct 6's commits, 16 rows / 77 SP, all Sprint 30 ─────────────────
+  // All 16 Pending Deploy: pushed, and Kane has given no word yet. Three carry a MEASURED open step.
   {
-    name: 'The Employee Dashboard shows a Loading your Employee Dashboard card on every cold load until the Overview is on screen',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['cd7fb08a', '9762b30f', 'f8f91c29'],
-    basis: closed("cd7fb08a keyed the card on the post-login baton, which almost nobody hits; 9762b30f shows it on every cold mount of the employee shell. f8f91c29 is its design-hook entry. Verified by tsc + tests in the session; no session clicked it through, so Kane's word is the evidence."),
+    name: "Accounting can suspend a member's MESA contribution from an effective date without opting out, and every MESA Action column is the same buttons",
+    status: 'Pending Deploy',
+    shas: ['1f0a7350', '972edc8d'],
+    basis: pd41('Item 360. Its migration is MEASURED applied 2026-10-07: --verify passes every object and control, and its one FAIL ("the table starts empty") means suspensions already exist in prod. 972edc8d tints the action buttons and says why a disabled one is disabled.'),
   },
   {
-    name: 'Orientation no-shows go on the Offboarded list, and the 55 missing since the sheet era are backfilled',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['118c6b9b', '0bb8dae4', '20ac1b6d'],
-    basis: closed('Item 343. The Did not attend route now writes an offboarded_sheet row (0bb8dae4). The backfill is APPLIED: 55 of 55 inserted ids measured present on 2026-10-05 (20ac1b6d). The owed post-deploy rerun was dry-run on 2026-10-06 and plans 0 inserts, so nothing is left for it to do.'),
+    name: 'MESA saving but not deducted no longer counts opted-out members - saving needs an open account',
+    status: 'Pending Deploy',
+    shas: ['55999aa5'],
+    basis: pd41('Item 361. The "8 saving but not deducted" banner was a false alarm: all 8 had opted out.'),
   },
   {
-    name: 'Employee Profile cold load skeletons only the pane - the hero and tabs render for real, and the ID card forms in',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['2af89fb6'],
-    basis: closed('Item 345, which also fixes the false bank dot (item 57 of the 09-12 log).'),
+    name: 'The whole People tab paints from the cache - roster and summary as one entry, the week list, Statistics and Bank changes',
+    status: 'Pending Deploy',
+    shas: ['8186145a'],
+    basis: pd41('Item 362.'),
   },
   {
-    name: 'The HR Global Master List reads as a formal ledger - no gradient hero, Sync in the roster toolbar, 20 rows a page',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['b46bb9f2', '7667670a'],
-    basis: closed('Two commits on HrGlobalMasterList.tsx and its doc.'),
+    name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date',
+    status: 'Pending Deploy',
+    shas: ['33fccfbc', 'ca4e5514'],
+    basis: pd41("Item 363, Kane's ruling (b): the 4h floor is retired. 33fccfbc shows every forgiven date with its own hours and makes it revocable; ca4e5514 stores no hours on a forgive. The backfill that clears the 19 legacy stored-hours rows has NOT run (dry run measured 2026-10-07)."),
+    blockers: ['scripts/backfill-pab-forgive-no-hours.mts --apply (19 rows, measured 2026-10-07; the doc calls it verdict-neutral)'],
   },
   {
-    name: "A work email that has ever been on anyone's record is never re-issued - set-work-email and the pending-hire edit both refuse it",
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['7d46dd1a', '80405fcd', '51bb1d1b'],
-    basis: closed("Item 344, Kane's C1 ruling: an address ever on anyone's record is never re-issued (work-email-reservations.ts reads six sources; the PATCH had no check). 7d46dd1a is the finding. 51bb1d1b records that the five hires keep their addresses and the previous holders were re-keyed; the session log records the re-key batches as applied."),
+    name: "A guarded script retires Mark Arriola's name-in-email ghost master row",
+    status: 'Pending Deploy',
+    shas: ['976c58d9', 'e0f6773e'],
+    basis: pd41('Item 364. 976c58d9 is the finding: the HR banner on the ghost row was correct. e0f6773e is the guarded stamp script; its 2026-10-06 plan run passed every guard. It has NOT been applied, and on 2026-10-07 the plan run REFUSES on 2 guards: jakec@ wrote marka@simple.biz and a real personal email onto the ghost row at 2026-10-06 16:27Z.'),
+    blockers: ["stamp-arriola-ghost-row.mts --apply, which now refuses: the ghost row was edited 2026-10-06 16:27Z and needs Kane's ruling first"],
   },
   {
-    name: "An orientation mark re-dates only the hire's own master and Sheet row, and the 5 overwritten Start Dates are restored",
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['3aa7a3e6'],
-    basis: closed("Item 344 C3. The restore was recorded APPLIED 2026-10-05 17:29Z (5 DB rows + 3 Sheet cells). Re-measured 2026-10-06: the restore script's dry run plans 0 DB rows and 0 Sheet cells."),
+    name: 'SSD Medical Records is scored from its Payment Catalog formula - the colour-team workspace is gone',
+    status: 'Pending Deploy',
+    shas: ['5fe90369'],
+    basis: pd41("Item 365. Live and USED: Carla re-saved all 68 SSD 2026-09-27 rows at 2026-10-06 15:07Z with the catalog inputs this code reads, and the week went Ready at 15:08Z. Open beside it, as a money finding for Kane (not a board blocker): the week was repriced from PHP 103,449.96 to PHP 87,704.49 under the new code, where the deploy gate said to mark it Ready first."),
   },
   {
-    name: "The KPI Calculator's QC first-pass rail and departed set paint from the KPI cache",
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['d2b93c08'],
-    basis: closed('Item 346. The HSL Branches Bonus Library read stays uncached on purpose (a money input, still open as its own item); it is not part of this row.'),
+    name: "HRIS vs NPD Export CSV - every row whatever the search or chip, with the person's paystub as Notes on a Mismatch or Not in NPD row",
+    status: 'Pending Deploy',
+    shas: ['921ddfcd', 'ae229888'],
+    basis: pd41('Items 366 + 370. No file is written while verdicts are held.'),
   },
   {
-    name: 'An employee-filed COE request emails its handler via n8n, with the recipient editable in Admin',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['c7c9f8a7'],
-    basis: closed('Item 347. Its n8n step is MEASURED done: webhooks.config coe_request_notify is active with an n8n cloud URL, and a real send at 2026-10-05 20:05Z returned 200 to jakec@ (audit webhook.coe_request_notify, source config).'),
+    name: 'HRIS vs NPD leaves out anyone configured not to be paid this week - excluded or paused are not rows, and one line counts them',
+    status: 'Pending Deploy',
+    shas: ['7dbd82a3', '089357f9'],
+    basis: pd41("Item 367. 7dbd82a3 is the hard stop (it reverses Kane's 10-02 rows-with-reason ruling); 089357f9 is the fix after his answer."),
   },
   {
-    name: "NPD shows a loading card per tab and week fed by the read's real steps, keeps a read left mid-load, and reads the other tab ahead",
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['da77be2b'],
-    basis: closed('Item 348.'),
+    name: 'HRIS vs NPD says why under every Mismatch, Not in HRIS and Not in NPD row, and Export CSV gains a Why column',
+    status: 'Pending Deploy',
+    shas: ['fcd609ec'],
+    basis: pd41('Item 371, with a new npd-identities route. Questions (a)/(b) on the NPD columns are open with Kane and do not hold this row.'),
   },
   {
-    name: 'Every member-filed MESA request emails Accounting via n8n, and the recipients edited in Admin are the ones mailed',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['d2115d23', 'c78f8c5b'],
-    basis: closed('Items 350 + 352. Its n8n step is MEASURED done: webhooks.config mesa_request_notify is active with an n8n cloud URL (config saved 2026-10-05 18:21Z). No member has filed since, so there are 0 sends to read back. c78f8c5b makes Admin-edited recipients the ones mailed (no env fallback for this slug).'),
+    name: 'My Team cold load paints the frame and skeletons only the data - rail entries, counts and roster rows',
+    status: 'Pending Deploy',
+    shas: ['a2a9ad07'],
+    basis: pd41('Item 369.'),
   },
   {
-    name: 'Accounting can archive a completed MESA request - Active and Archived views, row and bulk Archive',
-    status: 'Done',
-    completed: '2026-10-06',
-    dateBasis: 'external',
-    shas: ['d2115d23'],
-    basis: "DONE. Item 350. The code landed 2026-10-05 (d2115d23, on origin/main); this row was held at Pending Deploy because its migration was MEASURED NOT applied at 11:40Z on 2026-10-06 (--verify 0/4, PostgREST 42703 with a negative control). Kane then ran it, and it is MEASURED APPLIED at 11:47Z the same day: apply-mesa-request-archive-migration.mts --verify passes every check, including the six negative controls, and both archived_at and archived_by read through PostgREST (negative control 42703). Kane, 2026-10-06: \"Done now lets close it out and update the monday board\". The Completed Date is the day the migration ran, inside Sprint 30.",
+    name: 'Proof of Residential Address letter - Accounting-only, issued signed from the Signing Queue',
+    status: 'Pending Deploy',
+    shas: ['897b5237', '5935c119'],
+    basis: pd41("Item 375, from Aliviah's 10-06 email (897b5237). Its migration is MEASURED NOT applied 2026-10-07: document_requests_document_type_check admits only paystub / coe / award / other, and an 'address' control row is refused, so issuing a letter fails until it runs."),
+    blockers: ['scripts/apply-address-letter-migration.mts --apply (measured not applied 2026-10-07)'],
   },
   {
-    name: 'A MESA return carries its amount, and Review shows the balance after it',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['d2115d23'],
-    basis: closed('Item 350, the live third of d2115d23 (return-amount.ts, the employee form and the Review modal). It needs no new column.'),
+    name: 'An opened paystub in Dispatch Preview Emails has a Refresh - a background re-read of every outside source, with a strip naming the lines that moved',
+    status: 'Pending Deploy',
+    shas: ['fbe841ba'],
+    basis: pd41('Item 377. The loader gaps are item 378, open on their own.'),
   },
   {
-    name: 'Payroll Wizard PAB step - bulk Ignore on Needs review, and /api/pab-exclusions writes by compare-and-swap',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['3c9b2f47'],
-    basis: closed('Item 351. Also closes the 2026-09-01 no-CAS race on /api/pab-exclusions.'),
+    name: 'Accounting Scoreboard round 3 scoring - Buckets 10xC/(C+O), Payment Verified, PM No Meeting Streak, Chargebacks Open Disputes and Outcomes',
+    status: 'Pending Deploy',
+    shas: ['66f40a60'],
+    basis: pd41("Item 379, the scoring half of Carla's SCOREBOARD UPDATES. Its round 3 migration is MEASURED applied 2026-10-07 (--verify, all checks passed)."),
   },
   {
-    name: "Every table's Refresh keeps its rows and opens a progress modal with one line per real read - 48 buttons",
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['7d04a364'],
-    basis: closed("Item 354, 48 buttons across 68 files. The Payroll Wizard Step 2 Refresh rates button is NOT part of this row: it waits on Kane's ruling (item 355)."),
+    name: 'Accounting Scoreboard typed Payroll Problems log, and custom sections on top of Setup',
+    status: 'Pending Deploy',
+    shas: ['66f40a60'],
+    basis: pd41('Item 379, the two new logs from the same commit. Same migration, MEASURED applied 2026-10-07.'),
   },
   {
-    name: "Payment Dispatch never pays one person through another person's bank row, and promote never overwrites someone else's payout row",
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['c9ecec7d', '932942d9'],
-    basis: closed('Item 353. c9ecec7d is the finding (54 of 1,261 active people share a bank or rate row with a different personal email); 932942d9 is the bank-owner hold and the promote guard.'),
+    name: 'The Accounting Scoreboard paints from the browser cache - no loader on reload, no wait on a cached week, silent refreshes',
+    status: 'Pending Deploy',
+    shas: ['2c7739e8'],
+    basis: pd41('Item 380.'),
   },
   {
-    name: 'No native dropdown or date input is left, and a picker popup a container would clip now escapes it',
-    status: 'Done',
-    completed: '2026-10-05',
-    shas: ['501e6cde', '09618ab3'],
-    basis: closed("Item 357: 30 native selects in 21 files and 7 native date inputs in 5 files replaced, with an escaping popup layer (18 tests). 09618ab3 is the Admin Roles accent-border hook entry Kane ruled on during the sweep. No session clicked it through, so Kane's word is the evidence."),
+    name: 'The Accounting Scoreboard loading modal is accurate - the GET streams each group of reads, and the bar is green only once the board is painted',
+    status: 'Pending Deploy',
+    shas: ['05b48730'],
+    basis: pd41('Item 381.'),
   },
 ];
 
