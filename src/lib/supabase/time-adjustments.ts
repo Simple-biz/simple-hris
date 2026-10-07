@@ -192,15 +192,94 @@ export function deriveAdjustmentStatus(params: {
  * 2026-09-10 row, and nothing refused it), and Accounting could decide a request
  * they had filed themselves. Every reviewing path now runs this same test.
  *
+ * `filer` is the filer's FULL set of work addresses (2026-10-07), not just the one the
+ * request was filed under: an alternate work email is the same human
+ * (identity-resolution.md), so chariseg@ filing and chag@ — her own primary — reviewing
+ * is a self-review. The write paths pass {@link resolveAdjustmentFiler}'s `emails`.
+ *
  * Pure so the rule is testable; the async write paths call it after loading the row.
  */
 export function reviewerIsFiler(
   reviewerEmail: string | null | undefined,
-  filerEmail: string | null | undefined,
+  filer: string | null | undefined | readonly (string | null | undefined)[],
 ): boolean {
-  const reviewer = normEmail(reviewerEmail ?? null) ?? (reviewerEmail ?? '').trim().toLowerCase();
-  const filer = normEmail(filerEmail ?? null) ?? (filerEmail ?? '').trim().toLowerCase();
-  return !!reviewer && !!filer && reviewer === filer;
+  const reviewer = normEmail(reviewerEmail ?? null);
+  if (!reviewer) return false;
+  const filers = typeof filer === 'string' || filer == null ? [filer] : filer;
+  return filers.some((f) => normEmail(f ?? null) === reviewer);
+}
+
+/**
+ * The roster fields identity resolution reads. `EmployeeRow` satisfies it, so the
+ * paged roster the pool already loads can be resolved without a second read.
+ */
+export type RosterIdentityRow = {
+  department: string | null;
+  work_email?: string | null;
+  alternate_work_email?: string | null;
+  alternate_work_email_2?: string | null;
+};
+
+/** One person on the active roster: their effective team and every work address they use. */
+export type RosterIdentity = {
+  /** Effective department, or null when it is blank or the matched rows disagree. */
+  department: string | null;
+  /** Primary + alternates, lowercased, always including the address looked up. */
+  emails: string[];
+};
+
+/**
+ * Who is `email` on the active roster? Pure, so the rule is testable without Supabase.
+ *
+ * An alternate work email is the same human as the primary (identity-resolution.md
+ * Rule 2), and people FILE under whichever address they signed in with: on 2026-10-07
+ * both open requests were filed under alternates (chariseg@ → chag@, shaylae@ → shaie@,
+ * Accounting Team). Matching the primary column alone resolved neither, so the picker
+ * came back empty and every manager decision was refused.
+ *
+ * - **A primary match wins** and alternates are not consulted — a recycled address
+ *   that is one person's primary and another's alternate belongs to the primary holder.
+ * - **An alternate match must name ONE person.** Alternates on two different people's
+ *   rows is ambiguity, and ambiguity is null — never a union, which would let one
+ *   person's sign-in act for the other.
+ * - **Duplicate rows of one person** (same primary) union their addresses; if they
+ *   disagree on the team the department is null, which every caller treats as a refusal.
+ */
+export function pickRosterIdentity(
+  rows: readonly RosterIdentityRow[],
+  email: string | null | undefined,
+): RosterIdentity | null {
+  const target = normEmail(email ?? null);
+  if (!target) return null;
+
+  const primaryHits = rows.filter((r) => normEmail(r.work_email ?? null) === target);
+  const matched =
+    primaryHits.length > 0
+      ? primaryHits
+      : rows.filter(
+          (r) =>
+            normEmail(r.alternate_work_email ?? null) === target ||
+            normEmail(r.alternate_work_email_2 ?? null) === target,
+        );
+  if (matched.length === 0) return null;
+
+  const people = new Set(matched.map((r) => normEmail(r.work_email ?? null) ?? ''));
+  if (people.size > 1) return null;
+
+  const emails = new Set<string>([target]);
+  const departments = new Set<string>();
+  for (const r of matched) {
+    const rowEmails = [r.work_email, r.alternate_work_email, r.alternate_work_email_2]
+      .map((v) => normEmail(v ?? null))
+      .filter((v): v is string => !!v);
+    for (const e of rowEmails) emails.add(e);
+    // Same effective label the pool computes for a roster row, so the Sales /
+    // Sales-Assistant split lands the filer and their teammates on the same team.
+    departments.add((overrideDeptLabel(r.department, ...rowEmails) ?? '').trim());
+  }
+  const distinct = new Set([...departments].map((d) => d.toLowerCase()));
+  const department = distinct.size === 1 ? [...departments][0] || null : null;
+  return { department, emails: [...emails].sort() };
 }
 
 /** Route layer maps "Not authorized" to 403, so the refusal reads as forbidden, not as a bad request. */
@@ -346,6 +425,11 @@ export async function listTimeAdjustments(opts?: {
  * Deliberately NOT filtered to undecided rows — Kane's 2026-08-27 scope is "submitted
  * time adjustments AND time adjustment history", so a row they already signed stays
  * visible to them afterwards.
+ *
+ * Matches ANY of the caller's own work addresses (2026-10-07) — the same set
+ * {@link secondDecideTimeAdjustment} authorizes on, so the read and the write cannot
+ * disagree. The picker names people by their primary; someone signed in under an
+ * alternate would otherwise never see a request that is waiting on them.
  */
 export async function listSecondApprovalsForApprover(approverEmail: string): Promise<{
   rows: TimeAdjustmentRow[];
@@ -354,16 +438,25 @@ export async function listSecondApprovalsForApprover(approverEmail: string): Pro
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { rows: [], error: 'Supabase not configured' };
 
-  const email = normEmail(approverEmail) ?? approverEmail.trim().toLowerCase();
+  const email = normEmail(approverEmail);
   if (!email) return { rows: [], error: 'Not signed in' };
 
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .ilike('second_approver_email', email)
-    .order('created_at', { ascending: false });
-
-  return { rows: (data ?? []) as TimeAdjustmentRow[], error: error?.message ?? null };
+  // An unreadable roster narrows to the exact sign-in address (see resolveReviewerEmails).
+  const { emails } = await resolveReviewerEmails(supabase, email);
+  const byId = new Map<string, TimeAdjustmentRow>();
+  for (const addr of emails) {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select('*')
+      .ilike('second_approver_email', addr);
+    if (error) return { rows: [], error: error.message };
+    for (const r of (data ?? []) as TimeAdjustmentRow[]) {
+      // ilike is a prefilter; the exact compare is the rule (a `_` is a wildcard).
+      if (normEmail(r.second_approver_email ?? null) === addr) byId.set(r.id, r);
+    }
+  }
+  const rows = [...byId.values()].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  return { rows, error: null };
 }
 
 export async function getTimeAdjustmentById(id: string): Promise<{
@@ -520,9 +613,8 @@ async function getTimeAdjustmentByEmailDate(
  * which is ADDITIVE to this check — it never relaxes it.
  */
 async function authorizeManagerOverAdjustment(
-  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
   managerEmail: string,
-  workEmail: string,
+  filer: RosterIdentity,
 ): Promise<{ error: string | null }> {
   const { rows: deptAssigns } = await listDepartmentsForManager(managerEmail);
   if (deptAssigns.length === 0) {
@@ -530,41 +622,89 @@ async function authorizeManagerOverAdjustment(
   }
   const managedDepts = deptAssigns.map((a) => a.department.trim().toLowerCase());
 
-  const empDept = await resolveAdjustmentDepartment(supabase, workEmail);
-  if (!empDept || !managedDepts.includes(empDept.toLowerCase())) {
+  if (!filer.department || !managedDepts.includes(filer.department.toLowerCase())) {
     return { error: 'Not authorized — employee is not in your managed departments' };
   }
   return { error: null };
 }
 
+type ServiceClient = NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>;
+
 /**
- * The EFFECTIVE department of the employee a request belongs to — "the respective
- * team" for both the manager's scope check and the second-approver candidate pool.
+ * Reads the active-roster rows that could be `email` and resolves them with
+ * {@link pickRosterIdentity}. `identity` is null when nobody on the active roster uses
+ * the address (or it is ambiguous); `error` is set only when the roster could not be
+ * read, and every caller fails CLOSED on it.
+ */
+async function resolveRosterIdentity(
+  supabase: ServiceClient,
+  email: string,
+): Promise<{ identity: RosterIdentity | null; error: string | null }> {
+  const target = normEmail(email);
+  if (!target) return { identity: null, error: null };
+  const rows: RosterIdentityRow[] = [];
+  const text = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  // One single-column ilike per column, not one `.or(...)`: PostgREST's filter string
+  // mis-parses quoted, space-containing column names (work-email-aliases.ts). ilike is a
+  // prefilter only — pickRosterIdentity re-checks exact equality, so a `_` in an address
+  // matching as a wildcard cannot admit a different person.
+  for (const col of ['"Work Email"', '"Alternate Work Email"', '"Alternate Work Email 2"']) {
+    const { data, error } = await supabase
+      .from('active_employees')
+      .select('"Work Email","Alternate Work Email","Alternate Work Email 2","Department"')
+      .ilike(col, target);
+    if (error) return { identity: null, error: `Could not read the roster: ${error.message}` };
+    for (const r of (data ?? []) as Record<string, unknown>[]) {
+      rows.push({
+        department: text(r['Department']),
+        work_email: text(r['Work Email']),
+        alternate_work_email: text(r['Alternate Work Email']),
+        alternate_work_email_2: text(r['Alternate Work Email 2']),
+      });
+    }
+  }
+  return { identity: pickRosterIdentity(rows, target), error: null };
+}
+
+/**
+ * The employee a request belongs to: their EFFECTIVE department — "the respective team"
+ * for both the manager's scope check and the second-approver pool — and every work
+ * address they use, for the reviewer ≠ filer rule and the pool's exclusions.
  *
  * ONE implementation on purpose: if the pool resolved the team differently from the
  * authorization check, a manager could be offered a candidate the guard then refuses
  * (or worse, the reverse). `overrideDeptLabel` applies the Sales / Sales-Assistant
  * email split, so a Sales-Assistant request offers Sales Assistants, not Sales.
  *
- * Returns null when the employee has no resolvable department — the callers treat
- * that as a REFUSAL, never as "any department will do".
+ * Resolves a request filed under an ALTERNATE work email to its roster row (2026-10-07).
+ * `department` null means no resolvable team, which callers treat as a REFUSAL, never as
+ * "any department will do". `emails` always contains the address the request was filed
+ * under, even when nobody on the roster uses it.
  */
-async function resolveAdjustmentDepartment(
-  supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
+async function resolveAdjustmentFiler(
+  supabase: ServiceClient,
   workEmail: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from('active_employees')
-    .select('"Department"')
-    .ilike('"Work Email"', workEmail)
-    .maybeSingle();
-  const dept = (
-    overrideDeptLabel(
-      (data as Record<string, unknown> | null)?.['Department'] as string | null,
-      workEmail,
-    ) ?? ''
-  ).trim();
-  return dept || null;
+): Promise<{ filer: RosterIdentity; error: string | null }> {
+  const filed = normEmail(workEmail) ?? '';
+  const { identity, error } = await resolveRosterIdentity(supabase, filed);
+  if (error) return { filer: { department: null, emails: [filed] }, error };
+  if (!identity) return { filer: { department: null, emails: [filed] }, error: null };
+  return { filer: identity, error: null };
+}
+
+/**
+ * Every work address of a REVIEWER (the naming manager, a countersigner). Used where a
+ * reviewer's own other address must not slip past "two signatures need two people".
+ * Someone off the roster (a shared mailbox) is just the one address they signed in with.
+ */
+async function resolveReviewerEmails(
+  supabase: ServiceClient,
+  email: string,
+): Promise<{ emails: string[]; error: string | null }> {
+  const signedIn = normEmail(email) ?? '';
+  const { identity, error } = await resolveRosterIdentity(supabase, signedIn);
+  if (error) return { emails: [signedIn], error };
+  return { emails: identity?.emails ?? [signedIn], error: null };
 }
 
 /**
@@ -588,21 +728,25 @@ export async function listSecondApproverCandidatesForRequest(
   if (fetchErr) return { emails: [], department: null, error: fetchErr };
   if (!row) return { emails: [], department: null, error: 'Request not found' };
 
-  const authErr = await authorizeManagerOverAdjustment(
-    supabase,
-    managerEmail.trim().toLowerCase(),
-    row.work_email,
-  );
+  const { filer, error: filerErr } = await resolveAdjustmentFiler(supabase, row.work_email);
+  if (filerErr) return { emails: [], department: null, error: filerErr };
+
+  const authErr = await authorizeManagerOverAdjustment(managerEmail.trim().toLowerCase(), filer);
   if (authErr.error) return { emails: [], department: null, error: authErr.error };
 
-  const department = await resolveAdjustmentDepartment(supabase, row.work_email);
+  const department = filer.department;
   if (!department) {
     return { emails: [], department: null, error: 'Could not resolve the department for this request' };
   }
 
+  // The manager's own other addresses are excluded with them: signed in as an
+  // alternate, their primary would otherwise be offered as somebody else.
+  const manager = await resolveReviewerEmails(supabase, managerEmail);
+  if (manager.error) return { emails: [], department: null, error: manager.error };
+
   const { emails, error } = await listSecondApproverCandidates({
     department,
-    exclude: [row.work_email, managerEmail],
+    exclude: [...filer.emails, ...manager.emails],
   });
   return { emails, department, error };
 }
@@ -635,20 +779,27 @@ export async function assignSecondApprover(
   if (row.second_decision != null) {
     return { error: 'The second approver has already decided — recall the request to start over' };
   }
+  // Every address the filer and the naming manager use, so an alternate work email
+  // cannot make one person look like two. Unreadable roster = refusal, never a pass.
+  const { filer, error: filerErr } = await resolveAdjustmentFiler(supabase, row.work_email);
+  if (filerErr) return { error: filerErr };
+  const managerIds = await resolveReviewerEmails(supabase, managerLower);
+  if (managerIds.error) return { error: managerIds.error };
+
   // Two sign-offs must come from two people, and neither may be the employee whose
   // hours are being corrected — the NAMING manager included (2026-09-15): naming a
   // countersigner on your own request is the first half of approving it yourself.
-  if (reviewerIsFiler(managerLower, row.work_email)) {
+  if (reviewerIsFiler(managerLower, filer.emails)) {
     return { error: OWN_REQUEST_REVIEW_ERROR };
   }
-  if (approver === managerLower) {
+  if (managerIds.emails.includes(approver)) {
     return { error: 'Pick someone other than yourself as the second approver' };
   }
-  if (reviewerIsFiler(approver, row.work_email)) {
+  if (reviewerIsFiler(approver, filer.emails)) {
     return { error: 'The employee who filed the request cannot approve it' };
   }
 
-  const authErr = await authorizeManagerOverAdjustment(supabase, managerLower, row.work_email);
+  const authErr = await authorizeManagerOverAdjustment(managerLower, filer);
   if (authErr.error) return authErr;
 
   // The named person must actually be able to reach and act on the queue, or the
@@ -657,13 +808,13 @@ export async function assignSecondApprover(
   // The approver must be on the REQUEST's team. Re-resolved here rather than trusted
   // from the picker: the dropdown is a convenience, this is the guard. A cross-team
   // name — including one the client hand-crafts — is refused.
-  const department = await resolveAdjustmentDepartment(supabase, row.work_email);
+  const department = filer.department;
   if (!department) {
     return { error: "Could not resolve this employee's department — no second approver can be named" };
   }
   const eligible = await listSecondApproverCandidates({
     department,
-    exclude: [row.work_email, managerLower],
+    exclude: [...filer.emails, ...managerIds.emails],
   });
   if (eligible.error) return { error: `Could not verify second approver eligibility: ${eligible.error}` };
   if (!eligible.emails.includes(approver)) {
@@ -745,11 +896,14 @@ export async function managerDecideTimeAdjustment(
   if (adjustmentStage1Waived(row)) return { error: MANAGER_FILED_STAGE1_ERROR };
   if (row.manager_decision != null) return { error: 'You have already decided this request' };
   if (row.status !== 'pending') return { error: 'Request is no longer pending manager review' };
+  const { filer, error: filerErr } = await resolveAdjustmentFiler(supabase, row.work_email);
+  if (filerErr) return { error: filerErr };
   // A manager who manages their own department still may not sign their own request
-  // (2026-09-15). Department scope is checked next; this refuses before it can pass.
-  if (reviewerIsFiler(managerLower, row.work_email)) return { error: OWN_REQUEST_REVIEW_ERROR };
+  // (2026-09-15) — under any of their addresses. Department scope is checked next; this
+  // refuses before it can pass.
+  if (reviewerIsFiler(managerLower, filer.emails)) return { error: OWN_REQUEST_REVIEW_ERROR };
 
-  const authErr = await authorizeManagerOverAdjustment(supabase, managerLower, row.work_email);
+  const authErr = await authorizeManagerOverAdjustment(managerLower, filer);
   if (authErr.error) return authErr;
 
   // Dual approval: forwarding to Accounting takes two sign-offs, so an approval
@@ -833,11 +987,19 @@ export async function secondDecideTimeAdjustment(
   if (!row) return { error: 'Request not found' };
   if (adjustmentStage1Waived(row)) return { error: MANAGER_FILED_STAGE1_ERROR };
 
-  // The assignment IS the authorization. No assignment, no access.
-  const named = (row.second_approver_email ?? '').trim().toLowerCase();
-  if (!named || named !== approverLower) {
+  // The assignment IS the authorization. No assignment, no access. The pool names a
+  // person by their PRIMARY address and they may sign in under an alternate, so the
+  // assignment matches any of the caller's own addresses — the same human
+  // (identity-resolution.md). An unreadable roster falls back to the exact address
+  // they signed in with, which can only refuse more, never admit someone else.
+  const named = normEmail(row.second_approver_email ?? null);
+  const caller = await resolveReviewerEmails(supabase, approverLower);
+  if (!named || !caller.emails.includes(named)) {
     return { error: 'Not authorized — you are not the second approver for this request' };
   }
+  const { filer, error: filerErr } = await resolveAdjustmentFiler(supabase, row.work_email);
+  if (filerErr) return { error: filerErr };
+  if (reviewerIsFiler(approverLower, filer.emails)) return { error: OWN_REQUEST_REVIEW_ERROR };
   if (row.second_decision != null) return { error: 'You have already decided this request' };
   if (row.status !== 'pending' && row.status !== 'awaiting_second_approval') {
     return { error: 'Request is no longer open for review' };
@@ -897,7 +1059,7 @@ export async function secondDecideTimeAdjustment(
  * already held Manager access). Two things changed and each has a reason:
  *
  * - **Team-scoped.** "The respective team" is the department of the employee who filed
- *   the request — resolved by {@link resolveAdjustmentDepartment}, the same call the
+ *   the request — resolved by {@link resolveAdjustmentFiler}, the same call the
  *   manager's own authorization uses, so the pool and the guard cannot disagree. A
  *   manager of two departments gets the REQUEST's team, not the union of theirs.
  * - **No Manager access required.** Being named is now itself the authorization to
@@ -909,9 +1071,10 @@ export async function secondDecideTimeAdjustment(
  * Team" resolve identically here and there.
  *
  * Excluded, always: the employee whose hours are being corrected (they cannot approve
- * their own request) and the manager doing the naming (two signatures need two people).
- * Both are re-checked in {@link assignSecondApprover} — the pool is a convenience for
- * the dropdown, never the guard.
+ * their own request) and the manager doing the naming (two signatures need two people)
+ * — EVERY address of each, primary and alternates, since 2026-10-07. Both are re-checked
+ * in {@link assignSecondApprover} — the pool is a convenience for the dropdown, never
+ * the guard.
  */
 export async function listSecondApproverCandidates(params: {
   /** The request's team. Callers resolve it server-side — never from client input. */
@@ -1042,7 +1205,9 @@ export async function recallTimeAdjustment(
     return { error: 'Only requests forwarded to Accounting can be recalled' };
   }
 
-  const authErr = await authorizeManagerOverAdjustment(supabase, managerLower, row.work_email);
+  const { filer, error: filerErr } = await resolveAdjustmentFiler(supabase, row.work_email);
+  if (filerErr) return { error: filerErr };
+  const authErr = await authorizeManagerOverAdjustment(managerLower, filer);
   if (authErr.error) return authErr;
 
   const nowIso = new Date().toISOString();
@@ -1128,8 +1293,10 @@ export async function decideTimeAdjustment(
   }
   // Stage 2 is a review too: an Accounting member who filed the request hands it to
   // a colleague (2026-09-15). The doc's "neither reviewer may be the filer" now holds
-  // at every stage, not just for the second approver.
-  if (reviewerIsFiler(approverLower, row.work_email)) return { error: OWN_REQUEST_REVIEW_ERROR };
+  // at every stage, not just for the second approver — under any of the filer's addresses.
+  const { filer, error: filerErr } = await resolveAdjustmentFiler(supabase, row.work_email);
+  if (filerErr) return { error: filerErr };
+  if (reviewerIsFiler(approverLower, filer.emails)) return { error: OWN_REQUEST_REVIEW_ERROR };
 
   const nowIso = new Date().toISOString();
   // 0 is a valid SET override (zero the day). Only null/negative/undefined means "no override".

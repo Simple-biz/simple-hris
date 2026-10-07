@@ -4,12 +4,13 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { hasElevatedRole } from '@/lib/auth/elevated-roles';
 import { normEmail } from '@/lib/email/norm-email';
 import { listDepartmentsForManager } from '@/lib/supabase/department-managers';
+import { getEmployeesForAuthorizedServerRoute } from '@/lib/supabase/employees';
 import {
   listTimeAdjustments,
+  pickRosterIdentity,
   signTimeAdjustmentImageUrls,
   type TimeAdjustmentStatus,
 } from '@/lib/supabase/time-adjustments';
-import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -60,8 +61,19 @@ export async function GET() {
       const { rows: assigns } = await listDepartmentsForManager(sessionEmail);
       const managedDepts = assigns.map((a) => a.department.trim().toLowerCase());
 
-      const isNamedSecondApprover = (r: (typeof all)[number]) =>
-        (r.second_approver_email ?? '').trim().toLowerCase() === sessionEmail;
+      // Identity comes from the active roster, resolved by the SAME rule the writes use
+      // (`pickRosterIdentity`): a request filed under an ALTERNATE work email belongs to
+      // that person's team, and a countersigner signed in under an alternate is still the
+      // person the picker named by their primary. An unreadable roster is a 500, not an
+      // empty queue — silence here is how a request sits unseen.
+      const { employees, error: rosterErr } = await getEmployeesForAuthorizedServerRoute();
+      if (rosterErr) return NextResponse.json({ rows: [], error: rosterErr }, { status: 500 });
+
+      const viewerEmails = new Set(pickRosterIdentity(employees, sessionEmail)?.emails ?? [sessionEmail]);
+      const isNamedSecondApprover = (r: (typeof all)[number]) => {
+        const named = normEmail(r.second_approver_email ?? null);
+        return !!named && viewerEmails.has(named);
+      };
 
       // A manager with no department assignments can still be a named second approver,
       // so this can no longer short-circuit to an empty list.
@@ -69,28 +81,14 @@ export async function GET() {
         rows = all.filter(isNamedSecondApprover);
         managedIds = [];
       } else {
-        // Look up each employee's department and filter.
-        const supabase = createSupabaseServiceRoleClient();
-        if (!supabase) return NextResponse.json({ rows: [], error: 'Supabase not configured' }, { status: 500 });
-
-        // Batch-fetch departments for all unique emails in the result set.
-        const emails = [...new Set(all.map((r) => r.work_email.toLowerCase()))];
-        const deptMap = new Map<string, string>();
-        if (emails.length > 0) {
-          const { data } = await supabase
-            .from('active_employees')
-            .select('"Work Email","Department"')
-            .in('"Work Email"', emails);
-          for (const emp of (data ?? []) as Array<{ 'Work Email': string; Department: string }>) {
-            const em = (emp['Work Email'] ?? '').trim().toLowerCase();
-            const dept = (emp['Department'] ?? '').trim().toLowerCase();
-            if (em) deptMap.set(em, dept);
-          }
+        const deptByFiler = new Map<string, string | null>();
+        for (const em of new Set(all.map((r) => normEmail(r.work_email) ?? ''))) {
+          deptByFiler.set(em, pickRosterIdentity(employees, em)?.department ?? null);
         }
 
         const managesRow = (r: (typeof all)[number]) => {
-          const dept = deptMap.get(r.work_email.toLowerCase()) ?? '';
-          return !!dept && managedDepts.includes(dept);
+          const dept = deptByFiler.get(normEmail(r.work_email) ?? '') ?? null;
+          return !!dept && managedDepts.includes(dept.toLowerCase());
         };
         rows = all.filter((r) => managesRow(r) || isNamedSecondApprover(r));
         managedIds = rows.filter(managesRow).map((r) => r.id);

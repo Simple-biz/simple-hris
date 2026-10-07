@@ -145,6 +145,19 @@ included), and idempotent.
   would create a `setRate -> aliasEmails -> setRate` render loop.
 - `EmployeeDashboard` merged view goes through `/api/hubstaff-hours?merge_all=1`.
 
+### Time adjustment reviews (`src/lib/supabase/time-adjustments.ts`, 2026-10-07)
+- `pickRosterIdentity` resolves the address a request was FILED under to its owner:
+  primary `Work Email` first, then the two alternates; an alternate on two different
+  people resolves to nobody, never a union. It feeds the team (manager scope + the
+  second-approver pool), the pool's exclusions and `reviewerIsFiler` — so filing under
+  an alternate and reviewing under the primary is refused as the self-review it is.
+- The countersigner's read (`listSecondApprovalsForApprover`) and write
+  (`secondDecideTimeAdjustment`) match any of the caller's own addresses.
+- Unlike `expandWorkEmailAliases`, an unreadable roster here **refuses** rather than
+  degrading to the input address: these are authorization checks.
+- **Not bridged (OPEN):** the Payroll Wizard's approved-adjustment overlay is still keyed
+  by the filed address — see `time-adjustment-requests.md` § 2026-10-07.
+
 ### Hubstaff hours endpoint (`app/api/hubstaff-hours/route.ts`)
 - `expandEmailAliases(norm)` reads `active_employees` and returns the full set of
   a person's emails (work + personal + both alternates), degrading to just the

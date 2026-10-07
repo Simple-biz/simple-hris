@@ -13,6 +13,11 @@
 > three named accounts excluded — see [Dual approval](#dual-approval) and [Authorization](#authorization).
 > **Accounting approves or denies with NO hours entry since 2026-09-15** — the day total is derived
 > as tracked + the missed time the employee submitted; see [Pay wiring](#pay-wiring).
+>
+> **A request filed under an ALTERNATE work email resolves to its owner since 2026-10-07** — see
+> [Dual approval](#dual-approval). Until then the team was looked up by the primary `Work Email`
+> only, so both open requests (filed as chariseg@ and shaylae@, roster chag@ and shaie@) showed an
+> empty second-approver picker and refused every manager decision.
 > Requires five manual Supabase steps before use — see [Prerequisites](#prerequisites).
 
 A distinct, evidence-backed mechanism for employees to ask Accounting to correct the tracked hours for any past day. Designed to handle cases where work happened but Hubstaff did not record it (forgot to start the tracker, tracker crashed, worked offline or in a meeting, etc.).
@@ -87,9 +92,26 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
   `listSecondApproverCandidatesForRequest`; the route will not accept a department from
   the client, which would otherwise turn the picker into a roster-enumeration endpoint
   for teams the caller does not manage.
-  > One resolver, `resolveAdjustmentDepartment`, feeds **both** the pool and the manager's
+  > One resolver, `resolveAdjustmentFiler`, feeds **both** the pool and the manager's
   > own authorization check. If they resolved the team differently, the dropdown could
   > offer a candidate the guard then refuses — or the reverse.
+- **The filer is a PERSON, not an address (2026-10-07).** People file under whichever
+  address they signed in with, and an alternate work email is the same human
+  (`identity-resolution.md` Rule 2). `pickRosterIdentity` resolves the filed address
+  against the active roster's `Work Email` **first**, then `Alternate Work Email` /
+  `Alternate Work Email 2`, and returns that person's effective team **and every address
+  they use**. The rules, each pinned in `time-adjustments-alias-identity.test.ts`:
+  a **primary match wins** (a recycled address that is one person's primary and another's
+  alternate belongs to the primary holder); an alternate found on **two different people**
+  is ambiguity and resolves to **nobody** — never a union, which would let one person's
+  sign-in act for the other; duplicate rows of one person whose teams disagree resolve to
+  **no team**, which every caller refuses on; an **unreadable roster refuses** (the pool
+  returns the error, every write returns it, the manager list answers 500).
+  The address set, not the filed address, is what the pool excludes and what
+  `reviewerIsFiler` compares against. Fixing the team alone would have opened a worse
+  hole: excluding only chariseg@ left chag@ — **her own primary** — in her own pool.
+  The same applies to the **naming manager**: every address of theirs is excluded and
+  none of them may be named.
 - **…plus the team's active MANAGERS (2026-09-15).** Kane: *"Claire is a contractor that
   works for Accounting."* Claire's roster row says **USEE** because that is her pay bucket;
   what says she works for Accounting is her `department_managers` row for Accounting Team.
@@ -146,6 +168,10 @@ Added 2026-08-19. Stage 1 requires **two** sign-offs before Accounting sees anyt
   OPEN row filed by a manager `manager_filed`, so that row now stands at `manager_approved`
   **because she is a manager**, not because of the self-signature — and Accounting (someone
   other than Carla) signs it.
+  **Since 2026-10-07** the rule compares the reviewer against the filer's **full address
+  set** (primary + alternates), so filing under an alternate and reviewing under the
+  primary is the self-review it is. It also runs in `secondDecideTimeAdjustment`, which
+  catches a row named before the set existed.
 
 > **RULED 2026-09-15.** Carla: *"my second signature person is Claire. She is no longer on
 > this list."* Measured: Julia's roster department is **Accounting Team**; Claire's is
@@ -389,10 +415,12 @@ Actions, when the viewer owes a decision:
 - as the **manager**: a **required** second-approver picker fed by
   `GET /api/manager/approver-candidates?requestId=…`, **one fetch per request** because
   the pool is that request's own team and a manager of two departments gets a different
-  list per row. It lists every ACTIVE member of the team minus the filer and the manager,
-  names the team it is showing, and an empty list says *nobody else is active on that
-  team* — since 2026-08-27 the only way it can be empty, there being no access grant to
-  go and ask an admin for. Then an optional note, **Approve {h}** (`action:
+  list per row. It lists every ACTIVE member of the team minus every address of the
+  filer and of the manager, names the team it is showing, and an empty list says
+  *nobody else is active on that team*. **A refused or failed read says so instead**
+  (*"Could not load the team: …"*, the server's own reason, in red) — until 2026-10-07
+  the client dropped the error and rendered the empty-team line, which is how a 21-person
+  Accounting Team read as nobody. Then an optional note, **Approve {h}** (`action:
   manager_approve` **with `second_approver_email` in the same body**, so a row can never
   land approved-but-uncountersigned; disabled until someone is picked) and **Decline**
   (`manager_deny`).
@@ -515,7 +543,7 @@ and the route keeps `cache: 'no-store'` — this changed no endpoint's freshness
 
 `managerDecideTimeAdjustment` (in `src/lib/supabase/time-adjustments.ts`):
 1. Fetches the manager's department assignments via `listDepartmentsForManager(managerEmail)`.
-2. Looks up the employee's department from `active_employees` (by `work_email`).
+2. Resolves the filer with `resolveAdjustmentFiler` — `active_employees` by the primary `Work Email`, then the two alternate columns (see [Dual approval](#dual-approval)) — and refuses a reviewer who is any of the filer's addresses.
 3. Checks the employee's dept is in the manager's assigned depts; returns 403 if not.
 4. Records the manager's sign-off in `manager_decision` and re-derives `status`. Approving requires `second_approver_email` to be set (the route accepts it in the same call as the approval), so the row moves to `awaiting_second_approval`, not straight to `manager_approved`. Denying moves it to `manager_denied` on its own.
 
@@ -523,11 +551,11 @@ and the route keeps `cache: 'no-store'` — this changed no endpoint's freshness
 
 `secondDecideTimeAdjustment` (same file) does **not** consult `department_managers` at all — the assignment IS the authorization:
 
-1. The row must name the caller in `second_approver_email` (normalized compare); anyone else gets 403.
+1. The row must name the caller in `second_approver_email` — compared against **every address of the caller** (2026-10-07: the picker names people by their primary, and they may sign in under an alternate). An unreadable roster narrows to the exact sign-in address, which can only refuse more. Anyone else gets 403, and so does the filer under any of their addresses.
 2. They must not have decided already, and the row must still be `pending` or `awaiting_second_approval`.
 3. Records `second_decision` and re-derives `status`.
 
-This is what lets an ordinary teammate countersign without any Manager access. It widens nothing else: the manager's own path still requires department scope, and `GET /api/manager/time-adjustments` widens the **read** by exactly the same rule (`manages the department` **OR** `is the named second approver`) so read and write can never disagree. The response also returns `managedIds`, the subset the caller may act on *as the manager*, so a row reaching them only as second approver never renders the manager's controls.
+This is what lets an ordinary teammate countersign without any Manager access. It widens nothing else: the manager's own path still requires department scope, and `GET /api/manager/time-adjustments` widens the **read** by exactly the same rule (`manages the department` **OR** `is the named second approver`) so read and write can never disagree. Both halves resolve identity with the same `pickRosterIdentity` the writes use (2026-10-07): a request filed under an alternate counts toward its owner's team, and the effective label (the Sales / Sales-Assistant split) is the one the authorization check uses — the list previously compared the raw roster label, the write the effective one. The response also returns `managedIds`, the subset the caller may act on *as the manager*, so a row reaching them only as second approver never renders the manager's controls.
 
 **The route-level gate changed with it (2026-08-27).** `second_approve` / `second_deny` are the only two actions in `PATCH /api/time-adjustments/[id]` that no longer require the `manager:time_adjustments` edit grant — they are authorized by the on-row assignment alone. That is a **narrowing**, not a relaxation: it replaces "holds a company-wide tab grant" with "is the exact person named on this exact row", so every manager who previously qualified but was not named is refused exactly as before. Naming the approver (`assign_second_approver`) stays a manager action, so a named approver cannot re-point a request at somebody else.
 
@@ -539,7 +567,7 @@ Two sections, matching the scope Kane set ("ONLY submitted time adjustments and 
 
 The tab is **absent** unless the portal shell's count comes back non-zero, and a failed count hides it rather than guessing one into existence. The shell asks without `?evidence=1` so it does not pay for Storage signing it will not render.
 
-The endpoint takes **no email parameter**. There is nothing to authorize beyond "who are you", because the query itself is the authorization — it can only ever return rows naming the caller.
+The endpoint takes **no email parameter**. There is nothing to authorize beyond "who are you", because the query itself is the authorization — it can only ever return rows naming the caller, under any of the caller's own addresses (the same set the countersign write accepts).
 
 ---
 
@@ -799,9 +827,9 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | List department requests (manager) | `manager` or `admin` role + scoped to `department_managers` assignments |
 | Manager approve / deny | `manager:time_adjustments` **edit** grant + caller manages the employee's department + **caller is not the filer** (2026-09-15, 403). **Refused (400) on a manager-filed row** — there is no stage 1 |
 | Name / re-name the second approver | same as manager approve (filer check included); blocked once the second approver has decided; refused on a manager-filed row |
-| Second approver approve / deny | The row must name the caller in `second_approver_email`. **No role, no feature grant, no department check** — the assignment IS the authorization (2026-08-27) |
+| Second approver approve / deny | The row must name the caller — any of the caller's own addresses (2026-10-07) — in `second_approver_email`. **No role, no feature grant, no department check** — the assignment IS the authorization (2026-08-27). **Caller is not the filer** under any address (403) |
 | Read own second-approver queue | Signed in. `GET /api/time-adjustments/second-approvals` is scoped to the caller's own assignments and takes no email parameter |
-| Appear in the second-approver picker | ACTIVE roster member of the request's own department **or** an active `department_managers` assignee of that department who is on the active roster (2026-09-15), excluding the filer and the naming manager. **No role required** (2026-08-27) |
+| Appear in the second-approver picker | ACTIVE roster member of the request's own department **or** an active `department_managers` assignee of that department who is on the active roster (2026-09-15), excluding **every address** of the filer and of the naming manager (2026-10-07). **No role required** (2026-08-27) |
 | Recall | same as manager approve; allowed from `manager_approved` **or** `awaiting_second_approval`; refused on a manager-filed row (nothing to recall into) |
 | Accounting approve / deny | Route gate **`accounting:disputes` edit** (Accounting → Issues, 2026-09-15 — the wizard panel calls the same route, so it needs the same grant) + Accounting role (`canActOnDisputes`) + row must be `manager_approved` + **decider is not the filer** (403) + **not one of the named exclusions** (`TIME_ADJUSTMENT_DECIDER_EXCLUSIONS`: jakec@, april@, lenny@ — Kane, 403) |
 | Accounting delete | same gate, role check and exclusions as approve / deny + row must be `denied` or `manager_denied` |
@@ -915,3 +943,22 @@ Private. Object path: `{sanitized_email}/{requestKey}/{idx}-{timestamp}.{ext}`. 
 | `src/components/Overview.tsx` · `src/components/employee/EmployeePabCalendar.tsx` | **Edited** — hold facts, resolve against tracked hours. The calendar resolves against the RAW copy before its own SET writes mutate the map |
 | `src/components/payroll/TimeAdjustmentIssueRows.tsx` · `PabDisputeQueue.tsx` · `TimeAdjustmentReviewPanel.tsx` | **Edited** — hours entry removed from both Accounting surfaces; the applied figure renders as the added missed time when no total was stored |
 | `src/lib/accounting/issues-time-adjustments.ts` (+ test) | **Edited** — `canApproveTimeAdjustment` drops the hours argument; `approvedHoursFromInputs` and `timeAdjustmentHoursPrefill` deleted |
+
+### 2026-10-07 — a request filed under an alternate work email
+
+Kane, on Charise's request: *"where is the list of the 2nd approver?"* Measured: chariseg@ is the
+`Alternate Work Email` on chag@'s Accounting Team row; Shayla's open request is the same shape
+(shaylae@ → shaie@). Every lookup keyed the primary column only.
+
+| Path | Change |
+|---|---|
+| `src/lib/supabase/time-adjustments.ts` | **Edited** — pure `pickRosterIdentity` (primary wins · one person per alternate · disagreeing duplicates = no team); `resolveAdjustmentFiler` replaces `resolveAdjustmentDepartment` and returns the team **and** every address; `resolveReviewerEmails` for the naming manager and the countersigner; `reviewerIsFiler` takes an address set and now also runs in `secondDecideTimeAdjustment`; `authorizeManagerOverAdjustment` takes the resolved filer; `listSecondApprovalsForApprover` matches any of the caller's addresses; an unreadable roster refuses everywhere |
+| `app/api/manager/time-adjustments/route.ts` | **Edited** — teams and the second-approver match resolve through `pickRosterIdentity` over the paged roster (no more primary-only `.in`); an unreadable roster is a 500 |
+| `src/components/manager/ManagerTimeAdjustments.tsx` | **Edited** — `ApproverPool.error`; a refused or failed pool read renders the reason instead of the empty-team line |
+| `src/lib/supabase/time-adjustments-alias-identity.test.ts` | **New** — 20 tests: the identity rules, the pool excluding the filer's primary (and the pre-fix exclusion that did not), the address-set self-review, and source scans that every reviewing path and the list route use the resolver |
+
+**Not changed, and OPEN (session log item 390):** the pay overlay. The Payroll Wizard keys an
+approved adjustment by the address it was filed under (`approvedTimeAdjustments`,
+`PayrollWizard.tsx:6724`) and looks it up by the Hubstaff address. Hubstaff tracks both of these
+people under their PRIMARY (chag@ 24 rows, shaie@ 30; the alternates 0), so as of this commit an
+approved request filed under an alternate would match no Hubstaff row.

@@ -107,8 +107,14 @@ import {
 } from '@/lib/manager/time-adjustment-queue';
 
 type ApproverCandidate = { email: string; name: string | null };
-type ApproverPool = { list: ApproverCandidate[]; department: string | null; loading: boolean };
-const EMPTY_POOL: ApproverPool = { list: [], department: null, loading: true };
+type ApproverPool = {
+  list: ApproverCandidate[];
+  department: string | null;
+  loading: boolean;
+  /** The server's refusal or a failed read — never folded into an empty team. */
+  error: string | null;
+};
+const EMPTY_POOL: ApproverPool = { list: [], department: null, loading: true, error: null };
 
 type DecideAction = 'manager_approve' | 'manager_deny' | 'second_approve' | 'second_deny';
 
@@ -962,13 +968,21 @@ function RequestDetail({
                 searchable={pool.list.length > 8}
                 searchPlaceholder="Search the team…"
               />
-              <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                {pool.loading
-                  ? 'Loading this request’s team…'
-                  : pool.list.length === 0
-                    ? `Nobody else is active on ${teamLabel || 'this team'}, so there is no one to countersign.`
-                    : `Anyone active on ${teamLabel || 'the requester’s team'}. They review it in their own portal.`}
-              </p>
+              {/* A refused or failed pool read says WHY. Folding it into the empty-team
+                  line told a manager "nobody else is active" about a 12-person team. */}
+              {!pool.loading && pool.error ? (
+                <p role="alert" className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+                  Could not load the team: {pool.error}
+                </p>
+              ) : (
+                <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  {pool.loading
+                    ? 'Loading this request’s team…'
+                    : pool.list.length === 0
+                      ? `Nobody else is active on ${teamLabel || 'this team'}, so there is no one to countersign.`
+                      : `Anyone active on ${teamLabel || 'the requester’s team'}. They review it in their own portal.`}
+                </p>
+              )}
             </div>
           )}
 
@@ -1200,13 +1214,21 @@ export default function ManagerTimeAdjustments({
           const json = (await res.json()) as {
             candidates?: ApproverCandidate[];
             department?: string | null;
+            error?: string | null;
           };
+          const error = json.error || (res.ok ? null : `HTTP ${res.status}`);
           return [
             id,
-            { list: json.candidates ?? [], department: json.department ?? null, loading: false },
+            {
+              list: error ? [] : (json.candidates ?? []),
+              department: json.department ?? null,
+              loading: false,
+              error,
+            },
           ] as [string, ApproverPool];
-        } catch {
-          return [id, { list: [], department: null, loading: false }] as [string, ApproverPool];
+        } catch (e) {
+          const error = e instanceof Error ? e.message : 'Network error';
+          return [id, { list: [], department: null, loading: false, error }] as [string, ApproverPool];
         }
       }),
     ).then((entries) => {
