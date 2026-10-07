@@ -25,7 +25,7 @@
  */
 
 import { isStagePreppedActive, subscribeStagePrepped } from '@/lib/sound/ping-chime';
-import { getCarlaSongState } from '@/lib/sound/carla-song';
+import { isCarlaSongActive } from '@/lib/sound/carla-song';
 import {
   EMPTY_JAM_CLOCK,
   isJamDue,
@@ -184,8 +184,7 @@ function transition(event: JamEvent): void {
 /** Another song is audible (or about to be): the Start Processing cue, or the sign-in song. */
 function otherSongActive(): boolean {
   if (isStagePreppedActive()) return true;
-  const s = getCarlaSongState().status;
-  return s === 'playing' || s === 'blocked';
+  return isCarlaSongActive();
 }
 
 function tick(): void {

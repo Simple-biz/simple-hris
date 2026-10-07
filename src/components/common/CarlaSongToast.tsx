@@ -8,6 +8,7 @@ import {
   getCarlaSongElapsedSeconds,
   getCarlaSongServerState,
   getCarlaSongState,
+  isCarlaSongPillVisible,
   resumeCarlaSongIfPending,
   stopCarlaSong,
   subscribeCarlaSong,
@@ -31,7 +32,9 @@ import {
  */
 export default function CarlaSongToast() {
   const state = useSyncExternalStore(subscribeCarlaSong, getCarlaSongState, getCarlaSongServerState);
-  const active = state.status === 'playing' || state.status === 'blocked';
+  // Never while play() is pending ('starting'): an asset that never loads must
+  // not flash a "Now playing" pill over silence.
+  const active = isCarlaSongPillVisible(state.status);
 
   // A hard navigation mid-song lands on a fresh document with a fresh module —
   // pick the persisted run back up at the right offset. Runs once per document

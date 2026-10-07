@@ -24,21 +24,35 @@
  * play() there falls into the usual tap-anywhere recovery.
  *
  * `CarlaSongToast` (mounted once in the root layout) subscribes to this
- * module to show the "Now playing" pill with a mute toggle.
+ * module to show the "Now playing" pill with a mute toggle. The pill shows
+ * only once sound has actually started (`playing`) or a tap will start it
+ * (`blocked`) — never while play() is still pending (`starting`), so an
+ * asset that never loads never flashes a pill over silence.
  *
- * Assets: each song's `src` is a committed ~40s CUT, never the full track
- * (docs/features/login-carla-song.md § The clip). If a file is missing the
- * feature quietly stands down for that person — play() rejects, we finish(),
- * no toast shows.
+ * Assets: each song's clip is a committed ~40s CUT, never the full track
+ * (docs/features/login-carla-song.md § The clips). A row whose cut is not in
+ * the repo yet is `pending` and inert: nothing is fetched, nothing plays, no
+ * pill, and a console warning says so. An installed clip that fails to load
+ * or decode stands down the same way, logged with `console.error`.
  */
 
 export const CARLA_SONG_EMAIL = 'carla@simple.biz';
 export const ALIVIAH_SONG_EMAIL = 'aliviah@simple.biz';
 
+/**
+ * Where a person's cut lives, and whether it is committed. `carla-song.test.ts`
+ * holds both states to the disk: an `installed` clip must exist, a `pending`
+ * one must NOT — so committing a cut without flipping its row fails the suite.
+ */
+export interface SigninClip {
+  status: 'installed' | 'pending';
+  src: string;
+}
+
 export interface SigninSong {
   /** Lower-case, exact. The whole gate. */
   email: string;
-  src: string;
+  clip: SigninClip;
   title: string;
   artist: string;
   thumb: string;
@@ -49,7 +63,7 @@ export interface SigninSong {
 export const SIGNIN_SONGS: readonly SigninSong[] = [
   {
     email: CARLA_SONG_EMAIL,
-    src: '/sounds/carla-song.mp3',
+    clip: { status: 'installed', src: '/sounds/carla-song.mp3' },
     title: "I Can't Stop The Loneliness",
     artist: 'Anri',
     thumb: '/carla-song-thumb.jpg',
@@ -57,7 +71,8 @@ export const SIGNIN_SONGS: readonly SigninSong[] = [
   },
   {
     email: ALIVIAH_SONG_EMAIL,
-    src: '/sounds/aliviah-song.mp3',
+    // PENDING (item 386): Kane supplies the track; the 40s cut lands here.
+    clip: { status: 'pending', src: '/sounds/aliviah-song.mp3' },
     title: 'Impostor Syndrome',
     artist: 'Sidney Gish',
     thumb: '/aliviah-song-thumb.jpg',
@@ -76,9 +91,13 @@ export const CARLA_SONG_TOTAL_SECONDS = 30;
 /** How long the closing fade lasts (the last N seconds of the run). */
 const FADE_SECONDS = 4;
 const VOLUME = 0.9;
+/** A resume further than this from where the run should be is re-seeked once sound starts. */
+const SEEK_TOLERANCE_SECONDS = 0.75;
 
 export type CarlaSongStatus =
   | 'idle'
+  /** play() called, no sound yet. The run is live, but the pill stays hidden. */
+  | 'starting'
   /** play() was refused by the autoplay policy — waiting on any tap/keypress. */
   | 'blocked'
   | 'playing'
@@ -96,6 +115,13 @@ let el: HTMLAudioElement | null = null;
 let elSong: SigninSong | null = null;
 let state: CarlaSongState = { status: 'idle', muted: false, song: null };
 const listeners = new Set<() => void>();
+
+/**
+ * Bumped by every start and every finish. A play() that settles after its run
+ * was stopped or superseded sees a different number and does nothing — so a
+ * late resolve can never revive a stopped run.
+ */
+let runSeq = 0;
 
 let fadeStartTimer: ReturnType<typeof setTimeout> | null = null;
 let fadeInterval: ReturnType<typeof setInterval> | null = null;
@@ -122,6 +148,16 @@ export function getCarlaSongState(): CarlaSongState {
 const SERVER_STATE: CarlaSongState = { status: 'idle', muted: false, song: null };
 export function getCarlaSongServerState(): CarlaSongState {
   return SERVER_STATE;
+}
+
+/** A run is in progress — audible, about to be, or waiting on a tap. Guards re-entry and the jam bubble. */
+export function isCarlaSongActive(status: CarlaSongStatus = state.status): boolean {
+  return status === 'starting' || status === 'blocked' || status === 'playing';
+}
+
+/** The pill shows only once there is sound, or a tap will bring it — never while play() is pending. */
+export function isCarlaSongPillVisible(status: CarlaSongStatus): boolean {
+  return status === 'playing' || status === 'blocked';
 }
 
 /**
@@ -190,8 +226,9 @@ function clearTimers(): void {
   }
 }
 
-/** Stop playback and settle into 'done' (idempotent — ended/error/fade all land here). */
+/** Stop playback and settle into 'done' (idempotent — ended/error/fade/stop all land here). */
 function finish(): void {
+  runSeq += 1;
   clearTimers();
   clearRun();
   if (el) {
@@ -204,6 +241,31 @@ function finish(): void {
     }
   }
   if (state.status !== 'done') setState({ status: 'done' });
+}
+
+/**
+ * Drop the audio element so the next start builds a fresh one — for a
+ * different person's song, or after an error (an element that failed to load
+ * stays failed, and reusing it would sink every later start in this session).
+ */
+function releaseElement(): void {
+  if (!el) return;
+  try {
+    el.removeEventListener('ended', finish);
+    el.removeEventListener('error', onElementError);
+    el.pause();
+  } catch {
+    /* ignore */
+  }
+  el = null;
+  elSong = null;
+}
+
+/** The clip failed to load or decode (404, bad deploy, network) — say so, and stand down. */
+function onElementError(): void {
+  console.error(`[signin-song] ${elSong?.clip.src ?? 'clip'} failed to load; nothing plays`);
+  releaseElement();
+  finish();
 }
 
 /** Closing fade: ramp volume to 0 over `durationSeconds`, then stop. */
@@ -260,12 +322,7 @@ function installUnlock(): void {
     if (state.status !== 'blocked') return;
     const stored = readRun();
     if (stored) {
-      const elapsed = (Date.now() - stored.run.t0) / 1000;
-      if (elapsed < CARLA_SONG_TOTAL_SECONDS) {
-        start(stored.song, elapsed, stored.run.t0, stored.run.muted);
-        return;
-      }
-      finish();
+      start(stored.song, stored.run.t0, stored.run.muted);
       return;
     }
     if (state.song) start(state.song);
@@ -275,82 +332,115 @@ function installUnlock(): void {
   window.addEventListener('keydown', unlock);
 }
 
-/** Drop an element built for someone else's song, so the next start builds the right one. */
-function releaseElement(): void {
-  if (!el) return;
-  try {
-    el.removeEventListener('ended', finish);
-    el.removeEventListener('error', finish);
-    el.pause();
-  } catch {
-    /* ignore */
-  }
-  el = null;
-  elSong = null;
-}
-
 /**
- * Begin (or resume) `song` `offsetSeconds` into the 30s window. `t0Ms`
- * anchors the persisted run; omitted for a fresh start.
+ * Begin `song`, or resume the run anchored at `t0Ms`. A fresh start (no
+ * `t0Ms`) re-anchors the window to the moment sound actually begins, so a
+ * slow load never shortens the 30 seconds. A resume is placed by the wall
+ * clock when sound begins, so a slow load never stretches it past 0:30.
  */
-function start(song: SigninSong, offsetSeconds = 0, t0Ms?: number, muted = false): void {
+function start(song: SigninSong, t0Ms?: number, muted = false): void {
+  if (song.clip.status !== 'installed') {
+    finish();
+    return;
+  }
+  const src = song.clip.src;
+  const run = ++runSeq;
   try {
     clearTimers();
     if (el && elSong !== song) releaseElement();
     if (!el) {
-      el = new Audio(song.src);
+      el = new Audio(src);
       elSong = song;
       el.preload = 'auto';
       el.addEventListener('ended', finish);
-      // Missing/undecodable asset — stand down without ever showing the toast.
-      el.addEventListener('error', finish);
+      el.addEventListener('error', onElementError);
+    }
+    const anchor = t0Ms ?? Date.now();
+    const offset = (Date.now() - anchor) / 1000;
+    if (offset >= CARLA_SONG_TOTAL_SECONDS) {
+      finish();
+      return;
     }
     // Persist BEFORE play resolves so a navigation racing the start still
     // finds the run and resumes on the next document.
-    writeRun({ t0: t0Ms ?? Date.now() - offsetSeconds * 1000, muted, email: song.email });
+    writeRun({ t0: anchor, muted, email: song.email });
+    // Seek BEFORE play() so a resume starts at its offset, not at 0:00. Before
+    // metadata loads this sets the default playback start position; the
+    // resolve handler re-seeks any browser that ignored it.
+    if (offset > 0) {
+      try {
+        el.currentTime = offset;
+      } catch {
+        /* corrected once sound starts */
+      }
+    }
     el.volume = VOLUME;
     el.muted = muted;
-    // Optimistic: flips to 'blocked' or 'done' below if play() rejects.
-    setState({ status: 'playing', muted, song });
-    void el
+    setState({ status: 'starting', muted, song });
+    const a = el;
+    void a
       .play()
       .then(() => {
-        const a = el;
-        if (a && offsetSeconds > 0) {
-          try {
-            a.currentTime = offsetSeconds;
-          } catch {
-            /* seek is best-effort */
+        if (run !== runSeq) return; // stopped or superseded while loading
+        let at = 0;
+        if (t0Ms === undefined) {
+          writeRun({ t0: Date.now(), muted: state.muted, email: song.email });
+        } else {
+          at = (Date.now() - t0Ms) / 1000;
+          if (at >= CARLA_SONG_TOTAL_SECONDS) {
+            finish();
+            return;
+          }
+          if (Math.abs(a.currentTime - at) > SEEK_TOLERANCE_SECONDS) {
+            try {
+              a.currentTime = at;
+            } catch {
+              /* seek is best-effort */
+            }
           }
         }
-        armTimeline(offsetSeconds);
+        setState({ status: 'playing' });
+        armTimeline(at);
       })
       .catch((err: unknown) => {
+        if (run !== runSeq) return; // our own pause() aborting a stopped run
         const name = (err as { name?: string } | null)?.name;
         if (name === 'NotAllowedError') {
           setState({ status: 'blocked' });
           installUnlock();
-        } else {
-          // NotSupportedError etc. — asset missing; quietly no-op.
-          finish();
+          return;
         }
+        console.error(`[signin-song] ${src} would not play (${name ?? 'unknown error'}); nothing plays`);
+        releaseElement();
+        finish();
       });
-  } catch {
+  } catch (err) {
+    console.error(`[signin-song] ${src} could not start; nothing plays`, err);
+    releaseElement();
     finish();
   }
 }
 
 /**
  * The one sign-in entry point — called by the login page right before it
- * navigates into the app. No-ops for anyone not in `SIGNIN_SONGS`, and won't
- * restart a run that's already going (the hand-off effect can fire more than
- * once).
+ * navigates into the app, with whoever just signed in. A live run that is not
+ * theirs is stopped (nobody inherits the last person's song). A repeat call
+ * for the person already playing is a no-op (the hand-off effect can fire more
+ * than once). No-ops for anyone not in `SIGNIN_SONGS`; a `pending` clip warns
+ * and plays nothing.
  */
 export function startCarlaSongIfEligible(email: string | null | undefined): void {
   if (typeof window === 'undefined') return;
   const song = signinSongFor(email);
+  if (isCarlaSongActive()) {
+    if (song && state.song === song) return;
+    finish();
+  }
   if (!song) return;
-  if (state.status === 'playing' || state.status === 'blocked') return;
+  if (song.clip.status !== 'installed') {
+    console.warn(`[signin-song] ${song.email}: clip pending (${song.clip.src} is not committed); nothing plays`);
+    return;
+  }
   start(song);
 }
 
@@ -363,7 +453,7 @@ export function startCarlaSongIfEligible(email: string | null | undefined): void
  */
 export function resumeCarlaSongIfPending(): void {
   if (typeof window === 'undefined') return;
-  if (state.status === 'playing' || state.status === 'blocked') return;
+  if (isCarlaSongActive()) return;
   const stored = readRun();
   if (!stored) {
     // Absent, malformed, or for an email no longer listed — never resume it.
@@ -374,12 +464,11 @@ export function resumeCarlaSongIfPending(): void {
     clearRun();
     return;
   }
-  const elapsed = (Date.now() - stored.run.t0) / 1000;
-  if (elapsed >= CARLA_SONG_TOTAL_SECONDS) {
+  if ((Date.now() - stored.run.t0) / 1000 >= CARLA_SONG_TOTAL_SECONDS) {
     clearRun();
     return;
   }
-  start(stored.song, elapsed, stored.run.t0, stored.run.muted);
+  start(stored.song, stored.run.t0, stored.run.muted);
 }
 
 /** Mute keeps the 30s timeline running — unmuting rejoins the song mid-play. */
