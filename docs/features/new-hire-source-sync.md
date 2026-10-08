@@ -26,6 +26,7 @@ to arrive and changes none of them.
 | Env config, identifier-checked, table has NO default | `src/lib/hr/hires-source-config.ts` (+ `.test.ts`) |
 | Every decision, pure (US Eastern interview date · week · place/link/hold · merge) | `src/lib/hr/hires-source-map.ts` (+ `.test.ts`) |
 | Source read (paged, 20k cap, `truncated`) | `src/lib/hr/hires-source-read.ts` |
+| Network-reset retry for source READS (never an HTTP answer, never a write) | `src/lib/hr/fetch-network-retry.ts` (+ `.test.ts`) |
 | Our copy + checklist reads | `src/lib/supabase/hr-new-hire-source-db.ts` |
 | One sync pass · manual placement | `src/lib/hr/hires-source-sync.ts` |
 | Route | `app/api/hr/new-hire-checklist/source-sync/route.ts`: `GET` status (elevated) · `POST {action:'sync'}` · `POST {action:'place', source_key, period_start}` (feature edit) |
@@ -163,8 +164,17 @@ either way.
 
 - **Strip** (above the grid, checklist tab): a live dot and "checked 2:14:05 PM · N hires in the
   hiring database". Amber for *not set up* (names the missing variables) or *migration not applied*
-  (names the script). Rose for a source read error. Red if the read was truncated at 20,000.
-  Then **Sync now**, and **Not placed (N)**.
+  (names the script). Rose for a read error, followed by "trying again every 30 s · last good check
+  …". Red if the read was truncated at 20,000. Then **Sync now**, and **Not placed (N)**.
+- **A dropped connection is retried inside the pass; an answer never is.** The source client's
+  `fetch` (`fetchWithNetworkRetry`) re-sends a **GET/HEAD** whose connection was reset or dropped
+  (`TypeError: fetch failed`, ECONNRESET), twice, after 0.4 s and 1.2 s. **Any HTTP response is
+  final**: a 404 "no such table", a 401 or a 500 shows at once. That is the OMS rule that a missing
+  table must fail loud. A write is never replayed, and after the last try the original error is
+  thrown unchanged. Why: on 2026-10-08 Kane saw *"Hiring database read failed: TypeError: fetch
+  failed"*. Ten calls a minute later all succeeded, and this machine had hit ECONNRESET against both
+  Supabase projects that day. One reset was failing a whole pass. **Our own** Supabase client is
+  not wrapped: it is shared by the whole app, and a failed pass is retried by the next 30 s tick.
 - **Not placed** lists the held hires (name, email, department, interview, why). Since rule 3
   above, that is only a hire with every week ahead locked, so it is normally empty. Each has **Add
   to this week**, the week on screen. The route refuses a locked week (409), a hire no longer held

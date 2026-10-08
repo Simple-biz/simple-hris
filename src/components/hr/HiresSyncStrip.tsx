@@ -75,6 +75,12 @@ export default function HiresSyncStrip({
     case 'view_only':
       message = 'Live — new hires arrive while an HR editor has this tab open';
       break;
+    case 'source_error':
+    case 'error':
+      // Already retried in the pass (network resets only); still loud, but say what
+      // happens next and how fresh the checklist is.
+      message = `${status.reason} — trying again every 30 s${last ? ` · last good check ${formatClock(last.at)}` : ''}`;
+      break;
     default:
       message = status.reason;
   }

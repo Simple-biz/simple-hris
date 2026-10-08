@@ -16,6 +16,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 
+import { fetchWithNetworkRetry } from './fetch-network-retry';
 import { HIRES_SOURCE_FIELDS, type HiresSourceConfig } from './hires-source-config';
 
 /** More hires than this in the source is a mistake upstream, not a hiring pipeline. */
@@ -26,8 +27,18 @@ export interface HiresSourcePull {
   truncated: boolean;
 }
 
+/**
+ * The source client retries a READ whose connection was reset or dropped (twice,
+ * 0.4 s then 1.2 s), never an HTTP answer and never a write — see
+ * fetch-network-retry.ts. Measured 2026-10-08: intermittent ECONNRESET failed whole
+ * passes ("Hiring database read failed: TypeError: fetch failed") while the next
+ * 10/10 calls succeeded.
+ */
 export function createHiresSourceClient(cfg: HiresSourceConfig): SupabaseClient {
-  return createClient(cfg.url, cfg.key, { auth: { persistSession: false, autoRefreshToken: false } });
+  return createClient(cfg.url, cfg.key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: fetchWithNetworkRetry() },
+  });
 }
 
 /** The exact columns read from the source, de-duplicated, id first. */
