@@ -514,6 +514,13 @@ CHOSEN, each confirmable under W0.3:
 - Setup is never locked (*"I can still change all this stuff"*), and neither are task ticks (tasks are not the week's
   results).
 - Lock and reopen are stamps, never deletes. The history of who locked and reopened stays.
+- **REQUIRED (Kane, 2026-10-08): every lock writes a frozen snapshot of the week.** *"Please make sure all of the data in the accounting dashboard is saved so we can have a histogram created later"*. Without it every
+  score is recomputed with TODAY's goals, so a past week's score drifts when a goal changes. Table
+  `accounting_scoreboard_week_snapshots`, append-only (UPDATE and DELETE refused): `week_start`, `locked_at`, `locked_by`,
+  `schema_version`, and a `payload` with every section's headline, unit, goal in force, light and card score, each
+  tab's group score, the Team Score, and each row's week total. A reopen and re-lock writes a NEW snapshot; the newest
+  is the week's record. Tests: the payload equals `summarizeAll` + `teamScore` on a fixture week; the table refuses
+  UPDATE and DELETE (apply-script negative controls).
 
 **Files:**
 - Create: `src/lib/accounting-scoreboard/week-lock.ts`, `week-lock.test.ts`,
@@ -1342,6 +1349,33 @@ doc gets a section in this commit.
 - [x] **Step 5: `npm test` 6291/6291, `npm run lint` clean in source** (its only 2 errors are in the stale, gitignored
   `.next/types/validator.ts`, which names the deleted `bank-preferred-requests` route). Committed by explicit path:
   `feat(offboarding): notify the requester and the department's managers when a queue row is returned (item 397)`.
+
+---
+
+### Task 15: Keep every edit: typed-cell history and goal history (Kane, 2026-10-08)
+
+`hardening`. Kane: *"Please make sure all of the data in the accounting dashboard is saved so we can have a histogram created later"*.
+
+**Measured 2026-10-08 (session `39022c5c`):** collections, problems, Payment Verified ticks, role grants and tasks
+already keep everything (soft deletes and stamps). **Two things do not.** (1) A typed grid cell is an upsert
+(`writeEntry`, `server.ts`), so an edit overwrites the earlier value, and a cleared cell is a DELETE (the board's
+"absence is not zero" rule). (2) Goals and section switches (`accounting_scoreboard_sections`,
+`accounting_scoreboard_custom_sections`) are overwritten in place. Computed scores are never stored at all: that half
+is Task 5's weekly snapshot.
+
+- `accounting_scoreboard_entry_history`, append-only: one row per insert, update or delete of
+  `accounting_scoreboard_entries` (`row_id`, `entry_date`, `slot`, `old_value`, `new_value`, `op`, `changed_by`,
+  `changed_at`), written by an AFTER trigger so scripts are caught too. **A clear-a-cell DELETE carries no "who"**:
+  Step 0 decides how the trigger learns it (for example, `writeEntry` stamps `updated_by` before the DELETE, or the
+  route writes the history row and the trigger only guards). **Never change the clear-a-cell rule itself**: a cleared
+  cell stays deleted, never 0.
+- `accounting_scoreboard_setting_history`, append-only: every change to a built-in or custom section's goal, goal
+  direction, on/off switch and show-on-Overview, with who and when, by trigger.
+- Both service-role only, RLS on, anon refused. The apply script's controls prove that an edit, a clear and a goal
+  change each write exactly one history row, and that history rows refuse UPDATE and DELETE.
+- History starts on the apply date; nothing before it can be recovered, and the doc says so.
+- **No UI.** The histogram itself is a later `blueprint`; this task only guarantees the data exists.
+- Migration first, then the push, as always.
 
 ---
 

@@ -12,6 +12,11 @@ this stuff."* Lock and reopen are Admin only. CHOSEN in the plan: lockable from 
 every dated write in that week, for everyone, Admin included; Setup and task ticks are never locked; lock and reopen are
 stamps, never deletes. **A DB trigger is the last line of defence**, and later tasks (6 and 7) attach the same function.
 
+**REQUIRED (Kane, 2026-10-08, "make sure all of the data ... is saved so we can have a histogram"): every lock writes a
+frozen, append-only snapshot of the week** (`accounting_scoreboard_week_snapshots`: every section's headline, goal in force,
+light and card score, the group scores, the Team Score, each row's week total). Without it a past week's score is
+recomputed with today's goals. See plan Task 5 and Open item 410. (Task 7 is already built: tasks are never locked.)
+
 ## Check before you start (stop and tell Kane if one fails)
 - Task 4 is committed **and applied**: `git ls-files src/lib/accounting-scoreboard/roles.ts` prints the file, and
   `node --import tsx scripts/apply-accounting-scoreboard-roles-migration.mts --verify` passes (read-only). If the verify

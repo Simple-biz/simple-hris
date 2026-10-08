@@ -22,6 +22,7 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 | 7 | ~~`task-07-task-boards.md`~~ **BUILT 2026-10-08 (session `39022c5c`), do not paste** | — | apply the tasks migration → fill the import map → import `--apply` → push |
 | 8 | ~~`task-08-progress-message.md`~~ **BUILT 2026-10-08 with Task 7, do not paste** | — | (same push) |
 | any | `task-09-old-grid-problems.md` | **W0.2 ruled (a)**: in the next free lane-A slot, never alongside another lane-A session | run the clear script `--apply`, then the team re-logs |
+| any | `task-15-keep-every-edit.md` | **next free lane-A slot, before Task 5 if you can** (Kane's histogram ask, 2026-10-08) | apply migration → push |
 | any | `task-10-compliance-portal.md` | only after **W0.7** (Kentshin's endpoint) | push |
 
 **Lane B (not the scoreboard): may run alongside lane A, one session per file.**
