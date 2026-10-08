@@ -861,16 +861,19 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   failed on normal use (Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV"). `--verify` now checks what
   stays true for good: the three seeded types still exist, live or archived (a type is never deleted). It re-passed.
 - **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here) (`f770d29b`).
-- **Pre-arb flag migration: PENDING `--apply` (Kane's go), then the push.**
+- **Pre-arb flag migration: APPLIED 2026-10-08 ~11:13 UTC** by session `5fae2311` on Kane's *"go"*. **The push: PENDING** (Kane).
   `2026-10-07_accounting_scoreboard_pre_arb_flag.sql` re-declares CHECK `acct_sb_rows_outcome_valid` with `'pre_arb'`
   added (the 2026-10-07 text copied verbatim otherwise). Its script's data step flags the one live "Pre-arb" Outcomes
-  line, after writing that row to `docs/audits/backups/` on `--apply`. **Dry run 2026-10-07: 23/23 PASS, rolled
-  back** (flagged `e740e66f…`; Wins and Losses unchanged; the CHECK in force lists exactly `OUTCOMES`; nothing off
+  line, after writing that row to `docs/audits/backups/` on `--apply`
+  (`accounting-scoreboard-pre-arb-row-2026-10-08T11-13-13-954Z.json`, gitignored). Dry run 2026-10-07 23/23 (rolled
+  back), `--apply` 23/23 (committed), `--verify` 19/19 (the four data-step checks run on dry/apply only); the
+  2026-10-07 outcomes script's `--verify` re-passed. Read back through PostgREST: Pre-arb = `pre_arb`, Wins = `win`,
+  Losses = `loss`, and the anon key gets `401` / `42501`. The dry run's checks (flagged `e740e66f…`; Wins and Losses unchanged; the CHECK in force lists exactly `OUTCOMES`; nothing off
   Outcomes carries a flag; RLS, zero policies and no anon/authenticated privilege; `SET ROLE anon` refused with
-  `42501`; Pre-arb → win → loss → none writes; Pre-arb on a bucket, `'draw'` and the label `'Pre-arb'` refused). Run
-  `node --import tsx scripts/apply-accounting-scoreboard-pre-arb-flag-migration.mts --apply`, then `--verify`, then
-  push. Pushed first, the board still reads (no new column), but Setup's "Counts as Pre-arb" is refused by the old
-  CHECK and the Pre-arb line is unmarked, so its dollars are left out of the Net. After it, the 2026-10-07 outcomes
+  `42501`; Pre-arb → win → loss → none writes; Pre-arb on a bucket, `'draw'` and the label `'Pre-arb'` refused).
+  Re-check any time with `node --import tsx scripts/apply-accounting-scoreboard-pre-arb-flag-migration.mts --verify`.
+  The deployed (pre-push) code reads the `pre_arb` flag as unmarked (its `isOutcome` knows only win/loss), so the
+  live board is unchanged until the push. After it, the 2026-10-07 outcomes
   script is superseded: run only its `--verify` (its SQL would re-add the two-value CHECK).
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.

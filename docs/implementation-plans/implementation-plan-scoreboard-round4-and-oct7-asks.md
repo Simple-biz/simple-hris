@@ -302,7 +302,7 @@ negative."* Carla: *"Yes."* **CHOSEN: the sign comes from the line's flag, never
 "loss" flag would double-negate. People keep typing positive amounts, and the board shows Losses and Pre-arb with a
 minus and adds a **Net** line.
 
-> **Steps 0–6 BUILT 2026-10-07** (`63500994` signs + Net; Step 6 in its own commit; migration dry run 23/23; `--apply`
+> **Steps 0–6 BUILT 2026-10-07** (`63500994` signs + Net; Step 6 in its own commit; migration APPLIED 2026-10-08; the push
 > PENDING Kane). **Corrected against the code in
 > the same commit (Step 0; the code wins):**
 > - **There is no `OutcomeFlag` type.** The flag's values are `OUTCOMES` in `sections.ts:48` (type `Outcome`), pinned
@@ -410,8 +410,9 @@ export function outcomesNet(
   Setup → Rows gets "Counts as Pre-arb" beside win / loss / not counted. The Amount box hint: *"Type the amount. A loss
   shows as negative."*
 
-- [ ] **Step 5: Run the tests, `npm test`, `npm run lint`; dry-run the migration; stop for Kane's go; `--apply`,
-  `--verify`; commit** by explicit path (tests, dry run 23/23 and the commit DONE 2026-10-07; `--apply` PENDING):
+- [x] **Step 5: Run the tests, `npm test`, `npm run lint`; dry-run the migration; stop for Kane's go; `--apply`,
+  `--verify`; commit** by explicit path (DONE: dry run 23/23 2026-10-07; APPLIED 2026-10-08, `--apply` 23/23,
+  `--verify` 19/19; the push PENDING):
   `feat(accounting-scoreboard): Losses and Pre-arb show negative, with a Net, by flag never by typed sign (item 392)`.
 
 - [x] **Step 6 (only after W0.1 = (a)):** DONE 2026-10-07 (W0.1 = (a)); `WinRatio` also gained `preArb` (the Pre-arb part
