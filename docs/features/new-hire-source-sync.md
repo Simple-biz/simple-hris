@@ -2,11 +2,11 @@
 
 HR → New Hire Checklist now **polls the hiring database** (a separate Supabase project,
 `HRIS_HIRES_SUPABASE_URL`), saves every hire it reads into the HRIS's **own copy**
-(`hr_new_hire_source_rows`), and places each new hire on the checklist week it belongs to,
-tagged **Synced**, with a **Received** timestamp. The manual **New Hire** modal stays. A hire whose
-interview week cannot take it (no interview date, already past, or locked) is added to **this
-week** automatically, or the next open week. Only when every week ahead is locked does it wait in a
-**Not placed** list, where HR adds it with one click. Built 2026-10-08, session `1e5dbda7`
+(`hr_new_hire_source_rows`), and places new hires tagged **Synced**, with a **Received** timestamp.
+The manual **New Hire** modal stays. **Each pass syncs only the week on the week selector** (Kane,
+2026-10-08, ruled "(b) Only the week on screen"): a hire lands there only when that is its own week,
+the week after its interview. A hire with no interview date, or whose week has passed or is locked,
+waits in a **Not placed** list, where HR adds it with one click. Built 2026-10-08, session `1e5dbda7`
 (Kane: *"we will now be polling data that is available from that Database now I want this in
 Real Time … a new column for us where we can know the timestamp … saved in our own database as
 well … we will still have the Manual Option but find a way that we can prioritize the Polling of
@@ -24,12 +24,13 @@ to arrive and changes none of them.
 | Piece | File |
 | --- | --- |
 | Env config, identifier-checked, table has NO default | `src/lib/hr/hires-source-config.ts` (+ `.test.ts`) |
-| Every decision, pure (US Eastern interview date · week · place/link/hold · merge) | `src/lib/hr/hires-source-map.ts` (+ `.test.ts`) |
+| Every decision, pure (US Eastern interview date · week · place/link/hold/defer for the selected week · merge) | `src/lib/hr/hires-source-map.ts` (+ `.test.ts`) |
+| The interview week of a checklist week, browser-safe (the New Hire modal's picker) | `src/lib/hr/interview-week.ts` (+ `.test.ts`, pinned against `targetWeekFor`) |
 | Source read (paged, 20k cap, `truncated`) | `src/lib/hr/hires-source-read.ts` |
 | Network-reset retry for source READS (never an HTTP answer, never a write) | `src/lib/hr/fetch-network-retry.ts` (+ `.test.ts`) |
 | Our copy + checklist reads | `src/lib/supabase/hr-new-hire-source-db.ts` |
 | One sync pass · manual placement | `src/lib/hr/hires-source-sync.ts` |
-| Route | `app/api/hr/new-hire-checklist/source-sync/route.ts`: `GET` status (elevated) · `POST {action:'sync'}` · `POST {action:'place', source_key, period_start}` (feature edit) |
+| Route | `app/api/hr/new-hire-checklist/source-sync/route.ts`: `GET` status (elevated) · `POST {action:'sync', period_start}` (the selected week, required) · `POST {action:'place', source_key, period_start}` (feature edit) |
 | Client poll | `src/components/hr/use-hires-source-sync.ts` |
 | Strip (status · Sync now · Not placed) | `src/components/hr/HiresSyncStrip.tsx` |
 | Received column, Synced/Manual tag, wiring | `src/components/hr/HrNewHireChecklist.tsx` |
@@ -39,7 +40,9 @@ to arrive and changes none of them.
 ## "Real time" is a poll plus a Broadcast — not postgres_changes
 
 The open checklist tab runs a sync **on mount, every 30 s while the page is visible, at once
-when a hidden page comes back past 30 s, and on Sync now**. It is single-flight (a tick during a
+when a hidden page comes back past 30 s, at once when the week selector moves, and on Sync now**.
+Each pass carries the week on the selector (`POST {action:'sync', period_start}`, required: a pass
+without a week is a 400, never an "every week" pass). It is single-flight (a tick during a
 sync is dropped) and the client stops waiting after 45 s. A pass that placed or changed hires
 names the weeks it touched, and the server **Broadcasts `changed` on `hr-nhc-room:<week>`**
 (the same room `useChecklistRoom` already listens on), so every other open grid refetches in about
@@ -74,10 +77,18 @@ the hire. It is never rewritten.
 | RLS on, **no policies**; read and written only through the service-role route. | Rows name job applicants; the anon key ships in the bundle. |
 | `placement` only moves forward: `pending` → `placed` / `linked` / `held`, and `held` → placed/linked. | See the next section. |
 
-## Where a hire goes — place, link or hold (`decidePlacement`)
+## Where a hire goes — one week per pass: place, link, hold or defer (`decidePlacement`)
 
-Checked in this order, all pinned in `hires-source-map.test.ts`:
+**A pass writes only the week on the HR week selector** (the `selectedWeek`). Kane, 2026-10-08:
+*"please make sure to align the date of interview to the week selector … that we can only sync that
+data for that specific week period"*; asked whether that overturned the same day's "automatically
+added to this week" ("A"), he ruled **"(b) Only the week on screen"**. Checked in this order, all pinned
+in `hires-source-map.test.ts` (including a sweep that no date, week or lock state ever places a hire
+outside the selected week):
 
+0. **Another week's hire, still ahead → DEFER** (`deferredToWeek`). A dated hire whose week is not the
+   one selected, and has not passed, is left untouched (still `pending`) until its week is on the
+   selector. The pass filters these out before reading the checklist, so they cost nothing.
 1. **Already listed → LINK.** The same personal email (case-insensitive) on any checklist week
    from **4 weeks before the reference week** onward (prefer the reference week, then the latest).
    With no email: the exact name, in the reference week only. The reference week is the target
@@ -87,28 +98,32 @@ Checked in this order, all pinned in `hires-source-map.test.ts`:
    lean to linking. An email on the source never links by name alone. (Measured 2026-10-08: all 10
    undated portal hires were already typed in and linked. The first cut skipped this check for
    undated hires.)
-2. **Dated, and the target week is this week or later and OPEN → PLACE there.** This is the normal
-   path, as an ordinary checklist row with `origin='synced'`, appended at the end of the week.
-3. **Everything else is added to THIS WEEK automatically, or the next open week** (Kane,
-   2026-10-08: *"Lets make this automatically added to this week"*, then **"A"**: the lock rule
-   stands). That covers no usable interview date, a target week already past, and a locked target
-   week. The walk starts at this week (or at the week **after** a locked future target, so a hire
-   never lands before their interview week) and takes the first **open** week. A **locked week is
-   never written** (new-hire-checklist.md:89 *"A locked week refuses every mutating verb"*): its
-   orientation emails are out, and a hire added there would get none. A **past week is never
-   written** either. On 2026-10-08 this week (Oct 4–10) was locked by teal@, so these hires went to
-   Oct 11–17. Counted as `placed_into_this_week` on the audit row.
-4. **HOLD `week_locked`** only when every one of the `FALLBACK_WEEKS_AHEAD` (8) weeks in that walk
-   is locked. Re-tried every pass.
+2. **No usable interview date → HOLD `no_interview_date`.** It belongs to no week, so the sync never
+   puts it in one.
+3. **Its week already past → HOLD `past_week`.** A **past week is never written**.
+4. **Its week is the selected one but locked → HOLD `week_locked`.** A **locked week is never written**
+   (new-hire-checklist.md:89 *"A locked week refuses every mutating verb"*): its orientation emails
+   are out, and a hire added there would get none. It never walks to another week.
+5. **Otherwise (its week IS the selected week, this week or later, open) → PLACE there**, as an
+   ordinary checklist row with `origin='synced'`, appended at the end of the week. The normal path.
 
-*Superseded the same day:* the first cut HELD the three cases in rule 3 (`no_interview_date`,
-`past_week`, `week_locked`) for HR to place by hand. The first pass of the new code
-(2026-10-08 18:45:58Z) re-decided all 11 held rows: 10 linked and 1 was placed into Oct 11–17. The
-DB CHECK still allows all three reasons, for history.
+Held hires are re-decided every pass, so one HR types in later links instead of being listed twice.
+HR adds any held hire by hand under **Not placed**. The audit row records the `week` the pass synced
+and how many hires it `deferred`.
+
+*The history of this rule, all 2026-10-08:* the first cut HELD the three unusable cases for HR to place
+by hand. Kane then ruled "A" (*"Lets make this automatically added to this week"*): those went to this
+week, or the next open one, and that pass (18:45:58Z) re-decided all 11 held rows (10 linked, 1 placed
+into Oct 11–17, later deleted by HR). Then **(b)**, above, replaced "A": nothing is placed outside the
+week on the selector, and the unusable cases are held again. **Measured read-only at (b)'s build**
+(the new code's pure rule over production's copy): all 35 copy rows were already placed or linked, so
+the change re-decides nothing that exists; it applies to hires that arrive from then on.
 
 **The target week is the week AFTER the interview week.** This was measured on 2026-10-08 over
 every live row: 1,640 of the 1,747 rows that carry an interview date (94%) sit exactly one week after
-it, and 753 of 790 since August.
+it, and 753 of 790 since August. **The New Hire modal reads the same rule** the other way round: its
+Date of interview picker opens on the selected week's interview week (`interview-week.ts`, pinned
+equal to `targetWeekFor` day by day; new-hire-checklist.md § The New Hire modal). Change it in both.
 
 **The interview date is the US EASTERN calendar date** of the portal's timestamp
 (`INTERVIEW_TIME_ZONE = 'America/New_York'`, DST-aware). It is stored as `YYYY-MM-DD`, the format HR
@@ -135,8 +150,11 @@ away, so a second source row for the same person links instead of adding.
 
 ## Who wins a cell — "prioritize polling" without reverting HR (`mergeSourceIntoRow`)
 
-The sync **writes only this week and later, never a locked week** (`isWritableWeek`). Within
-those weeks:
+The sync **writes only the week on the selector, and only when it is this week or later and open**
+(`isWritableWeek`). Every pass merges that week's synced rows whose source holds a value the sync has
+not applied yet (`sourceAheadOfApplied`), not only in the pass that first saw the change, so a change
+that landed while another week was on screen is caught up when its week is selected. Within that
+week:
 
 - A **blank** cell takes the source's value. This includes a hire HR typed in and the sync then
   linked: the polled data fills what HR left empty.
@@ -144,6 +162,9 @@ those weeks:
   follows the source when the source changes.
 - A cell **HR typed or changed** is never overwritten again. HR's correction to a department is
   what keeps a Lead Gen orientation email from going to the wrong person.
+- A cell the sync filled and **HR then cleared** stays clear (since 2026-10-08: with the week merged
+  every pass, a refill would undo HR within 30 s). Before, a clear was refilled at the next source
+  change.
 - **The sync never blanks a cell.** A value removed at the source stays on the checklist.
 
 Every sync write goes through `updateHrNewHireChecklistRow`, so it appends to the cell's history
@@ -188,7 +209,7 @@ their only way onto the checklist, and the checklist is what **Lock-in** (orient
 ## The strip, the Received column, and the manual way in
 
 - **Strip** (above the grid, checklist tab): a live dot and "checked 2:14:05 PM · N hires in the
-  hiring database". Amber for *not set up* (names the missing variables) or *migration not applied*
+  hiring database · syncing Oct 11 – 17, 2026 only". Amber for *not set up* (names the missing variables) or *migration not applied*
   (names the script). Rose for a read error, followed by "trying again every 30 s · last good check
   …". Red if the read was truncated at 20,000. Then **Sync now**, and **Not placed (N)**.
 - **A dropped connection is retried inside the pass; an answer never is.** The source client's
@@ -200,9 +221,8 @@ their only way onto the checklist, and the checklist is what **Lock-in** (orient
   failed"*. Ten calls a minute later all succeeded, and this machine had hit ECONNRESET against both
   Supabase projects that day. One reset was failing a whole pass. **Our own** Supabase client is
   not wrapped: it is shared by the whole app, and a failed pass is retried by the next 30 s tick.
-- **Not placed** lists the held hires (name, email, department, interview, why). Since rule 3
-  above, that is only a hire with every week ahead locked, so it is normally empty. Each has **Add
-  to this week**, the week on screen. The route refuses a locked week (409), a hire no longer held
+- **Not placed** lists the held hires (name, email, department, interview, why): no interview date,
+  their week already past, or their week locked. Each has **Add to this week**, the week on screen. The route refuses a locked week (409), a hire no longer held
   (409), and **a hire whose email is already on the checklist** from 4 weeks before that week
   onward (409, naming the week). HR may type someone in after the sync held them, and "Add" must
   not list them twice. The row is attributed to the HR person (`created_by`, `placed_by`) and
@@ -242,11 +262,12 @@ or *Waiting for the next sync*.
 
 ## What looks like a bug and is not
 
-- **A hire interviewed weeks ago, or with no interview date, shows up in THIS week (or next week)**,
-  not the week after their interview. That is rule 3, by design (Kane, "A"). The audit row counts
-  them as `placed_into_this_week`. **A brand-new portal with a long history** would put every
-  unlisted old hire into this week on its first pass. On 2026-10-08 that was 1 hire, because the
-  other 33 were already typed in.
+- **A portal hire is not on the checklist yet.** Its week is not the one on the selector (pick the
+  week after the interview), or it is under **Not placed** (no interview date, or its week is past or
+  locked). That is (b), by design: the sync writes only the week on screen.
+- **A pass reads the whole checklist while any hire is undecided or the selected week has a synced row
+  behind its source.** A row whose cells HR owns stays "behind" for good, so with that week on screen
+  each pass reads its rows (no write). Measured at (b)'s build: 9 such rows on Oct 11–17.
 - **A synced row's `created_by` is `hires-sync`**, not a person. A held hire HR places carries the
   HR person.
 - **A source change after the week locked never reaches the row.** A locked week is frozen. The
@@ -290,6 +311,8 @@ all of these in Vercel production too.**
 `PGRST205` (no such table). Kane then sent a screenshot of `public.hires`, and the re-probe read it.
 It was created or exposed in between. If a probe says "no such table" again, re-check before
 concluding it's the wrong name.
+
+**One week per pass (b), 2026-10-08: no migration, no env var.** Its push is PENDING with the rest.
 
 **PENDING (Kane):** the push, and every `HRIS_HIRES_*` variable above in **Vercel production**. Until
 both are done, production cannot pull. A signed-in click-through of the strip and the Received column

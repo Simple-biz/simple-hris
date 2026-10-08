@@ -205,9 +205,18 @@ interface MonthGridProps {
   range: boolean;
   /** Render out-of-month cells as empty space (two-month layouts). */
   hideOutside?: boolean;
+  /** A span marked on the grid (information only: its days stay pickable), e.g. a suggested week. */
+  band?: DateBand | null;
 }
 
-function MonthGrid({ month, todayIso, lo, hi, isDisabled, onPick, onHover, focusIso, accent, range, hideOutside }: MonthGridProps) {
+/** A span a single picker marks on its calendar. `label` is shown in the panel and read out on each marked day. */
+export interface DateBand {
+  start: string;
+  end: string;
+  label: string;
+}
+
+function MonthGrid({ month, todayIso, lo, hi, isDisabled, onPick, onHover, focusIso, accent, range, hideOutside, band }: MonthGridProps) {
   const cells = useMemo(() => {
     const first = startOfMonth(month);
     const gridStart = addDays(first, -first.getDay());
@@ -235,14 +244,18 @@ function MonthGrid({ month, todayIso, lo, hi, isDisabled, onPick, onHover, focus
           const isEnd = iso === hi;
           const isEdge = isStart || isEnd;
           const spanned = range && inRange && lo !== hi;
+          // The band is a neutral tint, never the accent: it is a hint, not a selection.
+          const inBand = !!band && iso >= band.start && iso <= band.end && !inRange;
+          const dayLabel = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
           return (
             <button
               key={iso}
               type="button"
               data-iso={iso}
+              data-band={inBand || undefined}
               disabled={disabled}
               tabIndex={focusIso === iso ? 0 : -1}
-              aria-label={d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+              aria-label={inBand ? `${dayLabel}, ${band!.label}` : dayLabel}
               aria-pressed={isEdge}
               onClick={() => onPick(iso)}
               onMouseEnter={onHover ? () => onHover(iso) : undefined}
@@ -253,6 +266,12 @@ function MonthGrid({ month, todayIso, lo, hi, isDisabled, onPick, onHover, focus
                 !disabled && inMonth && !inRange && 'text-zinc-700 dark:text-zinc-200',
                 !disabled && !isEdge && 'rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800',
                 inRange && !isEdge && cn('rounded-none', accent.chipBg, accent.chipText, 'font-medium'),
+                inBand &&
+                  cn(
+                    'rounded-none bg-zinc-100 font-medium text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800/80 dark:text-zinc-100 dark:hover:bg-zinc-700',
+                    (iso === band!.start || d.getDay() === 0) && 'rounded-l-lg',
+                    (iso === band!.end || d.getDay() === 6) && 'rounded-r-lg',
+                  ),
                 !disabled && cn('focus-visible:ring-2 focus-visible:ring-inset', accent.focusRing),
               )}
             >
@@ -376,6 +395,13 @@ export interface DatePickerProps {
   containerClassName?: string;
   'aria-label'?: string;
   'aria-invalid'?: React.AriaAttributes['aria-invalid'];
+  /** The id of a hint under the field, read with the trigger. */
+  'aria-describedby'?: string;
+  /** "YYYY-MM-DD" the calendar opens on while there is no value (default: today). Never a value: nothing is picked. */
+  openOn?: string;
+  /** A span marked on the calendar and named above it, e.g. the interview week of the checklist week on screen.
+   *  Information only: every day stays pickable. */
+  band?: DateBand | null;
 }
 
 type PaneView = 'days' | 'months' | 'years';
@@ -395,6 +421,9 @@ export function DatePicker({
   containerClassName,
   'aria-label': ariaLabel,
   'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
+  openOn,
+  band = null,
 }: DatePickerProps) {
   const popover = usePickerPopover(304);
   const { open, openPanel, closePanel, rootRef, triggerRef, panelRef } = popover;
@@ -412,7 +441,7 @@ export function DatePicker({
 
   const show = () => {
     const todayIso = toIso(new Date());
-    const anchor = value && fromIso(value) ? value : clampIso(todayIso);
+    const anchor = value && fromIso(value) ? value : clampIso(openOn && fromIso(openOn) ? openOn : todayIso);
     const anchorDate = fromIso(anchor) ?? new Date();
     setViewMonth(startOfMonth(anchorDate));
     setView('days');
@@ -460,6 +489,7 @@ export function DatePicker({
         aria-expanded={open}
         aria-label={ariaLabel}
         aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
         onClick={() => (open ? closePanel() : show())}
         className={cn(
           'flex h-9 w-full min-w-0 items-center gap-2 rounded-lg border border-zinc-300 bg-transparent px-2.5 text-left text-sm text-zinc-900 transition-colors outline-none',
@@ -557,6 +587,13 @@ export function DatePicker({
             </button>
           </div>
 
+          {view === 'days' && band && (
+            <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] leading-snug text-zinc-600 dark:text-zinc-400" data-testid="date-picker-band">
+              <span aria-hidden className="inline-block h-2.5 w-4 shrink-0 rounded-sm bg-zinc-100 ring-1 ring-zinc-300 dark:bg-zinc-800 dark:ring-zinc-600" />
+              <span className="min-w-0">{band.label}</span>
+            </p>
+          )}
+
           {view === 'days' && (
             <div onKeyDown={onGridKeys}>
               <MonthGrid
@@ -569,6 +606,7 @@ export function DatePicker({
                 focusIso={focusIso}
                 accent={DEFAULT_GRID}
                 range={false}
+                band={band}
               />
             </div>
           )}

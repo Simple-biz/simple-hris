@@ -7,11 +7,12 @@ import {
   contentHash,
   currentManilaSunday,
   decidePlacement,
-  FALLBACK_WEEKS_AHEAD,
+  deferredToWeek,
   interviewCalendarDate,
   INTERVIEW_TIME_ZONE,
   mapSourceRow,
   mergeSourceIntoRow,
+  sourceAheadOfApplied,
   sundayOfDate,
   targetWeekFor,
   type ChecklistIndexRow,
@@ -174,102 +175,114 @@ test('canonicalize snaps department casing, country alias, source spelling; keep
 });
 
 const CURRENT = '2026-10-04';
+/** The default hire (interview 10-07) belongs on 10-11: the week after its interview week. */
+const NEXT = '2026-10-11';
 const open = () => false;
 
-test('PLACE: a fresh hire interviewed this week goes to next week', () => {
-  const d = decidePlacement({ values: values(), currentSunday: CURRENT, isWeekLocked: open, checklist: [] });
-  assert.deepEqual(d, { kind: 'place', period: '2026-10-11', fallback: null });
+// Kane, 2026-10-08: "align the date of interview to the week selector … that we can only sync that data for that
+// specific week period", ruled "(b) Only the week on screen". It REPLACED that day's "automatically added to this
+// week" ("A"): a pass places a hire only into the week on the selector, and only when that is the hire's own week.
+
+test('PLACE: a hire interviewed this week goes to next week, when next week is the one selected', () => {
+  const d = decidePlacement({ values: values(), selectedWeek: NEXT, currentSunday: CURRENT, isWeekLocked: open, checklist: [] });
+  assert.deepEqual(d, { kind: 'place', period: NEXT });
 });
 
-test('PLACE into the CURRENT week is allowed (interviewed last week)', () => {
+test('PLACE into the CURRENT week is allowed (interviewed last week, this week selected)', () => {
   const d = decidePlacement({
     values: values({ date_of_interview: '2026-09-30' }),
+    selectedWeek: CURRENT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [],
   });
-  assert.deepEqual(d, { kind: 'place', period: '2026-10-04', fallback: null });
+  assert.deepEqual(d, { kind: 'place', period: CURRENT });
 });
 
-// Kane, 2026-10-08: "Lets make this automatically added to this week", then "A":
-// the unusable-week cases go to THIS week, else the next open one — never a locked
-// week, never a past week.
-
-test('THIS WEEK: an old interview (target week already past) goes to this week, never the past week', () => {
-  const d = decidePlacement({
-    values: values({ date_of_interview: '2026-08-14' }),
+test("DEFER: another week's hire is never placed (or linked) while a different week is on the selector", () => {
+  const d = decidePlacement({ values: values(), selectedWeek: CURRENT, currentSunday: CURRENT, isWeekLocked: open, checklist: [] });
+  assert.deepEqual(d, { kind: 'defer', period: NEXT });
+  const typed = decidePlacement({
+    values: values(),
+    selectedWeek: '2026-10-18',
     currentSunday: CURRENT,
     isWeekLocked: open,
-    checklist: [],
+    checklist: [{ id: 'typed', period_start: CURRENT, personal_email: 'ana@example.com', name: 'Ana Cruz' }],
   });
-  assert.deepEqual(d, { kind: 'place', period: CURRENT, fallback: 'past_week' });
+  assert.deepEqual(typed, { kind: 'defer', period: NEXT }, 'decided when its own week is selected, not before');
+  assert.equal(deferredToWeek('2026-10-07', CURRENT, CURRENT), NEXT);
+  assert.equal(deferredToWeek('2026-10-07', NEXT, CURRENT), null, 'its own week is selected: this pass decides it');
+  assert.equal(deferredToWeek('2026-08-14', CURRENT, CURRENT), null, 'a past week is decided (held), never waited for');
+  assert.equal(deferredToWeek(null, CURRENT, CURRENT), null);
 });
 
-test('THIS WEEK: no usable interview date goes to this week', () => {
+test('ONE WEEK: nothing is ever placed outside the selected week (every date × every selected week)', () => {
+  for (let s = -3; s <= 5; s++) {
+    const selected = new Date(Date.UTC(2026, 9, 4 + 7 * s)).toISOString().slice(0, 10);
+    for (let i = -40; i <= 60; i++) {
+      const date = new Date(Date.UTC(2026, 9, 4 + i)).toISOString().slice(0, 10);
+      for (const locked of [(_week: string) => false, (_week: string) => true]) {
+        const d = decidePlacement({
+          values: values({ date_of_interview: date }),
+          selectedWeek: selected,
+          currentSunday: CURRENT,
+          isWeekLocked: locked,
+          checklist: [],
+        });
+        if (d.kind === 'place') {
+          assert.equal(d.period, selected, `${date} placed on ${d.period} with ${selected} selected`);
+          assert.equal(targetWeekFor(date), selected, 'only into its own week');
+          assert.ok(selected >= CURRENT, 'never a past week');
+          assert.equal(locked(selected), false, 'never a locked week');
+        }
+      }
+    }
+  }
+});
+
+test('HOLD: no usable interview date belongs to no week, so it waits for HR (never put in this week on its own)', () => {
   for (const date of [null, 'Aug 14-ish']) {
+    for (const selectedWeek of [CURRENT, NEXT]) {
+      const d = decidePlacement({
+        values: values({ date_of_interview: date }),
+        selectedWeek,
+        currentSunday: CURRENT,
+        isWeekLocked: open,
+        checklist: [],
+      });
+      assert.deepEqual(d, { kind: 'hold', period: null, reason: 'no_interview_date' });
+    }
+  }
+});
+
+test('HOLD: an old interview (its week already past) is never written into any week on its own', () => {
+  for (const selectedWeek of [CURRENT, '2026-08-16']) {
     const d = decidePlacement({
-      values: values({ date_of_interview: date }),
+      values: values({ date_of_interview: '2026-08-14' }),
+      selectedWeek, // even with its own (past) week on the selector
       currentSunday: CURRENT,
       isWeekLocked: open,
       checklist: [],
     });
-    assert.deepEqual(d, { kind: 'place', period: CURRENT, fallback: 'no_interview_date' });
+    assert.deepEqual(d, { kind: 'hold', period: '2026-08-16', reason: 'past_week' });
   }
 });
 
-test('NEXT OPEN WEEK: this week locked (the 2026-10-08 case) → the first open week after it', () => {
-  const locked = new Set(['2026-10-04']);
-  for (const date of [null, '2026-08-14']) {
-    const d = decidePlacement({
-      values: values({ date_of_interview: date }),
-      currentSunday: CURRENT,
-      isWeekLocked: (p) => locked.has(p),
-      checklist: [],
-    });
-    assert.equal(d.kind === 'place' && d.period, '2026-10-11');
-  }
-  // Interviewed last week → target = this week, which is locked → next week.
-  const t = decidePlacement({
+test('HOLD: its week selected but locked (the 2026-10-08 case) waits; it never walks to another week', () => {
+  const d = decidePlacement({
     values: values({ date_of_interview: '2026-09-30' }),
+    selectedWeek: CURRENT,
     currentSunday: CURRENT,
-    isWeekLocked: (p) => locked.has(p),
-    checklist: [],
-  });
-  assert.deepEqual(t, { kind: 'place', period: '2026-10-11', fallback: 'week_locked' });
-});
-
-test('a LOCKED FUTURE target walks forward from AFTER the target — never earlier than the interview week', () => {
-  const d = decidePlacement({
-    values: values(), // interview 10-07 → target 10-11
-    currentSunday: CURRENT, // this week (10-04) is OPEN, but it is before the target
-    isWeekLocked: (p) => p === '2026-10-11',
-    checklist: [],
-  });
-  assert.deepEqual(d, { kind: 'place', period: '2026-10-18', fallback: 'week_locked' });
-});
-
-test('HOLD only when every week in the window is locked — a locked week is never written', () => {
-  const d = decidePlacement({
-    values: values({ date_of_interview: null }),
-    currentSunday: CURRENT,
-    isWeekLocked: () => true,
+    isWeekLocked: (p) => p === CURRENT,
     checklist: [],
   });
   assert.deepEqual(d, { kind: 'hold', period: CURRENT, reason: 'week_locked' });
-  // The walk is bounded: 8 weeks, then hold.
-  const seen: string[] = [];
-  decidePlacement({
-    values: values({ date_of_interview: null }),
-    currentSunday: CURRENT,
-    isWeekLocked: (p) => (seen.push(p), true),
-    checklist: [],
-  });
-  assert.equal(seen.length, FALLBACK_WEEKS_AHEAD);
 });
 
 test('an UNDATED hire already typed in LINKS (measured 2026-10-08: all 10 undated portal hires were)', () => {
   const d = decidePlacement({
     values: values({ date_of_interview: null }),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     // within 4 weeks of this week
@@ -289,6 +302,7 @@ const row = (over: Partial<ChecklistIndexRow>): ChecklistIndexRow => ({
 test('LINK: the same email already typed in, case-insensitive, beats every week check', () => {
   const d = decidePlacement({
     values: values(),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: () => true, // even a locked week: she IS on the checklist
     checklist: [row({ personal_email: 'ANA@example.com ' })],
@@ -299,6 +313,7 @@ test('LINK: the same email already typed in, case-insensitive, beats every week 
 test('LINK window: up to 4 weeks before the target week, or any week after', () => {
   const four = decidePlacement({
     values: values(),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [row({ id: 'old', period_start: '2026-09-13' })],
@@ -306,13 +321,15 @@ test('LINK window: up to 4 weeks before the target week, or any week after', () 
   assert.equal(four.kind, 'link');
   const five = decidePlacement({
     values: values(),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [row({ id: 'older', period_start: '2026-09-06' })], // a re-hire, 5 weeks back
   });
-  assert.deepEqual(five, { kind: 'place', period: '2026-10-11', fallback: null });
+  assert.deepEqual(five, { kind: 'place', period: '2026-10-11' });
   const later = decidePlacement({
     values: values(),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [row({ id: 'later', period_start: '2026-10-25' })],
@@ -323,6 +340,7 @@ test('LINK window: up to 4 weeks before the target week, or any week after', () 
 test('LINK prefers the target week, then the latest', () => {
   const d = decidePlacement({
     values: values(),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [
@@ -334,6 +352,7 @@ test('LINK prefers the target week, then the latest', () => {
   assert.equal(d.kind === 'link' && d.rowId, 'target');
   const noTarget = decidePlacement({
     values: values(),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [row({ id: 'a', period_start: '2026-10-04' }), row({ id: 'b', period_start: '2026-10-18' })],
@@ -343,10 +362,11 @@ test('LINK prefers the target week, then the latest', () => {
 
 test('with NO email, only the exact name in the target week links', () => {
   const v = values({ personal_email: null, name: '  ana   CRUZ ' });
-  const hit = decidePlacement({ values: v, currentSunday: CURRENT, isWeekLocked: open, checklist: [row({})] });
+  const hit = decidePlacement({ values: v, selectedWeek: NEXT, currentSunday: CURRENT, isWeekLocked: open, checklist: [row({})] });
   assert.equal(hit.kind, 'link');
   const otherWeek = decidePlacement({
     values: v,
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [row({ period_start: '2026-10-04' })],
@@ -357,6 +377,7 @@ test('with NO email, only the exact name in the target week links', () => {
 test('an email on the source never links by name alone (two people can share a name)', () => {
   const d = decidePlacement({
     values: values({ personal_email: 'other@example.com' }),
+    selectedWeek: NEXT,
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [row({})],
@@ -412,4 +433,28 @@ test('MERGE: the sync never blanks a cell', () => {
   });
   assert.equal(r.updates.phone_number, undefined);
   assert.deepEqual(Object.keys(r.updates), []);
+});
+
+test('MERGE: a cell the sync filled and HR then CLEARED stays clear (HR wins for good; the week is merged every pass)', () => {
+  const r = mergeSourceIntoRow({
+    current: values({ location: null }), // HR cleared it
+    applied: { location: 'Cebu' }, // what the sync wrote
+    incoming: values({ location: 'Cebu' }),
+  });
+  assert.equal(r.updates.location, undefined);
+  const moved = mergeSourceIntoRow({
+    current: values({ location: null }),
+    applied: { location: 'Cebu' },
+    incoming: values({ location: 'Davao' }), // even when the source moves on
+  });
+  assert.equal(moved.updates.location, undefined);
+});
+
+test('SOURCE AHEAD: only a value the sync has not applied yet asks for a merge', () => {
+  const v = values({ location: 'Cebu', department: 'Lead Gen' });
+  const applied = { name: 'Ana Cruz', personal_email: 'ana@example.com', date_of_interview: '2026-10-07', department: 'Lead Gen', country: 'Philippines', location: 'Cebu' };
+  assert.equal(sourceAheadOfApplied(v, applied), false, 'everything applied: no read, no write');
+  assert.equal(sourceAheadOfApplied(values({ location: 'Davao', department: 'Lead Gen' }), applied), true, 'the source moved');
+  assert.equal(sourceAheadOfApplied(values({ location: null, department: 'Lead Gen' }), applied), false, 'a value removed at the source never asks (the sync never blanks)');
+  assert.equal(sourceAheadOfApplied(v, null), true, 'a linked row the sync never wrote');
 });

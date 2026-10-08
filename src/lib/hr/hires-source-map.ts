@@ -230,18 +230,13 @@ export interface ChecklistIndexRow {
   name: string | null;
 }
 
-/** Why a hire went to "this week" instead of the week after its interview. */
-export type FallbackReason = 'no_interview_date' | 'past_week' | 'week_locked';
-
 export type PlacementDecision =
-  /** `fallback` set = it could not go to its interview week and went to the first open week from this one. */
-  | { kind: 'place'; period: string; fallback: FallbackReason | null }
+  | { kind: 'place'; period: string }
   | { kind: 'link'; period: string; rowId: string }
-  /** Only when every week in the FALLBACK_WEEKS_AHEAD window is locked (reason `week_locked`). */
-  | { kind: 'hold'; period: string | null; reason: HoldReason };
-
-/** How many weeks forward the "this week, else the next open week" walk looks before holding. */
-export const FALLBACK_WEEKS_AHEAD = 8;
+  /** Waits in "Not placed" for HR's one-click Add: no interview date, its week is past, or its week is locked. */
+  | { kind: 'hold'; period: string | null; reason: HoldReason }
+  /** Another week's hire, still ahead: left undecided until that week is on the week selector. */
+  | { kind: 'defer'; period: string };
 
 function foldName(s: string | null): string | null {
   const t = (s ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -249,34 +244,43 @@ function foldName(s: string | null): string | null {
 }
 
 /**
- * Where a new source hire goes. Order matters:
- *  1. Already listed → LINK, before any week check, so a hire HR typed into a
- *     past or locked week is "on the checklist", never added twice. Same
- *     personal email in any week from LINK_LOOKBACK_DAYS before the reference
- *     week onward (prefer the reference week, then the latest); with no email,
- *     the exact name in the reference week only. The reference week is the
- *     target week, or THIS week for a hire with no interview date. A duplicate
- *     listing is two orientation emails; a false link costs HR one click, so ties
- *     lean toward linking.
- *  2. Dated, target week (the week after the interview) is this week or later
- *     and OPEN → PLACE there. The normal path.
- *  3. Everything else goes to "this week" automatically (Kane, 2026-10-08:
- *     "Lets make this automatically added to this week", then "A" = the lock
- *     rule stands): no interview date, a target week already past, or a
- *     target week that is locked → PLACE in the first OPEN week, walking forward
- *     from this week (from the week after the target, when the target is a
- *     locked future week, so a hire is never put BEFORE its interview week).
- *     A locked week is never written (new-hire-checklist.md: "A locked week
- *     refuses every mutating verb"), and a past week is never written.
- *  4. Every week in that FALLBACK_WEEKS_AHEAD window locked → HOLD `week_locked`.
+ * The week a hire is left for, or null when this pass decides it: a DATED hire whose checklist week (the week after
+ * the interview) is NOT the week on the selector and has not passed yet. Kane, 2026-10-08: "align the date of
+ * interview to the week selector … that we can only sync that data for that specific week period", ruled (b).
+ */
+export function deferredToWeek(interviewDate: string | null, selectedWeek: string, currentSunday: string): string | null {
+  if (!interviewDate || !ISO_DATE.test(interviewDate)) return null;
+  const target = targetWeekFor(interviewDate);
+  return target !== selectedWeek && target >= currentSunday ? target : null;
+}
+
+/**
+ * Where a new source hire goes, for ONE week: the week on the HR week selector (`selectedWeek`). Kane, 2026-10-08,
+ * ruled "(b) Only the week on screen", which REPLACED that day's "automatically added to this week" ("A"). Order:
+ *  0. A dated hire of ANOTHER week still ahead → DEFER: untouched until that week is selected (`deferredToWeek`).
+ *  1. Already listed → LINK, before any week check, so a hire HR typed into a past or locked week is "on the
+ *     checklist", never added twice. Same personal email in any week from LINK_LOOKBACK_DAYS before the reference
+ *     week onward (prefer the reference week, then the latest); with no email, the exact name in the reference week
+ *     only. The reference week is the target week, or THIS week for a hire with no interview date. A duplicate
+ *     listing is two orientation emails; a false link costs HR one click, so ties lean toward linking.
+ *  2. No usable interview date → HOLD `no_interview_date`: it belongs to no week, so it is never put in one on its own.
+ *  3. Its week (the week after the interview) already past → HOLD `past_week`. A past week is never written.
+ *  4. Its week is the selected week but locked → HOLD `week_locked`. A locked week is never written
+ *     (new-hire-checklist.md: "A locked week refuses every mutating verb").
+ *  5. Otherwise (its week IS the selected week, this week or later, open) → PLACE there.
+ * A held hire is re-decided every pass (it links once HR types it in), and HR can add it by hand under "Not placed".
  */
 export function decidePlacement(args: {
   values: HireValues;
+  /** The week on the HR week selector (its Sunday): the only week a pass writes. */
+  selectedWeek: string;
   currentSunday: string;
   isWeekLocked: (period: string) => boolean;
   checklist: readonly ChecklistIndexRow[];
 }): PlacementDecision {
   const date = args.values.date_of_interview;
+  const deferred = deferredToWeek(date, args.selectedWeek, args.currentSunday);
+  if (deferred) return { kind: 'defer', period: deferred };
   const target = date && ISO_DATE.test(date) ? targetWeekFor(date) : null;
   const reference = target ?? args.currentSunday;
 
@@ -301,16 +305,10 @@ export function decidePlacement(args: {
     if (hit) return { kind: 'link', period: reference, rowId: hit.id };
   }
 
-  const futureTarget = target !== null && target >= args.currentSunday;
-  if (futureTarget && !args.isWeekLocked(target)) return { kind: 'place', period: target, fallback: null };
-
-  const fallback: FallbackReason = target === null ? 'no_interview_date' : futureTarget ? 'week_locked' : 'past_week';
-  const start = futureTarget ? addDays(target, 7) : args.currentSunday;
-  for (let i = 0; i < FALLBACK_WEEKS_AHEAD; i++) {
-    const week = addDays(start, 7 * i);
-    if (!args.isWeekLocked(week)) return { kind: 'place', period: week, fallback };
-  }
-  return { kind: 'hold', period: start, reason: 'week_locked' };
+  if (target === null) return { kind: 'hold', period: null, reason: 'no_interview_date' };
+  if (target < args.currentSunday) return { kind: 'hold', period: target, reason: 'past_week' };
+  if (args.isWeekLocked(target)) return { kind: 'hold', period: target, reason: 'week_locked' };
+  return { kind: 'place', period: target };
 }
 
 /**
@@ -318,10 +316,13 @@ export function decidePlacement(args: {
  * the cell now (`current`), what the sync itself last wrote there (`applied`,
  * null for a row HR typed) and the source's latest values (`incoming`).
  *
- * A cell is written when it is BLANK, or when it still holds exactly what the
- * sync last wrote (HR has not touched it) and the source now says something
- * else. A cell HR typed or changed is never overwritten, and the sync never
- * blanks a cell (a value removed at the source stays here).
+ * A cell is written when it is BLANK and the sync never wrote it, or when it still
+ * holds exactly what the sync last wrote (HR has not touched it) and the source
+ * now says something else. A cell HR typed or changed is never overwritten, a cell
+ * the sync filled and HR then CLEARED stays clear (HR wins for good; since
+ * 2026-10-08 the selected week is merged every pass, so a refill would undo HR
+ * within 30 s), and the sync never blanks a cell (a value removed at the source
+ * stays here).
  */
 export function mergeSourceIntoRow(args: {
   current: Partial<Record<HiresSourceField, string | null>>;
@@ -339,12 +340,25 @@ export function mergeSourceIntoRow(args: {
       if (mine !== null) nextApplied[f] = next;
       continue;
     }
-    if (cur === null || (mine !== null && cur === mine)) {
+    if ((cur === null && mine === null) || (mine !== null && cur === mine)) {
       updates[f] = next;
       nextApplied[f] = next;
     }
   }
   return { updates, nextApplied };
+}
+
+/**
+ * Does the source hold something the sync has not applied to its row yet? A field with a value whose `applied` entry
+ * differs (or is missing). Decides, without reading the checklist, whether a synced row of the selected week needs
+ * its cells read and merged this pass. True forever for a field HR owns (it never becomes `applied`): that costs one
+ * read of the week's rows, never a write.
+ */
+export function sourceAheadOfApplied(incoming: HireValues, applied: Partial<Record<HiresSourceField, string | null>> | null): boolean {
+  return HIRES_SOURCE_FIELDS.some((f) => {
+    const next = clean(incoming[f]);
+    return next !== null && clean(applied?.[f]) !== next;
+  });
 }
 
 /** The `applied_values` for a row the sync inserted: every non-blank value it wrote. */

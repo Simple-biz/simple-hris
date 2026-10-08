@@ -123,6 +123,17 @@ locked week, and never fills a past week on its own. See
 [new-hire-source-sync.md](./new-hire-source-sync.md). **The modal is permanent** (Kane, 2026-10-08:
 managers who hire outside the portal still need their hires added so accounts get created). It is
 never hidden or gated on the sync, and it is pinned by `src/lib/hr/new-hire-manual-add-wiring.test.ts`.
+**Date of interview follows the week selector** (Kane, 2026-10-08: *"make sure to align the date of interview to the
+week selector"*, the option "Modal follows the week"). Hires on a checklist week were interviewed the week before it
+(the sync's measured rule, `interview-week.ts`, pinned against the sync's `targetWeekFor`). So the picker opens on that
+**interview week** (Oct 11–17 selected → October, focus on Oct 4) and marks it as a band named *Interview week · Oct 4 –
+10, 2026*. Under the field: *"Hires on this week were interviewed Oct 4 – 10, 2026."* A date outside it turns that line
+amber: *"Oct 1 is outside Oct 4 – 10, 2026, the interview week for this week. Keep it if that is the real date."* It is
+**information only**: every day stays pickable, Save is never blocked (HR's own rows include real exceptions: measured
+2026-10-08, 2 of 39 on Oct 11–17 were interviewed two weeks before), nothing is prefilled, and edit mode shows the same
+line for the row's own date. The band and the opening day are the shared `DatePicker`'s optional `band` and `openOn`
+(ui-standards § 9.3).
+
 Its submit is now **async**: `commit` awaits `onSave(values)` and treats a resolved **`false`**
 as "the server write failed / conflicted" — it shows a spinner (`submitting`), disables the footer
 buttons and backdrop-dismiss, and **stays open** so the entry isn't lost. On success it either resets

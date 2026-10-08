@@ -5,17 +5,22 @@ import 'server-only';
  * Doc: docs/features/new-hire-source-sync.md
  *
  *   1. read the source (paged, capped)                         — READ ONLY on their side
- *   2. save every new or changed hire into OUR copy            — hr_new_hire_source_rows
- *   3. decide each undecided hire: place / link / hold         — decidePlacement
- *   4. push source changes into cells the sync owns            — mergeSourceIntoRow
+ *   2. save every new or changed hire into OUR copy            — hr_new_hire_source_rows (EVERY hire, any week)
+ *   3. decide each undecided hire: place / link / hold / defer — decidePlacement, for the SELECTED week
+ *   4. bring the selected week's synced rows up to the source  — mergeSourceIntoRow
  *   5. Broadcast `changed` to every week room it touched       — open grids refetch in ~1s
+ *
+ * ONE WEEK PER PASS (Kane, 2026-10-08: "align the date of interview to the week selector … that we can only sync
+ * that data for that specific week period", ruled "(b) Only the week on screen"): the pass writes checklist rows of
+ * the week on the HR week selector only. A hire of another week ahead waits for that week; one with no interview
+ * date, or whose week is past or locked, waits under "Not placed". Our copy still saves every hire.
  *
  * Idempotent and safe to run concurrently: an unchanged source row costs no
  * write, a second sync placing the same hire loses on the unique index and
  * resolves to the winner's row, and a merge diffs against the DB.
  *
- * Never: writes a locked week, fills a week before this one on its own, lists a
- * hire twice, overwrites a cell HR typed, blanks a cell, deletes anything.
+ * Never: writes a week other than the selected one, a locked week or a week before this one; lists a hire twice;
+ * overwrites a cell HR typed or refills one HR cleared; blanks a cell; deletes anything.
  */
 
 import { broadcastFromServer } from '@/lib/supabase/realtime-broadcast';
@@ -46,8 +51,10 @@ import {
   contentHash,
   currentManilaSunday,
   decidePlacement,
+  deferredToWeek,
   mapSourceRow,
   mergeSourceIntoRow,
+  sourceAheadOfApplied,
   type HireValues,
 } from './hires-source-map';
 import { pullSourceHires } from './hires-source-read';
@@ -64,13 +71,14 @@ export type HiresSyncSummary = {
   newRows: number;
   changedRows: number;
   placed: number;
-  /** Of `placed`: went to this week (or the next open one) because the interview
-   *  week was unusable — no date, already past, or locked. */
-  placedFallback: number;
   linked: number;
+  /** Hires of another week still ahead, left for that week (never placed by this pass). */
+  deferred: number;
   held: number;
   /** Cells the sync wrote on rows already on the checklist (fills + source changes). */
   updatedCells: number;
+  /** The week this pass synced: the week on the selector. */
+  week: string;
   touchedWeeks: string[];
   truncated: boolean;
   errors: string[];
@@ -111,8 +119,13 @@ function knownSpellings(rows: readonly ChecklistContextRow[]): { departments: st
   return { departments: pick('department'), sources: pick('source') };
 }
 
-export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<HiresSyncResult> {
+export async function runHiresSourceSync(opts: {
+  now?: number;
+  /** The week on the HR week selector (its Sunday): the only week this pass writes. Required. */
+  selectedWeek: string;
+}): Promise<HiresSyncResult> {
   const now = opts.now ?? Date.now();
+  const selectedWeek = opts.selectedWeek;
   const nowIso = new Date(now).toISOString();
 
   const cfg = readHiresSourceConfig();
@@ -134,10 +147,11 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
     newRows: 0,
     changedRows: 0,
     placed: 0,
-    placedFallback: 0,
     linked: 0,
+    deferred: 0,
     held: 0,
     updatedCells: 0,
+    week: selectedWeek,
     touchedWeeks: [],
     truncated: pull.truncated,
     errors: [],
@@ -149,7 +163,6 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
   const copyByKey = new Map(existing.rows.map((r) => [r.source_key, r]));
 
   const writes: SourceRowWrite[] = [];
-  const changedKeys = new Set<string>();
   const seenKeys = new Set<string>();
   for (const raw of pull.rows) {
     const mapped = mapSourceRow(raw, cfg.config);
@@ -162,12 +175,8 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
     const hash = contentHash(mapped.values);
     const prior = copyByKey.get(mapped.sourceKey);
     if (prior && prior.content_hash === hash) continue;
-    if (prior) {
-      summary.changedRows++;
-      changedKeys.add(mapped.sourceKey);
-    } else {
-      summary.newRows++;
-    }
+    if (prior) summary.changedRows++;
+    else summary.newRows++;
     writes.push({
       source_key: mapped.sourceKey,
       ...mapped.values,
@@ -186,15 +195,25 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
   const copy = writes.length > 0 ? await listSourceRows() : existing;
   if (copy.error) return { status: 'error', reason: `Reading the HRIS copy failed: ${copy.error}` };
 
-  // Re-decide every pending AND every held hire. Since 2026-10-08 ("A") a hire is
-  // held only when every week in the fallback window is locked, so held rows are
-  // rare, and each pass must retry them (a week may have reopened, a new one
-  // opened). Rows held under the earlier rules (no date / past week) get placed
-  // into this week by the first pass that runs this code.
-  const toDecide = copy.rows.filter((r) => r.placement === 'pending' || r.placement === 'held');
-  const toMerge = copy.rows.filter(
-    (r) => changedKeys.has(r.source_key) && (r.placement === 'placed' || r.placement === 'linked') && r.checklist_row_id,
-  );
+  // Decide every pending and every held hire of THIS pass: a held hire is retried (it links once HR types it in, and a
+  // locked week may reopen). A dated hire of another week still ahead is left for that week, without reading the
+  // checklist (`deferredToWeek`, the same rule decidePlacement opens with).
+  const currentSunday = currentManilaSunday(now);
+  const undecided = copy.rows.filter((r) => r.placement === 'pending' || r.placement === 'held');
+  const toDecide = undecided.filter((r) => deferredToWeek(r.date_of_interview, selectedWeek, currentSunday) === null);
+  summary.deferred = undecided.length - toDecide.length;
+  // The selected week's synced rows whose source holds something not applied yet. Every pass, not only the pass that
+  // saw the change: a change that landed while another week was on screen is caught up when this week is selected.
+  const toMerge =
+    selectedWeek >= currentSunday
+      ? copy.rows.filter(
+          (r) =>
+            (r.placement === 'placed' || r.placement === 'linked') &&
+            r.checklist_row_id &&
+            r.target_period_start === selectedWeek &&
+            sourceAheadOfApplied(valuesOf(r), r.applied_values ?? null),
+        )
+      : [];
   if (toDecide.length === 0 && toMerge.length === 0) return { status: 'ok', summary };
 
   // ── 3. Decisions ────────────────────────────────────────────────────────────
@@ -204,15 +223,21 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
   const index = [...ctx.rows];
   const known = knownSpellings(ctx.rows);
   const isWeekLocked = (p: string) => locked.weeks.has(p);
-  const currentSunday = currentManilaSunday(now);
-  // The sync WRITES only this week and later, and never a locked week. A link to
-  // a hire HR typed into an older week is recorded, but that week is history.
-  const isWritableWeek = (p: string | null): p is string => !!p && p >= currentSunday && !isWeekLocked(p);
+  // The sync WRITES only the selected week, and only when it is this week or later and open. A link to a hire HR
+  // typed into any other week is recorded, but writes nothing there.
+  const isWritableWeek = (p: string | null): p is string =>
+    p === selectedWeek && p >= currentSunday && !isWeekLocked(p);
   const touched = new Set<string>();
 
   for (const src of toDecide) {
     const values = canonicalizeHireValues(valuesOf(src), known);
-    const decision = decidePlacement({ values, currentSunday, isWeekLocked, checklist: index });
+    const decision = decidePlacement({ values, selectedWeek, currentSunday, isWeekLocked, checklist: index });
+
+    if (decision.kind === 'defer') {
+      // Unreachable after the filter above (same rule), kept so a new decision kind can never fall through to a write.
+      summary.deferred++;
+      continue;
+    }
 
     if (decision.kind === 'hold') {
       if (src.placement !== 'held' || src.hold_reason !== decision.reason || src.target_period_start !== decision.period) {
@@ -266,7 +291,6 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
       }
       touched.add(period);
       summary.placed++;
-      if (decision.fallback) summary.placedFallback++;
       continue;
     }
 
@@ -305,8 +329,8 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
     summary.linked++;
   }
 
-  // ── 4. Source changes reach the cells the sync owns ─────────────────────────
-  if (toMerge.length > 0) {
+  // ── 4. The selected week's synced rows follow the source (cells the sync owns, and blanks it never filled) ──
+  if (toMerge.length > 0 && isWritableWeek(selectedWeek)) {
     const cells = await getChecklistCells(toMerge.map((r) => r.checklist_row_id!));
     if (cells.error) summary.errors.push(`checklist read: ${cells.error}`);
     for (const src of toMerge) {

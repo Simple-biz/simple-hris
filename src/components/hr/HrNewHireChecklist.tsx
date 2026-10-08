@@ -484,7 +484,8 @@ export default function HrNewHireChecklist({
     },
     [fetchPeriod, loadPeriods],
   );
-  const hiresSync = useHiresSourceSync({ enabled: !!selfEmail, onWeeksChanged: handleSyncedWeeks });
+  // Syncs the week on the selector only (Kane, 2026-10-08, "(b) Only the week on screen").
+  const hiresSync = useHiresSourceSync({ enabled: !!selfEmail, week: period, onWeeksChanged: handleSyncedWeeks });
 
   // Announce which row (if any) this client is editing, so peers see the soft
   // lock. Cleared when the modal closes or drops to 'add'.
@@ -2047,6 +2048,7 @@ export default function HrNewHireChecklist({
         open={editor !== null}
         mode={editor?.mode ?? 'add'}
         weekLabel={formatWeekLabel(period)}
+        periodStart={period}
         departments={departments}
         sources={sourceOptions}
         referrers={referrers}

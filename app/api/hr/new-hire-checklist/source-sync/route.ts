@@ -19,11 +19,12 @@ import { placeHeldSourceHire, runHiresSourceSync } from "@/lib/hr/hires-source-s
  *
  *   GET                                      status + the held hires (elevated session)
  *   GET ?view=synced                         every hire in the HRIS copy + where it went (elevated)
- *   POST { action: 'sync' }                  one sync pass (feature edit — it writes rows)
+ *   POST { action: 'sync', period_start }    one sync pass for the week on the selector (feature edit — it writes
+ *                                            rows of THAT week only; Kane 2026-10-08, "(b) Only the week on screen")
  *   POST { action: 'place', source_key, period_start }
  *                                            HR places a held hire in an open week
  *
- * The open tab calls `sync` on mount, every 30 s while visible, and on "Sync now".
+ * The open tab calls `sync` on mount, on every week change, every 30 s while visible, and on "Sync now".
  * Known states answer with a `status` the strip renders (not_configured / not_ready
  * / source_error), never a bare 500 in a toast.
  */
@@ -140,7 +141,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "action must be 'sync' or 'place'" }, { status: 400 });
   }
 
-  const result = await runHiresSourceSync();
+  // A pass syncs ONE week, the one on the selector; there is no "every week" pass to fall back to.
+  const selectedWeek = typeof body.period_start === "string" ? body.period_start.trim() : "";
+  if (!ISO_DATE.test(selectedWeek) || new Date(`${selectedWeek}T00:00:00Z`).getUTCDay() !== 0) {
+    return NextResponse.json({ error: "period_start must be the selected week's Sunday (YYYY-MM-DD)" }, { status: 400 });
+  }
+
+  const result = await runHiresSourceSync({ selectedWeek });
   if (result.status !== "ok") {
     const code =
       result.status === "not_configured" || result.status === "not_ready"
@@ -162,13 +169,14 @@ export async function POST(req: Request) {
       resource: "hr_new_hire_checklist",
       resource_id: s.touchedWeeks[0] ?? "hires-sync",
       details: {
+        week: s.week,
         pulled: s.pulled,
         new_rows: s.newRows,
         changed_rows: s.changedRows,
         placed: s.placed,
-        placed_into_this_week: s.placedFallback,
         linked: s.linked,
         held: s.held,
+        deferred: s.deferred,
         updated_cells: s.updatedCells,
         weeks: s.touchedWeeks,
         truncated: s.truncated,

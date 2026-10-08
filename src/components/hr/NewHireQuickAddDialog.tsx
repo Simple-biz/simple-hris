@@ -22,9 +22,10 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { DatePicker } from '@/components/ui/date-picker';
+import { DatePicker, formatRange, fromIso } from '@/components/ui/date-picker';
 import { ONBOARDING_COUNTRIES } from '@/lib/onboarding/countries';
 import { BASE_SOURCE_OPTIONS, isReferralSource } from '@/lib/hr/referral-source';
+import { interviewFitsWeek, interviewWeekFor } from '@/lib/hr/interview-week';
 import SmoothCombobox from './SmoothCombobox';
 
 /**
@@ -95,6 +96,9 @@ interface Props {
   mode: 'add' | 'edit';
   /** e.g. "Jun 28 – Jul 4, 2026" — shown so HR sees which week they're on. */
   weekLabel: string;
+  /** The week selector's week (its Sunday, "YYYY-MM-DD"). The Date of interview picker opens on ITS interview week,
+   *  the week before (interview-week.ts, the sync's own rule), and names a date outside it. */
+  periodStart: string;
   /** Department dropdown suggestions (same source the grid uses). */
   departments: string[];
   /** Source dropdown suggestions (base list ∪ sources already used). */
@@ -113,6 +117,7 @@ export default function NewHireQuickAddDialog({
   open,
   mode,
   weekLabel,
+  periodStart,
   departments,
   sources,
   referrers,
@@ -132,6 +137,12 @@ export default function NewHireQuickAddDialog({
     () => (sources.length > 0 ? sources : [...BASE_SOURCE_OPTIONS]),
     [sources],
   );
+  // The week selector's interview week: hires on the week picked were interviewed the week before it (the sync's
+  // rule, pinned in interview-week.test.ts). A hint and a picker anchor, never a value: nothing is prefilled.
+  const interviewWeek = useMemo(() => interviewWeekFor(periodStart), [periodStart]);
+  const interviewWeekText = interviewWeek ? formatRange(interviewWeek.start, interviewWeek.end) : null;
+  const interviewFits = interviewFitsWeek(values.date_of_interview, periodStart);
+
   const sourceIsReferral = isReferralSource(values.source);
   const referrerMissing = sourceIsReferral && values.referred_by.trim().length === 0;
   const canSave = values.name.trim().length > 0 && !referrerMissing;
@@ -298,14 +309,34 @@ export default function NewHireQuickAddDialog({
                         </label>
                         {f.type === 'date' ? (
                           // The shared calendar, not the browser's native date popup (ui-standards § 9.3).
-                          <DatePicker
-                            id={`nhc-qa-${f.key}`}
-                            value={values[f.key]}
-                            onChange={(v) => set(f.key, v)}
-                            placeholder="Pick a date"
-                            containerClassName="mt-1.5"
-                            className="h-10 rounded-xl text-[13.5px] focus-visible:border-emerald-400 focus-visible:ring-emerald-300/50"
-                          />
+                          <>
+                            <DatePicker
+                              id={`nhc-qa-${f.key}`}
+                              value={values[f.key]}
+                              onChange={(v) => set(f.key, v)}
+                              placeholder="Pick a date"
+                              containerClassName="mt-1.5"
+                              className="h-10 rounded-xl text-[13.5px] focus-visible:border-emerald-400 focus-visible:ring-emerald-300/50"
+                              aria-describedby={interviewWeek ? 'nhc-qa-interview-week' : undefined}
+                              openOn={interviewWeek?.start}
+                              band={interviewWeek && interviewWeekText ? { ...interviewWeek, label: `Interview week · ${interviewWeekText}` } : null}
+                            />
+                            {interviewWeek && interviewWeekText ? (
+                              <p
+                                id="nhc-qa-interview-week"
+                                data-testid="nhc-interview-week-hint"
+                                data-fits={interviewFits === null ? 'none' : String(interviewFits)}
+                                className={cn(
+                                  'mt-1.5 text-[11.5px] leading-snug',
+                                  interviewFits === false ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400',
+                                )}
+                              >
+                                {interviewFits === false
+                                  ? `${fromIso(values.date_of_interview)!.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} is outside ${interviewWeekText}, the interview week for this week. Keep it if that is the real date.`
+                                  : `Hires on this week were interviewed ${interviewWeekText}.`}
+                              </p>
+                            ) : null}
+                          </>
                         ) : (
                           <div className="relative mt-1.5">
                             <Icon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />

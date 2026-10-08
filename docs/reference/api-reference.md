@@ -2533,6 +2533,17 @@ Granular per-row checklist API (rows persist atomically as they're typed — no 
 | `DELETE` | `{ id? }` or `{ ids[] }` | Delete exactly the named ids (never "everything not in the payload"). Audit `…row_deleted`. |
 | `PUT` | `{ period_start, period_end?, action }` | `action: 'lock'` freezes the week and fires the orientation webhook off the **DB's** current rows (best-effort); `'reopen'` flips it back to `open`. Audit `…locked` / `…reopened`. |
 
+### `/api/hr/new-hire-checklist/source-sync` *(added here 2026-10-08)*
+
+The hiring-database sync ([new-hire-source-sync.md](../features/new-hire-source-sync.md)). `GET` is `requireElevatedSession()`; `POST` is
+`requireFeatureEdit('hr','new_hire_checklist')`. Not configured / not applied / source unreachable answer `503` / `502` with a JSON `status`.
+
+| Method | Body | Purpose |
+|---|---|---|
+| `GET` | — or `?view=synced` | The sync's status and the held hires; `view=synced` lists every hire in the HRIS copy and where it went. |
+| `POST` | `{ action: 'sync', period_start }` | One pass for the week on the selector (`period_start`, its Sunday, **required**, `400` otherwise): it writes checklist rows of that week only (Kane 2026-10-08, "(b) Only the week on screen"). Audit `hr.new_hire_checklist.source_synced` (with `week`, `deferred`) only when it placed, linked or changed cells. |
+| `POST` | `{ action: 'place', source_key, period_start }` | HR adds a held hire to an open week. `409` locked week, not held, or already on the checklist. Audit `…source_placed`. |
+
 ### Orphanage Management System (OMS) pull — Payroll Wizard Orphanage step
 
 Against a SEPARATE Supabase project (env `OMS_*`, server-only). Read-only EXCEPT `oms/return`, the one append-only write into OMS (2026-09-28). See
@@ -3484,7 +3495,7 @@ board payload, and no live announce (`live.test.ts` names why). Archived, never 
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). **2026-10-08**: five more (§ 24: `roles`, `tasks`, `tasks/checks`, `tasks/post-progress`, `tasks/frequency`), found missing from this table when `tasks/frequency` was added, and every scoreboard row's Gate re-read from its route file (the board-local actions of `roles.ts`; the old `'member'` / `'manager'` gates no longer exist). The rest of the table was not re-diffed against the tree. `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). **2026-10-08**: five more (§ 24: `roles`, `tasks`, `tasks/checks`, `tasks/post-progress`, `tasks/frequency`), found missing from this table when `tasks/frequency` was added, and every scoreboard row's Gate re-read from its route file (the board-local actions of `roles.ts`; the old `'member'` / `'manager'` gates no longer exist). Also that day: `/api/hr/new-hire-checklist/source-sync` (item 411's route, found missing when its `sync` body changed). The rest of the table was not re-diffed against the tree. `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3692,6 +3703,7 @@ of cells — the matches were not re-run).
 | `/api/hr/new-hire-checklist/periods` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/hr/new-hire-checklist/recruiters` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/hr/new-hire-checklist/referrals` | GET | `requireElevatedSession` | — **no doc** |
+| `/api/hr/new-hire-checklist/source-sync` | GET, POST | GET: `requireElevatedSession` · POST: `requireFeatureEdit` | [new-hire-source-sync](../features/new-hire-source-sync.md) · *this file* |
 | `/api/hr/new-hire-checklist/sources` | GET | `requireElevatedSession` | — **no doc** |
 | `/api/hr/offboard` | POST | `requireFeatureEdit` | [bonus-catalog](../features/bonus-catalog.md) · [identity-resolution](../features/identity-resolution.md) · *this file* |
 | `/api/hr/offboard-fire-webhook` | POST | `requireFeatureEdit` | — **no doc** |

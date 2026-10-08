@@ -1027,7 +1027,10 @@ third-party date library; both are hand-rolled and dependency-free:
   input (`value: "YYYY-MM-DD" | ""`, `onChange(iso)`), plus `min`/`max`,
   `required` (keeps native form validation via an invisible mirror input and
   hides the clear ×), `className` (trigger: height/text/focus-ring accent) and
-  `containerClassName` (width/flex — the trigger itself is `w-full`). Calendar
+  `containerClassName` (width/flex — the trigger itself is `w-full`). Optional since 2026-10-08: `openOn`
+  (the day an EMPTY picker opens on, instead of today; never a value), `band` (`{ start, end, label }`: a
+  span marked in a neutral tint and named above the grid, every day still pickable, the label read out on
+  each marked day; the New Hire modal's interview week) and `aria-describedby` (a hint under the field). Calendar
   popover has month/year drill-down (click the header label), full keyboard
   nav (arrows, PageUp/Down ± month, Shift+PageUp/Down ± year, Home/End),
   a Today shortcut, and edge-aware placement. The calendar is never clipped

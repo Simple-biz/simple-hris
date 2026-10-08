@@ -9,7 +9,11 @@
  *
  *   • on mount, then every SYNC_INTERVAL_MS while the page is VISIBLE, and at once
  *     when a hidden page becomes visible again past the interval;
+ *   • at once when the week selector moves to another week;
  *   • "Sync now" runs one immediately.
+ *
+ * Each pass syncs the week on the selector ONLY (`week`; Kane, 2026-10-08: "align the date of interview to the week
+ * selector … that we can only sync that data for that specific week period", ruled "(b) Only the week on screen").
  *
  * Single-flight: a tick that lands while a sync is out is dropped, never queued.
  * A sync that changed the checklist reports `touchedWeeks`; the grid refetches the
@@ -103,6 +107,8 @@ type StatusBody = {
 
 export function useHiresSourceSync(opts: {
   enabled: boolean;
+  /** The week on the selector (its Sunday): the only week a pass syncs. */
+  week: string;
   /** A sync changed these weeks (and it is safe to refetch now). */
   onWeeksChanged: (weeks: string[]) => void;
 }): HiresSourceSyncState {
@@ -120,6 +126,9 @@ export function useHiresSourceSync(opts: {
   const mounted = useRef(true);
   const onWeeksChangedRef = useRef(opts.onWeeksChanged);
   onWeeksChangedRef.current = opts.onWeeksChanged;
+  /** Read at send time, so the 30 s timer always syncs the week on screen now. */
+  const weekRef = useRef(opts.week);
+  weekRef.current = opts.week;
 
   useEffect(() => {
     mounted.current = true;
@@ -181,7 +190,7 @@ export function useHiresSourceSync(opts: {
       const res = await fetch('/api/hr/new-hire-checklist/source-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'sync' }),
+        body: JSON.stringify({ action: 'sync', period_start: weekRef.current }),
         cache: 'no-store',
         signal: ctl.signal,
       });
@@ -248,6 +257,17 @@ export function useHiresSourceSync(opts: {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [opts.enabled, run]);
+
+  // Another week picked: sync that week now, not on the next tick. (Single-flight: a pass already out finishes on the
+  // week it was sent for; the next one, at most 30 s later, takes the new week.)
+  const firstWeek = useRef(true);
+  useEffect(() => {
+    if (firstWeek.current) {
+      firstWeek.current = false;
+      return; // the mount effect above already ran the first pass
+    }
+    if (opts.enabled) void run();
+  }, [opts.week, opts.enabled, run]);
 
   const syncNow = useCallback(() => {
     void run();

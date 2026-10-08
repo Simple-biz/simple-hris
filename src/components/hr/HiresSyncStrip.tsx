@@ -12,9 +12,9 @@ import type { HiresSourceSyncState } from './use-hires-source-sync';
 
 /**
  * The New Hire Checklist's hiring-database strip (docs/features/new-hire-source-sync.md):
- * whether the live sync is running, "Sync now", and the HELD hires — since
- * 2026-10-08 only those with no open week in the 8 ahead — each with an "Add to this
- * week" button, which is where the manual option and the polled data meet.
+ * whether the live sync is running (and for which week: a pass syncs the week on the selector only, Kane 2026-10-08,
+ * "(b) Only the week on screen"), "Sync now", and the HELD hires (no interview date, or their own week has passed or
+ * is locked), each with an "Add to this week" button, which is where the manual option and the polled data meet.
  */
 
 function formatClock(ms: number): string {
@@ -49,9 +49,7 @@ function syncedWhere(h: SyncedHire): { text: string; tone: 'ok' | 'muted' | 'war
 
 function holdLabel(h: HeldHire): string {
   const reason: HoldReason | null = h.hold_reason;
-  // Since 2026-10-08 only `week_locked` is written (every week from here, 8 deep, is
-  // locked); the other two can show until the next sync re-decides an older row.
-  if (reason === 'week_locked') return `Every week from ${formatWeek(h.target_period_start)} is locked`;
+  if (reason === 'week_locked') return `Week of ${formatWeek(h.target_period_start)} is locked`;
   if (reason === 'past_week') return `Week of ${formatWeek(h.target_period_start)} already passed`;
   if (reason === 'no_interview_date') return 'No interview date';
   return 'Held';
@@ -94,7 +92,7 @@ export default function HiresSyncStrip({
       break;
     case 'live':
       message = last
-        ? `Live — checked ${formatClock(last.at)} · ${last.pulled.toLocaleString()} ${last.pulled === 1 ? 'hire' : 'hires'} in the hiring database`
+        ? `Live — checked ${formatClock(last.at)} · ${last.pulled.toLocaleString()} ${last.pulled === 1 ? 'hire' : 'hires'} in the hiring database · syncing ${periodLabel} only`
         : 'Live';
       break;
     case 'view_only':
@@ -294,9 +292,9 @@ export default function HiresSyncStrip({
       {open && held.length > 0 && (
         <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-amber-200 bg-white dark:border-amber-900/50 dark:bg-zinc-950">
           <p className="border-b border-amber-100 px-2.5 py-1.5 text-[11px] text-zinc-600 dark:border-amber-900/40 dark:text-zinc-400">
-            From the hiring database, not placed: the sync adds a hire to this week (or the next open week)
-            on its own, but never into a locked week, and every week ahead is locked. Add one to{' '}
-            <strong>{periodLabel}</strong> if it belongs there.
+            From the hiring database, not placed: the sync adds a hire only to its own week (the week after
+            the interview), while that week is on screen, open and not past. These have no interview date, or
+            their week has passed or is locked. Add one to <strong>{periodLabel}</strong> if it belongs there.
           </p>
           <table className="w-full border-collapse text-[12px]">
             <thead>
