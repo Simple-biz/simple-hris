@@ -23,7 +23,7 @@ to arrive and changes none of them.
 | Piece | File |
 | --- | --- |
 | Env config, identifier-checked, table has NO default | `src/lib/hr/hires-source-config.ts` (+ `.test.ts`) |
-| Every decision, pure (Manila date · week · place/link/hold · merge) | `src/lib/hr/hires-source-map.ts` (+ `.test.ts`) |
+| Every decision, pure (US Eastern interview date · week · place/link/hold · merge) | `src/lib/hr/hires-source-map.ts` (+ `.test.ts`) |
 | Source read (paged, 20k cap, `truncated`) | `src/lib/hr/hires-source-read.ts` |
 | Our copy + checklist reads | `src/lib/supabase/hr-new-hire-source-db.ts` |
 | One sync pass · manual placement | `src/lib/hr/hires-source-sync.ts` |
@@ -91,12 +91,23 @@ Checked in this order, all pinned in `hires-source-map.test.ts`:
 5. Otherwise **PLACE**, as an ordinary checklist row with `origin='synced'`, appended at the end
    of the week.
 
-**The target week is the week AFTER the interview week**, using the interview's **Manila**
-calendar date. This was measured on 2026-10-08 over every live row: 1,640 of the 1,747 rows that
-carry an interview date (94%) sit exactly one week after it, and 753 of 790 since August. Manila,
-because the recruiters interview in the Philippines. Kane's examples, `07:30Z` and `02:00Z`, are
-3:30 PM and 10 AM there, but 3:30 AM and 10 PM the day before in New York. "This week" is also the
-Manila Sunday (`currentManilaSunday`).
+**The target week is the week AFTER the interview week.** This was measured on 2026-10-08 over
+every live row: 1,640 of the 1,747 rows that carry an interview date (94%) sit exactly one week after
+it, and 753 of 790 since August.
+
+**The interview date is the US EASTERN calendar date** of the portal's timestamp
+(`INTERVIEW_TIME_ZONE = 'America/New_York'`, DST-aware). It is stored as `YYYY-MM-DD`, the format HR
+types. Measured 2026-10-08 on the 23 portal hires HR had also typed by hand: HR's date equals the
+New York date on **20 of 23** and the Manila date on only **11**. The other 3 are HR typing a
+different day entirely. The portal's interviews sit at 13:00–18:30Z, 9 AM to 2:30 PM in New York.
+**Never read them in Manila.** The first cut (built 2026-10-08 from Kane's two sample rows, `07:30Z`
+and `02:00Z`) did, and that put every interview after 16:00Z on the next day, and a Saturday-afternoon
+interview a whole week late. Kane: *"put the interview date properly please"*, the same day.
+Switching zones back needs a fresh measurement against HR's own dates.
+
+**"This week" is the Manila Sunday** (`currentManilaSunday`), deliberately not the interview zone:
+it matches the grid's own **Start Week** badge, which is the HR browser's local Sunday
+(`HrNewHireChecklist.tsx` `sundayIso(new Date())`), and HR works from Manila.
 
 **Placed is final.** HR deleting a synced row does not bring it back: the FK is
 `ON DELETE SET NULL`, `placed_at` stays, and only `pending`/`held` hires are ever decided.
@@ -212,4 +223,8 @@ Generation". **23 linked** to hires HR had already typed in (weeks 09-20, 09-27,
 0 cells changed. **10 held `no_interview_date`**: `dateOfInterview` is blank at the source.
 **1 held `week_locked`**: its week, 10-04, is locked, and it is on no other week. **0 placed.**
 One `hr.new_hire_checklist.source_synced` audit row. All 24 dated source rows arrive as **timestamps**
-(`interview_at` is set on every one), so the Manila-date conversion is on the live path, not just a test.
+(`interview_at` is set on every one), so the time-zone conversion is on the live path, not just a test.
+**That sync ran the first cut, which read them in Manila.** Our copy therefore held Manila dates (only
+11 of 24 equal the New York date, measured 18:41Z). The checklist was untouched: nothing placed, and
+the linked rows keep HR's own dates. The corrected code changes each affected row's hash, so the next
+sync rewrites those copy rows and re-decides the held hires. No data script.

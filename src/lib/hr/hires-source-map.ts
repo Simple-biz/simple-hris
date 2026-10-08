@@ -3,7 +3,7 @@
  * Doc: docs/features/new-hire-source-sync.md
  *
  *   mapSourceRow          a source row → the ten checklist values (+ its key and stamps)
- *   manilaInterviewDate   an interview timestamp → its MANILA calendar date
+ *   interviewCalendarDate an interview timestamp → its US EASTERN calendar date
  *   targetWeekFor         interview date → the checklist week it belongs to
  *   decidePlacement       place it / link it to a row HR already typed / hold it, and why
  *   mergeSourceIntoRow    which cells the sync may write on an existing row
@@ -49,11 +49,24 @@ function clean(v: unknown): string | null {
   return t === '' ? null : t;
 }
 
-/** The YYYY-MM-DD of an instant on the Manila wall clock (UTC+8, no DST). */
-function manilaYmd(ms: number): string {
+/**
+ * The zone an interview's calendar date is read in: US EASTERN (DST-aware).
+ *
+ * Measured 2026-10-08 on the 23 portal hires HR had also typed by hand: HR's date
+ * equals the portal timestamp's New York date on 20 of 23, its Manila date on only
+ * 11. The portal's interviews sit at 13:00–18:30Z = 9 AM–2:30 PM New York, so
+ * reading them in Manila (the first cut, from Kane's two sample rows) put every
+ * interview after 16:00Z on the NEXT day, and a Saturday-afternoon one a whole
+ * week late. Kane: "put the interview date properly". Never switch this back to
+ * Manila without re-measuring against HR's own dates.
+ */
+export const INTERVIEW_TIME_ZONE = 'America/New_York';
+
+/** The YYYY-MM-DD of an instant on a zone's wall clock. */
+function ymdIn(ms: number, timeZone: string): string {
   // en-CA formats as YYYY-MM-DD.
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Manila',
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -61,13 +74,11 @@ function manilaYmd(ms: number): string {
 }
 
 /**
- * The interview's MANILA calendar date. The recruiters interview in the
- * Philippines: Kane's own examples, 07:30Z and 02:00Z, are 3:30 PM and 10:00 AM
- * in Manila, but 3:30 AM and 10 PM the previous day in New York. A plain date (no
- * time) has no zone and is taken as written; "8/14/2026" is read month-first,
- * the way 765 existing checklist rows are written.
+ * The interview's calendar date, in INTERVIEW_TIME_ZONE (US Eastern). A plain
+ * date (no time) has no zone and is taken as written; "8/14/2026" is read
+ * month-first, the way 765 existing checklist rows are written.
  */
-export function manilaInterviewDate(raw: unknown): { date: string | null; at: string | null } {
+export function interviewCalendarDate(raw: unknown): { date: string | null; at: string | null } {
   const s = clean(raw);
   if (!s) return { date: null, at: null };
   if (ISO_DATE.test(s)) return { date: s, at: null };
@@ -82,7 +93,7 @@ export function manilaInterviewDate(raw: unknown): { date: string | null; at: st
   }
   const ms = Date.parse(s);
   if (Number.isNaN(ms)) return { date: null, at: null };
-  return { date: manilaYmd(ms), at: new Date(ms).toISOString() };
+  return { date: ymdIn(ms, INTERVIEW_TIME_ZONE), at: new Date(ms).toISOString() };
 }
 
 function addDays(isoDate: string, n: number): string {
@@ -97,9 +108,13 @@ export function sundayOfDate(isoDate: string): string {
   return addDays(isoDate, -dow);
 }
 
-/** This week's Sunday on the Manila calendar — the "current week" the sync compares against. */
+/**
+ * This week's Sunday on the MANILA calendar — the "current week" the sync compares
+ * against. Deliberately not INTERVIEW_TIME_ZONE: it matches the grid's own "Start
+ * Week" badge, which is the HR browser's local Sunday, and HR works from Manila.
+ */
 export function currentManilaSunday(nowMs: number = Date.now()): string {
-  return sundayOfDate(manilaYmd(nowMs));
+  return sundayOfDate(ymdIn(nowMs, 'Asia/Manila'));
 }
 
 /**
@@ -128,7 +143,7 @@ export function mapSourceRow(raw: Record<string, unknown>, cfg: HiresSourceConfi
   if (!sourceKey) return null;
   const values = {} as HireValues;
   for (const f of HIRES_SOURCE_FIELDS) values[f] = clean(raw[cfg.cols[f]]);
-  const interview = manilaInterviewDate(raw[cfg.cols.date_of_interview]);
+  const interview = interviewCalendarDate(raw[cfg.cols.date_of_interview]);
   // An unparseable interview cell is KEPT as written (the checklist column is free
   // text); it simply cannot place the hire, which is held as `no_interview_date`.
   values.date_of_interview = interview.date ?? values.date_of_interview;

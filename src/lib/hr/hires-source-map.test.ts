@@ -7,7 +7,8 @@ import {
   contentHash,
   currentManilaSunday,
   decidePlacement,
-  manilaInterviewDate,
+  interviewCalendarDate,
+  INTERVIEW_TIME_ZONE,
   mapSourceRow,
   mergeSourceIntoRow,
   sundayOfDate,
@@ -68,26 +69,37 @@ function values(over: Partial<HireValues> = {}): HireValues {
   };
 }
 
-test("interview dates are MANILA calendar dates (Kane's examples)", () => {
-  // 07:30Z = 15:30 Manila, same day.
-  assert.deepEqual(manilaInterviewDate('2026-08-14T07:30:00.000Z'), {
-    date: '2026-08-14',
-    at: '2026-08-14T07:30:00.000Z',
+test('interview dates are US EASTERN calendar dates — the date HR writes (measured 20/23 vs Manila 11/23)', () => {
+  assert.equal(INTERVIEW_TIME_ZONE, 'America/New_York');
+  // Real portal times (13:00–18:30Z = 9 AM–2:30 PM New York). HR typed 2026-10-05
+  // for this one; Manila would have said the 6th.
+  assert.deepEqual(interviewCalendarDate('2026-10-05T18:00:00+00:00'), {
+    date: '2026-10-05',
+    at: '2026-10-05T18:00:00.000Z',
   });
-  // 02:00Z = 10:00 Manila; in New York it would still be Aug 19.
-  assert.equal(manilaInterviewDate('2026-08-20T02:00:00.000Z').date, '2026-08-20');
-  // 17:00Z on the 19th is already the 20th in Manila.
-  assert.equal(manilaInterviewDate('2026-08-19T17:00:00Z').date, '2026-08-20');
+  assert.equal(interviewCalendarDate('2026-09-24 14:00:00+00').date, '2026-09-24');
+  assert.equal(interviewCalendarDate('2026-09-29T16:30:00Z').date, '2026-09-29');
+  // Late evening New York is still that day (Manila is already tomorrow).
+  assert.equal(interviewCalendarDate('2026-08-20T02:00:00.000Z').date, '2026-08-19');
+  // DST: in November New York is UTC-5, so 04:00Z is 11 PM the day before.
+  assert.equal(interviewCalendarDate('2026-12-01T04:00:00Z').date, '2026-11-30');
+  assert.equal(interviewCalendarDate('2026-12-01T05:00:00Z').date, '2026-12-01');
+});
+
+test('a Saturday-afternoon New York interview stays in ITS week (Manila would push it a week late)', () => {
+  const sat = interviewCalendarDate('2026-09-26T18:00:00Z').date!; // Sat 2 PM New York, Sun 2 AM Manila
+  assert.equal(sat, '2026-09-26');
+  assert.equal(targetWeekFor(sat), '2026-09-27');
 });
 
 test('a plain date is taken as written; M/D/YYYY is month-first; junk has no date', () => {
-  assert.deepEqual(manilaInterviewDate('2026-09-18'), { date: '2026-09-18', at: null });
-  assert.equal(manilaInterviewDate('6/4/2026').date, '2026-06-04');
-  assert.equal(manilaInterviewDate('7/7/26').date, '2026-07-07');
-  assert.equal(manilaInterviewDate('2/30/2026').date, null);
-  assert.equal(manilaInterviewDate('next tuesday').date, null);
-  assert.equal(manilaInterviewDate(null).date, null);
-  assert.equal(manilaInterviewDate('   ').date, null);
+  assert.deepEqual(interviewCalendarDate('2026-09-18'), { date: '2026-09-18', at: null });
+  assert.equal(interviewCalendarDate('6/4/2026').date, '2026-06-04');
+  assert.equal(interviewCalendarDate('7/7/26').date, '2026-07-07');
+  assert.equal(interviewCalendarDate('2/30/2026').date, null);
+  assert.equal(interviewCalendarDate('next tuesday').date, null);
+  assert.equal(interviewCalendarDate(null).date, null);
+  assert.equal(interviewCalendarDate('   ').date, null);
 });
 
 test('target week = the Sunday AFTER the interview week (the measured 94% rule)', () => {
