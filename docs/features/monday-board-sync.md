@@ -2737,3 +2737,37 @@ that row never reached the board.
 needs `done: true` and a re-review. **Finding (item 405):** `e88315ac`'s security report is on
 `origin/main` while the repo is public, against its own commit message. The board row is worded so the
 board does not repeat its findings.
+
+### Pass 43 — 2026-10-08 — everything after pass 42, re-derived while the budget is dead (STAGED)
+
+First staged at 08:54 EDT as 2 rows after Kane's *"add"*, then dead on `review.mts`'s first read. Kane:
+*"update monday board"*. One `boardGroups` probe at 19:23:21Z still returned `DAILY_LIMIT_EXCEEDED`
+(`retry_in_seconds` 16598, so 00:00 UTC again). Nothing was ever reviewed or hashed, so the pass was
+re-derived over everything since: `27e69bca..b7cfe890`, 38 commits, all authored 10-08 (Sprint 30).
+After a fetch, origin/main is `81040a76`. Item 421's two commits are local.
+
+**16 rows / 73 SP: 2 Done (13 SP), 13 Pending Deploy, 1 In Progress.** `selfcheck()` passes. The
+scoreboard commits share shell files, but each carries its own route, lib and test, so each is its own
+row (the pass 42 rule). The hires sync is two rows, because `7dc7500d` alone is 3,094 lines. `cfb65d35`
+shares files with payout account reports but is a separate Kane ask, so it is its own row. No row: status
+notes, item 410's plan amendment (Tasks 5 and 15 are not built), item 418's vision (no code) and the
+board-sync commits.
+
+**Two rows close on measured production use (the pass 42b precedent), not on a push:**
+
+| Row | Measured read-only 2026-10-08 |
+|---|---|
+| Scheduled Chat post (412, 5 SP) | The Vercel cron `0 19 * * *` claimed the 15:00 ET slot at 19:00:49Z. Its `accounting_scoreboard_chat_posts` row reads `posted`, and the audit row is by "Scoreboard Chat Schedule" / System. Only a deployed build has that cron, and `posted` needs the webhook env set in Vercel production. The migration is APPLIED by `--verify`, although item 412 still read PENDING. |
+| Per-person task boards (393, 8 SP) | 97 ticks by 13 people from 14:34Z to 19:15Z, 12 of them not Kane, on 346 tasks: 338 imported and 6 added by Carla. The migration is APPLIED by `--verify`. |
+
+| Other step | State |
+|---|---|
+| Hires sync migration (411) | APPLIED by `--verify` |
+| `HRIS_HIRES_*` in Vercel production (411) | **UNVERIFIED**: no Vercel CLI here, and local dev writes the same database. Blocker on both hires rows |
+| realtime-js patch (419) | No hand step: `patch-package` runs on postinstall |
+| Interns cap data (417) | Applied 9/9 in production before the push |
+
+**Owed after 00:00 UTC:** `review.mts`, Kane's approval of that hash, then `apply.mts --apply --only-new
+--approve <hash>` (16 creates), and a 1-call `getItemsByIds` read-back. Kane's "add" covered only the
+first 2-row shape, so this pass needs his approval of the new hash. If more commits land first,
+re-derive before reviewing.

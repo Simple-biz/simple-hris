@@ -889,6 +889,27 @@
  * payout_account_reports table APPLIED. Item 406 still recorded that --apply as pending, so this is
  * one more stale PENDING claim. No external step is open. Kane has given no word that either is live,
  * so both are Pending Deploy.
+ *
+ * PASS 43 RE-DERIVED 2026-10-08 19:2xZ — Kane: "update monday board". The budget was still dead
+ * (one boardGroups probe, DAILY_LIMIT_EXCEEDED, retry_in_seconds 16598 at 19:23:21Z → 00:00 UTC), so
+ * nothing above was ever reviewed or hashed, and 28 more commits had landed: the range is now
+ * 27e69bca..b7cfe890, 38 commits, 16 rows / 73 SP (cluster note in hris-plan.ts). After a fetch,
+ * origin/main is 81040a76: 4884086a and b7cfe890 (item 421) are local, so that row is In Progress.
+ * MEASURED read-only 2026-10-08:
+ *   • Three more migrations APPLIED by their own --verify: chat posts (412; its Open item still read
+ *     PENDING, another stale claim), task boards (393) and hires sync (411).
+ *   • Item 412 is LIVE: the Vercel cron claimed the 15:00 ET slot (schedule 0 19 * * *) at
+ *     19:00:49Z and the accounting_scoreboard_chat_posts row reads `posted`, with an audit row by
+ *     "Scoreboard Chat Schedule" / System. Only a deployed build carries that cron, and `posted` needs
+ *     the webhook env set in Vercel production, so every step its row named is done.
+ *   • Item 393's task boards are IN USE: 97 ticks by 13 people on 10-08, 12 of them not Kane, from
+ *     14:34Z to 19:15Z, on 346 tasks (338 sheet-imported, 6 added by Carla). Nobody but Kane runs a
+ *     local dev server, so those ticks are production use.
+ *   • Item 411's HRIS_HIRES_* in Vercel production: UNVERIFIED (no Vercel CLI), named as a blocker.
+ *   • The realtime-js patch (419) needs no hand step: package.json runs patch-package on postinstall.
+ *   • The interns cap (417) was applied 9/9 in production before the push.
+ * Two rows close on that measured use (the pass 42b precedent). The rest are Pending Deploy, because
+ * Kane has given no word that he has seen them live.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
@@ -896,8 +917,8 @@ import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
 export const PASS_DATE = '2026-10-08';
-export const AUDIT_RANGE = '27e69bca..a2a95911';
-export const AUDIT_COMMITS = 10;
+export const AUDIT_RANGE = '27e69bca..b7cfe890';
+export const AUDIT_COMMITS = 38;
 
 /** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
 const ON_MAIN =
@@ -944,6 +965,15 @@ const LOCAL_1008 =
   'IN PROGRESS: the last sha is committed on local main and NOT on origin/main (11 ahead after a ' +
   'fetch on 2026-10-08). Kane pushes; once it is on origin/main it is Pending Deploy.';
 const ip42 = (what: string) => `${LOCAL_1008} ${what}`;
+/** Pass 43's local rows: origin/main is 81040a76 after a fetch on 2026-10-08 19:2xZ, main 2 ahead. */
+const LOCAL_1008_PM =
+  'IN PROGRESS: the shas are committed on local main and NOT on origin/main (2 ahead of 81040a76 ' +
+  'after a fetch on 2026-10-08). Kane pushes; once it is on origin/main it is Pending Deploy.';
+const ip43 = (what: string) => `${LOCAL_1008_PM} ${what}`;
+/** Measured production use closes a row without Kane's word (the pass 42b precedent). */
+const inUse = (what: string) =>
+  `DONE ON MEASURED PRODUCTION USE (the pass 42b precedent). Every sha is on origin/main, no external ` +
+  `step is open, and the Completed Date is the last sha's commit date. ${what}`;
 /** Dev tooling has no prod surface, so it goes Done on USE (the pass 17 precedent). */
 const used = (what: string) =>
   `DONE ON USE. Dev tooling with no prod surface (the pass 17 precedent): selfcheck() runs it over the ` +
@@ -974,18 +1004,106 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 43 · 2026-10-08 · 2 new rows / 13 SP, both Pending Deploy, Sprint 30 ─────────────────────
+  // —── PASS 43 · 2026-10-08 · 16 new rows / 73 SP, Sprint 30: 2 Done · 13 Pending Deploy · 1 In Progress ─
   {
     name: 'The Accounting Scoreboard has its own roles - Admin, Assistant and Team member, granted in Setup - and HRIS accounting alone no longer manages it',
     status: 'Pending Deploy',
-    shas: ['74f6d2ee'],
-    basis: pd42("Item 393, Carla's roles from the 2026-10-07 call, which Kane confirmed. Its roles migration is MEASURED applied 2026-10-08 (--verify, all checks passed), and the two Admin grants are recorded in a2a95911. No external step is open."),
+    shas: ['74f6d2ee', '7ed5b3f8'],
+    basis: pd42("Item 393, Carla's roles from the 2026-10-07 call, which Kane confirmed. 7ed5b3f8 adds the apply script's --keep-access-only, so the accounting holder who would have lost access stays a Team member. Its roles migration is MEASURED applied 2026-10-08 (--verify, all checks passed), and the two Admin grants are recorded in a2a95911. No external step is open."),
   },
   {
     name: 'Employees can report a payout account closed, deactivated or frozen, and Accounting sees it on Mark Paid and People before paying',
     status: 'Pending Deploy',
     shas: ['20a1287a'],
     basis: pd42("Item 406, Kane's ask 2026-10-08. It informs only: it never holds a payout or switches to the backup account. Its table is MEASURED applied 2026-10-08 (--verify, all checks passed), although the building session recorded the --apply as pending. No external step is open."),
+  },
+  {
+    name: 'People Banking shows how many times the paid account was paid successfully, before the reveal',
+    status: 'Pending Deploy',
+    shas: ['cfb65d35'],
+    basis: pd42('Kane, 2026-10-08: "the People - Roster - Banking should have the counts on the successful bank payments". The same floor count the employee sees, from paid dispatch rows to the account Payment Dispatch pays today. One read, no new endpoint, no migration. A failed read says so and never shows 0.'),
+  },
+  {
+    name: "The Accounting Scoreboard is live - a teammate's save shows on every open board in seconds over Supabase Realtime, and no value travels on the wire",
+    status: 'Pending Deploy',
+    shas: ['01e49496'],
+    basis: pd42('Item 409. All 15 write handlers send a Broadcast signal, and an open board re-reads through the gated GET, so no value is ever on the wire. No migration and no env var. A Broadcast leaves no trace in the database, so nothing here can be measured from outside a browser.'),
+  },
+  {
+    name: "Accounting Scoreboard per-person task boards - Carla's sheet tasks imported, each person ticks their own, an Everyone view, and Post to Chat",
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['0ded334b'],
+    basis: inUse('Item 393, plan Tasks 7 and 8. Its tasks migration is MEASURED applied (--verify 2026-10-08, all checks passed), and the sheet import landed 338 tasks on 23 boards (0b7d39c9). Measured read-only in production on 2026-10-08: 97 ticks by 13 people, 12 of them not Kane, from 14:34Z to 19:15Z, and Carla added 6 tasks of her own. Post to Chat shares its one sender with the scheduled post, which is proven live on the scheduled-post row. The weekly lock-in (Task 5) is NOT in this row; it is not built.'),
+  },
+  {
+    name: "The Accounting Scoreboard task progress posts itself to the accounting Google Chat on Carla's schedule - daily at 3 PM, weekly Wed and Fri, monthly",
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['5079c89e'],
+    basis: inUse('Item 412. Every step its Open item named is MEASURED done: the chat posts migration is applied (--verify 2026-10-08, all checks passed; the item still read PENDING), the code is pushed, and the first 3 PM ET slot posted. The Vercel cron (0 19 * * *) claimed the 2026-10-08 15:00 ET slot at 19:00:49Z, its accounting_scoreboard_chat_posts row reads posted, and the audit row is by "Scoreboard Chat Schedule" / System. Only a deployed build carries that cron, and posted needs the webhook env set in Vercel production.'),
+  },
+  {
+    name: 'An Accounting Scoreboard task changes how often it is done from its edit pencil, and the Tasks view caches and loads with a skeleton',
+    status: 'Pending Deploy',
+    shas: ['3e3fbae0'],
+    basis: pd42('Item 413. A changed frequency is a NEW task, and the old one is archived with its ticks. No migration. The only two archives in production (13:47Z and 14:13Z, both Kane) came before this commit, so no use of it has been measured.'),
+  },
+  {
+    name: "Accounting Scoreboard Tasks load behind NPD's loading card, fed line by line by a streamed read",
+    status: 'Pending Deploy',
+    shas: ['aa5d12b7'],
+    basis: pd42("Item 414. GET /tasks?stream=1 streams a line as each read answers. No migration. Owed: one signed-in Tasks load through Vercel, since the stream has not been proven through Vercel's edge (the board's and NPD's streams are the precedent)."),
+  },
+  {
+    name: 'The Accounting Scoreboard Chat post carries a card of progress bars that go red, orange and green as the goal nears, through one Chat sender',
+    status: 'In Progress',
+    shas: ['4884086a', 'b7cfe890'],
+    basis: ip43('Item 421. Both the scheduled post and the click now send through chat-webhook.ts, which falls back to text alone once on a 400. A post with card: true is in the audit log at 19:12Z, sent from the unpushed code, so it was a local test post and not production use.'),
+  },
+  {
+    name: 'The New Hire Checklist polls the hiring database and places each hire as Synced - interview dates read in US Eastern, a dropped connection retried',
+    status: 'Pending Deploy',
+    shas: ['7dc7500d', 'f6a1c2b0', 'fefe84fc'],
+    basis: pd42('Item 411. It polls public.hires every 30 s while the tab is open and broadcasts to the week room, with no cron. f6a1c2b0 reads the interview date in US Eastern, not Manila. fefe84fc retries a dropped connection instead of failing the pass. Its migration is MEASURED applied (--verify 2026-10-08, all checks passed). The HRIS_HIRES_* env in Vercel production is UNVERIFIED: there is no Vercel CLI here, and local dev writes the same database, so a synced row cannot say which build wrote it.'),
+    blockers: ['HRIS_HIRES_* env in Vercel production: UNVERIFIED (Kane)'],
+  },
+  {
+    name: 'A hire the sync cannot place joins this week or the next open week, and a manual New Hire add stays permanent beside the sync',
+    status: 'Pending Deploy',
+    shas: ['ed616a87', '81040a76'],
+    basis: pd42('Item 411, Kane\'s ruling "A": a hire with no date, a past date or a locked week goes to this week or the next open week. 81040a76 pins, with a test, that a manual add is never touched by the sync. It rides on the sync row above, so it carries the same env blocker.'),
+    blockers: ['HRIS_HIRES_* env in Vercel production: UNVERIFIED (Kane)'],
+  },
+  {
+    name: 'Payment Dispatch never shows a paid person as Pending when the paid-list read fails - a failed read is an error, never nobody is paid',
+    status: 'Pending Deploy',
+    shas: ['c0766122'],
+    basis: pd42("Item 415. On 2026-10-08 the production database was overloaded (load average 43), the queue read fell back to rows ?? [], and paid people were painted Pending. The duplicate guard was beaten once (cheskac@'s echo). Fixed in code; no migration. The unique index the item calls for is still OPEN and is not in this row."),
+  },
+  {
+    name: 'A remote change costs Payment Dispatch one queue load per visible screen, not two',
+    status: 'Pending Deploy',
+    shas: ['b51f8f15'],
+    basis: pd42('Item 416. The load grows with payments times open screens (about clerks squared). 5 clerks broke it and this halves the cost per payment. 8 clerks needs a lighter reload or more compute, which is still OPEN and not in this row. No migration.'),
+  },
+  {
+    name: 'Orphanage interns are paid up to 6 hours a week - hours over it are shown and never paid, and all 9 profiles moved to 6',
+    status: 'Pending Deploy',
+    shas: ['74763e67'],
+    basis: pd42("Item 417, Ralph's cap. scripts/set-intern-caps-6h.mts ran --apply in production 2026-10-08 at about 17:37Z: 9/9 changed, and the re-read was ok. Whether to return to 5 next time, and the share mode, are still OPEN for Ralph and Kane, and neither is in this row."),
+  },
+  {
+    name: 'The collab rail names the tab a person is actually on, and a closed tab leaves - realtime-js presence patched',
+    status: 'Pending Deploy',
+    shas: ['39d04215'],
+    basis: pd42("Item 419. realtime-js 2.101.1's transformState deleted phx_ref in place, so a leave never matched and stale sections and ghosts stacked. The patch ships through patch-package on postinstall, so Vercel applies it with no hand step. pickLiveMeta replaces [0] in CollabLayer and CeoPayrollLive. Not verified live (no browser was driven). PresenceProvider and usePayrollLivePresence still read [0], OPEN and not in this row."),
+  },
+  {
+    name: "Admin Diagnostics' Supabase Postgres card tells a Supabase outage from our own database overloaded",
+    status: 'Pending Deploy',
+    shas: ['c87a6703'],
+    basis: pd42('Item 420. No migration and no env var. It still alerts nobody while the page is closed: an alert is a new cron or notification, which needs Kane\'s pick, and is not in this row.'),
   },
 ];
 

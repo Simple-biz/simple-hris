@@ -2413,11 +2413,33 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: 'The meeting-notes skill is ported from Gridline - a call writes its notes, its INDEX links and an Open items row for every ask', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
   { epic: 'HRIS-05', name: 'Security review - API keys on phones, certificate pinning and deep links, answered from the code and a production probe', type: 'Spike', sp: 2, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-15', name: 'The Monday evidence run lists the work Kane rules off the board and keeps it out of every row', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
-  // —── PASS 43 · 2026-10-08 · the two features after pass 42, 2 rows, 13 SP, Sprint 30 ──────────────
-  // Kane: "add". Range 27e69bca..a2a95911, 10 commits, all on origin/main. Two are code, one feature
-  // each: 74f6d2ee (scoreboard roles, item 393) and 20a1287a (payout account reports, item 406). No
-  // row: e7701bc9 / a2a95911 (item 393 status notes), 3f07f348 / ffee159b / 240bbd48 (the W0.4 Google
-  // Chat webhook, set in .env.local, docs only), 0ea5ede5 (item 403 finding), and pass 42's own commits.
+  // —── PASS 43 · 2026-10-08 · everything after pass 42, 16 rows, 73 SP, Sprint 30 ───────────────────
+  // Kane: "add", then "update monday board". Range 27e69bca..b7cfe890, 38 commits, all authored
+  // 2026-10-08 (inside S30's Sep 29-Oct 9). Pushed through 81040a76; 4884086a and b7cfe890 are local.
+  // Clustered by FILE OVERLAP. The scoreboard commits share TasksPanel / server.ts but each carries its
+  // own route, lib and test, so each is its own row (the pass 42 rule). Folded in by overlap: 7ed5b3f8
+  // (the roles apply script's --keep-access-only) into the roles row. The hires sync is two rows because
+  // 7dc7500d alone is 3,094 lines: the sync and its two fixes (f6a1c2b0, fefe84fc), then Kane's "A"
+  // placement rule (ed616a87) with the manual-add pin (81040a76). cfb65d35 shares payout-account-reports
+  // files but is a separate Kane ask (paid counts on People -> Banking), so it is its own row. No row:
+  // e7701bc9 / a2a95911 / d8473e42 / 0b7d39c9 (item 393 status notes), f0851a0f / c3f599ef (item 411
+  // status notes), 3f07f348 / ffee159b / 240bbd48 (the W0.4 webhook, docs only), 0ea5ede5 (item 403
+  // finding), 2f53b533 (item 410, a plan amendment for Tasks 5 and 15, which are not built), 4db047fe
+  // (item 418, a vision with no code), and the board-sync commits 8e35f5eb / b7465bd2 / a3b89429.
   { epic: 'HRIS-06', name: 'The Accounting Scoreboard has its own roles - Admin, Assistant and Team member, granted in Setup - and HRIS accounting alone no longer manages it', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-25', name: 'Employees can report a payout account closed, deactivated or frozen, and Accounting sees it on Mark Paid and People before paying', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-23', name: 'People Banking shows how many times the paid account was paid successfully, before the reveal', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "The Accounting Scoreboard is live - a teammate's save shows on every open board in seconds over Supabase Realtime, and no value travels on the wire", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard per-person task boards - Carla's sheet tasks imported, each person ticks their own, an Everyone view, and Post to Chat", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: "The Accounting Scoreboard task progress posts itself to the accounting Google Chat on Carla's schedule - daily at 3 PM, weekly Wed and Fri, monthly", type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'An Accounting Scoreboard task changes how often it is done from its edit pencil, and the Tasks view caches and loads with a skeleton', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "Accounting Scoreboard Tasks load behind NPD's loading card, fed line by line by a streamed read", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'The Accounting Scoreboard Chat post carries a card of progress bars that go red, orange and green as the goal nears, through one Chat sender', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-24', name: 'The New Hire Checklist polls the hiring database and places each hire as Synced - interview dates read in US Eastern, a dropped connection retried', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-24', name: 'A hire the sync cannot place joins this week or the next open week, and a manual New Hire add stays permanent beside the sync', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-03a', name: 'Payment Dispatch never shows a paid person as Pending when the paid-list read fails - a failed read is an error, never nobody is paid', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-03a', name: 'A remote change costs Payment Dispatch one queue load per visible screen, not two', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-03c', name: 'Orphanage interns are paid up to 6 hours a week - hours over it are shown and never paid, and all 9 profiles moved to 6', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-13', name: 'The collab rail names the tab a person is actually on, and a closed tab leaves - realtime-js presence patched', type: 'Bug', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-15', name: "Admin Diagnostics' Supabase Postgres card tells a Supabase outage from our own database overloaded", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
 ];
