@@ -6,8 +6,8 @@
 > `blueprint` runs through the `blueprint` skill. This plan does not replace either of them. It gives them their scope,
 > their tests, and their order.
 
-> **Status: AWAITING KANE'S REVIEW (2026-10-07). Task 1 is BUILT (2026-10-07; its migration's `--apply` is PENDING
-> Kane, see Task 1). No other task has written to `src/`, `app/`, `references/` or `scripts/`.**
+> **Status: AWAITING KANE'S REVIEW (2026-10-07). Task 1 is BUILT (2026-10-07; its migration is APPLIED, the push is
+> PENDING Kane, see Task 1). No other task has written to `src/`, `app/`, `references/` or `scripts/`.**
 > Source record: [the Oct 7 meeting](../meetings/2026-10-07-carla-alivia-scoreboard-tasks-roles-and-interns.md).
 > Tracked as Open items **391–397**, with this plan as **398**, in the
 > [Sep 29 log](../audits/audit-2026-09-29-session-log.md).
@@ -149,7 +149,7 @@ W0.3 (h). They are probably emoji typed into section names, which is not code.
 `hardening`. Carla: *"I don't want this one on the overview, but I don't have a hide option."* Kane: *"setup will have
 an option to hide it from the overview."* Carla: *"Under sections."*
 
-> **BUILT 2026-10-07** (code committed; migration dry run 37/37, `--apply` PENDING Kane, then the push). **Corrected
+> **BUILT 2026-10-07** (`476b6b9f`; migration APPLIED 2026-10-07, `--apply` 37/37, `--verify` 35/35; the push PENDING). **Corrected
 > against the code in the same commit (Step 0; the code wins):**
 > - **The Team Score is not gathered in `team-score.ts`.** The `Overview` component builds the cards, the on-track
 >   tally and the Team Score from one list, `summarizeAll(board, cardSections, …)` (`ScoreboardApp.tsx:384`, `:749`,
@@ -225,9 +225,9 @@ alter table public.accounting_scoreboard_custom_sections
 
 - [x] **Step 5: Run the tests and see them pass.** Same command as Step 2, then `npm test` and `npm run lint`.
 
-- [ ] **Step 6: Dry-run the migration** (`node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts`).
-  **Stop for Kane's go**, then `--apply` and `--verify`. Dry run DONE 2026-10-07: 37/37, rolled back. **`--apply` and
-  `--verify`: PENDING Kane's go.** Step 5 as run: 51/51 in the three files, `npm test` 6,269/6,269, `tsc --noEmit` clean
+- [x] **Step 6: Dry-run the migration** (`node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts`).
+  **Stop for Kane's go**, then `--apply` and `--verify`. Dry run 2026-10-07: 37/37, rolled back. **APPLIED 2026-10-07 on Kane's
+  go: `--apply` 37/37, `--verify` 35/35.** The push: PENDING (Kane). Step 5 as run: 51/51 in the three files, `npm test` 6,269/6,269, `tsc --noEmit` clean
   apart from two stale `.next/types/validator.ts` errors (a deleted `bank-preferred-requests` route).
 
 - [x] **Step 7: Commit** (doc + INDEX + memory in the same commit).

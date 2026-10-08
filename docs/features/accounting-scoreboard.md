@@ -783,17 +783,21 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   exist before this code is deployed: the board selects `host_section_key`, and a missing column makes every board read
   answer "not set up yet" (`isMissingTable`). **The push: PENDING** (Kane). After it, Carla adds "Sales - Projects
   Onboarded" herself: Setup → Sections, Shown in = Sales Onboarding tab, then its lines under Rows.
-- **Hidden-from-Overview migration: PENDING `--apply` (Kane's go), then the push.**
+- **Hidden-from-Overview migration: APPLIED 2026-10-07** by session `5fae2311` on Kane's *"APPLY THEN VERIFY"*.
   `2026-10-07_accounting_scoreboard_overview_visibility.sql` adds `show_on_overview boolean NOT NULL DEFAULT true` to
-  `accounting_scoreboard_sections` and `accounting_scoreboard_custom_sections`. It has no data step, so there is nothing
-  to back up. **Dry run 2026-10-07: 37/37 PASS, rolled back** (columns, every existing row true, RLS and zero policies,
-  no anon/authenticated privilege, not in realtime, the board's exact selects answer, `SET ROLE anon` refused with
-  `42501` on both tables, three positive controls, NULL refused with `23502` on both). Production then held 2 built-in
-  switch rows and 1 custom section, none hidden. Run
-  `node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts --apply`, then `--verify`,
-  **then push**: the board selects `show_on_overview` on both tables, and pushed first every board read answers "not
-  set up yet" (the 2026-10-07 outage). After the push Carla turns **On Overview** off for "Sales - Projects Onboarded"
-  and her second section under Setup → Sections.
+  `accounting_scoreboard_sections` and `accounting_scoreboard_custom_sections`. It has no data step, so there was nothing
+  to back up. Dry run 37/37 (rolled back), then `--apply` 37/37 (committed), then `--verify` 35/35 (the two "every
+  existing row reads true" checks run on dry/apply only: after that, hiding a section is the point). The checks cover
+  the columns, RLS and zero policies, no anon/authenticated privilege, not in realtime, the board's exact selects,
+  `SET ROLE anon` refused with `42501` on both tables, three positive controls, and NULL refused with `23502` on both.
+  Read back through PostgREST: the service role reads both tables with the board's exact selects (2 switch rows and 1
+  custom section, all `true`), and the anon key gets `401` / `42501` on both. The custom-host `--verify` re-passed.
+  Re-check any time with `node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts --verify`.
+  **The push: PENDING** (Kane). The migration is in, so the push is safe. After it, Carla turns **On Overview** off for
+  "Sales - Projects Onboarded" and her second section under Setup → Sections.
+- **The round-3 `--verify` now fails one check, by design use (Open item 399):** *"Carla's three starting problem types
+  are live"*. Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV", which is what the types list is for. The
+  check is a seed-time check that `--verify` still runs. Its other checks pass.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.
