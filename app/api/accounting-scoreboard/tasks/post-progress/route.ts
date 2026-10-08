@@ -8,7 +8,8 @@ export const runtime = 'nodejs';
  *
  * Posts the team's task progress to the accounting team space's Google Chat (plan Task 8, Open item 393), through
  * ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL. 503 when it is not set; 502 when Google refuses or does not answer. The
- * webhook URL carries a key and never appears in a response. Nothing posts on a schedule: only this click.
+ * webhook URL carries a key and never appears in a response. This is the manual post; the scheduled ones are
+ * /api/cron/accounting-scoreboard-chat (docs/features/accounting-scoreboard-tasks.md § Scheduled posts).
  */
 export async function POST() {
   try {

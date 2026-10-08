@@ -19,6 +19,10 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 | Reads, writes, the Chat post | `src/lib/accounting-scoreboard/server.ts` § Task boards |
 | Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET / POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/post-progress/route.ts` (POST) |
 | UI | `src/components/accounting-scoreboard/TasksPanel.tsx`; the switch in `ScoreboardApp.tsx` |
+| Scheduled posts: when (pure) | `src/lib/accounting-scoreboard/chat-schedule.ts` (+ `.test.ts`, which also checks `vercel.json`) |
+| Scheduled posts: claim → post → stamp (pure, effects injected) | `src/lib/accounting-scoreboard/scheduled-chat-core.ts` (+ `.test.ts`) |
+| Scheduled posts: the wiring, the cron route, the schedule | `src/lib/accounting-scoreboard/scheduled-chat.ts` · `app/api/cron/accounting-scoreboard-chat/route.ts` · `vercel.json` |
+| Scheduled posts: table + apply / verify | `references/sql/create/2026-10-08_accounting_scoreboard_chat_posts.sql` · `scripts/apply-accounting-scoreboard-chat-posts-migration.mts` |
 | Sheet import | `scripts/import-accounting-scoreboard-tasks.mts` + `src/lib/accounting-scoreboard/task-import.ts` (+ `.test.ts`) |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` (`TasksPayload`, `BoardTask`, `TaskCheck`, `TaskPerson`) |
 
@@ -87,14 +91,77 @@ Kane, 2026-10-08: *"make sure all of the data … is saved so we can have a hist
 - **Copy message** copies it. **Post to Chat** (Admin) asks first ("Post this to the accounting team's Google Chat?"),
   then posts it through the space's incoming webhook.
 - **The webhook URL carries a key.** It is `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL`, read only inside
-  `postTaskProgress`, and it never appears in a response, an error or the audit row. Unset = 503 and the button is
+  `postTaskProgress` and the scheduled post's `runScheduledChatPosts`, and it never appears in a response, an error,
+  the posts table or the audit row. Unset = 503 and the button is
   disabled with the reason. Google refusing = 502 naming its HTTP status. **No answer within 10 s = 502 that says the
   message may or may not have posted**: check the space before posting again (a timeout is ambiguous, never "failed").
 - Every post writes `accounting_scoreboard.tasks_progress_posted` (the message and the counts) to the audit log,
   registered in `src/lib/audit/registry.ts`.
-- **Nothing posts on a schedule.** A daily post needs a time from Kane, and a scheduler proven to fire (memory
-  `scheduled-deletion-cron-never-ran`). Carla's personal "you still have tasks left" nudge would @mention each person
-  and needs their Chat user ids: not built.
+- **It also posts itself on Carla's schedule** (2026-10-08): § Scheduled posts below. Carla's personal "you still
+  have tasks left" nudge would @mention each person and needs their Chat user ids: not built.
+
+## Scheduled posts
+
+Carla, relayed by Kane 2026-10-08: *"Daily: Every day around 3:00 PM · Weekly: Twice a week, ideally Wednesday and
+Friday mornings · Monthly: On the 1st and 30th of each month · The other task don't need to be posted since they are
+mainly Claire and I task."* Until then this section was "nothing posts on a schedule", for want of a time and of a
+scheduler proven to fire. Both are now met: the times are hers, and the two older Vercel crons have fired every day
+since 2026-10-03 (measured in `audit_log` on 2026-10-08).
+
+| Post | When (US Eastern) | Counts |
+|---|---|---|
+| Daily | every day at 3:00 PM, Saturday and Sunday included | daily tasks |
+| Weekly | Wednesday and Friday at 9:00 AM | weekly tasks |
+| Monthly | the 1st and the 30th at 9:00 AM; February posts on its last day | monthly tasks |
+
+- **Each post counts only its own frequency.** A Wednesday or Friday that is also the 1st or the 30th posts ONE
+  message carrying weekly and monthly. Bi-weekly, bimonthly, quarterly and annual tasks are never posted: they are
+  mostly Carla's and Claire's. The wording is `buildProgressMessage`'s, the same as the click.
+- **CHOSEN 2026-10-08, each one line in `chat-schedule.ts`:** Eastern time, the board's day, so the 3 PM count is
+  today's; "mornings" = 9:00 AM; daily includes weekends ("every day"); the 1st posts the NEW month's count (a kick-off,
+  close to 0 done), not a recap of the month that just ended.
+- **The counts are the Everyone view's**: `readTasks(…, { kind: 'all' })`, read as an Assistant (the least role that
+  sees everyone's tasks). A scheduled post and an Admin's click at the same moment say the same thing.
+
+### How it fires: Vercel cron, at both UTC hours of each slot
+
+- `vercel.json` calls `GET /api/cron/accounting-scoreboard-chat` at **13:00, 14:00, 19:00 and 20:00 UTC**: each
+  slot's EDT and EST hour. Vercel cron is UTC-only, so the route reads the Eastern clock (`dueChatSlots`) and does
+  nothing outside a slot's window. Each entry runs once a day, so a Hobby plan could not refuse the deploy.
+- **A slot is due for 2 hours from its time** (`SLOT_WINDOW_HOURS`). That is wide enough for a cron that lands late
+  (Hobby: up to 59 min) and for the second UTC entry, and never wide enough to reach the next slot. A test walks three
+  years of days and proves every slot is reached on time and 59 minutes late, on both sides of DST. **Moving an hour
+  in `chat-schedule.ts` without `vercel.json` (or the reverse) fails that test.**
+- **Auth: `Bearer CRON_SECRET` only.** `proxy.ts` lets `/api/cron/*` past sign-in only with it. There is no signed-in
+  trigger: the manual path is the Admin's Post to Chat button.
+
+### One claim per slot: the row comes before the post
+
+`accounting_scoreboard_chat_posts` holds one row per scheduled post, unique by (Eastern date, hour).
+
+- **The row is inserted BEFORE anything is sent.** Vercel can deliver a cron twice, and both UTC entries of a slot can
+  land inside its window. The second call finds the slot claimed (`already_claimed`) and sends nothing. **Any other
+  claim error posts nothing:** no claim, no post.
+- **One attempt per slot.** The outcome is stamped once (`posted`, `skipped`, `refused`, `unreachable`, `timed_out`,
+  `failed`); the table's trigger refuses a second stamp. The schedule never retries a failed post (Carla can click Post
+  to Chat), and **never retries a timeout, which may have posted.**
+- `skipped` = no live tasks of that frequency, so nothing was sent. `failed` = the task read failed, nothing was sent.
+- **A row left at `sending` is not a bug to clean up.** The function died between the claim and the stamp, so the post
+  may or may not have gone out. Check the space.
+- Never deleted (the histogram rule above). Service role only. The Admin's click is not recorded here.
+- The route answers **200** when nothing was due, or every due post went out, was skipped or was already claimed;
+  **502** when a due post did not go out (so Vercel's cron log shows it); **503** when the webhook env or the table is
+  missing (nothing claimed, nothing posted).
+- A post that went out writes the click's audit action, `accounting_scoreboard.tasks_progress_posted`, as
+  `Scoreboard Chat Schedule` / `System`, with `trigger: 'schedule'`, the slot, and `resource_id` = the posts row.
+
+### Two senders, one behaviour
+
+The webhook is posted from two places: `postTaskProgress` (the click, `server.ts`) and `sendToChat`
+(`scheduled-chat.ts`). Both have the same 10 s timeout and read a timeout the same way ("may or may not have posted").
+Neither ever puts the URL in a response, an error, the posts table or the audit row. **Change one, change the other.**
+They are two only because `server.ts` was mid-edit by another session on 2026-10-08; moving the click onto
+`sendToChat` is a safe refactor.
 
 ## Importing from the sheet
 
@@ -120,7 +187,7 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
 
 ## Not built
 
-- A scheduled post, the personal nudge, a reorder control (the API takes `sortOrder`; new tasks go last), ticks on
+- The personal nudge, a reorder control (the API takes `sortOrder`; new tasks go last), ticks on
   someone else's behalf, live refresh of the Tasks view (the board's Broadcast refresh is a separate change).
 
 ## Deploy notes
@@ -132,6 +199,20 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
 - **Env:** `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL` is in `.env.local` (2026-10-08; proven with two manual posts) and in
   `.env.example` with no value. Vercel Production: Kane (he was deploying it on 2026-10-08).
 - **Import:** after the migration, fill the 18 null tabs in the map, dry-run, then `--apply` on Kane's go.
+- **Scheduled posts migration: PENDING (Kane). Apply it BEFORE the push.**
+  `node --import tsx scripts/apply-accounting-scoreboard-chat-posts-migration.mts` (dry run, rolled back) passed every
+  check on 2026-10-08: 16 object and privilege checks, the anon refusal, 7 positive and 13 negative controls. Then
+  `--apply`, then `--verify`. Pushed without it, each due slot answers 503 "not set up" and posts nothing.
+- **Scheduled posts go live with the push** (the four `vercel.json` entries deploy with it). No new env:
+  `CRON_SECRET` is already set in production (the older crons fire daily) and the webhook env is the click's.
+  **PENDING:** watch the space at the first 3:00 PM ET after the deploy, then check its row in
+  `accounting_scoreboard_chat_posts` (`status = 'posted'`).
+- **To stop the schedule:** remove the four `accounting-scoreboard-chat` entries from `vercel.json` and redeploy.
+  **Not** Vercel → Settings → Cron Jobs → Disable: that switches off every cron, the deletion reaper and the transfer
+  applier included.
+- **Scheduled posts verified (2026-10-08):** 9 schedule tests + 10 claim/post tests; the scoreboard suite 290/290; `tsc`
+  clean apart from the same two stale `.next/types/validator.ts` entries. **Not run against Google from the deployed
+  cron yet.**
 - **Verified:** 18 task tests + 5 import tests; the scoreboard suite 227/227 and `npm test` 6,402/6,402 before the import
   module; `tsc` clean apart from two stale `.next/types/validator.ts` entries for another feature's routes. **Not
   rendered in a browser and not clicked through signed in.**
