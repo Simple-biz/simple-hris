@@ -121,7 +121,12 @@ the change re-decides nothing that exists; it applies to hires that arrive from 
 
 **The target week is the week AFTER the interview week.** This was measured on 2026-10-08 over
 every live row: 1,640 of the 1,747 rows that carry an interview date (94%) sit exactly one week after
-it, and 753 of 790 since August. **The New Hire modal reads the same rule** the other way round: its
+it, and 753 of 790 since August. **Confirmed by Kane on 2026-10-08 ("A")**, when asked whether a week's
+page should hold only that week's own interviews. A checklist week is the hires' START and orientation
+week, and every week is locked about 1.2 days before it begins (12 of the last 14 measured that day).
+So a same-week rule would land every synced hire on a week that is already locked. Example: the
+Oct 11–17 page holds the hires interviewed Oct 4–10 (30 of its 39 that day). **Do not switch to
+"same week as the interview" without a new ruling.** The New Hire modal reads the same rule the other way round: its
 Date of interview picker opens on the selected week's interview week (`interview-week.ts`, pinned
 equal to `targetWeekFor` day by day; new-hire-checklist.md § The New Hire modal). Change it in both.
 
