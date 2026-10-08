@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
-import { AlertTriangle, Archive, ChevronLeft, ChevronRight, LayoutGrid, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
+import { AlertTriangle, Archive, ChevronLeft, ChevronRight, LayoutGrid, ListChecks, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -101,6 +101,7 @@ import { SectionGrid } from './SectionGrid';
 import { CollectionsPanel, type NewCollection } from './CollectionsPanel';
 import { ProblemsPanel, type NewProblem } from './ProblemsPanel';
 import { SetupPanel } from './SetupPanel';
+import { TasksPanel } from './TasksPanel';
 import { SECTIONS_NAV_ID, SectionsDrawer, type DrawerItem } from './SectionsDrawer';
 
 /** 'overview', 'setup', or a section's board id (a built-in key, or `custom:<uuid>`). */
@@ -181,6 +182,9 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   // that is already painted (from the cache, the 45 s timer or a focus) is silent.
   const [fetching, setFetching] = useState(true);
   const [tab, setTab] = useState<Tab>('overview');
+  // Scoreboard | Tasks (plan Task 7): the task boards have their own periods, so Tasks hides the week arrows and the
+  // section row. The board keeps loading underneath, so switching back is instant.
+  const [mode, setMode] = useState<'scoreboard' | 'tasks'>('scoreboard');
   const [menuOpen, setMenuOpen] = useState(false);
   const burgerRef = useRef<HTMLButtonElement>(null);
   const menuWasOpen = useRef(false);
@@ -579,7 +583,8 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     setDir(direction);
     setWeek(next);
   };
-  const activeLabel = activeTab === 'overview' ? 'Overview' : activeTab === 'setup' ? 'Setup' : (activeSection?.tab ?? 'Overview');
+  const activeLabel =
+    mode === 'tasks' ? 'Tasks' : activeTab === 'overview' ? 'Overview' : activeTab === 'setup' ? 'Setup' : (activeSection?.tab ?? 'Overview');
 
   const sectionGrid = (s: BoardSection) => (
     <SectionGrid
@@ -621,7 +626,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
             type="button"
             variant="outline"
             size="icon"
-            className="md:hidden"
+            className={cn('md:hidden', mode === 'tasks' && 'hidden')}
             onClick={() => setMenuOpen(true)}
             aria-label="Open sections menu"
             aria-expanded={menuOpen}
@@ -642,7 +647,15 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
               <p className="truncate text-xs font-medium text-orange-700 md:hidden dark:text-orange-300">{activeLabel}</p>
             </div>
           </div>
-          <div className="ml-auto flex items-center gap-1.5 max-sm:w-full">
+          <div role="group" aria-label="Scoreboard or tasks" className="flex rounded-lg border border-zinc-200 bg-white/70 p-0.5 dark:border-zinc-800 dark:bg-zinc-950/60">
+            <SlidingPill layoutId="acct-sb-mode" active={mode === 'scoreboard'} onClick={() => setMode('scoreboard')}>
+              <Trophy className="size-3.5" /> Scoreboard
+            </SlidingPill>
+            <SlidingPill layoutId="acct-sb-mode" active={mode === 'tasks'} onClick={() => setMode('tasks')}>
+              <ListChecks className="size-3.5" /> Tasks
+            </SlidingPill>
+          </div>
+          <div className={cn('ml-auto flex items-center gap-1.5 max-sm:w-full', mode === 'tasks' && 'hidden')}>
             <Button
               size="icon-sm"
               variant="outline"
@@ -731,7 +744,10 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
         </AnimatePresence>
 
         <nav
-          className="hidden gap-1 overflow-x-auto border-b border-zinc-100 bg-white/90 px-3 py-2 sm:px-5 md:flex dark:border-zinc-900 dark:bg-zinc-950/90"
+          className={cn(
+            'hidden gap-1 overflow-x-auto border-b border-zinc-100 bg-white/90 px-3 py-2 sm:px-5 dark:border-zinc-900 dark:bg-zinc-950/90',
+            mode === 'scoreboard' && 'md:flex',
+          )}
           aria-label="Sections"
         >
           <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
@@ -751,62 +767,66 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
 
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {/* overflow-x-clip, not hidden: the slide never spawns a scrollbar, and sticky headers keep working (§ 11.1). */}
-          <div className="overflow-x-clip">
-            <AnimatePresence mode="wait" initial={false} custom={dir}>
-              <motion.div
-                key={`${activeTab}:${board.weekStart}`}
-                custom={dir}
-                variants={PANEL_VARIANTS}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
-              >
-                {activeTab === 'setup' ? (
-                  <SetupPanel board={board} sections={sections} role={board.viewer.role} onChanged={() => void load(week, true)} />
-                ) : !activeSection ? (
-                  <Overview board={board} sections={cardSections} all={sections} lookup={lookup} onOpen={openCard} />
-                ) : activeSection.kind === 'payroll_cycle' ? (
-                  withHosted(
-                    activeSection,
-                    <PayrollCyclePanel
-                      section={resolved.find((s) => s.key === 'payroll_timing')!}
-                      weekStart={board.weekStart}
-                      today={board.today}
-                      events={board.payrollEvents}
-                      firstClosedPeriodEnd={board.firstClosedPeriodEnd}
-                    />,
-                  )
-                ) : activeSection.kind === 'collections' ? (
-                  withHosted(
-                    activeSection,
-                    <CollectionsPanel
-                      section={resolved.find((s) => s.key === 'collections')!}
-                      board={board}
-                      rows={rowsFor('collections')}
-                      onLog={logCollection}
-                      onDelete={deleteCollection}
-                      onVerify={verifyCollection}
-                    />,
-                  )
-                ) : activeSection.kind === 'problem_log' ? (
-                  withHosted(
-                    activeSection,
-                    <ProblemsPanel
-                      section={activeSection}
-                      board={board}
-                      rows={rowsFor(activeSection.id)}
-                      lookup={lookup}
-                      onLog={logProblem}
-                      onDelete={deleteProblem}
-                    />,
-                  )
-                ) : (
-                  withHosted(activeSection, sectionGrid(activeSection))
-                )}
-              </motion.div>
-            </AnimatePresence>
-          </div>
+          {mode === 'tasks' ? (
+            <TasksPanel viewer={board.viewer} />
+          ) : (
+            <div className="overflow-x-clip">
+              <AnimatePresence mode="wait" initial={false} custom={dir}>
+                <motion.div
+                  key={`${activeTab}:${board.weekStart}`}
+                  custom={dir}
+                  variants={PANEL_VARIANTS}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
+                >
+                  {activeTab === 'setup' ? (
+                    <SetupPanel board={board} sections={sections} role={board.viewer.role} onChanged={() => void load(week, true)} />
+                  ) : !activeSection ? (
+                    <Overview board={board} sections={cardSections} all={sections} lookup={lookup} onOpen={openCard} />
+                  ) : activeSection.kind === 'payroll_cycle' ? (
+                    withHosted(
+                      activeSection,
+                      <PayrollCyclePanel
+                        section={resolved.find((s) => s.key === 'payroll_timing')!}
+                        weekStart={board.weekStart}
+                        today={board.today}
+                        events={board.payrollEvents}
+                        firstClosedPeriodEnd={board.firstClosedPeriodEnd}
+                      />,
+                    )
+                  ) : activeSection.kind === 'collections' ? (
+                    withHosted(
+                      activeSection,
+                      <CollectionsPanel
+                        section={resolved.find((s) => s.key === 'collections')!}
+                        board={board}
+                        rows={rowsFor('collections')}
+                        onLog={logCollection}
+                        onDelete={deleteCollection}
+                        onVerify={verifyCollection}
+                      />,
+                    )
+                  ) : activeSection.kind === 'problem_log' ? (
+                    withHosted(
+                      activeSection,
+                      <ProblemsPanel
+                        section={activeSection}
+                        board={board}
+                        rows={rowsFor(activeSection.id)}
+                        lookup={lookup}
+                        onLog={logProblem}
+                        onDelete={deleteProblem}
+                      />,
+                    )
+                  ) : (
+                    withHosted(activeSection, sectionGrid(activeSection))
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          )}
         </main>
       </div>
 

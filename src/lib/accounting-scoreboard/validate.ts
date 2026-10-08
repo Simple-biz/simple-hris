@@ -28,6 +28,7 @@ import {
   type Weekday,
 } from './sections';
 import { isIsoDate, weekdayOf } from './week';
+import { isTaskFrequency, type TaskFrequency } from './tasks';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -561,4 +562,95 @@ export function parseCustomSectionPatch(body: unknown): Parsed<CustomSectionPatc
     return { ok: false, error: 'Nothing to change' };
   }
   return { ok: true, value: out };
+}
+
+// ---------------------------------------------------------------------------
+// Task boards (plan Task 7, Open item 393; docs/features/accounting-scoreboard-tasks.md)
+// ---------------------------------------------------------------------------
+
+export const TASK_TITLE_MAX = 300;
+
+function taskTitle(value: unknown): Parsed<string> {
+  if (typeof value !== 'string') return { ok: false, error: 'A task needs a title' };
+  const title = value.trim().replace(/\s+/g, ' ');
+  if (!title) return { ok: false, error: 'A task needs a title' };
+  if (title.length > TASK_TITLE_MAX) return { ok: false, error: `A task title is at most ${TASK_TITLE_MAX} characters` };
+  return { ok: true, value: title };
+}
+
+export interface TaskCreate {
+  ownerEmail: string;
+  title: string;
+  frequency: TaskFrequency;
+}
+
+/** Admin: a new task on someone's board. Whether the owner is on the board is the server's check. */
+export function parseTaskCreate(body: unknown): Parsed<TaskCreate> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  const ownerEmail = normalizeEmail(b.ownerEmail);
+  if (!ownerEmail) return { ok: false, error: 'Pick whose board the task goes on' };
+  const title = taskTitle(b.title);
+  if (!title.ok) return title;
+  if (!isTaskFrequency(b.frequency)) return { ok: false, error: 'Pick how often the task is done' };
+  return { ok: true, value: { ownerEmail, title: title.value, frequency: b.frequency } };
+}
+
+export interface TaskPatch {
+  id: string;
+  title?: string;
+  sortOrder?: number;
+  /** Archive the task (final: a task is never deleted or un-archived). Only `true` is accepted. */
+  archived?: true;
+}
+
+/**
+ * Admin: rename, reorder or archive. The owner and the frequency never change in place (the table refuses it):
+ * a new frequency is a new task, so an old tick never changes meaning.
+ */
+export function parseTaskPatch(body: unknown): Parsed<TaskPatch> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.id)) return { ok: false, error: 'id must be a task id' };
+  if (b.ownerEmail !== undefined || b.frequency !== undefined) {
+    return { ok: false, error: "A task's owner and frequency never change. Archive it and add a new one." };
+  }
+  const out: TaskPatch = { id: b.id };
+  if (b.title !== undefined) {
+    const title = taskTitle(b.title);
+    if (!title.ok) return title;
+    out.title = title.value;
+  }
+  if (b.sortOrder !== undefined) {
+    if (typeof b.sortOrder !== 'number' || !Number.isInteger(b.sortOrder) || Math.abs(b.sortOrder) > 100_000) {
+      return { ok: false, error: 'sortOrder is a whole number' };
+    }
+    out.sortOrder = b.sortOrder;
+  }
+  if (b.archived !== undefined) {
+    if (b.archived !== true) return { ok: false, error: 'A task is archived for good: archived can only be true' };
+    out.archived = true;
+  }
+  if (out.title === undefined && out.sortOrder === undefined && out.archived === undefined) {
+    return { ok: false, error: 'Nothing to change' };
+  }
+  return { ok: true, value: out };
+}
+
+/** A tick or an untick. The period is the server's, from today (US Eastern), never the body's. */
+export function parseTaskCheck(body: unknown): Parsed<{ taskId: string; done: boolean }> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.taskId)) return { ok: false, error: 'taskId must be a task id' };
+  if (typeof b.done !== 'boolean') return { ok: false, error: 'done is true or false' };
+  return { ok: true, value: { taskId: b.taskId, done: b.done } };
+}
+
+/** GET ?person=: 'me' (the default), 'all' (the All view), or a board person's work email. */
+export function parseTaskView(value: string | null): Parsed<{ kind: 'me' } | { kind: 'all' } | { kind: 'person'; email: string }> {
+  if (value === null || value === '' || value === 'me') return { ok: true, value: { kind: 'me' } };
+  if (value === 'all') return { ok: true, value: { kind: 'all' } };
+  const email = normalizeEmail(value);
+  if (!email) return { ok: false, error: 'person is me, all, or a work email' };
+  return { ok: true, value: { kind: 'person', email } };
 }

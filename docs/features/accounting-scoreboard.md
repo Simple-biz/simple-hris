@@ -883,8 +883,10 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
 
 ## Not built (on purpose)
 
-- The sheet's status strip (Working / Lunch / Break) and the per-person task checklists (Carla's
-  Tracker). Both are outside the bonus and can come later.
+- The sheet's status strip (Working / Lunch / Break). It is outside the bonus and can come later. The per-person
+  task checklists **were built on 2026-10-08** behind the header's Scoreboard | Tasks switch: see
+  [accounting-scoreboard-tasks.md](accounting-scoreboard-tasks.md). They read their own route and are not part of
+  the board read, its load lines or its cache.
 - Per-person or per-section bonuses after Carla's revamp, and any write to pay (Item 315).
 - Charts. Carla's § 6 says "sections/charts"; a custom section is a tab, a grid and an Overview card, the same
   as a built-in one. No chart type was built.

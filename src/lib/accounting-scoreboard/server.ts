@@ -41,6 +41,7 @@ import {
 import { addDays, easternToUtc, todayEastern, weekStartOf } from './week';
 import { shortNameFromRoster } from './names';
 import {
+  ROLE_LABEL,
   can,
   canRevokeGrant,
   highestGrant,
@@ -58,7 +59,20 @@ import {
 } from './payroll-cycle';
 import { collectionsHistory, type CollectionEntry, type ProblemEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
-import type { BoardMember, BoardPayload, BoardRow, ProblemType, RoleGrant, RosterPerson } from './types';
+import type {
+  BoardMember,
+  BoardPayload,
+  BoardRow,
+  BoardTask,
+  ProblemType,
+  RoleGrant,
+  RosterPerson,
+  TaskCheck,
+  TaskPerson,
+  TasksPayload,
+} from './types';
+import { currentPeriodKeys, isTaskFrequency, taskPeriodKey, taskProgress, type TaskLike } from './tasks';
+import { buildProgressMessage } from './chat-summary';
 import type { BoardRead, BoardReadProgress } from './load-progress';
 import {
   customGoal,
@@ -71,6 +85,8 @@ import {
   type RowCreate,
   type RowPatch,
   type SectionPatch,
+  type TaskCreate,
+  type TaskPatch,
 } from './validate';
 
 const ROWS = 'accounting_scoreboard_rows';
@@ -1260,4 +1276,297 @@ export async function patchCustomSection(viewer: Viewer, p: CustomSectionPatch):
   if (error) return dbFailure(error, 'Could not change the section');
   const section = mapCustomSection(data as CustomSectionRecord);
   return section ? { ok: true, value: section } : fail(500, 'db_error', 'The section came back unreadable.');
+}
+
+// ---------------------------------------------------------------------------
+// Task boards (plan Task 7 + 8, Open item 393; docs/features/accounting-scoreboard-tasks.md). Read on their own route,
+// NEVER inside readBoard: the board's load, its progress lines and its cache are unchanged. Nothing here is deleted:
+// a task is archived, a tick is unchecked by a stamp, and both keep their timestamps, so every past period can be
+// counted again later (Kane, 2026-10-08: "make sure all of the data ... is saved so we can have a histogram").
+// ---------------------------------------------------------------------------
+
+const TASKS = 'accounting_scoreboard_tasks';
+const TASK_CHECKS = 'accounting_scoreboard_task_checks';
+const TASK_COLS = 'id, owner_email, title, frequency, sort_order, created_at';
+const TASK_CHECK_COLS = 'id, task_id, period_key, checked_by, checked_at';
+/** The accounting team space's Google Chat incoming webhook. It carries a key: read here only, never echoed. */
+const CHAT_WEBHOOK_ENV = 'ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL';
+const CHAT_TIMEOUT_MS = 10_000;
+
+type TaskRecord = { id: string; owner_email: string; title: string; frequency: string; sort_order: number; created_at: string };
+type TaskCheckRecord = { id: string; task_id: string; period_key: string; checked_by: string; checked_at: string };
+
+function mapTask(r: TaskRecord): BoardTask | null {
+  if (!isTaskFrequency(r.frequency)) return null;
+  return { id: r.id, ownerEmail: r.owner_email, title: r.title, frequency: r.frequency, sortOrder: r.sort_order, createdAt: r.created_at };
+}
+
+const mapTaskCheck = (r: TaskCheckRecord): TaskCheck => ({
+  taskId: r.task_id,
+  periodKey: r.period_key,
+  checkedBy: r.checked_by,
+  checkedAt: r.checked_at,
+});
+
+const byTaskOrder = (a: BoardTask, b: BoardTask) =>
+  a.sortOrder - b.sortOrder || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+
+const asTaskLike = (t: BoardTask): TaskLike => ({ id: t.id, ownerEmail: t.ownerEmail, frequency: t.frequency, archived: false });
+
+/**
+ * Everyone a task can belong to: the board's people. A live person row (named by its label, what the team calls
+ * them), a member, or a role grant. Not any HRIS address: a task on someone who cannot open the board helps no one.
+ */
+export async function listTaskPeople(): Promise<Result<TaskPerson[]>> {
+  const [rows, members, grants] = await Promise.all([
+    selectAllPaged<{ work_email: string | null; label: string }>((from, to) =>
+      client().from(ROWS).select('work_email, label').not('work_email', 'is', null).is('archived_at', null).order('id').range(from, to),
+    ),
+    selectAllPaged<{ work_email: string }>((from, to) =>
+      client().from(MEMBERS).select('work_email').is('removed_at', null).order('work_email').range(from, to),
+    ),
+    selectAllPaged<{ email: string }>((from, to) =>
+      client().from(ROLES).select('email').is('revoked_at', null).order('id').range(from, to),
+    ),
+  ]);
+  for (const r of [rows, members, grants]) {
+    if (r.error) return dbFailure({ message: r.error }, "Could not read the board's people");
+  }
+  const names = new Map<string, string>();
+  const add = (raw: string | null, name: string | null) => {
+    const email = (raw ?? '').trim().toLowerCase();
+    if (email && !names.has(email)) names.set(email, (name ?? '').trim() || email.split('@')[0]);
+  };
+  for (const r of rows.rows) add(r.work_email, r.label);
+  for (const m of members.rows) add(m.work_email, null);
+  for (const g of grants.rows) add(g.email, null);
+  const people = [...names].map(([email, name]) => ({ email, name }));
+  people.sort((a, b) => a.name.localeCompare(b.name) || a.email.localeCompare(b.email));
+  return { ok: true, value: people };
+}
+
+export type TaskViewRequest = { kind: 'me' } | { kind: 'all' } | { kind: 'person'; email: string };
+
+/**
+ * GET /tasks. A Team member sees only their own board (by every address they sign in with). An Admin or an
+ * Assistant may pick a person, or All. Only live tasks and their ticks in the CURRENT periods are sent.
+ */
+export async function readTasks(viewer: Viewer, view: TaskViewRequest): Promise<Result<TasksPayload>> {
+  const seesAll = can(viewer.role, 'view_all_tasks');
+  if (view.kind !== 'me' && !seesAll) return fail(403, 'not_allowed', REFUSED.view_all_tasks);
+  const today = todayEastern();
+
+  const people = await listTaskPeople();
+  if (!people.ok) return people;
+  const nameOf = (email: string) => people.value.find((p) => p.email === email)?.name ?? email.split('@')[0];
+
+  let owners: string[] | null;
+  let shown: TasksPayload['view'];
+  if (view.kind === 'all') {
+    owners = null;
+    shown = { kind: 'all' };
+  } else if (view.kind === 'person' && !viewer.aliases.includes(view.email)) {
+    owners = [view.email];
+    shown = { kind: 'person', person: { email: view.email, name: nameOf(view.email) }, own: false };
+  } else {
+    owners = viewer.aliases;
+    const mine = people.value.find((p) => viewer.aliases.includes(p.email));
+    shown = { kind: 'person', person: mine ?? { email: viewer.email, name: nameOf(viewer.email) }, own: true };
+  }
+
+  const taskRead = await selectAllPaged<TaskRecord>((from, to) => {
+    const q = client().from(TASKS).select(TASK_COLS).is('archived_at', null);
+    return (owners ? q.in('owner_email', owners) : q).order('id').range(from, to);
+  });
+  if (taskRead.error) return dbFailure({ message: taskRead.error }, 'Could not read the tasks');
+  const tasks = taskRead.rows.map(mapTask).filter((t): t is BoardTask => t !== null).sort(byTaskOrder);
+
+  // Ticks are read by the current period keys (at most seven), never by a list of task ids: hundreds of ids would
+  // overflow the URL (memory postgrest-url-ceiling). A tick counts only for its task's own current period.
+  const keys = [...new Set(Object.values(currentPeriodKeys(today)))];
+  const checkRead = await selectAllPaged<TaskCheckRecord>((from, to) =>
+    client().from(TASK_CHECKS).select(TASK_CHECK_COLS).is('unchecked_at', null).in('period_key', keys).order('id').range(from, to),
+  );
+  if (checkRead.error) return dbFailure({ message: checkRead.error }, 'Could not read the ticks');
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const checks = checkRead.rows
+    .filter((c) => {
+      const t = byId.get(c.task_id);
+      return !!t && taskPeriodKey(t.frequency, today) === c.period_key;
+    })
+    .map(mapTaskCheck);
+
+  return {
+    ok: true,
+    value: {
+      today,
+      viewer: { email: viewer.email, role: viewer.role },
+      view: shown,
+      people: seesAll ? people.value : null,
+      tasks,
+      checks,
+      teamProgress: view.kind === 'all' ? taskProgress(tasks.map(asTaskLike), checks, today) : null,
+      chatConfigured: can(viewer.role, 'manage_tasks') ? Boolean(process.env[CHAT_WEBHOOK_ENV]?.trim()) : null,
+    },
+  };
+}
+
+/** Admin: a new task, at the end of its owner's list. The owner must be one of the board's people. */
+export async function createTask(viewer: Viewer, c: TaskCreate): Promise<Result<BoardTask>> {
+  const people = await listTaskPeople();
+  if (!people.ok) return people;
+  if (!people.value.some((p) => p.email === c.ownerEmail)) {
+    return fail(422, 'not_on_board', `${c.ownerEmail} is not on the board. Add them under Setup → Members first.`);
+  }
+  const sb = client();
+  const { data: last, error: lastErr } = await sb
+    .from(TASKS)
+    .select('sort_order')
+    .eq('owner_email', c.ownerEmail)
+    .is('archived_at', null)
+    .order('sort_order', { ascending: false })
+    .limit(1);
+  if (lastErr) return dbFailure(lastErr, 'Could not read the tasks');
+  const top = ((last ?? []) as { sort_order: number }[])[0]?.sort_order;
+  const { data, error } = await sb
+    .from(TASKS)
+    .insert({
+      owner_email: c.ownerEmail,
+      title: c.title,
+      frequency: c.frequency,
+      sort_order: top === undefined ? 0 : top + 1,
+      created_by: viewer.email,
+    })
+    .select(TASK_COLS)
+    .single();
+  if (error) return dbFailure(error, 'Could not add the task');
+  const task = mapTask(data as TaskRecord);
+  return task ? { ok: true, value: task } : fail(500, 'db_error', 'The task came back unreadable.');
+}
+
+/** Admin: rename, reorder, or archive (final). The owner and the frequency never change in place. */
+export async function patchTask(viewer: Viewer, p: TaskPatch): Promise<Result<{ task: BoardTask; archived: boolean }>> {
+  const update: Record<string, unknown> = {};
+  if (p.title !== undefined) update.title = p.title;
+  if (p.sortOrder !== undefined) update.sort_order = p.sortOrder;
+  if (p.archived) {
+    update.archived_at = new Date().toISOString();
+    update.archived_by = viewer.email;
+  }
+  const { data, error } = await client().from(TASKS).update(update).eq('id', p.id).is('archived_at', null).select(TASK_COLS);
+  if (error) return dbFailure(error, 'Could not change the task');
+  const rec = ((data ?? []) as TaskRecord[])[0];
+  if (!rec) return fail(404, 'not_found', 'That task is not on the board any more. Refresh and try again.');
+  const task = mapTask(rec);
+  return task ? { ok: true, value: { task, archived: !!p.archived } } : fail(500, 'db_error', 'The task came back unreadable.');
+}
+
+async function readLiveTaskCheck(taskId: string, periodKey: string): Promise<Result<TaskCheckRecord | null>> {
+  const { data, error } = await client()
+    .from(TASK_CHECKS)
+    .select(TASK_CHECK_COLS)
+    .eq('task_id', taskId)
+    .eq('period_key', periodKey)
+    .is('unchecked_at', null)
+    .maybeSingle();
+  if (error) return dbFailure(error, 'Could not read the tick');
+  return { ok: true, value: (data as TaskCheckRecord | null) ?? null };
+}
+
+/**
+ * Tick or untick a task for its CURRENT period (US Eastern, computed here, never sent). Only the task's owner ticks
+ * it; the owner or an Admin unticks it, by a stamp, never a delete (the Payment Verified pattern). As-needed tasks are
+ * never ticked.
+ */
+export async function setTaskDone(viewer: Viewer, taskId: string, done: boolean): Promise<Result<TaskCheck | null>> {
+  const { data, error } = await client().from(TASKS).select('id, owner_email, frequency, archived_at').eq('id', taskId).maybeSingle();
+  if (error) return dbFailure(error, 'Could not read the task');
+  const rec = data as { id: string; owner_email: string; frequency: string; archived_at: string | null } | null;
+  if (!rec || rec.archived_at) return fail(404, 'not_found', 'That task is not on the board any more. Refresh and try again.');
+  if (!isTaskFrequency(rec.frequency) || rec.frequency === 'as_needed') {
+    return fail(422, 'not_counted', 'An as-needed task is not ticked: it is done whenever it is needed.');
+  }
+  const periodKey = taskPeriodKey(rec.frequency, todayEastern()) as string;
+  const isOwner = viewer.aliases.includes(rec.owner_email);
+  const live = await readLiveTaskCheck(taskId, periodKey);
+  if (!live.ok) return live;
+
+  if (done) {
+    if (!isOwner) return fail(403, 'not_owner', 'Only the person whose task it is can tick it.');
+    if (live.value) return { ok: true, value: mapTaskCheck(live.value) };
+    const ins = await client()
+      .from(TASK_CHECKS)
+      .insert({ task_id: taskId, period_key: periodKey, checked_by: viewer.email })
+      .select(TASK_CHECK_COLS)
+      .single();
+    if (ins.error?.code === '23505') {
+      const again = await readLiveTaskCheck(taskId, periodKey);
+      if (!again.ok) return again;
+      return { ok: true, value: again.value ? mapTaskCheck(again.value) : null };
+    }
+    if (ins.error) return dbFailure(ins.error, 'Could not save the tick');
+    return { ok: true, value: mapTaskCheck(ins.data as TaskCheckRecord) };
+  }
+
+  if (!live.value) return { ok: true, value: null };
+  if (!isOwner && !can(viewer.role, 'manage_tasks')) {
+    return fail(403, 'not_owner', 'Only the person whose task it is, or an Admin, can untick it.');
+  }
+  const { data: upd, error: updErr } = await client()
+    .from(TASK_CHECKS)
+    .update({ unchecked_at: new Date().toISOString(), unchecked_by: viewer.email })
+    .eq('id', live.value.id)
+    .is('unchecked_at', null)
+    .select('id');
+  if (updErr) return dbFailure(updErr, 'Could not untick the task');
+  if (!(upd ?? []).length) return fail(409, 'conflict', 'That tick just changed. Refresh and try again.');
+  return { ok: true, value: null };
+}
+
+/**
+ * Admin: post the team's progress to the accounting space's Google Chat (plan Task 8). The message is what Copy
+ * message copies. The webhook URL never leaves this function: not in a response, not in an error, not in the audit.
+ */
+export async function postTaskProgress(viewer: Viewer): Promise<Result<{ message: string; postedAt: string }>> {
+  const url = process.env[CHAT_WEBHOOK_ENV]?.trim();
+  if (!url) {
+    return fail(503, 'chat_not_configured', `Google Chat isn't connected yet: ${CHAT_WEBHOOK_ENV} is not set on the server.`);
+  }
+  const team = await readTasks(viewer, { kind: 'all' });
+  if (!team.ok) return team;
+  const progress = team.value.teamProgress ?? [];
+  const message = buildProgressMessage(progress);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify({ text: message }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return fail(
+      502,
+      'chat_unreachable',
+      timedOut
+        ? 'Google Chat did not answer within 10 seconds. The message may or may not have posted: check the space before posting again.'
+        : 'Could not reach Google Chat. Nothing was posted.',
+    );
+  }
+  if (!res.ok) {
+    return fail(502, 'chat_refused', `Google Chat refused the post (HTTP ${res.status}). The webhook may have been removed from the space.`);
+  }
+  const postedAt = new Date().toISOString();
+  await insertAuditLog({
+    user_name: viewer.email,
+    user_role: ROLE_LABEL[viewer.role],
+    action: 'accounting_scoreboard.tasks_progress_posted',
+    resource: TASKS,
+    resource_id: null,
+    details: { message, progress },
+  });
+  return { ok: true, value: { message, postedAt } };
 }

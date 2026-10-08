@@ -150,8 +150,8 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
   {
     match: 'accounting_scoreboard.',
     surfaces: ['accounting', 'admin'],
-    label: 'Accounting Scoreboard roles',
-    note: 'role_granted / role_revoked — a board Admin granted or revoked Admin or Assistant on the Accounting Scoreboard (details: email, role; resource_id = the accounting_scoreboard_roles row). Team members are the member list and write no row here',
+    label: 'Accounting Scoreboard roles and Chat posts',
+    note: 'role_granted / role_revoked — a board Admin granted or revoked Admin or Assistant on the Accounting Scoreboard (details: email, role; resource_id = the accounting_scoreboard_roles row). Team members are the member list and write no row here. tasks_progress_posted — an Admin posted the team\x27s task progress to the accounting team\x27s Google Chat (details: the message and the counts per frequency; never the webhook URL)',
   },
   {
     match: 'accounting.payroll_wizard_notes.',

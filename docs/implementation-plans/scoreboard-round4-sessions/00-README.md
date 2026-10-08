@@ -19,8 +19,8 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 | 4 | `task-04-roles.md` | after 3, **and W0.6** (second Admin) for the apply | apply migration → push |
 | 5 | `task-05-weekly-lock.md` | after 4 is **applied** | apply migration → push |
 | 6 | `task-06-sales-timing-log.md` | after 5 is **applied**; apply on a weekend | apply (Sat/Sun) → push before Monday |
-| 7 | `task-07-task-boards.md` | after 6 | apply migration → import `--apply` → push |
-| 8 | `task-08-progress-message.md` | after 7; Chat part needs **W0.4** | push |
+| 7 | ~~`task-07-task-boards.md`~~ **BUILT 2026-10-08 (session `39022c5c`), do not paste** | — | apply the tasks migration → fill the import map → import `--apply` → push |
+| 8 | ~~`task-08-progress-message.md`~~ **BUILT 2026-10-08 with Task 7, do not paste** | — | (same push) |
 | any | `task-09-old-grid-problems.md` | **W0.2 ruled (a)**: in the next free lane-A slot, never alongside another lane-A session | run the clear script `--apply`, then the team re-logs |
 | any | `task-10-compliance-portal.md` | only after **W0.7** (Kentshin's endpoint) | push |
 

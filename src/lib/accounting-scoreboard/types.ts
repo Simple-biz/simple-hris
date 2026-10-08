@@ -8,6 +8,7 @@ import type { PayrollEvent } from './payroll-cycle';
 import type { CollectionEntry, ProblemEntry, StoredEntry } from './scoring';
 import type { CustomSection, Outcome, RowSectionKey, SectionSetting, Weekday } from './sections';
 import type { BoardRole, GrantRole } from './roles';
+import type { FrequencyProgress, TaskFrequency } from './tasks';
 
 export interface BoardRow {
   id: string;
@@ -106,4 +107,49 @@ export interface RosterPerson {
 export interface ApiError {
   error: string;
   code: string;
+}
+
+// ---------------------------------------------------------------------------
+// Task boards (plan Task 7 + 8, Open item 393): GET /api/accounting-scoreboard/tasks. Not part of the board read.
+// ---------------------------------------------------------------------------
+
+/** Someone a task can belong to: a live person row (named by its label), a member, or a role grant. */
+export interface TaskPerson {
+  email: string;
+  name: string;
+}
+
+/** A live task. Archived tasks are history and are not sent. */
+export interface BoardTask {
+  id: string;
+  ownerEmail: string;
+  title: string;
+  frequency: TaskFrequency;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/** A live tick in a task's CURRENT period (the server only sends those). */
+export interface TaskCheck {
+  taskId: string;
+  periodKey: string;
+  checkedBy: string;
+  checkedAt: string;
+}
+
+export interface TasksPayload {
+  /** US Eastern: every period is computed from it. */
+  today: string;
+  /** A permission, resolved per request, never cached. */
+  viewer: { email: string; role: BoardRole };
+  /** Whose tasks are shown: one person (the viewer's own, or a person an Admin or Assistant picked), or everyone. */
+  view: { kind: 'person'; person: TaskPerson; own: boolean } | { kind: 'all' };
+  /** The person picker (Admin and Assistant); null for a Team member. */
+  people: TaskPerson[] | null;
+  tasks: BoardTask[];
+  checks: TaskCheck[];
+  /** The All view: everyone's live tasks counted together, for the progress message. */
+  teamProgress: FrequencyProgress[] | null;
+  /** Whether Post to Chat can send (the webhook env is set). Admins only; null for everyone else. */
+  chatConfigured: boolean | null;
 }
