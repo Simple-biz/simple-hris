@@ -26,6 +26,13 @@ import {
 } from '@/components/employee/employee-payout-fields';
 import { resolveEffectivePayoutProcessor } from '@/lib/employee/payout-completeness';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
+import { PayoutChangeNotice, PayoutTrackLine } from '@/components/banking/payout-change-notice';
+import {
+  PAYOUT_CHANGE_NOTICE_VERSION,
+  assessPayoutChange,
+  parsePayoutTrack,
+  type PayoutTrackRecord,
+} from '@/lib/banking/payout-change-safety';
 
 type Step = 'email' | 'code' | 'edit' | 'done';
 
@@ -46,6 +53,20 @@ export default function UpdateBankInfoPage() {
 
   const [preferredProcessor, setPreferredProcessor] = useState<ProcessorId | ''>('');
   const [payout, setPayout] = useState<PayoutFields>(() => ({ ...emptyPayout }));
+
+  // ── Payout change safety (Kane, 2026-10-07) ──────────────────────────────
+  // What is stored now (the verified prefill, then whatever this session last
+  // saved), so the form can tell what a save CHANGES; the record of the account
+  // on file; and the acknowledgement + the two conditional confirmations the
+  // server refuses a change without. `force*` turns a box on when the server
+  // flagged something this page did not (it judges against more names).
+  const [storedPayout, setStoredPayout] = useState<Record<string, unknown>>({});
+  const [payoutTrack, setPayoutTrack] = useState<PayoutTrackRecord | null>(null);
+  const [noticeAck, setNoticeAck] = useState(false);
+  const [cardConfirmed, setCardConfirmed] = useState(false);
+  const [holderConfirmed, setHolderConfirmed] = useState(false);
+  const [forceCardConfirm, setForceCardConfirm] = useState(false);
+  const [forceHolderConfirm, setForceHolderConfirm] = useState(false);
 
   // ── Payroll-lock probe ────────────────────────────────────────────────────
   // While Accounting is dispatching payroll the /save endpoint hard-blocks with
@@ -126,6 +147,7 @@ export default function UpdateBankInfoPage() {
         work_email?: string;
         name?: string | null;
         payout?: Record<string, unknown>;
+        payout_track?: unknown;
         error?: string;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'That code is incorrect.');
@@ -135,6 +157,9 @@ export default function UpdateBankInfoPage() {
       setName(json.name ?? null);
 
       const payoutRow = (json.payout ?? {}) as Record<string, unknown>;
+      setStoredPayout(payoutRow);
+      setPayoutTrack(parsePayoutTrack(json.payout_track));
+      resetSafety();
       const draft = payoutDraftFromIdsRow(payoutRow);
       // Seed the picker from the rail the employee is ACTUALLY paid on: their
       // Disbursement pick if they made one, else their Bank Preferred
@@ -153,6 +178,42 @@ export default function UpdateBankInfoPage() {
     }
   };
 
+  const resetSafety = () => {
+    setNoticeAck(false);
+    setCardConfirmed(false);
+    setHolderConfirmed(false);
+    setForceCardConfirm(false);
+    setForceHolderConfirm(false);
+  };
+
+  // The 18 payout keys this page posts — the same object the safety assessment
+  // reads, so the boxes shown are the boxes the server will ask for.
+  const payoutFields = {
+    preferred_processor: preferredProcessor || null,
+    preferred_bank_slot: payout.preferredBankSlot || null,
+    hurupay_email: payout.hurupayEmail,
+    wepay_email: payout.wepayEmail,
+    higlobe_email: payout.higlobeEmail,
+    higlobe_account_name: payout.higlobeAccountName,
+    wise_email: payout.wiseEmail,
+    wise_tag: payout.wiseTag,
+    phone_number: payout.phoneNumber,
+    full_address: payout.fullAddress,
+    bank_name: payout.bankName,
+    account_holder_name: payout.accountHolderName,
+    account_number: payout.accountNumber,
+    swift_code: payout.swiftCode,
+    alt_bank_name: payout.altBankName,
+    alt_account_holder_name: payout.altAccountHolderName,
+    alt_account_number: payout.altAccountNumber,
+    alt_routing_number: payout.altSwiftCode,
+  };
+  const safety = assessPayoutChange(storedPayout, payoutFields, [name]);
+  const cardShaped = forceCardConfirm || safety.flags.includes('card_shaped_account');
+  const holderMismatch = forceHolderConfirm || safety.flags.includes('holder_not_employee');
+  const safetyReady =
+    noticeAck && (!cardShaped || cardConfirmed) && (!holderMismatch || holderConfirmed);
+
   // ── Step 3: save the new details ──────────────────────────────────────────
   const save = async () => {
     if (payrollLocked) return;
@@ -160,26 +221,16 @@ export default function UpdateBankInfoPage() {
       toast.error('Choose a payment method.');
       return;
     }
+    if (!safetyReady) {
+      toast.error('Read the notice above and tick the confirmation box before saving.');
+      return;
+    }
     const payload = {
       session_token: sessionToken,
-      preferred_processor: preferredProcessor || null,
-      preferred_bank_slot: payout.preferredBankSlot || null,
-      hurupay_email: payout.hurupayEmail,
-      wepay_email: payout.wepayEmail,
-      higlobe_email: payout.higlobeEmail,
-      higlobe_account_name: payout.higlobeAccountName,
-      wise_email: payout.wiseEmail,
-      wise_tag: payout.wiseTag,
-      phone_number: payout.phoneNumber,
-      full_address: payout.fullAddress,
-      bank_name: payout.bankName,
-      account_holder_name: payout.accountHolderName,
-      account_number: payout.accountNumber,
-      swift_code: payout.swiftCode,
-      alt_bank_name: payout.altBankName,
-      alt_account_holder_name: payout.altAccountHolderName,
-      alt_account_number: payout.altAccountNumber,
-      alt_routing_number: payout.altSwiftCode,
+      ...payoutFields,
+      payout_notice_ack: PAYOUT_CHANGE_NOTICE_VERSION,
+      confirm_not_card_number: cardShaped && cardConfirmed,
+      confirm_holder_is_self: holderMismatch && holderConfirmed,
     };
     // Block a half-filled save (e.g. method chosen but its required field blank),
     // which would otherwise overwrite good details with empties.
@@ -194,11 +245,21 @@ export default function UpdateBankInfoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const json = (await res.json()) as { success?: boolean; error?: string };
+      const json = (await res.json()) as { success?: boolean; error?: string; code?: string };
       // 423 = payroll dispatch lock flipped on mid-session. Reflect it in the UI
       // (greys the controls, shows the notice) so it matches the server's block.
       if (res.status === 423) setPayrollLocked(true);
+      // The safety gate flagged something this page did not: show that box.
+      if (json.code === 'card_confirm_required') setForceCardConfirm(true);
+      if (json.code === 'holder_confirm_required') setForceHolderConfirm(true);
+      if (json.code === 'payout_notice_ack_required') setNoticeAck(false);
       if (!res.ok || json.error) throw new Error(json.error ?? 'Could not save your details.');
+      // What was saved is now what is stored. A record that described the account
+      // just replaced no longer describes the account on file, so it is dropped
+      // rather than carried over to the new one.
+      setStoredPayout((prev) => ({ ...prev, ...payoutFields }));
+      if (safety.destinationChanged) setPayoutTrack(null);
+      resetSafety();
       setStep('done');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not save your details.');
@@ -310,6 +371,8 @@ export default function UpdateBankInfoPage() {
                 changed, then save.
               </Stepline>
 
+              <PayoutTrackLine track={payoutTrack} />
+
               <PreferredPaymentMethodRadios
                 value={preferredProcessor}
                 onChange={setPreferredProcessor}
@@ -329,11 +392,26 @@ export default function UpdateBankInfoPage() {
                 </p>
               )}
 
+              <PayoutChangeNotice
+                idPrefix="bu-safety"
+                track={payoutTrack}
+                ownName={name}
+                acknowledged={noticeAck}
+                onAcknowledgedChange={setNoticeAck}
+                cardShaped={cardShaped}
+                cardConfirmed={cardConfirmed}
+                onCardConfirmedChange={setCardConfirmed}
+                holderMismatch={holderMismatch}
+                holderConfirmed={holderConfirmed}
+                onHolderConfirmedChange={setHolderConfirmed}
+                disabled={busy || payrollLocked}
+              />
+
               <Button
                 type="button"
                 className="w-full"
                 onClick={save}
-                disabled={busy || payrollLocked || !preferredProcessor}
+                disabled={busy || payrollLocked || !preferredProcessor || !safetyReady}
               >
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Save changes

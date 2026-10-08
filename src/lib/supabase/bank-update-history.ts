@@ -3,6 +3,7 @@ import 'server-only';
 import { createSupabaseServiceRoleClient } from './server';
 import { normEmail } from '@/lib/email/norm-email';
 import { selectAllPaged } from './select-all-paged';
+import type { PayoutChangeAttestation } from '@/lib/banking/payout-change-safety';
 
 /**
  * Bank/payout change history — a dedicated, non-clearable table (separate from
@@ -45,6 +46,10 @@ export type BankChangeEntry = {
   via: string | null;
   ip_address: string | null;
   created_at: string;
+  /** What the employee attested on a self-service change (notice version, flags,
+   *  confirmations). Null for staff edits, for rows before 2026-10-07, and while
+   *  the `safety` column migration is unapplied. */
+  safety: PayoutChangeAttestation | null;
 };
 
 export type NewBankUpdateHistoryRow = {
@@ -56,7 +61,15 @@ export type NewBankUpdateHistoryRow = {
   created_new: boolean;
   via: string | null;
   ip_address: string | null;
+  /** Self-service attestation; omit for staff edits. */
+  safety?: PayoutChangeAttestation | null;
 };
+
+/** PostgREST's answer when a payload names a column the table does not have yet. */
+function isMissingSafetyColumn(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes('safety') && (m.includes('schema cache') || m.includes('column'));
+}
 
 /**
  * Record one bank/payout change. Best-effort — an un-migrated environment
@@ -67,7 +80,7 @@ export async function insertBankUpdateHistory(row: NewBankUpdateHistoryRow): Pro
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { error: 'Supabase not configured' };
 
-  const { error } = await supabase.from('bank_update_history').insert({
+  const base = {
     work_email:    row.work_email,
     employee_name: row.employee_name,
     fields:        row.fields,
@@ -76,7 +89,21 @@ export async function insertBankUpdateHistory(row: NewBankUpdateHistoryRow): Pro
     created_new:   row.created_new,
     via:           row.via,
     ip_address:    row.ip_address,
-  });
+  };
+  // `safety` is named ONLY when there is an attestation: a staff edit's payload is
+  // byte-identical to before. Until references/sql/alter/
+  // 2026-10-07_bank_update_history_safety.sql is applied, PostgREST rejects a
+  // payload naming the column (PGRST204) BEFORE writing anything, which would
+  // lose the whole history row. So that one error retries without the column:
+  // the change itself is still recorded here, and the attestation is still on
+  // the audit_log row and Accounting's alert. Any other error is returned as is.
+  if (row.safety) {
+    const { error } = await supabase.from('bank_update_history').insert({ ...base, safety: row.safety });
+    if (!error) return { error: null };
+    if (!isMissingSafetyColumn(error.message)) return { error: error.message };
+    console.error('[bank-update-history] safety column missing; history row written without the attestation');
+  }
+  const { error } = await supabase.from('bank_update_history').insert(base);
 
   return { error: error?.message ?? null };
 }
@@ -109,6 +136,34 @@ function toEntry(r: Record<string, unknown>): BankChangeEntry {
     via: (r.via as string | null) ?? null,
     ip_address: (r.ip_address as string | null) ?? null,
     created_at: String(r.created_at),
+    safety: toAttestation(r.safety),
+  };
+}
+
+/** Read a stored attestation back, or null when the row has none (or the column does not exist yet). */
+function toAttestation(raw: unknown): PayoutChangeAttestation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.notice_version !== 'string') return null;
+  const prev = o.previous_account as Record<string, unknown> | null | undefined;
+  return {
+    notice_version: o.notice_version,
+    attested_at: String(o.attested_at ?? ''),
+    destination_changed: o.destination_changed === true,
+    flags: Array.isArray(o.flags)
+      ? o.flags.filter((f): f is PayoutChangeAttestation['flags'][number] =>
+          f === 'card_shaped_account' || f === 'holder_not_employee')
+      : [],
+    holder_confirmed: o.holder_confirmed === true,
+    card_confirmed: o.card_confirmed === true,
+    previous_account:
+      prev && typeof prev === 'object' && typeof prev.paid_count === 'number'
+        ? {
+            paid_count: prev.paid_count,
+            problem_count: typeof prev.problem_count === 'number' ? prev.problem_count : 0,
+            last_paid_on: typeof prev.last_paid_on === 'string' ? prev.last_paid_on : null,
+          }
+        : null,
   };
 }
 
@@ -124,7 +179,9 @@ export async function fetchRecentBankChanges(
 
   const { data, error } = await supabase
     .from('bank_update_history')
-    .select('id, work_email, employee_name, fields, changes, processor, created_new, via, ip_address, created_at')
+    // `*`, not a column list: it reads `safety` once the 2026-10-07 column exists
+    // and still works before it does (a named missing column is a 400).
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -148,7 +205,9 @@ export async function getPeopleBankHistory(
 
   const { data, error } = await supabase
     .from('bank_update_history')
-    .select('id, work_email, employee_name, fields, changes, processor, created_new, via, ip_address, created_at')
+    // `*`, not a column list: it reads `safety` once the 2026-10-07 column exists
+    // and still works before it does (a named missing column is a 400).
+    .select('*')
     .ilike('work_email', target)
     .order('created_at', { ascending: false })
     .limit(limit);

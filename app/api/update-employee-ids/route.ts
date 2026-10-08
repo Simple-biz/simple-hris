@@ -16,6 +16,18 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureEditAnyView } from "@/lib/auth/authorize-feature";
+import { findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
+import { resolveEffectivePayoutProcessor } from "@/lib/employee/payout-completeness";
+import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
+import {
+  SELF_SERVICE_PAYOUT_FIELDS,
+  assessPayoutChange,
+  attestationAlertSentences,
+  buildPayoutAttestation,
+  judgePayoutChange,
+  type PayoutChangeAttestation,
+  type PayoutSafetyAnswers,
+} from "@/lib/banking/payout-change-safety";
 
 /** Fields blocked while Accounting has payroll dispatch locked (employees may still update personal_email). */
 const BLOCKED_WHILE_PAYROLL_LOCKED = new Set([
@@ -67,6 +79,11 @@ function clientIp(req: Request): string | null {
  * how Accounting hears it needs changing — so the title says so, not only the
  * message. Same type and `neutral` tone: the notifications CHECK rejects
  * anything else, silently.
+ *
+ * `attestation` (self-service only) adds what the employee confirmed about a
+ * flagged account and the record of the account they left — sentences and flags,
+ * never values. The mismatch title keeps precedence; a flagged change without one
+ * is titled "check the new account". Same as the external-link route.
  */
 async function notifyReviewers(
   supabase: NonNullable<ReturnType<typeof createSupabaseServiceRoleClient>>,
@@ -74,6 +91,7 @@ async function notifyReviewers(
   displayName: string | null,
   changedFields: string[],
   mismatch: ReturnType<typeof sendFromMismatch>,
+  attestation: PayoutChangeAttestation | null,
 ): Promise<void> {
   try {
     const { data: roleRows } = await supabase
@@ -90,18 +108,29 @@ async function notifyReviewers(
     );
     if (recipients.length === 0) return;
     const base = `${displayName || workEmail} updated their bank & payout details from the Employee Dashboard.`;
+    const sentences = [
+      base,
+      ...(mismatch ? [sendFromMismatchSentence(mismatch)] : []),
+      ...(attestation ? attestationAlertSentences(attestation) : []),
+    ];
+    const title = mismatch
+      ? "Bank details updated — sending bank no longer matches"
+      : attestation && attestation.flags.length > 0
+        ? "Bank details updated — check the new account"
+        : "Bank details updated";
     await supabase.from("employee_notifications").insert(
       recipients.map((to) => ({
         recipient_email: to,
         type: "people.banking.self_updated",
         tone: "neutral",
-        title: mismatch ? "Bank details updated — sending bank no longer matches" : "Bank details updated",
-        message: mismatch ? `${base} ${sendFromMismatchSentence(mismatch)}` : base,
+        title,
+        message: sentences.join(" "),
         details: {
           work_email: workEmail,
           via: "employee_dashboard",
           fields: changedFields,
           ...(mismatch ? { send_from_mismatch: { send_from: mismatch.sendFrom, receiving: mismatch.receiving } } : {}),
+          ...(attestation ? { safety: attestation } : {}),
         },
       })),
     );
@@ -143,8 +172,10 @@ async function recordDashboardBankChange(opts: {
   /** The sending bank this save leaves mismatched with the receiving channel,
    *  if any — named in the reviewer alert (see `notifyReviewers`). */
   mismatch: ReturnType<typeof sendFromMismatch>;
+  /** What the employee attested (self-service changes only; null for staff edits). */
+  attestation: PayoutChangeAttestation | null;
 }): Promise<void> {
-  const { supabase, req, workEmail, displayName, bankChangedFields, beforeRow, update, created, source, actor, mismatch } = opts;
+  const { supabase, req, workEmail, displayName, bankChangedFields, beforeRow, update, created, source, actor, mismatch, attestation } = opts;
   if (bankChangedFields.length === 0 || !workEmail) return;
 
   const ip = clientIp(req);
@@ -189,6 +220,7 @@ async function recordDashboardBankChange(opts: {
       processor: update.preferred_processor ?? null,
       created,
       changes,
+      ...(attestation ? { safety: attestation } : {}),
     },
     ip_address: ip,
   }).catch(() => undefined);
@@ -202,9 +234,10 @@ async function recordDashboardBankChange(opts: {
     created_new: created,
     via: source,
     ip_address: ip,
+    safety: attestation,
   }).catch(() => undefined);
 
-  await notifyReviewers(supabase, workEmail, displayName, bankChangedFields, mismatch);
+  await notifyReviewers(supabase, workEmail, displayName, bankChangedFields, mismatch, attestation);
 
   // Nudge the People-tab "Bank changes" live feed to refetch instantly.
   await pulseBankChanges();
@@ -434,21 +467,21 @@ export async function POST(req: Request) {
       }
     }
 
-    // Snapshot the CURRENT value of the bank fields being written, BEFORE the
-    // update overwrites them, so the People-tab feed can show a masked
-    // before→after. Best-effort.
-    const snapshotFields = Object.keys(update).filter((k) =>
-      BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
-    );
-    // A receiving move no longer touches the sending bank (2026-09-24 — the
-    // employee-side 1:1 mirror that FILED a matching change is gone), so read the
-    // stored one alongside: the reviewer alert names a mismatch this save leaves.
-    if ("preferred_processor" in update) snapshotFields.push("bank_preferred");
+    // Snapshot the CURRENT payout record BEFORE the update overwrites it, so the
+    // People-tab feed can show a masked before→after and the safety gate below can
+    // tell what this save changes. The WHOLE record is read, not just the posted
+    // fields: which account the money goes to depends on the slot and the rail
+    // too. A receiving move no longer touches the sending bank (2026-09-24 — the
+    // employee-side 1:1 mirror that FILED a matching change is gone), so the
+    // stored one rides along: the reviewer alert names a mismatch this save
+    // leaves. Best-effort: a failed read leaves `{}`, which makes the gate read
+    // everything as changed, so it asks rather than skips.
+    const touchesPayout = Object.keys(update).some((k) => BLOCKED_WHILE_PAYROLL_LOCKED.has(k));
     let beforeRow: Record<string, unknown> = {};
-    if (snapshotFields.length > 0) {
+    if (touchesPayout) {
       const { data } = await supabase
         .from("employee_ids")
-        .select([...snapshotFields, "name"].join(", "))
+        .select([...SELF_SERVICE_PAYOUT_FIELDS, "bank_preferred", "name", "work_email", "personal_email"].join(", "))
         .eq(eqColumn, identifier)
         .limit(1);
       beforeRow = (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
@@ -479,6 +512,66 @@ export async function POST(req: Request) {
       BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
     );
 
+    // PAYOUT CHANGE SAFETY (Kane, 2026-10-07) — the SAME gate as the external
+    // link, for the employee's OWN payout only. A change is refused unless the
+    // employee acknowledged the current bank-change notice, plus a separate
+    // confirmation when the new account looks like a card number or its holder
+    // does not read as them. Staff fixing someone else's row (People tab,
+    // Payroll Wizard Readiness) are not asked: they are not attesting to their
+    // own account, and their edit is attributed to them in the trail. The names
+    // judged against are the roster's and the payout row's, never
+    // `bootstrap_display_name`, which the caller supplies.
+    let attestation: PayoutChangeAttestation | null = null;
+    if (isSelfEdit && bankChangedFields.length > 0) {
+      const roster = await findActiveEmployeeByEmail(authz.effectiveEmail);
+      const answers: PayoutSafetyAnswers = {
+        payout_notice_ack: fields.payout_notice_ack,
+        confirm_holder_is_self: fields.confirm_holder_is_self,
+        confirm_not_card_number: fields.confirm_not_card_number,
+      };
+      const verdict = judgePayoutChange(
+        assessPayoutChange(beforeRow, update, [
+          roster?.name ?? null,
+          typeof beforeRow.name === "string" ? beforeRow.name : null,
+        ]),
+        answers,
+      );
+      if (!verdict.ok) {
+        // The record that the employee WAS warned, even though nothing was saved.
+        await insertAuditLog({
+          user_name: roster?.name || authz.sessionEmail,
+          user_role: "employee (dashboard)",
+          action: "bank_update.safety_refused",
+          resource: "employee_ids",
+          resource_id: authz.effectiveEmail,
+          details: { via: EMPLOYEE_DASHBOARD_SOURCE, code: verdict.code, flags: verdict.assessment.flags },
+          ip_address: clientIp(req),
+        }).catch(() => undefined);
+        return NextResponse.json(
+          { error: verdict.error, code: verdict.code, flags: verdict.assessment.flags },
+          { status: 400 },
+        );
+      }
+      if (verdict.assessment.changed) {
+        // How the account being LEFT had done — counts only. Read only when the
+        // destination actually moves.
+        const previousTrack = verdict.assessment.destinationChanged
+          ? await readPayoutTrackRecord({
+              emails: [
+                authz.effectiveEmail,
+                roster?.workEmail,
+                roster?.personalEmail,
+                beforeRow.work_email as string | null | undefined,
+                beforeRow.personal_email as string | null | undefined,
+              ],
+              row: beforeRow,
+              rail: resolveEffectivePayoutProcessor(beforeRow),
+            })
+          : null;
+        attestation = buildPayoutAttestation(verdict.assessment, answers, previousTrack);
+      }
+    }
+
     const { data: updatedRows, error: updateError } = await supabase
       .from("employee_ids")
       .update(update)
@@ -503,6 +596,7 @@ export async function POST(req: Request) {
         source,
         actor,
         mismatch,
+        attestation,
       });
       return NextResponse.json({
         success: true,
@@ -552,6 +646,7 @@ export async function POST(req: Request) {
         source,
         actor,
         mismatch,
+        attestation,
       });
       return NextResponse.json({
         success: true,
@@ -583,6 +678,7 @@ export async function POST(req: Request) {
         source,
         actor,
         mismatch,
+        attestation,
       });
       return NextResponse.json({
         success: true,

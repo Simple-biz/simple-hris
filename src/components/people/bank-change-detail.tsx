@@ -3,7 +3,7 @@
 import { type ReactNode } from 'react';
 import {
   Clock, Landmark, ShieldCheck, CreditCard, Globe, UserPlus, PencilLine, Link2, Sparkles,
-  ArrowRight, ArrowUpRight, UserRound,
+  ArrowRight, ArrowUpRight, UserRound, AlertTriangle, FileSignature,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { TeamAvatar } from '@/components/team/team-ui';
 import { cn } from '@/lib/utils';
+import type { PayoutChangeAttestation } from '@/lib/banking/payout-change-safety';
 
 /**
  * Shared "what changed" rendering for a self-service bank/payout change —
@@ -40,6 +41,14 @@ export interface BankChangeEntry {
   via: string | null;
   ip_address: string | null;
   created_at: string;
+  /** What the employee attested on a self-service change (2026-10-07 on).
+   *  Absent/null for staff edits, older rows, and while the column is unapplied. */
+  safety?: PayoutChangeAttestation | null;
+}
+
+/** Plain-words label for a payout safety flag — the feed chip and the dialog share it. */
+export function safetyFlagLabel(flag: PayoutChangeAttestation['flags'][number]): string {
+  return flag === 'card_shaped_account' ? 'Card-shaped account number' : 'Holder is not the employee';
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -151,6 +160,11 @@ export function BankChangeDetailDialog({
             {row.processor && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold capitalize text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
                 <CreditCard className="h-3 w-3" /> {row.processor}
+              </span>
+            )}
+            {row.safety && row.safety.flags.length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-semibold text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                <AlertTriangle className="h-3 w-3" /> Check the new account
               </span>
             )}
           </div>
@@ -275,6 +289,12 @@ export function BankChangeDetailDialog({
 
         </div>
 
+        {/* ── What the employee attested (self-service, 2026-10-07 on). The record
+              that a wrong account entered here is the employee's own error: the
+              notice they acknowledged, what they confirmed, and the account they
+              left. Flags and counts only — never a value. ── */}
+        {row.safety && <AttestationBlock a={row.safety} />}
+
         {/* ── Primary action: jump to this person's roster profile ──────────── */}
         {onOpenProfile && (
           <Button
@@ -305,6 +325,43 @@ export function BankChangeDetailDialog({
 }
 
 /** A single before/after value chip in the "what changed" list. */
+function AttestationBlock({ a }: { a: PayoutChangeAttestation }) {
+  const prev = a.previous_account;
+  return (
+    <div className="rounded-xl border border-zinc-200/80 bg-white/60 p-3.5 text-[12px] dark:border-zinc-800 dark:bg-zinc-900/40">
+      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+        <FileSignature className="h-3.5 w-3.5" /> Employee attestation
+      </div>
+      <ul className="space-y-1.5 text-zinc-700 dark:text-zinc-300">
+        <li>
+          Acknowledged the bank-change notice (version {a.notice_version})
+          {a.attested_at ? <> on {absoluteTime(a.attested_at)}</> : null}: own, open account; a mistake in it is
+          theirs, not an HRIS or payroll error.
+        </li>
+        {a.flags.map((f) => (
+          <li key={f} className="text-rose-700 dark:text-rose-300">
+            {safetyFlagLabel(f)} —{' '}
+            {f === 'card_shaped_account'
+              ? a.card_confirmed
+                ? 'employee confirmed it is an account number, not a card.'
+                : 'not confirmed.'
+              : a.holder_confirmed
+                ? 'employee confirmed the account is in their own name.'
+                : 'not confirmed.'}
+          </li>
+        ))}
+        <li>
+          {a.destination_changed
+            ? prev
+              ? `Moved pay to a new account. The account they left had ${prev.paid_count} successful payment${prev.paid_count === 1 ? '' : 's'} on record${prev.problem_count ? ` and ${prev.problem_count} with a problem` : ''}${prev.last_paid_on ? `, last on ${prev.last_paid_on}` : ''}.`
+              : 'Moved pay to a new account.'
+            : 'The account payroll pays did not change.'}
+        </li>
+      </ul>
+    </div>
+  );
+}
+
 export function ValuePill({ tone, children }: { tone: 'before' | 'after'; children: ReactNode }) {
   return (
     <span

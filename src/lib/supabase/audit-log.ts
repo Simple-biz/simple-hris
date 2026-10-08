@@ -55,6 +55,10 @@ export type AuditAction =
   | 'bank_update.otp_verified'
   | 'bank_update.otp_verify_failed'
   | 'bank_update.saved'
+  // A self-service payout change refused because the bank-change notice was not
+  // acknowledged, or a card-shaped number / non-matching holder was not confirmed.
+  // The record that the employee WAS warned (payout-change-safety.ts).
+  | 'bank_update.safety_refused'
   | 'bank_override.saved'
   // HR Dashboard — pending hires / onboarding pipeline
   | 'hr.pending.created'

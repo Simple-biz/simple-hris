@@ -122,6 +122,13 @@ import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-t
 // one resolver, one palette, one contrast proof; it simply gains a `masked` mode
 // for the payee looking at their own record.
 import { BankCard } from '@/components/banking/bank-card';
+import { PayoutChangeNotice, PayoutTrackLine } from '@/components/banking/payout-change-notice';
+import {
+  PAYOUT_CHANGE_NOTICE_VERSION,
+  assessPayoutChange,
+  parsePayoutTrack,
+  type PayoutTrackRecord,
+} from '@/lib/banking/payout-change-safety';
 // …and the deck the card sits in when there is a second account on the record.
 import { BankCardDeck } from '@/components/banking/bank-card-deck';
 import {
@@ -396,12 +403,15 @@ function PayoutReadView({
   bank,
   row,
   reduceMotion,
+  track,
 }: {
   /** The EFFECTIVE, server-resolved rail. Never the raw Disbursement pick. */
   rail: ProcessorId | null;
   bank: PreferredBank;
   row: EmployeeIdRow | null;
   reduceMotion: boolean;
+  /** How the account PD pays has done (Kane, 2026-10-07). Null renders nothing. */
+  track: PayoutTrackRecord | null;
 }) {
   /**
    * Which card of the deck is facing. Lifted OUT of `BankCardDeck` because the
@@ -456,6 +466,9 @@ function PayoutReadView({
           Paid via {railLabel}
         </p>
       )}
+      {/* The PAID account's record. Describes the account Payment Dispatch pays,
+          never the backup card a spin may have brought forward. */}
+      <PayoutTrackLine track={track} className="mb-3" />
       {showBankCard && hasDeck && (
         <BankCardDeck
           front={bank}
@@ -1197,6 +1210,17 @@ export default function EmployeeProfile({
   const [payoutSaving, setPayoutSaving] = useState(false);
   const [payoutSavedAt, setPayoutSavedAt] = useState<string | null>(null);
   const [payoutEditing, setPayoutEditing] = useState(false);
+  // Payout change safety (Kane, 2026-10-07): the record of the account on file
+  // (rides the uncached /api/employee-ids read, `&track=1`, so it is never in
+  // storage), the acknowledgement the save route refuses a change without, and
+  // the two conditional confirmations. `force*` turns a box on when the server
+  // flagged something this form did not.
+  const [payoutTrack, setPayoutTrack] = useState<PayoutTrackRecord | null>(null);
+  const [payoutNoticeAck, setPayoutNoticeAck] = useState(false);
+  const [payoutCardConfirmed, setPayoutCardConfirmed] = useState(false);
+  const [payoutHolderConfirmed, setPayoutHolderConfirmed] = useState(false);
+  const [forcePayoutCardConfirm, setForcePayoutCardConfirm] = useState(false);
+  const [forcePayoutHolderConfirm, setForcePayoutHolderConfirm] = useState(false);
 
   /**
    * The Disbursement pane ELONGATES between reading and editing instead of
@@ -1763,6 +1787,11 @@ export default function EmployeeProfile({
   }, [bankInfo]);
 
   const resetPayoutDraft = React.useCallback(() => {
+    setPayoutNoticeAck(false);
+    setPayoutCardConfirmed(false);
+    setPayoutHolderConfirmed(false);
+    setForcePayoutCardConfirm(false);
+    setForcePayoutHolderConfirm(false);
     if (!bankInfo) {
       setPreferredProcessor('');
       setPayout({ ...emptyPayout });
@@ -1796,7 +1825,7 @@ export default function EmployeeProfile({
         const [empRes, rateRes, idsRes, fxRes, mrRes] = await Promise.all([
           fetch(`/api/employees?${emailParam}`, { cache: 'no-store' }),
           fetch(`/api/employee-hourly-rates?${emailParam}`, { cache: 'no-store' }),
-          fetch(`/api/employee-ids?${emailParam}`, { cache: 'no-store' }),
+          fetch(`/api/employee-ids?${emailParam}&track=1`, { cache: 'no-store' }),
           fetch('/api/app-settings?key=usd_to_php_rate', { cache: 'no-store' }),
           optional(`/api/employee-master-record?${emailParam}`),
         ]);
@@ -1807,6 +1836,7 @@ export default function EmployeeProfile({
           rows?: EmployeeIdRow[];
           error?: string | null;
           walletRail?: unknown;
+          payoutTrack?: unknown;
         };
         const fxJson = (await fxRes.json()) as { value: string | null };
 
@@ -1862,6 +1892,7 @@ export default function EmployeeProfile({
         setBankInfo(myId ?? null);
         setBankInfoLoaded(true);
         setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
+        setPayoutTrack(parsePayoutTrack(idsJson.payoutTrack));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -1977,11 +2008,55 @@ export default function EmployeeProfile({
     return employeeEmail.slice(0, 2).toUpperCase();
   }, [heroName, employeeEmail]);
 
+  // The payout keys this form posts — the RECEIVING channel only. The sending
+  // bank is never sent from here; it is Accounting's (People → Banking) since
+  // 2026-09-24. The same object feeds the safety assessment below, so the boxes
+  // shown are the boxes the server will ask for.
+  const payoutFields = {
+    preferred_processor: preferredProcessor || null,
+    preferred_bank_slot: payout.preferredBankSlot || null,
+    hurupay_email: payout.hurupayEmail,
+    wepay_email: payout.wepayEmail,
+    higlobe_email: payout.higlobeEmail,
+    higlobe_account_name: payout.higlobeAccountName,
+    wise_email: payout.wiseEmail,
+    wise_tag: payout.wiseTag,
+    phone_number: payout.phoneNumber,
+    full_address: payout.fullAddress,
+    bank_name: payout.bankName,
+    account_holder_name: payout.accountHolderName,
+    account_number: payout.accountNumber,
+    swift_code: payout.swiftCode,
+    alt_bank_name: payout.altBankName,
+    alt_account_holder_name: payout.altAccountHolderName,
+    alt_account_number: payout.altAccountNumber,
+    alt_routing_number: payout.altSwiftCode,
+  };
+  // Plain consts, not hooks: this sits below the state block on purpose and is
+  // cheap enough to recompute per render. Names judged against are the roster's
+  // and the payout row's, the same two the server uses.
+  const payoutOwnName = displayName && displayName !== '—' ? displayName : bankInfo?.name ?? null;
+  const payoutSafety = assessPayoutChange(
+    (bankInfo ?? {}) as unknown as Record<string, unknown>,
+    payoutFields,
+    [master?.name ?? null, bankInfo?.name ?? null],
+  );
+  const payoutCardShaped = forcePayoutCardConfirm || payoutSafety.flags.includes('card_shaped_account');
+  const payoutHolderMismatch = forcePayoutHolderConfirm || payoutSafety.flags.includes('holder_not_employee');
+  const payoutSafetyReady =
+    payoutNoticeAck &&
+    (!payoutCardShaped || payoutCardConfirmed) &&
+    (!payoutHolderMismatch || payoutHolderConfirmed);
+
   const savePaymentDetails = async () => {
     if (payrollLocked) {
       toast.error('Payroll processing is in progress', {
         description: 'Bank and payout details cannot be edited until accounting finishes.',
       });
+      return;
+    }
+    if (!payoutSafetyReady) {
+      toast.error('Read the bank-change notice and tick the confirmation box before saving.');
       return;
     }
     setPayoutSaving(true);
@@ -1995,43 +2070,39 @@ export default function EmployeeProfile({
         body: JSON.stringify({
           work_email: norm,
           bootstrap_display_name: bootstrapName || undefined,
-          // The RECEIVING channel only. The sending bank is never sent from
-          // here — it is Accounting's (People → Banking) since 2026-09-24.
-          preferred_processor: preferredProcessor || null,
-          preferred_bank_slot: payout.preferredBankSlot || null,
-          hurupay_email: payout.hurupayEmail,
-          wepay_email: payout.wepayEmail,
-          higlobe_email: payout.higlobeEmail,
-          higlobe_account_name: payout.higlobeAccountName,
-          wise_email: payout.wiseEmail,
-          wise_tag: payout.wiseTag,
-          phone_number: payout.phoneNumber,
-          full_address: payout.fullAddress,
-          bank_name: payout.bankName,
-          account_holder_name: payout.accountHolderName,
-          account_number: payout.accountNumber,
-          swift_code: payout.swiftCode,
-          alt_bank_name: payout.altBankName,
-          alt_account_holder_name: payout.altAccountHolderName,
-          alt_account_number: payout.altAccountNumber,
-          alt_routing_number: payout.altSwiftCode,
+          ...payoutFields,
+          payout_notice_ack: PAYOUT_CHANGE_NOTICE_VERSION,
+          confirm_not_card_number: payoutCardShaped && payoutCardConfirmed,
+          confirm_holder_is_self: payoutHolderMismatch && payoutHolderConfirmed,
         }),
       });
       const json = (await res.json()) as {
         error?: string | null;
         success?: boolean;
+        code?: string;
       };
+      // The safety gate flagged something this form did not: show that box.
+      if (json.code === 'card_confirm_required') setForcePayoutCardConfirm(true);
+      if (json.code === 'holder_confirm_required') setForcePayoutHolderConfirm(true);
+      if (json.code === 'payout_notice_ack_required') setPayoutNoticeAck(false);
       if (!res.ok || json.error) throw new Error(json.error ?? 'Save failed');
 
       const idsRes = await fetch(
-        `/api/employee-ids?email=${encodeURIComponent(employeeEmail)}`,
+        `/api/employee-ids?email=${encodeURIComponent(employeeEmail)}&track=1`,
         { cache: 'no-store' },
       );
-      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; walletRail?: unknown };
+      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; walletRail?: unknown; payoutTrack?: unknown };
       const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
-      // Re-read the effective rail too — this save may have moved it.
+      // Re-read the effective rail too — this save may have moved it — and the
+      // record of whatever account is on file NOW.
       setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
+      setPayoutTrack(parsePayoutTrack(idsJson.payoutTrack));
+      setPayoutNoticeAck(false);
+      setPayoutCardConfirmed(false);
+      setPayoutHolderConfirmed(false);
+      setForcePayoutCardConfirm(false);
+      setForcePayoutHolderConfirm(false);
       onPayoutCompletionChange?.(isPayoutComplete((myId as unknown as Record<string, unknown>) ?? null));
       setPayoutSavedAt(new Date().toLocaleTimeString());
       setPayoutEditing(false);
@@ -2945,7 +3016,7 @@ export default function EmployeeProfile({
                               <Button
                                 type="button"
                                 size="sm"
-                                disabled={payoutSaving || payrollLocked || !payoutEditing}
+                                disabled={payoutSaving || payrollLocked || !payoutEditing || !payoutSafetyReady}
                                 onClick={savePaymentDetails}
                                 className="h-8 gap-1.5 rounded-lg bg-orange-500 text-[12px] text-white hover:bg-orange-600 disabled:opacity-50 dark:bg-orange-500 dark:hover:bg-orange-400"
                               >
@@ -3079,20 +3150,42 @@ export default function EmployeeProfile({
                                 }}
                               >
                                 {payoutEditing ? (
-                                  preferredProcessor ? (
-                                    <PayoutDetailsFields
-                                      processor={preferredProcessor}
-                                      payout={payout}
-                                      setPayout={setPayout}
-                                      disabled={payoutReadOnly}
+                                  <div className="space-y-4">
+                                    {preferredProcessor ? (
+                                      <PayoutDetailsFields
+                                        processor={preferredProcessor}
+                                        payout={payout}
+                                        setPayout={setPayout}
+                                        disabled={payoutReadOnly}
+                                      />
+                                    ) : null}
+                                    {/* Before any change lands: what the account
+                                        on file is worth, what a mistake costs,
+                                        and whose error it is. The Save button
+                                        above stays disabled until it is
+                                        acknowledged; the route refuses without. */}
+                                    <PayoutChangeNotice
+                                      idPrefix="profile-payout-safety"
+                                      track={payoutTrack}
+                                      ownName={payoutOwnName}
+                                      acknowledged={payoutNoticeAck}
+                                      onAcknowledgedChange={setPayoutNoticeAck}
+                                      cardShaped={payoutCardShaped}
+                                      cardConfirmed={payoutCardConfirmed}
+                                      onCardConfirmedChange={setPayoutCardConfirmed}
+                                      holderMismatch={payoutHolderMismatch}
+                                      holderConfirmed={payoutHolderConfirmed}
+                                      onHolderConfirmedChange={setPayoutHolderConfirmed}
+                                      disabled={payoutReadOnly || payoutSaving}
                                     />
-                                  ) : null
+                                  </div>
                                 ) : (
                                   <PayoutReadView
                                     rail={walletRailEffective}
                                     bank={paidSlotBank}
                                     row={bankInfo}
                                     reduceMotion={!!prefersReducedMotion}
+                                    track={payoutTrack}
                                   />
                                 )}
                               </motion.div>

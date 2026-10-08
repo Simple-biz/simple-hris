@@ -1,6 +1,7 @@
 import { getEmployeeIds, getEmployeeIdRowByEmail } from "@/lib/supabase/employee-ids";
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { resolveWalletRailLock } from "@/lib/employee/wallet-rail-lock";
+import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +32,21 @@ export async function GET(req: NextRequest) {
       authz.effectiveEmail,
       error ? undefined : { row },
     );
+    // `&track=1` (Profile → Payout only — the shell's completeness read does not
+    // pay for it): how many times the account on file has been paid, with no
+    // problems or with how many. Counts and dates only. A failed row or rail read
+    // is "unavailable", never "never paid" — a failed read is not a fact.
+    if (req.nextUrl.searchParams.get("track") === "1") {
+      const payoutTrack =
+        error || walletRail.error
+          ? { status: "unavailable" as const }
+          : await readPayoutTrackRecord({
+              emails: [authz.effectiveEmail, row?.work_email, row?.personal_email],
+              row: (row ?? null) as unknown as Record<string, unknown> | null,
+              rail: walletRail.effectiveRail,
+            });
+      return NextResponse.json({ rows: row ? [row] : [], error, walletRail, payoutTrack });
+    }
     return NextResponse.json({ rows: row ? [row] : [], error, walletRail });
   }
   const { rows, error } = await getEmployeeIds();

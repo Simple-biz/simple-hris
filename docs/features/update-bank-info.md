@@ -15,6 +15,13 @@ doc was written 2026-09-29 from the code, read-only. **Only two things in it wer
 against production for this doc:** the anon-key reads of `bank_update_otps` and
 `bank_update_history` (§ *Security notes*, 2026-09-29). Every other number cites its source.
 
+**Payout change safety, 2026-10-07** (§ *Payout change safety*): the page shows how many times
+the account on file has been paid, and a save that changes anything is refused until the employee
+acknowledges a versioned notice (card numbers, closed accounts, a spouse's or anyone else's
+account), plus a separate confirmation when the new account looks like a card number or its holder
+is not them. What they attested is recorded. The same gate runs on the Employee Dashboard's own
+save ([employee-profile.md](employee-profile.md) §6.4).
+
 It is the precedent the gift-address link was copied from
 ([gift-address-external-link.md:34-37](gift-address-external-link.md)). The two flows now
 differ in places, which §*Security notes* lists.
@@ -39,7 +46,12 @@ differ in places, which §*Security notes* lists.
 | Edge allowlist, rate limit, host isolation | `proxy.ts` |
 | Migrations | `references/sql/migrate/2026-06-29_bank_update_external_link.sql` · `2026-07-01_bank_update_history.sql` |
 | The email that links here | `references/n8n/bank-info-missing-notify.workflow.json` · `src/lib/people/bank-info-notify.ts` · `app/api/people/request-bank-info/route.ts` |
-| Tests that pin it | `src/lib/employee/send-from-accounting-only.test.ts:57-62` · `src/lib/notifications/notification-views.test.ts:25-40` |
+| Payout change safety: notice text + version, card/holder checks, the gate, the attestation, the track-record fold | `src/lib/banking/payout-change-safety.ts` (+ `.test.ts`, 25 tests) |
+| Track record reader (`payment_dispatches`, paged) | `src/lib/supabase/payout-track-record.ts` |
+| The notice and the track line (shared with the dashboard) | `src/components/banking/payout-change-notice.tsx` |
+| The attestation column | `references/sql/alter/2026-10-07_bank_update_history_safety.sql` · `scripts/apply-bank-update-history-safety-migration.mts` |
+| The measurement behind the design | `scripts/measure-payout-track-record.mts` (read-only, counts only) |
+| Tests that pin it | `src/lib/employee/send-from-accounting-only.test.ts:57-62` · `src/lib/notifications/notification-views.test.ts:25-40` · `src/lib/banking/payout-change-safety.test.ts` |
 
 ## Who uses it, and how they get there
 
@@ -74,19 +86,21 @@ differ in places, which §*Security notes* lists.
    (§Rules 2–4).
 3. **Code.** The field accepts six digits only (`page.tsx:112, 275`). **Resend code** re-runs
    step 2, and **Change email** goes back (`page.tsx:284-301`). `verify-otp` checks the newest
-   live code. On success it returns `session_token`, `work_email`, `name` and the current
-   payout record (`verify-otp/route.ts:52-71`).
+   live code. On success it returns `session_token`, `work_email`, `name`, the current
+   payout record, and `payout_track`: how many times the account on file has been paid
+   (rule 27).
 4. **Edit.** The method picker is seeded with the stored `preferred_processor`, else the
    **effective** rail (Bank Preferred → Disbursement → legacy cell), so a person routed on
    Bank Preferred is not shown an empty picker (`page.tsx:139-146`,
    `payout-completeness.ts:113-122`, [bank-preferred-routing.md:480-482](bank-preferred-routing.md)).
-   The fields for the chosen method render from the shared component
-   (`page.tsx:313-330`). **Save** is blocked in the browser until a method is chosen and its
-   required fields are filled (`page.tsx:159-162, 184-189`).
-5. **Save.** POSTs the session token plus 18 payout keys (`page.tsx:163-183`). Server order:
-   token → 401 · service role → 500 · field validation → 400 · dispatch lock → 423 · write ·
-   stamp · audit · history · reviewer alert · feed pulse · payroll email
-   (`save/route.ts:116-306`).
+   The fields for the chosen method render from the shared component. The track line sits above
+   them and the payout change notice below them (§ *Payout change safety*). **Save** is blocked in
+   the browser until a method is chosen, its required fields are filled, and the notice (plus any
+   card or holder confirmation it raised) is ticked.
+5. **Save.** POSTs the session token, the 18 payout keys and the three safety answers. Server
+   order: token → 401 · service role → 500 · field validation → 400 · dispatch lock → 423 ·
+   before-snapshot · **safety gate → 400** (with a `bank_update.safety_refused` audit row) · write ·
+   stamp · audit · history · reviewer alert · feed pulse · payroll email.
 6. **Done.** **Make another change** returns to the edit step with the same token
    (`page.tsx:355-363`). The token keeps working until its 20 minutes run out
    (`otp.ts:26, 230-233`), after which a save answers 401 *"Your verification expired"*
@@ -224,17 +238,53 @@ Each is what the code does at HEAD, with where it does it.
     bank details"* (`prefill.ts:15-20, 58, 70-79`). That fallback maps only
     `hurupay` / `wires` as a method (`prefill.ts:91`).
 
+### Payout change safety (2026-10-07)
+
+26. **A self-service save that changes anything is refused (400 `payout_notice_ack_required`)
+    unless `payout_notice_ack` equals `PAYOUT_CHANGE_NOTICE_VERSION` exactly.** A stale page
+    posting an older version, or `true`, is refused. A save that changes nothing needs no
+    acknowledgement. "Changed" compares each posted field with the stored row; the stored row is
+    read whole and best-effort, and an unread row (`{}`) makes everything read as changed, so the
+    gate asks rather than skips (`judgePayoutChange`, `assessPayoutChange`).
+27. **The track record counts `paid` dispatch rows whose recorded destination is the account on
+    file**: digits of `recipient_account_number` against the paid slot's account, or the wallet
+    email lowercased on a wallet rail, keyed on the rail Payment Dispatch pays (all three tiers,
+    `resolveWalletRailLock`). `problem` rows to the same account are counted too. A failed read is
+    `unavailable`, **never "0 payments"**. Rows with no recorded account cannot be attributed, so the
+    count is "on record", a floor.
+28. **A card-shaped account number is confirmed, never blocked.** A NEW account number (changed in
+    this save) with 15–19 digits, a card-network prefix and a valid Luhn digit needs
+    `confirm_not_card_number: true` (400 `card_confirm_required`). Not a block, because 2 of the 8
+    card-shaped numbers on file were paid successfully (measured 2026-10-07). A number already on
+    file is not re-flagged.
+29. **A holder who is not the employee is confirmed, never blocked.** When a slot's details change
+    (or the paid slot switches) and its holder name does not carry BOTH a given name and a surname
+    of the employee, or HiGlobe's account name likewise, the save needs
+    `confirm_holder_is_self: true` (400 `holder_confirm_required`). A shared surname alone is what a
+    spouse's account looks like, so it is a mismatch; surname particles (*dela*, *de los*, *san*)
+    never count. The names judged against come from the roster and the payout row, **never the
+    body**. Not a block, because 115 of 1,044 bank-rail holders on file read as a mismatch
+    (married names, short forms, roster typos).
+30. **What the employee attested is recorded and holds no value**: notice version, time, flags,
+    both confirmations, whether the destination moved, and the paid/problem counts of the account
+    they left. It goes on the `bank_update.saved` audit row (`details.safety`), the non-clearable
+    `bank_update_history.safety` column, and Accounting's alert (`details.safety` plus plain
+    sentences). A flagged change without a sending-bank mismatch is titled *"Bank details updated —
+    check the new account"*; the mismatch title keeps precedence (rule 18).
+31. **A refusal is recorded too** (`bank_update.safety_refused`, `{via, code, flags}`), so the
+    record shows the employee was warned even when nothing was saved.
+
 ## What it writes
 
 | Where | What | Code |
 | --- | --- | --- |
 | `bank_update_otps` | One row per code: `work_email`, `code_hash`, `attempts: 0`, `expires_at`, `request_ip`. A wrong guess bumps `attempts`, and the 5th sets `expires_at` to now. A verify sets `consumed_at`, `session_token` (the hash) and `session_expires_at`. | `otp.ts:139-145, 187-193, 197-205` |
-| `audit_log` | `bank_update.otp_requested`: `resource_id` = the typed email when nobody matched, the Work Email when someone did; `details` `{found}` or `{found, throttled}`. `bank_update.otp_verify_failed`: typed email, `{reason}`. `bank_update.otp_verified`: Work Email, `{has_existing_payout}`. `bank_update.saved`: Work Email, role `employee (external link)`, `{via, fields, processor, created, changes}` with masked `changes`. | `request-otp/route.ts:63-71, 88-96` · `verify-otp/route.ts:34-42, 55-63` · `save/route.ts:265-279` |
+| `audit_log` | `bank_update.otp_requested`: `resource_id` = the typed email when nobody matched, the Work Email when someone did; `details` `{found}` or `{found, throttled}`. `bank_update.otp_verify_failed`: typed email, `{reason}`. `bank_update.otp_verified`: Work Email, `{has_existing_payout}`. `bank_update.saved`: Work Email, role `employee (external link)`, `{via, fields, processor, created, changes, safety?}` with masked `changes` and the attestation (rule 30). `bank_update.safety_refused`: Work Email, `{via, code, flags}` (rule 31). | `request-otp/route.ts` · `verify-otp/route.ts` · `save/route.ts` |
 | `employee_ids` (existing) | The posted payout columns, on **every** row whose `work_email` matches case-insensitively | `save/route.ts:198-202` |
 | `employee_ids` (new) | When no row matches: `employee_id` `SELF-` + 14 hex characters, `name` (roster name, else derived from the address), `work_email`, `personal_email` (roster), plus the payout columns | `save/route.ts:48-53, 209-233` |
 | `employee_ids.bank_last_self_updated_at` | now(), best-effort | `save/route.ts:235-245` |
-| `bank_update_history` | `work_email`, `employee_name`, `fields`, masked `changes`, `processor` (= `preferred_processor`, the receive election, not the send-from rail), `created_new`, `via: external_link`, `ip_address`. Best-effort. No actor column: `external_link` means the employee themself ([[admin-penny-ai]]). | `save/route.ts:280-291` · `bank-update-history.ts:66-82` · [bank-preferred-routing.md:600-603](bank-preferred-routing.md) |
-| `employee_notifications` | `people.banking.self_updated`, tone `neutral`, one per recipient; `details` `{work_email, via, fields, send_from_mismatch?}` | `save/route.ts:89-102` |
+| `bank_update_history` | `work_email`, `employee_name`, `fields`, masked `changes`, `processor` (= `preferred_processor`, the receive election, not the send-from rail), `created_new`, `via: external_link`, `ip_address`, and `safety` (the attestation, rule 30) once the 2026-10-07 column exists. Best-effort. Until the column is applied, PostgREST rejects a payload naming it, so the writer retries that one error without it: the history row still lands and the attestation stays on the audit row. No actor column: `external_link` means the employee themself ([[admin-penny-ai]]). | `save/route.ts` · `bank-update-history.ts` (`insertBankUpdateHistory`) · [bank-preferred-routing.md:600-603](bank-preferred-routing.md) |
+| `employee_notifications` | `people.banking.self_updated`, tone `neutral`, one per recipient; `details` `{work_email, via, fields, send_from_mismatch?, safety?}`; title *"check the new account"* on a flagged change with no mismatch | `save/route.ts` (`notifyReviewers`) |
 | `app_settings` | `people.bank_changes.pulse` = now, to nudge the People → Bank changes feed | `save/route.ts:293-295` · `app-settings.ts:272-281` |
 | n8n `bank_update_otp` | `{to, recipient_name, otp_code, subject, body, html, sent_by}` to the Work Email | `otp-email.ts:70-79` |
 | n8n `bank_update_notify` | To `BANK_UPDATE_NOTIFY_EMAIL`, else `payroll@simple.biz`: employee, method, first-time vs update, field names | `notify-email.ts:20-23, 79-104` |
@@ -267,6 +317,54 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
 | OTP code email | amber box in the HTML, one line in the text body | *"Never share your card number, CVV or expiry date. Simple employees will never ask for them — by email, chat or phone. If anyone does, it's a scam."* | Ships with the deploy (`87c407ff`). `otp-email.ts:44, 76` |
 | Missing Bank Info email | the grey trust note in *Build Recipients*, deliberately not red | *"Simple employees will never ask for your password, a payment, or your card number, CVV or expiry date — if anyone does, it's a scam."* | **Live since 2026-10-02** (Kane, 2026-10-02 ~21:20 EDT: *"it already existed"*, then *"udpated!"*): the live n8n node now runs this code. Kane's word; n8n is not readable from here. `bank-info-missing-notify.workflow.json:23`; [[bank-info-notify-webhook]] |
 
+## Payout change safety (2026-10-07, Open item 401)
+
+Kane, 2026-10-07: *"When updating bank information - lets add like an indicator in there that this
+bank account has been successful in how many numbers with no problems - and let them know that if
+they change this - it might cause problems if not done correctly like, Giving out Card numbers
+instead of account numbers, Or closed account numbers … lets also add that do not send your money
+to your spouse or anyone that isn't you … This type of error should not rule that this is an HRIS
+Problem but rather a USER ERROR make sure we have systems and loggers in place for this"*.
+
+**Both self-service surfaces, one module.** This page and Profile → Compensation → Payout render
+the same `PayoutTrackLine` and `PayoutChangeNotice`, from copy that lives beside the server gate
+in `payout-change-safety.ts`, so the warning cannot be worded differently in two places. The
+dashboard route applies the gate to the employee's **own** row only; staff fixing someone else's
+row (People tab, Payroll Wizard Readiness) are not attesting to their own account and are not
+asked.
+
+**Measured before it was designed** (`scripts/measure-payout-track-record.mts`, read-only, counts
+only, 2026-10-07):
+
+| Measure | Value |
+| --- | --- |
+| `payment_dispatches` rows | 13,970: 13,792 `paid`, 165 `threshold`, 13 `problem` (a cleared problem is DELETED, so problems undercount) |
+| Paid rows with no recorded account | 2,498, which cannot be attributed to an account |
+| `employee_ids` rows with a destination on file | 2,103 of 2,347 (1,118 wallet, 985 account) |
+| Paid to the CURRENT destination | 684 at 10–19 times, 254 at 5–9, 641 at 1–4, 524 never |
+| Paid before but never to the current destination | 58 |
+| Card-shaped numbers on file | 8 of 22 sixteen-digit values; **2 were paid successfully** |
+| Bank-rail holder vs own name | 859 match, **115 mismatch**, 70 unknown |
+
+Those last two rows are why rules 28 and 29 ask for a confirmation and never refuse: a block on
+either would have stopped real, working accounts.
+
+**What the employee sees.** Above the form, *"Paid successfully N times to this account — no
+problems on record"* (amber with the problem count when there were any; *"No payments to this
+account on record yet"* for an unproven one; nothing when no account is on file). Below the form,
+the amber notice: the account's record and what changing it means, the four rules (account
+number not card number; open account; own name, never a spouse's, relative's or friend's, pay
+yourself then send money on; check every digit), the responsibility sentence (*"not an HRIS or
+payroll error"*), and the acknowledgement box. Rose boxes with their own checkbox appear for a
+card-shaped number and for a holder who is not them.
+
+**What Accounting sees.** The alert carries the flags and plain sentences, never values. People →
+Bank changes shows a *Check account* chip on a flagged change, and **View** shows the employee's
+attestation (`BankChangeDetailDialog` → `AttestationBlock`).
+
+**This page's older card-safety notice is unchanged.** It is about phishing (never share a CVV);
+the new notice is about typing the wrong number.
+
 ## Limits and expiry
 
 | Limit | Value | Code |
@@ -296,6 +394,10 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
   (`app-settings.ts:26-36`), and `parseLocked(null)` is `false` (`payroll-dispatch-lock.ts:13-16`).
   So the 423 gate in rule 19 fails OPEN, although the page comment calls the server
   *"the real block"* (`page.tsx:55-56`).
+- **The attestation rides the same best-effort writes as the rest of the trail** (rule 30), so a
+  failed audit insert AND a failed history insert would leave a saved change with no record of
+  what was attested. Making the save refuse when the trail cannot be written is item 266 #3,
+  still Kane's call (Open item 401).
 - **A lost audit row does not fail the save.** `insertAuditLog` returns `{ error }` and never
   throws. Its only failure signal is a `console.error` (`audit-log.ts:147-178`). The route awaits
   it and ignores the result (`save/route.ts:263-279`), despite its comment *"a payout change must
@@ -387,6 +489,11 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
 
 ## Deploy notes
 
+- **PENDING (Open item 401): the `bank_update_history.safety` column.** Kane runs
+  `node --import tsx scripts/apply-bank-update-history-safety-migration.mts --apply` (dry run
+  verified 2026-10-07: all five checks pass, rolled back). Order is free: until it runs, the
+  history row is written without the attestation and the attestation is on the audit row only.
+  **The non-clearable copy is not kept until this runs.**
 - **Migrations.** `2026-06-29_bank_update_external_link.sql` adds `bank_update_otps`, the
   `bank_last_self_updated_at` column and the `people.banking.self_updated` notification type.
   `2026-07-01_bank_update_history.sql` adds the history table. Neither is re-measured here. A
@@ -416,6 +523,10 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
 
 ## Open items
 
+- **401 — OPEN** (Sep 29 log): payout change safety shipped in code 2026-10-07. Owed: the
+  `safety` column `--apply` (Kane), a push, and a signed-in browser pass of both forms. Kane's
+  call: whether a save should REFUSE when its trail cannot be written (item 266 #3), now that the
+  trail is the employee's attestation.
 - **216** (Sep 25 log): this surface had no feature doc. It is closed by this file, its INDEX row
   and its README row (Sep 29 log item 265).
 - **266 — OPEN SECURITY, Kane's call** (Sep 29 log): four findings made while writing this doc:
@@ -472,6 +583,7 @@ the Notify flow:
 | `debac13d` · `b8b1f3fc` | 2026-08-31 | Receiving-side wallet gate added, then removed by the 1:1 rule |
 | `6cabcff3` | 2026-09-24 | Sending-bank mismatch alert; the employee send-from pick retired |
 | `d21a0a3b` · `87c407ff` | 2026-09-25 | Card-safety warning: page, OTP email, n8n node |
+| (this commit) | 2026-10-07 | Payout change safety: track record, versioned notice + confirmations, server gate on both self-service routes, attestation trail, `safety` column (PENDING apply) |
 
 Commit subjects before 2026-08 are uninformative ("push", "Push", "asdasdas"). The "What" for
 those rows is inferred from the files each touched, not from the messages.

@@ -28,6 +28,7 @@ zero governing documents. That is what this file exists to end.
 | The cross-slot preferred-bank rule (shared with Accounting) | `src/lib/banking/preferred-bank.ts` (+ `.test.ts`) |
 | The RAW per-slot read the backup card is built from | `readBankSlot` in the same file (+ `bank-slot-deck.test.ts`) |
 | "Can this person actually be paid?" | `src/lib/employee/payout-completeness.ts` |
+| The account's track record + the bank-change notice (§6.4) | `src/components/banking/payout-change-notice.tsx` · `src/lib/banking/payout-change-safety.ts` (+ `.test.ts`) |
 | The reload cache this surface conforms to | `src/lib/employee/tab-cache.ts` — see [employee-dashboard-cache.md](./employee-dashboard-cache.md) |
 | Guards | `profile-hook-order.test.ts` · `profile-cache-conformance.test.ts` · `profile-date-render.test.ts` |
 
@@ -383,6 +384,30 @@ Edit and Cancel are **one slot**, not two conditions — `popLayout` again, so S
 the width difference instead of being shoved sideways. `prefers-reduced-motion` keeps every
 state change and every cross-fade and drops only the spatial travel: no height animation, no
 `y`, no deck spin.
+
+### 6.4 The account's record, and the notice before a change (2026-10-07)
+
+Kane: *"lets add like an indicator in there that this bank account has been successful in how many
+numbers with no problems - and let them know that if they change this - it might cause problems"*.
+The full rule set, the measurements and the gate are in
+[update-bank-info.md](update-bank-info.md) § *Payout change safety*; this host shares the module,
+the component and the gate.
+
+- **Read view:** `PayoutTrackLine` under *Paid via*: *"Paid successfully N times to this account —
+  no problems on record"*. It describes the account Payment Dispatch pays, never the backup card a
+  spin brought forward.
+- **Edit view:** `PayoutChangeNotice` under the fields. The header **Save** stays disabled until the
+  notice is acknowledged (and any card or holder confirmation it raised), and
+  `/api/update-employee-ids` refuses a self-service change without them (400 with a `code` the form
+  uses to show the box it was missing). Cancel and a successful save clear every box: each change is
+  acknowledged on its own.
+- **§3 condition 2 still holds.** The record rides the same uncached read,
+  `/api/employee-ids?email=…&track=1` (only this Profile asks for `track`; the shell's completeness
+  read does not pay for it), into plain `useState`. No cache key, no storage.
+- **A failed read is never "0 payments".** `unavailable` prints *"Payment history for this account
+  isn't available right now"*.
+- The new state sits in the state block above the loading bail-out (§5); the safety consts are
+  plain consts, not hooks.
 
 ## 7. A neutral card is a CORRECT outcome — do not report it as a bug
 

@@ -447,6 +447,7 @@ Fetches all employee IDs and bank information from the `employee_ids` table.
 
 **Query Parameters**:
 - `email` *(optional, added 2026-05-14)* — server-side ilike filter on `work_email` then `personal_email`. Returns a 1-row array (or empty). Used by the employee portal (Profile page) to avoid downloading every employee_ids row.
+- `track=1` *(optional, with `email`, added 2026-10-07)* — adds `payoutTrack`: how many times the account on file has been paid (`{status:'ok', destination, paidCount, problemCount, firstPaidOn, lastPaidOn, lastProblemOn}` or `{status:'unavailable'}`). Counts and dates only. Only Profile → Payout asks for it ([update-bank-info.md](../features/update-bank-info.md) rule 27).
 
 **Response** `200`:
 ```json
@@ -529,6 +530,7 @@ Updates bank information and other employee ID fields.
 **Behavior notes**:
 - **The sending bank (`bank_preferred`) is not writable here** — it is Accounting's alone since 2026-09-24, set through `PATCH /api/people/[email]/banking` ([bank-preferred-routing.md](../features/bank-preferred-routing.md) §1). A body carrying a CHANGED `bank_preferred` gets **`403`** `"The sending bank can only be changed by Accounting, in People → Banking…"` from every caller, self-service or staff; the unchanged stored value (a page opened before the retirement still posts it) is a no-op; an unreadable stored value is **`503`** and nothing is saved. Until 2026-09-24 the field was accepted and filed as an approval request for Accounting → Issues.
 - A save that writes `preferred_processor` and leaves the stored sending bank out of step with it (the 1:1 rule) still lands; the Accounting/CEO/Admin `people.banking.self_updated` alert then says *"Bank details updated — sending bank no longer matches"* and carries `details.send_from_mismatch`.
+- **Payout change safety (2026-10-07), SELF edits only.** A body that changes any payout field of the caller's OWN row is refused with **`400`** `{error, code, flags}` unless it carries `payout_notice_ack` equal to `PAYOUT_CHANGE_NOTICE_VERSION` (`code: payout_notice_ack_required`), plus `confirm_not_card_number: true` for a new card-shaped account number (`card_confirm_required`) and `confirm_holder_is_self: true` for a holder who is not the employee (`holder_confirm_required`). A refusal writes a `bank_update.safety_refused` audit row. An accepted change carries the attestation on its audit row (`details.safety`), its `bank_update_history.safety` and the reviewer alert. Staff edits of someone else's row are not asked. See [update-bank-info.md](../features/update-bank-info.md) § Payout change safety.
 - Writes to Supabase table `employee_ids`.
 - If no existing row matches and `work_email` is present, the route bootstraps a new `employee_ids` row with a temporary `SELF-...` employee ID, then saves the submitted fields.
 - `preferred_processor` must be one of: `hurupay`, `wepay`, `higlobe`, `wise`, `jeeves`, `wires`.
@@ -3539,8 +3541,8 @@ of cells — the matches were not re-run).
 | `/api/avatar` | GET | `authorizeEmail` | *this file* |
 | `/api/bank-update/lock-status` | GET | — **none found** | [update-bank-info](../features/update-bank-info.md) |
 | `/api/bank-update/request-otp` | POST | — **none found** | [update-bank-info](../features/update-bank-info.md) |
-| `/api/bank-update/save` | POST | service-role only | [update-bank-info](../features/update-bank-info.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |
-| `/api/bank-update/verify-otp` | POST | — **none found** | [update-bank-info](../features/update-bank-info.md) |
+| `/api/bank-update/save` | POST | service-role only; 400 safety gate (2026-10-07: notice ack + card/holder confirmations) | [update-bank-info](../features/update-bank-info.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |
+| `/api/bank-update/verify-otp` | POST | — **none found** (returns `payout_track` since 2026-10-07) | [update-bank-info](../features/update-bank-info.md) |
 | `/api/bonus-catalog` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) · *this file* |
 | `/api/bonus-catalog-applied` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [kpi-scored-notification](../features/kpi-scored-notification.md) · [payment-dispatch](../features/payment-dispatch.md) · [kpi-live-refresh](../features/kpi-live-refresh.md) (POST + DELETE broadcast `kpi-bonus-sync`, 2026-09-29) |
 | `/api/bonus-catalog/history` | GET | — **none found** | [bonus-catalog](../features/bonus-catalog.md) |

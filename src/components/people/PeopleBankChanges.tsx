@@ -10,7 +10,7 @@ import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { cn } from '@/lib/utils';
 import type { Accent } from './PeopleTab';
 import {
-  BankChangeDetailDialog, fieldLabel, timeAgo, absoluteTime, type BankChangeEntry as BankChange,
+  BankChangeDetailDialog, fieldLabel, timeAgo, absoluteTime, safetyFlagLabel, type BankChangeEntry as BankChange,
 } from './bank-change-detail';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import { RailMixBand } from './rail-mix-band';
@@ -557,6 +557,17 @@ function ChangeCard({
                 ) : (
                   <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                     Updated
+                  </span>
+                )}
+                {/* A self-service change the employee had to confirm past a
+                    warning (card-shaped number, holder not them). View has the
+                    attestation. */}
+                {row.safety && row.safety.flags.length > 0 && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+                    title={row.safety.flags.map(safetyFlagLabel).join(' · ')}
+                  >
+                    Check account
                   </span>
                 )}
                 <AnimatePresence>

@@ -11,6 +11,17 @@ import { pulseBankChanges } from "@/lib/supabase/app-settings";
 import { escapeLikePattern } from "@/lib/db/like-escape";
 import { maskFieldValue } from "@/lib/bank-update/mask-field";
 import { sendFromMismatch, sendFromMismatchSentence } from "@/lib/employee-payment-processors";
+import { resolveEffectivePayoutProcessor } from "@/lib/employee/payout-completeness";
+import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
+import {
+  SELF_SERVICE_PAYOUT_FIELDS,
+  assessPayoutChange,
+  attestationAlertSentences,
+  buildPayoutAttestation,
+  judgePayoutChange,
+  type PayoutChangeAttestation,
+  type PayoutSafetyAnswers,
+} from "@/lib/banking/payout-change-safety";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,13 +73,18 @@ function clientIp(req: Request): string | null {
  *  `mismatch` names an Accounting-set sending bank this save leaves out of step
  *  with the receiving channel (the 1:1 rule) — this page never touches the
  *  sending bank, so the alert is how Accounting hears it needs changing. Same
- *  wording as the dashboard route's alert (`sendFromMismatchSentence`). */
+ *  wording as the dashboard route's alert (`sendFromMismatchSentence`).
+ *  `attestation` adds what the employee confirmed about a flagged account (a
+ *  card-shaped number, a holder who is not them) and the record of the account
+ *  they left, as sentences and flags, never values. The mismatch title keeps
+ *  precedence; a flagged change without one is titled "check the new account". */
 async function notifyReviewers(
   supabase: ReturnType<typeof createSupabaseServiceRoleClient>,
   workEmail: string,
   displayName: string | null,
   changedFields: string[],
   mismatch: ReturnType<typeof sendFromMismatch>,
+  attestation: PayoutChangeAttestation | null,
 ): Promise<void> {
   if (!supabase) return;
   try {
@@ -86,18 +102,29 @@ async function notifyReviewers(
     );
     if (recipients.length === 0) return;
     const base = `${displayName || workEmail} updated their bank & payout details via the external link.`;
+    const sentences = [
+      base,
+      ...(mismatch ? [sendFromMismatchSentence(mismatch)] : []),
+      ...(attestation ? attestationAlertSentences(attestation) : []),
+    ];
+    const title = mismatch
+      ? "Bank details updated — sending bank no longer matches"
+      : attestation && attestation.flags.length > 0
+        ? "Bank details updated — check the new account"
+        : "Bank details updated";
     await supabase.from("employee_notifications").insert(
       recipients.map((to) => ({
         recipient_email: to,
         type: "people.banking.self_updated",
         tone: "neutral",
-        title: mismatch ? "Bank details updated — sending bank no longer matches" : "Bank details updated",
-        message: mismatch ? `${base} ${sendFromMismatchSentence(mismatch)}` : base,
+        title,
+        message: sentences.join(" "),
         details: {
           work_email: workEmail,
           via: "external_link",
           fields: changedFields,
           ...(mismatch ? { send_from_mismatch: { send_from: mismatch.sendFrom, receiving: mismatch.receiving } } : {}),
+          ...(attestation ? { safety: attestation } : {}),
         },
       })),
     );
@@ -167,23 +194,71 @@ export async function POST(req: Request) {
     // Escaped, case-insensitive exact match on the verified work email.
     const emailPattern = escapeLikePattern(workEmail);
 
-    // Snapshot the CURRENT value of just the fields being written, BEFORE the
-    // update overwrites them — so the People-tab feed can show a masked
-    // before→after. Best-effort: on an un-migrated env (missing column) or a
-    // first-time setup (no row) this resolves empty and every "before" is null.
+    // Snapshot the CURRENT payout record BEFORE the update overwrites it — so the
+    // People-tab feed can show a masked before→after, and so the safety gate below
+    // can tell what this save actually changes. The WHOLE record is read (not just
+    // the posted fields): which account the money goes to depends on the slot and
+    // the rail too. Best-effort: on an un-migrated env (missing column) or a
+    // first-time setup (no row) this resolves empty, every "before" is null, and
+    // the gate reads everything as changed, so it asks rather than skips.
     // `.limit(1)` (not maybeSingle) tolerates the known same-email row collisions.
-    // The stored sending bank rides along whenever the receiving channel is
-    // written, for the reviewer alert's mismatch line — never into `changes`.
-    const snapshotFields =
-      "preferred_processor" in update ? [...changedFields, "bank_preferred"] : changedFields;
+    // The stored sending bank rides along for the reviewer alert's mismatch line
+    // and the effective rail — never into `changes`.
     const beforeRow: Record<string, unknown> = await (async () => {
       const { data } = await supabase
         .from("employee_ids")
-        .select(snapshotFields.join(", "))
+        .select([...SELF_SERVICE_PAYOUT_FIELDS, "bank_preferred", "name", "personal_email"].join(", "))
         .ilike("work_email", emailPattern)
         .limit(1);
       return (Array.isArray(data) && data[0] ? data[0] : {}) as Record<string, unknown>;
     })();
+
+    // PAYOUT CHANGE SAFETY (Kane, 2026-10-07). A change is refused unless the
+    // employee acknowledged the CURRENT bank-change notice, and — when the new
+    // account looks like a card number, or its holder does not read as them —
+    // confirmed that separately. The names judged against are the roster's and
+    // the payout row's own, never anything from the body. See
+    // payout-change-safety.ts and update-bank-info.md § Payout change safety.
+    const answers: PayoutSafetyAnswers = {
+      payout_notice_ack: body.payout_notice_ack,
+      confirm_holder_is_self: body.confirm_holder_is_self,
+      confirm_not_card_number: body.confirm_not_card_number,
+    };
+    const verdict = judgePayoutChange(
+      assessPayoutChange(beforeRow, update, [
+        match?.name ?? null,
+        typeof beforeRow.name === "string" ? beforeRow.name : null,
+      ]),
+      answers,
+    );
+    if (!verdict.ok) {
+      // The record that the employee WAS warned, even though nothing was saved.
+      await insertAuditLog({
+        user_name: match?.name || workEmail,
+        user_role: "employee (external link)",
+        action: "bank_update.safety_refused",
+        resource: "employee_ids",
+        resource_id: workEmail,
+        details: { via: "external_link", code: verdict.code, flags: verdict.assessment.flags },
+        ip_address: ip,
+      });
+      return NextResponse.json(
+        { error: verdict.error, code: verdict.code, flags: verdict.assessment.flags },
+        { status: 400 },
+      );
+    }
+    // How the account being LEFT had done — counts only, for the attestation and
+    // Accounting's alert. Read only when the destination actually moves.
+    const previousTrack = verdict.assessment.destinationChanged
+      ? await readPayoutTrackRecord({
+          emails: [workEmail, match?.personalEmail, beforeRow.personal_email as string | null | undefined],
+          row: beforeRow,
+          rail: resolveEffectivePayoutProcessor(beforeRow),
+        })
+      : null;
+    const attestation = verdict.assessment.changed
+      ? buildPayoutAttestation(verdict.assessment, answers, previousTrack)
+      : null;
     // Advisory, like the dashboard route: the 1:1 rule is enforced where the
     // sending bank is SET (People → Banking); a save here only reports it.
     const mismatch =
@@ -274,6 +349,7 @@ export async function POST(req: Request) {
         processor: update.preferred_processor ?? null,
         created,
         changes,
+        ...(attestation ? { safety: attestation } : {}),
       },
       ip_address: ip,
     });
@@ -288,8 +364,9 @@ export async function POST(req: Request) {
       created_new: created,
       via: "external_link",
       ip_address: ip,
+      safety: attestation,
     }).catch(() => undefined);
-    await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields, mismatch);
+    await notifyReviewers(supabase, workEmail, match?.name ?? null, changedFields, mismatch, attestation);
     // Nudge the People-tab "Bank changes" live feed to refetch instantly. The
     // audit row above is the feed's source; this pulse just makes it real-time.
     await pulseBankChanges();
