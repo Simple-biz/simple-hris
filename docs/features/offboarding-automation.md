@@ -151,7 +151,9 @@ Since 10-01, cjm@ still holds 7 of 7 completed-request cards and ainsleyw@ 2 of 
 15 of 79 and carla@ 0 of 2. Use the audit row's `notified` count as the trail.
 
 **Deploy notes.** No migration: the type has been in `employee_notifications_type_check` since
-2026-07-02 (read from the live constraint 2026-10-07). No env var and no n8n change. Push only.
+2026-07-02 (read from the live constraint 2026-10-07). No env var and no n8n change. **Pushed: measured 2026-10-08**
+(`3e5f960e` on origin/main; deploy not measured from here). The first live return proves it: its
+`offboarding.request_returned` audit row should carry `notified` = the requester plus the department's managers.
 
 ---
 

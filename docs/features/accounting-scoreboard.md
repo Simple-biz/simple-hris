@@ -821,7 +821,7 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   locks for about 15 s (the pooler is ~240 ms away, so its checks and controls run batched) and sets
   `lock_timeout = 10s`. Re-check any time with
   `node --import tsx scripts/apply-accounting-scoreboard-round3-migration.mts --verify`.
-- **The round-3 code needs that migration**, which is applied. **The push: PENDING** (Kane).
+- **The round-3 code needs that migration**, which is applied. **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here).
 - **Win/loss flags + 0 payroll problems migration: APPLIED 2026-10-07 ~14:10 UTC** by session `48c8828b` on Kane's *"run
   this"*, sent with the board's live error. The code (`0b8748f6`) had been pushed BEFORE the migration ran, so until then
   every board read in production answered "not set up yet" (the deploy order below was not followed).
@@ -841,7 +841,7 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   PostgREST: the board's exact custom-section select answers (0 rows), and the anon key is refused (`42501`). Re-check any
   time with `node --import tsx scripts/apply-accounting-scoreboard-custom-host-migration.mts --verify`. The column has to
   exist before this code is deployed: the board selects `host_section_key`, and a missing column makes every board read
-  answer "not set up yet" (`isMissingTable`). **The push: PENDING** (Kane). After it, Carla adds "Sales - Projects
+  answer "not set up yet" (`isMissingTable`). **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here). Now Carla adds "Sales - Projects
   Onboarded" herself: Setup → Sections, Shown in = Sales Onboarding tab, then its lines under Rows.
 - **Hidden-from-Overview migration: APPLIED 2026-10-07** by session `5fae2311` on Kane's *"APPLY THEN VERIFY"*.
   `2026-10-07_accounting_scoreboard_overview_visibility.sql` adds `show_on_overview boolean NOT NULL DEFAULT true` to
@@ -853,15 +853,14 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   Read back through PostgREST: the service role reads both tables with the board's exact selects (2 switch rows and 1
   custom section, all `true`), and the anon key gets `401` / `42501` on both. The custom-host `--verify` re-passed.
   Re-check any time with `node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts --verify`.
-  **The push: PENDING** (Kane). The migration is in, so the push is safe. After it, Carla turns **On Overview** off for
+  **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here). Now Carla turns **On Overview** off for
   "Sales - Projects Onboarded" and her second section under Setup → Sections.
 - **The round-3 script's data checks run on a dry run and `--apply` only** (Open item 399, 2026-10-07). They assert
   what its one-off data step did (the weekday buckets' days, the "due in 7 days" flag, the Outcomes lines, Carla's
   three types live), and managers change all of that on purpose in Setup afterwards. Under `--verify` one of them
   failed on normal use (Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV"). `--verify` now checks what
   stays true for good: the three seeded types still exist, live or archived (a type is never deleted). It re-passed.
-- **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **The push:
-  PENDING** (Kane).
+- **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here) (`f770d29b`).
 - **Pre-arb flag migration: PENDING `--apply` (Kane's go), then the push.**
   `2026-10-07_accounting_scoreboard_pre_arb_flag.sql` re-declares CHECK `acct_sb_rows_outcome_valid` with `'pre_arb'`
   added (the 2026-10-07 text copied verbatim otherwise). Its script's data step flags the one live "Pre-arb" Outcomes
