@@ -194,12 +194,18 @@ this, the panel unmounted on every Scoreboard → Tasks switch, so every switch 
   then posts it through the space's incoming webhook.
 - **The Chat post is the sentence plus a card of bars** (Kane, 2026-10-08: *"Can we send a progress bar?"*;
   `buildProgressPost`). Google Chat shows neither an HTML page nor a GIF sent through a webhook, but a card's text takes
-  `<font color>`. So each frequency gets one row: its name, a 20-cell bar of `█` (green when all done, amber when
-  some, grey for the rest) and *"98 of 170 done · 57%"*. The card's header is *"Task progress"* and the Eastern day and
+  `<font color>`. So each frequency gets one row: its name, a 20-cell bar of `█` (the done cells in one colour, grey
+  for the rest) and *"98 of 170 done · 57%"*. The card's header is *"Task progress"* and the Eastern day and
   time the counts were read. The sentence stays as the message text above the card, word for word. **Copy message
   stays the sentence alone.** No tasks = the sentence alone, no card.
   - **A bar is full only when every task is done, and the percent rounds DOWN** (`barCells`, `percentDone`): 169 of 170
     is 19 cells and 99%, and 1 of 170 still shows 1 cell. Rounding never makes a frequency look finished, or untouched.
+  - **The colour goes red → orange → green as the goal nears** (Kane, 2026-10-08: *"as we are reaching the goal we are
+    like red orange green"*; `barTier`): **red under 50%, orange from 50%, green from 90%** (the 50 / 90 cut-offs are
+    CHOSEN, `ORANGE_FROM_PERCENT` / `GREEN_FROM_PERCENT`). The tier is read off the **printed** percent, so the colour
+    and the number never disagree (89.9% prints 89% and stays orange). Green from 90% does not fill the bar: 99% is
+    a green bar with one grey cell. One colour per bar. Until this rule, the bar was amber for any partial and green
+    only when all done. The Everyone view's colours (above) are a separate rule and did not change.
   - **A card Google refuses with HTTP 400 is sent once more as the sentence alone** (`chat-webhook.ts`). A 400 posted
     nothing, so this can never post twice. Google does not document cards on incoming webhooks; this keeps the proven
     text post working if it refuses them. No other status is re-sent, and a timeout never is. The click answers
@@ -344,7 +350,9 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
   sender 10 (every Google answer, the 400 re-send, never the URL, and the source pin), the core 11; the scoreboard and
   audit suites 342/342; `tsc` clean apart from the same two `.next` entries. **PENDING: the first real post.** Google
   does not document cards on incoming webhooks, so whether the bars show (`card: true` in the audit row) or the sentence
-  goes alone (`card: false`) is only known from a post.
+  goes alone (`card: false`) is only known from a post. **Red → orange → green, same day:** chat-summary now 11 tests
+  (the tier boundaries 49 / 50 / 89 / 90%, 89.9% staying orange, each tier's cells, one colour per bar); the scoreboard
+  suite 319/319; `tsc` clean apart from the same two `.next` entries.
 - **Verified:** 18 task tests + 5 import tests; the scoreboard suite 227/227 and `npm test` 6,402/6,402 before the import
   module; `tsc` clean apart from two stale `.next/types/validator.ts` entries for another feature's routes. **Not
   rendered in a browser and not clicked through signed in.** Rendered on 2026-10-08 with the frequency change and the cache

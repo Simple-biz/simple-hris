@@ -5,7 +5,8 @@
  *
  * The Chat post is that sentence PLUS a card of progress bars, one per frequency (Kane, 2026-10-08: "Can we send a
  * progress bar?"). Google Chat renders neither HTML pages nor an uploaded GIF from a webhook; a card's text takes
- * <font color>, so a bar is a run of coloured block characters. Copy message stays the sentence alone.
+ * <font color>, so a bar is a run of coloured block characters, red → orange → green as it nears the goal. Copy
+ * message stays the sentence alone.
  *
  * Governing doc: docs/features/accounting-scoreboard-tasks.md § The progress message.
  */
@@ -33,8 +34,15 @@ export function buildProgressMessage(progress: readonly FrequencyProgress[]): st
 /** Cells in one bar: short enough for a phone's Chat card on one line. */
 export const BAR_CELLS = 20;
 const BAR_CHAR = '█';
-/** All done (the Everyone view's green), some done (its amber), and the empty track. */
-const BAR_COLOR = { full: '#059669', partial: '#d97706', track: '#d1d5db' } as const;
+/**
+ * The bar turns red → orange → green as a frequency nears its goal (Kane, 2026-10-08: "as we are reaching the goal we
+ * are like red orange green"). Decided by the PRINTED percent (rounded down), so the colour and the number never
+ * disagree. CHOSEN: orange from 50%, green from 90%.
+ */
+export const ORANGE_FROM_PERCENT = 50;
+export const GREEN_FROM_PERCENT = 90;
+export type BarTier = 'red' | 'orange' | 'green';
+const BAR_COLOR: Record<BarTier | 'track', string> = { red: '#dc2626', orange: '#ea580c', green: '#059669', track: '#d1d5db' };
 
 /**
  * Filled cells for done / total. A bar is full ONLY when every task is done, and some done always shows at least one
@@ -52,10 +60,18 @@ export function percentDone(done: number, total: number): number {
   return Math.min(100, Math.floor((done / total) * 100));
 }
 
-/** One bar as card text: the done cells in green (all done) or amber, the rest in grey. */
+/** Red under 50%, orange from 50%, green from 90%, by the printed percent. */
+export function barTier(done: number, total: number): BarTier {
+  const pct = percentDone(done, total);
+  if (pct >= GREEN_FROM_PERCENT) return 'green';
+  if (pct >= ORANGE_FROM_PERCENT) return 'orange';
+  return 'red';
+}
+
+/** One bar as card text: the done cells in their tier's colour, the rest in grey. */
 export function progressBarHtml(p: Pick<FrequencyProgress, 'done' | 'total'>): string {
   const filled = barCells(p.done, p.total);
-  const color = p.done >= p.total ? BAR_COLOR.full : BAR_COLOR.partial;
+  const color = BAR_COLOR[barTier(p.done, p.total)];
   const parts: string[] = [];
   if (filled > 0) parts.push(`<font color="${color}">${BAR_CHAR.repeat(filled)}</font>`);
   if (filled < BAR_CELLS) parts.push(`<font color="${BAR_COLOR.track}">${BAR_CHAR.repeat(BAR_CELLS - filled)}</font>`);

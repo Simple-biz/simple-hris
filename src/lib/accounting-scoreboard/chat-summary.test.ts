@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   BAR_CELLS,
   barCells,
+  barTier,
   buildProgressMessage,
   buildProgressPost,
   percentDone,
@@ -60,16 +61,47 @@ test('the percent rounds down, so 100% means everything', () => {
   assert.equal(percentDone(0, 0), 0);
 });
 
-test('a bar is green when all done, amber when some, grey track for the rest, always 20 cells', () => {
-  const some = progressBarHtml({ done: 98, total: 170 });
-  assert.equal(cellsIn(some, '#d97706'), 12);
-  assert.equal(cellsIn(some, '#d1d5db'), 8);
+// Kane, 2026-10-08: "as we are reaching the goal we are like red orange green".
+test('red under 50%, orange from 50%, green from 90%, by the printed percent', () => {
+  assert.equal(barTier(0, 170), 'red');
+  assert.equal(barTier(1, 170), 'red');
+  assert.equal(barTier(84, 170), 'red'); // 49%
+  assert.equal(barTier(85, 170), 'orange'); // 50%
+  assert.equal(barTier(98, 170), 'orange'); // 57%
+  assert.equal(barTier(152, 170), 'orange'); // 89%
+  assert.equal(barTier(153, 170), 'green'); // 90%
+  assert.equal(barTier(169, 170), 'green'); // 99%
+  assert.equal(barTier(170, 170), 'green');
+  // The colour follows the number shown: 89.9% prints 89% and stays orange.
+  assert.equal(percentDone(899, 1000), 89);
+  assert.equal(barTier(899, 1000), 'orange');
+});
+
+const RED = '#dc2626';
+const ORANGE = '#ea580c';
+const GREEN = '#059669';
+const GREY = '#d1d5db';
+
+test('the done cells take their tier colour, the rest is grey, always 20 cells', () => {
+  const low = progressBarHtml({ done: 40, total: 170 }); // 23%: 5 cells
+  assert.equal(cellsIn(low, RED), 5);
+  assert.equal(cellsIn(low, GREY), 15);
+  const mid = progressBarHtml({ done: 98, total: 170 }); // 57%: 12 cells
+  assert.equal(cellsIn(mid, ORANGE), 12);
+  assert.equal(cellsIn(mid, GREY), 8);
+  const near = progressBarHtml({ done: 169, total: 170 }); // 99%: green, but not full
+  assert.equal(cellsIn(near, GREEN), BAR_CELLS - 1);
+  assert.equal(cellsIn(near, GREY), 1);
   const all = progressBarHtml({ done: 5, total: 5 });
-  assert.equal(cellsIn(all, '#059669'), BAR_CELLS);
-  assert.ok(!all.includes('#d1d5db'));
+  assert.equal(cellsIn(all, GREEN), BAR_CELLS);
+  assert.ok(!all.includes(GREY));
   const none = progressBarHtml({ done: 0, total: 5 });
-  assert.equal(cellsIn(none, '#d1d5db'), BAR_CELLS);
-  assert.ok(!none.includes('#d97706') && !none.includes('#059669'));
+  assert.equal(cellsIn(none, GREY), BAR_CELLS);
+  assert.ok(![RED, ORANGE, GREEN].some((c) => none.includes(c)));
+  // Only one tier colour ever appears in one bar.
+  for (const html of [low, mid, near, all]) {
+    assert.equal([RED, ORANGE, GREEN].filter((c) => html.includes(c)).length, 1);
+  }
 });
 
 test('the heading is the Eastern day and time the counts were read', () => {
