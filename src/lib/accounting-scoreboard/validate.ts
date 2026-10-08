@@ -637,6 +637,34 @@ export function parseTaskPatch(body: unknown): Parsed<TaskPatch> {
   return { ok: true, value: out };
 }
 
+export interface TaskFrequencyChange {
+  id: string;
+  frequency: TaskFrequency;
+  /** A new title in the same save; absent keeps the old one. */
+  title?: string;
+}
+
+/**
+ * Admin: change how often a task is done (POST /tasks/frequency). Never in place: the server adds a new task with the
+ * new frequency and archives this one, which keeps its ticks. The owner never changes, here or anywhere.
+ */
+export function parseTaskFrequencyChange(body: unknown): Parsed<TaskFrequencyChange> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!isUuid(b.id)) return { ok: false, error: 'id must be a task id' };
+  if (b.ownerEmail !== undefined) {
+    return { ok: false, error: "A task's owner never changes. Remove it and add a new one on the other board." };
+  }
+  if (!isTaskFrequency(b.frequency)) return { ok: false, error: 'Pick how often the task is done' };
+  const out: TaskFrequencyChange = { id: b.id, frequency: b.frequency };
+  if (b.title !== undefined) {
+    const title = taskTitle(b.title);
+    if (!title.ok) return title;
+    out.title = title.value;
+  }
+  return { ok: true, value: out };
+}
+
 /** A tick or an untick. The period is the server's, from today (US Eastern), never the body's. */
 export function parseTaskCheck(body: unknown): Parsed<{ taskId: string; done: boolean }> {
   const b = obj(body);

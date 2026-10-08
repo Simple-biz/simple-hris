@@ -149,3 +149,28 @@ export function progressByOwner(
     .map((ownerEmail) => ({ ownerEmail, progress: taskProgress(tasks.filter((t) => t.ownerEmail === ownerEmail), checks, today) }))
     .filter((o) => o.progress.length > 0);
 }
+
+/**
+ * Changing how often a task is done (Kane, 2026-10-08: "the tasks edit button can also edit the frequency"). The
+ * owner and the frequency never change in place (the table's trigger refuses it), so a new frequency is a NEW task:
+ * the old one is archived and keeps its ticks, and the new one starts unticked. An old tick never changes meaning.
+ *
+ * The two writes cannot share a transaction over PostgREST, so their ORDER is the guard:
+ *   1. add the new task. If that fails, nothing changed.
+ *   2. archive the old one. If that fails (or it was archived meanwhile), archive the new one again, so the change
+ *      never leaves the task on the board twice. Archived is final, so a task is never lost: the old one is still live.
+ *   3. If undoing also fails, the task IS on the board twice, and the caller says so (`undone: false`), never "failed".
+ * Archive-first would be worse: a failed add would leave the task gone from the board for good.
+ */
+export async function changeFrequencyInOrder<T, F extends { ok: false }>(steps: {
+  add: () => Promise<{ ok: true; value: T } | F>;
+  archiveOld: () => Promise<{ ok: true } | F>;
+  undoAdd: (added: T) => Promise<boolean>;
+}): Promise<{ ok: true; value: T } | { ok: false; failure: F; added: T | null; undone: boolean }> {
+  const added = await steps.add();
+  if (!added.ok) return { ok: false, failure: added, added: null, undone: true };
+  const archived = await steps.archiveOld();
+  if (archived.ok) return { ok: true, value: added.value };
+  const undone = await steps.undoAdd(added.value);
+  return { ok: false, failure: archived, added: added.value, undone };
+}

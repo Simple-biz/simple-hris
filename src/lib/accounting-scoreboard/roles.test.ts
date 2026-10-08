@@ -120,6 +120,8 @@ test('every route resolves access through resolveAccess, and setup writes ask fo
   }
   const roles = readFileSync(join(ROOT, 'app', 'api', 'accounting-scoreboard', 'roles', 'route.ts'), 'utf8');
   assert.doesNotMatch(roles, /resolveAccess\((?!'manage_roles'\))/, 'the roles route is Admin only');
+  const frequency = readFileSync(join(ROOT, 'app', 'api', 'accounting-scoreboard', 'tasks', 'frequency', 'route.ts'), 'utf8');
+  assert.doesNotMatch(frequency, /resolveAccess\((?!'manage_tasks'\))/, 'changing how often a task is done is Admin only');
 });
 
 test('the server refuses the last Admin revoke before the database does', () => {

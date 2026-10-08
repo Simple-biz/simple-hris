@@ -101,7 +101,7 @@ import { SectionGrid } from './SectionGrid';
 import { CollectionsPanel, type NewCollection } from './CollectionsPanel';
 import { ProblemsPanel, type NewProblem } from './ProblemsPanel';
 import { SetupPanel } from './SetupPanel';
-import { TasksPanel } from './TasksPanel';
+import { TasksPanel, type TasksView } from './TasksPanel';
 import { SECTIONS_NAV_ID, SectionsDrawer, type DrawerItem } from './SectionsDrawer';
 
 /** 'overview', 'setup', or a section's board id (a built-in key, or `custom:<uuid>`). */
@@ -185,6 +185,9 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   // Scoreboard | Tasks (plan Task 7): the task boards have their own periods, so Tasks hides the week arrows and the
   // section row. The board keeps loading underneath, so switching back is instant.
   const [mode, setMode] = useState<'scoreboard' | 'tasks'>('scoreboard');
+  // Whose tasks are picked. Kept here, not in the panel, so Scoreboard and back lands on the same board (painted from
+  // the browser cache, then fetched again: TasksPanel).
+  const [tasksView, setTasksView] = useState<TasksView>('me');
   const [menuOpen, setMenuOpen] = useState(false);
   const burgerRef = useRef<HTMLButtonElement>(null);
   const menuWasOpen = useRef(false);
@@ -768,7 +771,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {/* overflow-x-clip, not hidden: the slide never spawns a scrollbar, and sticky headers keep working (§ 11.1). */}
           {mode === 'tasks' ? (
-            <TasksPanel viewer={board.viewer} />
+            <TasksPanel viewer={board.viewer} view={tasksView} onViewChange={setTasksView} />
           ) : (
             <div className="overflow-x-clip">
               <AnimatePresence mode="wait" initial={false} custom={dir}>

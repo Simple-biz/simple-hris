@@ -38,7 +38,7 @@ every payroll problem, and custom sections.
 | Host rule for the domain | `src/lib/accounting-scoreboard/host.ts`, called from `proxy.ts` |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
 | Member check, reads and writes | `src/lib/accounting-scoreboard/server.ts` (server-only) |
-| Browser cache (board per week, Setup's roster) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
+| Browser cache (board per week, Setup's roster, the Tasks views) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
 | Live refresh: the topic, the re-read signal, the flood-bounded scheduler (§ Live refresh) | `src/lib/accounting-scoreboard/live.ts` (+ `live.test.ts`) · the server's announce `live-server.ts` · the onSnapshot listener `live-client.ts` |
 | Loading modal: lines ↔ reads, the stream, the fail-closed assembler | `src/lib/accounting-scoreboard/load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the dialog `src/components/accounting-scoreboard/ScoreboardLoadDialog.tsx` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
@@ -768,6 +768,11 @@ header spinner on every 45 s and focus refresh.
 - The board has **no sign-out control** to purge on (the HRIS sidebars purge their own stores). A different viewer
   binding purges, and a removed member never reaches `ScoreboardApp` (the page refuses first).
 - The archive page is server-rendered and is not cached.
+- **The Tasks view caches under keys of its own** (`acct-sb:tasks:<view>`, 2026-10-08), never inside a board blob, on the
+  same rules: it paints and never decides, the viewer is never cached, and only the server's answer is written back. It
+  adds two guards: someone else's board or Everyone paints only for a role that may see it now, and a view paints only on
+  the Eastern day it was read. See [accounting-scoreboard-tasks.md](accounting-scoreboard-tasks.md) § Loading and the
+  browser cache.
 - Verified 2026-10-06 in headless Chromium against a 1.5 s API, 16 checks. The first visit shows the loader once.
   A reload paints within 400 ms with no loader or spinner and still fetches. Five tab switches make no fetch.
   An uncached week spins, stepping back to a cached week is instant, and the second Setup visit has no roster
@@ -886,7 +891,8 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
 - The sheet's status strip (Working / Lunch / Break). It is outside the bonus and can come later. The per-person
   task checklists **were built on 2026-10-08** behind the header's Scoreboard | Tasks switch: see
   [accounting-scoreboard-tasks.md](accounting-scoreboard-tasks.md). They read their own route and are not part of
-  the board read, its load lines or its cache.
+  the board read, its load lines or the board's cached blob (the Tasks view caches under keys of its own,
+  § Browser cache).
 - Per-person or per-section bonuses after Carla's revamp, and any write to pay (Item 315).
 - Charts. Carla's § 6 says "sections/charts"; a custom section is a tab, a grid and an Overview card, the same
   as a built-in one. No chart type was built.

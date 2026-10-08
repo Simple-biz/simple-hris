@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { currentPeriodKeys, isTaskDone, progressByOwner, taskPeriodKey, taskProgress, type TaskLike } from './tasks';
+import { changeFrequencyInOrder, currentPeriodKeys, isTaskDone, progressByOwner, taskPeriodKey, taskProgress, type TaskLike } from './tasks';
 
 test('period keys on Wednesday 2026-10-07 (Eastern)', () => {
   assert.equal(taskPeriodKey('daily', '2026-10-07'), '2026-10-07');
@@ -90,4 +90,57 @@ test('the All view: one entry per owner with counted tasks; an owner with only a
       ],
     },
   ]);
+});
+
+// ── Changing how often: add the new task, then archive the old one ───────────
+
+type Fail = { ok: false; why: string };
+
+function recorder() {
+  const calls: string[] = [];
+  return { calls, log: (s: string) => calls.push(s) };
+}
+
+test('a frequency change adds the new task FIRST, then archives the old one', async () => {
+  const r = recorder();
+  const out = await changeFrequencyInOrder<string, Fail>({
+    add: async () => (r.log('add'), { ok: true, value: 'new' }),
+    archiveOld: async () => (r.log('archive old'), { ok: true }),
+    undoAdd: async () => (r.log('undo'), true),
+  });
+  assert.deepEqual(out, { ok: true, value: 'new' });
+  assert.deepEqual(r.calls, ['add', 'archive old'], 'never archive-first: a failed add would lose the task');
+});
+
+test('a failed add changes nothing: the old task is never archived', async () => {
+  const r = recorder();
+  const out = await changeFrequencyInOrder<string, Fail>({
+    add: async () => (r.log('add'), { ok: false, why: 'not on the board' }),
+    archiveOld: async () => (r.log('archive old'), { ok: true }),
+    undoAdd: async () => (r.log('undo'), true),
+  });
+  assert.deepEqual(out, { ok: false, failure: { ok: false, why: 'not on the board' }, added: null, undone: true });
+  assert.deepEqual(r.calls, ['add']);
+});
+
+test('a failed archive archives the NEW task again, so the task is never on the board twice', async () => {
+  const r = recorder();
+  const out = await changeFrequencyInOrder<string, Fail>({
+    add: async () => (r.log('add'), { ok: true, value: 'new' }),
+    archiveOld: async () => (r.log('archive old'), { ok: false, why: 'removed meanwhile' }),
+    undoAdd: async (t) => (r.log(`undo ${t}`), true),
+  });
+  assert.deepEqual(out, { ok: false, failure: { ok: false, why: 'removed meanwhile' }, added: 'new', undone: true });
+  assert.deepEqual(r.calls, ['add', 'archive old', 'undo new']);
+});
+
+test('if the undo fails too, it says the task is on the board twice (undone: false), never a plain failure', async () => {
+  const out = await changeFrequencyInOrder<string, Fail>({
+    add: async () => ({ ok: true, value: 'new' }),
+    archiveOld: async () => ({ ok: false, why: 'db down' }),
+    undoAdd: async () => false,
+  });
+  assert.equal(out.ok, false);
+  assert.equal(!out.ok && out.undone, false);
+  assert.equal(!out.ok && out.added, 'new');
 });

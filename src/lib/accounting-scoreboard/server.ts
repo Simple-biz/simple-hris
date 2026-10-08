@@ -71,7 +71,15 @@ import type {
   TaskPerson,
   TasksPayload,
 } from './types';
-import { currentPeriodKeys, isTaskFrequency, taskPeriodKey, taskProgress, type TaskLike } from './tasks';
+import {
+  FREQUENCY_LABEL,
+  changeFrequencyInOrder,
+  currentPeriodKeys,
+  isTaskFrequency,
+  taskPeriodKey,
+  taskProgress,
+  type TaskLike,
+} from './tasks';
 import { buildProgressMessage } from './chat-summary';
 import type { BoardRead, BoardReadProgress } from './load-progress';
 import {
@@ -86,6 +94,7 @@ import {
   type RowPatch,
   type SectionPatch,
   type TaskCreate,
+  type TaskFrequencyChange,
   type TaskPatch,
 } from './validate';
 
@@ -1459,6 +1468,54 @@ export async function patchTask(viewer: Viewer, p: TaskPatch): Promise<Result<{ 
   if (!rec) return fail(404, 'not_found', 'That task is not on the board any more. Refresh and try again.');
   const task = mapTask(rec);
   return task ? { ok: true, value: { task, archived: !!p.archived } } : fail(500, 'db_error', 'The task came back unreadable.');
+}
+
+/** Archive one live task (final). A task already archived, or gone, is a 404, never a silent success. */
+async function archiveLiveTask(viewer: Viewer, id: string): Promise<Result<true>> {
+  const { data, error } = await client()
+    .from(TASKS)
+    .update({ archived_at: new Date().toISOString(), archived_by: viewer.email })
+    .eq('id', id)
+    .is('archived_at', null)
+    .select('id');
+  if (error) return dbFailure(error, 'Could not archive the task');
+  if (!((data ?? []) as { id: string }[]).length) {
+    return fail(404, 'not_found', 'That task is not on the board any more. Refresh and try again.');
+  }
+  return { ok: true, value: true };
+}
+
+/**
+ * Admin: change how often a task is done (Kane, 2026-10-08). Never in place (the trigger refuses it): a NEW task with
+ * the new frequency, the same owner and the title (or the new one), added last on the owner's list like any new task,
+ * then the old one archived with its ticks. The new one starts unticked. Order and the undo: `changeFrequencyInOrder`.
+ */
+export async function changeTaskFrequency(
+  viewer: Viewer,
+  c: TaskFrequencyChange,
+): Promise<Result<{ task: BoardTask; replacedId: string }>> {
+  const { data, error } = await client().from(TASKS).select('id, owner_email, title, frequency, archived_at').eq('id', c.id).maybeSingle();
+  if (error) return dbFailure(error, 'Could not read the task');
+  const rec = data as { id: string; owner_email: string; title: string; frequency: string; archived_at: string | null } | null;
+  if (!rec || rec.archived_at) return fail(404, 'not_found', 'That task is not on the board any more. Refresh and try again.');
+  if (rec.frequency === c.frequency) {
+    return fail(422, 'same_frequency', `It is already ${FREQUENCY_LABEL[c.frequency].toLowerCase()}. Pick another frequency, or just rename it.`);
+  }
+  const run = await changeFrequencyInOrder<BoardTask, Failure>({
+    add: () => createTask(viewer, { ownerEmail: rec.owner_email, title: c.title ?? rec.title, frequency: c.frequency }),
+    archiveOld: () => archiveLiveTask(viewer, rec.id),
+    undoAdd: async (added) => (await archiveLiveTask(viewer, added.id)).ok,
+  });
+  if (run.ok) return { ok: true, value: { task: run.value, replacedId: rec.id } };
+  if (run.added && !run.undone) {
+    return fail(
+      500,
+      'on_board_twice',
+      `The task was added as ${FREQUENCY_LABEL[c.frequency].toLowerCase()}, but the old one could not be archived (${run.failure.message}), ` +
+        'and taking the new one back failed too. It is on the board twice now: refresh and remove one of them.',
+    );
+  }
+  return run.failure;
 }
 
 async function readLiveTaskCheck(taskId: string, periodKey: string): Promise<Result<TaskCheckRecord | null>> {

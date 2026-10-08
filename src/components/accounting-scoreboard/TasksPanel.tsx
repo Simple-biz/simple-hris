@@ -6,13 +6,19 @@
  *
  * - Everyone opens on their OWN board and ticks their own tasks for the current period (today, this week, ...).
  * - An Admin or an Assistant gets a picker: a person's board, or Everyone (the All view: done of total per person).
- * - An Admin adds, renames and removes tasks, unticks anyone's, and posts the team's progress to Google Chat.
+ * - An Admin adds, renames and removes tasks, changes how often one is done (a new task: the old one is archived with
+ *   its ticks), unticks anyone's, and posts the team's progress to Google Chat.
  * - As-needed tasks are listed last, never counted and never ticked.
- * Reads its own route (GET /api/accounting-scoreboard/tasks), never the board payload. Nothing is cached: who may
- * see what is a permission, and the route answers per request.
+ * Reads its own route (GET /api/accounting-scoreboard/tasks), never the board payload.
+ *
+ * Loading (Kane, 2026-10-08: "enhance skeleton loading on the table and store cache data"): a view PAINTS from the
+ * browser cache before the first paint (`tab-cache.ts`, its own `tasks:<view>` keys) and is then fetched anyway,
+ * silently. A view with nothing of it on screen shows a skeleton shaped like what arrives, never a spinner, and a
+ * refetch never re-skeletons. The viewer's role is a permission: it comes from the page on every load and is never
+ * cached, and someone else's board or Everyone paints from the cache only for a role that may see it now.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Check, ClipboardCopy, Loader2, MessageSquareShare, Pencil, Plus, RefreshCw, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -32,15 +38,25 @@ import {
   type TaskLike,
 } from '@/lib/accounting-scoreboard/tasks';
 import { buildProgressMessage } from '@/lib/accounting-scoreboard/chat-summary';
-import { dayHeader } from '@/lib/accounting-scoreboard/week';
+import { dayHeader, todayEastern } from '@/lib/accounting-scoreboard/week';
+import { clearCachedTasks, readCachedTasks, writeCachedTasks } from '@/lib/accounting-scoreboard/tab-cache';
 import type { BoardPayload, BoardTask, TaskCheck, TasksPayload } from '@/lib/accounting-scoreboard/types';
 import { api, TINY_CAPS } from './shared';
 
-type ViewKey = 'me' | 'all' | string;
+/** 'me' (your own board), 'all' (Everyone), or a board person's work email. */
+export type TasksView = 'me' | 'all' | string;
+
+/** The payload on screen and the view it answers. It is shown only while that view is the one picked. */
+type Shown = { view: TasksView; payload: TasksPayload };
+
+type ChangeFrequency = (task: BoardTask, frequency: TaskFrequency, title: string | undefined) => Promise<boolean>;
 
 const FREQUENCY_OPTIONS = TASK_FREQUENCIES.map((f) => ({ value: f, label: FREQUENCY_LABEL[f] }));
 
 const asLike = (t: BoardTask): TaskLike => ({ id: t.id, ownerEmail: t.ownerEmail, frequency: t.frequency, archived: false });
+
+/** Runs before paint in the browser; a plain effect on the server, where there is nothing to seed. */
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 function progressTone(p: FrequencyProgress): string {
   if (p.done === p.total) return 'text-emerald-700 dark:text-emerald-300';
@@ -48,43 +64,86 @@ function progressTone(p: FrequencyProgress): string {
   return 'text-amber-700 dark:text-amber-300';
 }
 
-export function TasksPanel({ viewer }: { viewer: BoardPayload['viewer'] }) {
-  const [view, setView] = useState<ViewKey>('me');
-  const [data, setData] = useState<TasksPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+/**
+ * `view` lives in ScoreboardApp, so switching to the Scoreboard and back lands on the same board. The cache is bound
+ * to the viewer there, before this panel can mount.
+ */
+export function TasksPanel({
+  viewer,
+  view,
+  onViewChange,
+}: {
+  viewer: BoardPayload['viewer'];
+  view: TasksView;
+  onViewChange: (view: TasksView) => void;
+}) {
+  const [data, setData] = useState<Shown | null>(null);
+  const [error, setError] = useState<{ view: TasksView; message: string } | null>(null);
+  // Only a Refresh click spins: revalidating a view already on screen is silent, like the board's.
+  const [refreshing, setRefreshing] = useState(false);
   const seq = useRef(0);
+  /** The view the server last answered for. Only THAT view is written back to the cache, never a cached seed. */
+  const liveView = useRef<TasksView | null>(null);
 
-  const load = useCallback(async (next: ViewKey) => {
+  // Paint the view from the cache before the browser paints. It never decides: the fetch below runs anyway, and its
+  // answer replaces it. `viewer` is deliberately not a dependency (the board's rule): a role change arrives with the
+  // page, and the role passed here is the one the page resolved, never a cached one.
+  useIsoLayoutEffect(() => {
+    const cached = readCachedTasks(view, todayEastern(), viewer.role);
+    if (!cached) return;
+    setData((prev) => (prev?.view === view ? prev : { view, payload: { ...cached, viewer } }));
+  }, [view]);
+
+  const load = useCallback(async (next: TasksView, click: boolean) => {
     const id = ++seq.current;
-    setLoading(true);
+    if (click) setRefreshing(true);
     const res = await api<TasksPayload>(`/api/accounting-scoreboard/tasks?person=${encodeURIComponent(next)}`);
     if (id !== seq.current) return;
-    setLoading(false);
+    setRefreshing(false);
     if (!res.ok) {
-      setError(res.error);
+      // A refusal is the server deciding this viewer may not see the view: it leaves the screen and never paints from
+      // the cache again. Any other failure keeps the last good view on screen and says so; it never blanks it.
+      if (res.status === 401 || res.status === 403) {
+        clearCachedTasks(next);
+        setData((d) => (d?.view === next ? null : d));
+      }
+      setError({ view: next, message: res.error });
       return;
     }
+    liveView.current = next;
     setError(null);
-    setData(res.data);
+    setData({ view: next, payload: res.data });
   }, []);
 
   useEffect(() => {
-    void load(view);
+    void load(view, false);
   }, [load, view]);
 
-  const role = data?.viewer.role ?? viewer.role;
+  // Write back what the server answered (and edits made on top of it), never the seed: re-writing a seed would
+  // restamp stale data as fresh.
+  useEffect(() => {
+    if (data && data.view === liveView.current) writeCachedTasks(data.view, data.payload);
+  }, [data]);
+
+  const shown = data && data.view === view ? data.payload : null;
+  const viewError = error && error.view === view ? error.message : null;
+  const role = shown?.viewer.role ?? viewer.role;
   const seesAll = can(role, 'view_all_tasks');
   const manages = can(role, 'manage_tasks');
 
-  const pickerOptions = useMemo(() => {
-    const people = data?.people ?? [];
-    return [
+  // The picker keeps the last list it had while another view loads, so it never collapses under the skeleton.
+  const people = data?.payload.people ?? null;
+  const pickerOptions = useMemo(
+    () => [
       { value: 'me', label: 'My tasks' },
       { value: 'all', label: 'Everyone' },
-      ...people.filter((p) => p.email !== viewer.email).map((p) => ({ value: p.email, label: p.name })),
-    ];
-  }, [data?.people, viewer.email]);
+      ...(people ?? []).filter((p) => p.email !== viewer.email).map((p) => ({ value: p.email, label: p.name })),
+    ],
+    [people, viewer.email],
+  );
+
+  /** Edits land on the view on screen (only a shown view has controls). */
+  const edit = (fn: (p: TasksPayload) => TasksPayload) => setData((d) => (d ? { ...d, payload: fn(d.payload) } : d));
 
   const onTick = async (task: BoardTask, done: boolean) => {
     const res = await api<{ check: TaskCheck | null }>('/api/accounting-scoreboard/tasks/checks', {
@@ -95,8 +154,7 @@ export function TasksPanel({ viewer }: { viewer: BoardPayload['viewer'] }) {
       toast.error(res.error);
       return false;
     }
-    setData((d) => {
-      if (!d) return d;
+    edit((d) => {
       const others = d.checks.filter((c) => c.taskId !== task.id);
       return { ...d, checks: res.data.check ? [...others, res.data.check] : others };
     });
@@ -112,7 +170,7 @@ export function TasksPanel({ viewer }: { viewer: BoardPayload['viewer'] }) {
       toast.error(res.error);
       return false;
     }
-    setData((d) => (d ? { ...d, tasks: [...d.tasks, res.data.task] } : d));
+    edit((d) => ({ ...d, tasks: [...d.tasks, res.data.task] }));
     return true;
   };
 
@@ -125,24 +183,53 @@ export function TasksPanel({ viewer }: { viewer: BoardPayload['viewer'] }) {
       toast.error(res.error);
       return false;
     }
-    setData((d) => {
-      if (!d) return d;
+    edit((d) => {
       const tasks = res.data.archived ? d.tasks.filter((t) => t.id !== task.id) : d.tasks.map((t) => (t.id === task.id ? res.data.task : t));
       return { ...d, tasks, checks: res.data.archived ? d.checks.filter((c) => c.taskId !== task.id) : d.checks };
     });
     return true;
   };
 
-  const today = data?.today;
+  // A new frequency is a new task (the doc's rule): the server adds it and archives this one, which keeps its ticks.
+  const onChangeFrequency: ChangeFrequency = async (task, frequency, title) => {
+    const res = await api<{ task: BoardTask; replacedId: string }>('/api/accounting-scoreboard/tasks/frequency', {
+      method: 'POST',
+      body: JSON.stringify({ id: task.id, frequency, ...(title !== undefined ? { title } : {}) }),
+    });
+    if (!res.ok) {
+      toast.error(res.error);
+      return false;
+    }
+    const { task: added, replacedId } = res.data;
+    edit((d) => ({
+      ...d,
+      tasks: [...d.tasks.filter((t) => t.id !== replacedId), added],
+      checks: d.checks.filter((c) => c.taskId !== replacedId),
+    }));
+    toast.success(`Now ${FREQUENCY_LABEL[frequency].toLowerCase()}: "${added.title}"`);
+    return true;
+  };
+
+  const today = shown?.today;
   const todayText = today ? `${dayHeader(today).weekday} ${dayHeader(today).short}` : '';
+  const nameOf = (email: string) => people?.find((p) => p.email === email)?.name ?? email.split('@')[0];
+  const heading = shown
+    ? shown.view.kind === 'all'
+      ? 'Everyone'
+      : shown.view.own
+        ? 'My tasks'
+        : `${shown.view.person.name}'s tasks`
+    : view === 'all'
+      ? 'Everyone'
+      : view === 'me'
+        ? 'My tasks'
+        : `${nameOf(view)}'s tasks`;
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-            {data?.view.kind === 'all' ? 'Everyone' : data?.view.kind === 'person' && !data.view.own ? `${data.view.person.name}'s tasks` : 'My tasks'}
-          </h2>
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
           <p className="text-xs text-zinc-500">
             Ticks count for the current period: today for daily tasks, this week for weekly ones, and so on (US Eastern
             {todayText ? `, today is ${todayText}` : ''}).
@@ -151,7 +238,7 @@ export function TasksPanel({ viewer }: { viewer: BoardPayload['viewer'] }) {
         {seesAll ? (
           <SmoothSelect
             value={view}
-            onChange={(v) => setView(v)}
+            onChange={(v) => onViewChange(v)}
             options={pickerOptions}
             accent="orange"
             align="start"
@@ -161,40 +248,144 @@ export function TasksPanel({ viewer }: { viewer: BoardPayload['viewer'] }) {
             triggerClassName="h-9 min-w-44 text-sm"
           />
         ) : null}
-        <Button size="icon-sm" variant="outline" aria-label="Refresh tasks" disabled={loading} onClick={() => void load(view)}>
-          {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        <Button size="icon-sm" variant="outline" aria-label="Refresh tasks" disabled={refreshing} onClick={() => void load(view, true)}>
+          {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
         </Button>
       </div>
 
-      {error ? (
+      {viewError ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200" role="alert">
-          {error}
-          <Button className="ml-3" size="xs" variant="outline" onClick={() => void load(view)}>
+          {shown ? `Couldn't refresh (${viewError}). You're seeing these tasks as of the last good load.` : viewError}
+          <Button className="ml-3" size="xs" variant="outline" onClick={() => void load(view, true)}>
             Try again
           </Button>
         </div>
       ) : null}
 
-      {!data ? (
-        loading ? (
-          <div className="flex items-center gap-2 py-10 text-sm text-zinc-500">
-            <Loader2 className="size-4 animate-spin" /> Loading tasks…
-          </div>
-        ) : null
-      ) : data.view.kind === 'all' ? (
-        <EveryoneView data={data} manages={manages} onOpen={(email) => setView(email)} />
+      {shown ? (
+        shown.view.kind === 'all' ? (
+          <EveryoneView data={shown} manages={manages} onOpen={(email) => onViewChange(email)} />
+        ) : (
+          <PersonBoard
+            data={shown}
+            canTick={shown.view.own}
+            canUntickAny={manages}
+            manages={manages}
+            onTick={onTick}
+            onAdd={(title, frequency) => (shown.view.kind === 'person' ? onAdd(shown.view.person.email, title, frequency) : Promise.resolve(false))}
+            onPatch={onPatch}
+            onChangeFrequency={onChangeFrequency}
+          />
+        )
+      ) : viewError ? null : view === 'all' ? (
+        <EveryoneSkeleton manages={manages} />
       ) : (
-        <PersonBoard
-          data={data}
-          canTick={data.view.own}
-          canUntickAny={manages}
-          manages={manages}
-          onTick={onTick}
-          onAdd={(title, frequency) => (data.view.kind === 'person' ? onAdd(data.view.person.email, title, frequency) : Promise.resolve(false))}
-          onPatch={onPatch}
-        />
+        <PersonBoardSkeleton manages={manages} />
       )}
     </div>
+  );
+}
+
+/* ── Skeletons: shaped like what arrives, on the same cards (ui-standards § 12.3), for the first paint only ── */
+
+const BAR = 'skeleton-shimmer rounded';
+const TITLE_WIDTHS = ['w-2/3', 'w-1/2', 'w-3/4', 'w-5/12', 'w-7/12', 'w-1/3'];
+const NAME_WIDTHS = ['w-28', 'w-36', 'w-24', 'w-32', 'w-20', 'w-28'];
+
+function TasksLoading({ children }: { children: ReactNode }) {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading tasks…</span>
+      {children}
+    </div>
+  );
+}
+
+/** One person's board: the Add form (Admins), then frequency cards of task rows, a checkbox and a title each. */
+function PersonBoardSkeleton({ manages }: { manages: boolean }) {
+  return (
+    <TasksLoading>
+      {manages ? (
+        <div aria-hidden className="flex flex-wrap items-center gap-2 rounded-xl border border-orange-200/70 bg-orange-50/50 p-3 dark:border-orange-900/50 dark:bg-orange-950/20">
+          <div className="skeleton-shimmer h-9 min-w-48 flex-1 rounded-md" />
+          <div className="skeleton-shimmer h-9 w-32 rounded-md" />
+          <div className="skeleton-shimmer h-8 w-24 rounded-md" />
+        </div>
+      ) : null}
+      {[5, 3].map((rows, s) => (
+        <section key={s} aria-hidden className="rounded-xl border border-zinc-200 bg-white/80 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
+          <div className="flex h-[37px] items-center justify-between gap-3 border-b border-zinc-100 px-4 dark:border-zinc-900">
+            <div className={cn(BAR, 'h-2.5 w-16')} />
+            <div className={cn(BAR, 'h-3 w-28')} />
+          </div>
+          <ul className="divide-y divide-zinc-100 dark:divide-zinc-900">
+            {Array.from({ length: rows }, (_, i) => (
+              // An Admin's rows carry the pencil and Remove, which make them 45px: the skeleton holds that height.
+              <li key={i} className={cn('flex items-center gap-3 px-4 py-2.5', manages && 'min-h-[45px]')}>
+                <div className="skeleton-shimmer size-4 shrink-0 rounded" />
+                <div className="flex h-5 min-w-0 flex-1 items-center">
+                  <div className={cn(BAR, 'h-3.5', TITLE_WIDTHS[(i + s * 2) % TITLE_WIDTHS.length])} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </TasksLoading>
+  );
+}
+
+/** Everyone: the progress message card, then the done-of-total table (Person + a column per frequency). */
+function EveryoneSkeleton({ manages }: { manages: boolean }) {
+  const cols = [0, 1, 2];
+  return (
+    <TasksLoading>
+      <section aria-hidden className="rounded-xl border border-zinc-200 bg-white/80 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
+        <div className={cn(BAR, 'mb-3 h-2.5 w-36')} />
+        <div className="space-y-2">
+          <div className={cn(BAR, 'h-3.5 w-full')} />
+          <div className={cn(BAR, 'h-3.5 w-3/5')} />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <div className="skeleton-shimmer h-8 w-32 rounded-md" />
+          {manages ? <div className="skeleton-shimmer h-8 w-28 rounded-md" /> : null}
+        </div>
+      </section>
+      <div aria-hidden className="overflow-x-auto rounded-xl border border-zinc-200 bg-white/80 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/60">
+        <table className="table-keep w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-100 dark:border-zinc-900">
+              <th className="px-4 py-2.5">
+                <div className={cn(BAR, 'h-2.5 w-14')} />
+              </th>
+              {cols.map((c) => (
+                <th key={c} className="px-3 py-2.5">
+                  <div className={cn(BAR, 'ml-auto h-2.5 w-12')} />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100 dark:divide-zinc-900">
+            {NAME_WIDTHS.map((w, r) => (
+              <tr key={r}>
+                <td className="px-4 py-2">
+                  <div className="flex h-5 items-center">
+                    <div className={cn(BAR, 'h-3.5', w)} />
+                  </div>
+                </td>
+                {cols.map((c) => (
+                  <td key={c} className="px-3 py-2">
+                    <div className="flex h-5 items-center justify-end">
+                      <div className={cn(BAR, 'h-3.5 w-10')} />
+                    </div>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </TasksLoading>
   );
 }
 
@@ -206,6 +397,7 @@ function PersonBoard({
   onTick,
   onAdd,
   onPatch,
+  onChangeFrequency,
 }: {
   data: TasksPayload;
   canTick: boolean;
@@ -214,6 +406,7 @@ function PersonBoard({
   onTick: (task: BoardTask, done: boolean) => Promise<boolean>;
   onAdd: (title: string, frequency: TaskFrequency) => Promise<boolean>;
   onPatch: (task: BoardTask, patch: { title?: string; archived?: true }) => Promise<boolean>;
+  onChangeFrequency: ChangeFrequency;
 }) {
   const done = new Set(data.checks.map((c) => c.taskId));
   const progress = taskProgress(data.tasks.map(asLike), data.checks, data.today);
@@ -260,6 +453,7 @@ function PersonBoard({
                   manages={manages}
                   onTick={onTick}
                   onPatch={onPatch}
+                  onChangeFrequency={onChangeFrequency}
                 />
               ))}
             </ul>
@@ -278,6 +472,7 @@ function TaskRow({
   manages,
   onTick,
   onPatch,
+  onChangeFrequency,
 }: {
   task: BoardTask;
   done: boolean;
@@ -286,11 +481,14 @@ function TaskRow({
   manages: boolean;
   onTick: (task: BoardTask, done: boolean) => Promise<boolean>;
   onPatch: (task: BoardTask, patch: { title?: string; archived?: true }) => Promise<boolean>;
+  onChangeFrequency: ChangeFrequency;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
+  const [frequency, setFrequency] = useState<TaskFrequency>(task.frequency);
   const [confirming, setConfirming] = useState(false);
+  const moving = frequency !== task.frequency;
   const counted = task.frequency !== 'as_needed';
   const enabled = counted && !busy && (done ? canUntick : canTick);
 
@@ -315,30 +513,54 @@ function TaskRow({
       )}
       {editing ? (
         <form
-          className="flex min-w-0 flex-1 items-center gap-2"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
           onSubmit={async (e) => {
             e.preventDefault();
+            const renamed = title.trim() !== task.title;
             setBusy(true);
-            const ok = title.trim() === task.title || (await onPatch(task, { title }));
+            // A new frequency is a new task (the old one is archived with its ticks); the title rides along. A title
+            // alone is renamed in place.
+            const ok = moving
+              ? await onChangeFrequency(task, frequency, renamed ? title : undefined)
+              : !renamed || (await onPatch(task, { title }));
             setBusy(false);
             if (ok) setEditing(false);
           }}
         >
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} className="h-8 flex-1" aria-label="Task title" autoFocus />
+          <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} className="h-8 min-w-40 flex-1" aria-label="Task title" autoFocus />
+          <SmoothSelect
+            value={frequency}
+            onChange={(v) => setFrequency(v)}
+            options={FREQUENCY_OPTIONS}
+            accent="orange"
+            align="start"
+            portal
+            aria-label="How often"
+            triggerClassName="h-8 min-w-32 text-sm"
+          />
           <Button size="xs" type="submit" disabled={busy || !title.trim()}>
-            Save
+            {busy ? <Loader2 className="animate-spin" /> : null} Save
           </Button>
           <Button
             size="xs"
             type="button"
             variant="ghost"
+            disabled={busy}
             onClick={() => {
               setTitle(task.title);
+              setFrequency(task.frequency);
               setEditing(false);
             }}
           >
             Cancel
           </Button>
+          {moving ? (
+            <p className="basis-full text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+              Saving makes this a new {FREQUENCY_LABEL[frequency].toLowerCase()} task and archives this one. Ticks stay with
+              the old task, so the new one starts unticked.
+              {frequency === 'as_needed' ? ' As-needed tasks are never ticked or counted.' : ''}
+            </p>
+          ) : null}
         </form>
       ) : (
         <span
@@ -373,7 +595,7 @@ function TaskRow({
           </span>
         ) : (
           <span className="flex items-center gap-1">
-            <Button size="icon-xs" variant="ghost" aria-label={`Rename ${task.title}`} onClick={() => setEditing(true)}>
+            <Button size="icon-xs" variant="ghost" aria-label={`Edit ${task.title}`} title="Rename or change how often" onClick={() => setEditing(true)}>
               <Pencil />
             </Button>
             <Button size="xs" variant="ghost" className="text-zinc-500" onClick={() => setConfirming(true)}>

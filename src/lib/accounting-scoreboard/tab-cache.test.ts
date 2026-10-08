@@ -5,22 +5,27 @@
  * (dashboard-cache/create-tab-cache.test.ts) proves the identity, age, schema and quota rules; this
  * pins what THIS store adds: the viewer (a permission) is never cached, a board is keyed by its own
  * week and never paints as another week, only the newest MAX_CACHED_WEEKS boards are kept, and
- * nothing it exports can answer "already fetched".
+ * nothing it exports can answer "already fetched". For the Tasks views it also pins: no viewer, a view only
+ * paints as itself, never on another Eastern day, and never for a role that may not see it.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as store from './tab-cache';
 import {
+  MAX_CACHED_TASK_VIEWS,
   MAX_CACHED_WEEKS,
   SCOREBOARD_CACHE_KEYS,
   bindScoreboardCache,
+  clearCachedTasks,
   readCachedBoard,
   readCachedRoster,
+  readCachedTasks,
   scoreboardTabCache,
   writeCachedBoard,
   writeCachedRoster,
+  writeCachedTasks,
 } from './tab-cache';
-import type { BoardPayload } from './types';
+import type { BoardPayload, TasksPayload } from './types';
 
 function fakeStorage(): Storage {
   const map = new Map<string, string>();
@@ -117,4 +122,92 @@ test('the roster picker round-trips; nothing cached is a miss, not an empty rost
 
 test('nothing this store exports can answer "already fetched": a cached value paints, never decides', () => {
   for (const name of Object.keys(store)) assert.doesNotMatch(name, /fetched|fresh|skip|stale/i, name);
+});
+
+// ── Tasks views ──────────────────────────────────────────────────────────────
+
+const TODAY = '2026-10-08';
+
+function tasks(view: TasksPayload['view'], over: Partial<TasksPayload> = {}): TasksPayload {
+  return {
+    today: TODAY,
+    viewer: { email: 'carla@simple.biz', role: 'admin' },
+    view,
+    people: [{ email: 'joana@simple.biz', name: 'Joana' }],
+    tasks: [{ id: 't1', ownerEmail: 'joana@simple.biz', title: 'Check the inbox', frequency: 'daily', sortOrder: 0, createdAt: '2026-10-08T12:00:00Z' }],
+    checks: [{ taskId: 't1', periodKey: TODAY, checkedBy: 'joana@simple.biz', checkedAt: '2026-10-08T13:00:00Z' }],
+    teamProgress: null,
+    chatConfigured: true,
+    ...over,
+  };
+}
+const MINE: TasksPayload['view'] = { kind: 'person', person: { email: 'carla@simple.biz', name: 'Carla' }, own: true };
+const JOANA: TasksPayload['view'] = { kind: 'person', person: { email: 'joana@simple.biz', name: 'Joana' }, own: false };
+
+test('a Tasks view round-trips under its own key, WITHOUT the viewer, and never inside a board blob', () => {
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedTasks('me', tasks(MINE));
+  const cached = readCachedTasks('me', TODAY, 'admin');
+  assert.ok(cached);
+  assert.equal('viewer' in cached, false, 'the role is a permission: it comes from the page, never the cache');
+  assert.equal(cached.checks.length, 1);
+  writeCachedBoard(board('2026-10-04'));
+  assert.equal('tasks' in (readCachedBoard('2026-10-04') ?? {}), false, 'the board blob never carries tasks');
+});
+
+test('a view paints only as itself: me is own, all is Everyone, an email is that person', () => {
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedTasks('all', tasks({ kind: 'all' }));
+  writeCachedTasks('joana@simple.biz', tasks(JOANA));
+  assert.ok(readCachedTasks('all', TODAY, 'admin'));
+  assert.ok(readCachedTasks('joana@simple.biz', TODAY, 'admin'));
+  writeCachedTasks('me', tasks(JOANA));
+  assert.equal(readCachedTasks('me', TODAY, 'admin'), undefined, "someone else's board is never written as mine");
+  scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.tasks('all'), { ...tasks(MINE), viewer: undefined });
+  assert.equal(readCachedTasks('all', TODAY, 'admin'), undefined, 'a blob filed under the wrong view is refused');
+});
+
+test("someone else's board, or Everyone, never paints for a role that may not see it NOW", () => {
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedTasks('all', tasks({ kind: 'all' }));
+  writeCachedTasks('joana@simple.biz', tasks(JOANA));
+  writeCachedTasks('me', tasks(MINE));
+  for (const view of ['all', 'joana@simple.biz']) {
+    assert.ok(readCachedTasks(view, TODAY, 'assistant'), `${view}: an Assistant sees everyone's`);
+    assert.equal(readCachedTasks(view, TODAY, 'member'), undefined, `${view}: demoted to Team member, it never paints`);
+  }
+  assert.ok(readCachedTasks('me', TODAY, 'member'), 'your own board paints for every role');
+});
+
+test("a view read on another Eastern day never paints: its ticks are another period's", () => {
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedTasks('me', tasks(MINE, { today: '2026-10-07' }));
+  assert.equal(readCachedTasks('me', TODAY, 'admin'), undefined, "yesterday's daily ticks would paint as done today");
+  assert.ok(readCachedTasks('me', '2026-10-07', 'admin'));
+});
+
+test('inert until bound; another viewer never reads a view; a refused view is forgotten', () => {
+  writeCachedTasks('me', tasks(MINE));
+  bindScoreboardCache('carla@simple.biz');
+  assert.equal(readCachedTasks('me', TODAY, 'admin'), undefined, 'a write before binding is dropped');
+  writeCachedTasks('me', tasks(MINE));
+  bindScoreboardCache('someone.else@simple.biz');
+  assert.equal(readCachedTasks('me', TODAY, 'admin'), undefined, 'binding a different viewer purges first');
+
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedTasks('all', tasks({ kind: 'all' }));
+  clearCachedTasks('all');
+  assert.equal(readCachedTasks('all', TODAY, 'admin'), undefined);
+  assert.deepEqual(scoreboardTabCache.get<string[]>(SCOREBOARD_CACHE_KEYS.taskViews), []);
+});
+
+test(`only the newest ${MAX_CACHED_TASK_VIEWS} Tasks views are kept`, () => {
+  bindScoreboardCache('carla@simple.biz');
+  const emails = Array.from({ length: MAX_CACHED_TASK_VIEWS + 1 }, (_, i) => `p${i}@simple.biz`);
+  for (const email of emails) {
+    writeCachedTasks(email, tasks({ kind: 'person', person: { email, name: email }, own: false }));
+  }
+  assert.equal(readCachedTasks(emails[0], TODAY, 'admin'), undefined, 'the oldest-written view was dropped');
+  for (const email of emails.slice(1)) assert.ok(readCachedTasks(email, TODAY, 'admin'), email);
+  assert.equal(scoreboardTabCache.get<string[]>(SCOREBOARD_CACHE_KEYS.taskViews)?.length, MAX_CACHED_TASK_VIEWS);
 });

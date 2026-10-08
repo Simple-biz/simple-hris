@@ -3441,6 +3441,24 @@ decides it. `showOnOverview: false` (2026-10-07) takes its card off the Overview
 
 Managers. The people picker: `{ people: [{ name, department, workEmail }] }` from `active_employees`, paged; no other column.
 
+### Tasks: `GET /api/accounting-scoreboard/tasks` · `POST` · `PATCH` · `tasks/checks` · `tasks/frequency` · `tasks/post-progress` *(2026-10-08)*
+
+The per-person task boards ([accounting-scoreboard-tasks.md](../features/accounting-scoreboard-tasks.md)). Their own read, never the
+board payload, and no live announce (`live.test.ts` names why). Archived, never deleted; a tick is unchecked by a stamp.
+
+- `GET ?person=me|all|<work email>` (any role; `all` or a person: Admin, Assistant) → `{ today, viewer, view, people, tasks, checks,
+  teamProgress, chatConfigured }`, the live tasks and their ticks in the CURRENT periods (US Eastern, computed by the server).
+- `POST { ownerEmail, title, frequency }` (Admin) → 201 `{ task }`, last on the owner's list; the owner must be one of the board's people.
+- `PATCH { id, title?, sortOrder?, archived?: true }` (Admin) → `{ task, archived }`. **Refuses `ownerEmail` and `frequency`**: neither
+  changes in place.
+- `POST tasks/frequency { id, frequency, title? }` (Admin) → 201 `{ task, replacedId }`: changes how often a task is done by ADDING a new
+  task with the new frequency (and the title, or the new one) and then ARCHIVING the old one, which keeps its ticks; the new one starts
+  unticked. 422 `same_frequency` for no change; 404 if the task is archived or gone. If the archive fails, the new task is archived again,
+  and the answer is the archive's error. If that undo also fails, 500 `on_board_twice`: refresh and remove one.
+- `POST tasks/checks { taskId, done }` (any role; only the owner ticks, the owner or an Admin unticks) → `{ check }` or `{ check: null }`.
+- `POST tasks/post-progress` (Admin) → `{ message, postedAt }`, sent through the Chat webhook (never echoed); 503 when unset, 502 when
+  Google refuses or takes over 10 s ("may or may not have posted").
+
 ---
 
 ## Route index — every `app/api/**/route.ts` in the tree
@@ -3448,7 +3466,7 @@ Managers. The people picker: `{ people: [{ name, department, workEmail }] }` fro
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). **2026-10-08**: five more (§ 24: `roles`, `tasks`, `tasks/checks`, `tasks/post-progress`, `tasks/frequency`), found missing from this table when `tasks/frequency` was added, and every scoreboard row's Gate re-read from its route file (the board-local actions of `roles.ts`; the old `'member'` / `'manager'` gates no longer exist). The rest of the table was not re-diffed against the tree. `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3495,17 +3513,22 @@ of cells — the matches were not re-run).
 
 | Route | Verbs | Gate | Mentioned in |
 |---|---|---|---|
-| `/api/accounting-scoreboard` | GET | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/collections` | POST, DELETE | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/collections/verify` | POST | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/custom-sections` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/entries` | PUT | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/members` | POST, DELETE | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/problem-types` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/problems` | POST, DELETE | `resolveAccess('member')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/roster` | GET | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/rows` | POST, PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
-| `/api/accounting-scoreboard/sections` | PATCH | `resolveAccess('manager')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard` | GET | `resolveAccess()` (any role on the board) | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/collections` | POST, DELETE | `resolveAccess('log_lines')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/collections/verify` | POST | `resolveAccess('log_lines')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/custom-sections` | POST, PATCH | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/entries` | PUT | `resolveAccess('edit_cells')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/members` | POST, DELETE | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/problem-types` | POST, PATCH | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/problems` | POST, DELETE | `resolveAccess('log_lines')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/roles` | GET, POST, DELETE | `resolveAccess('manage_roles')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/roster` | GET | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/rows` | POST, PATCH | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/sections` | PATCH | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/tasks` | GET, POST, PATCH | GET: `resolveAccess()` · POST, PATCH: `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
+| `/api/accounting-scoreboard/tasks/checks` | POST | `resolveAccess()` (the owner ticks; the server checks) | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
+| `/api/accounting-scoreboard/tasks/frequency` | POST | `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
+| `/api/accounting-scoreboard/tasks/post-progress` | POST | `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
 | `/api/accounting/documents` | GET | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/[id]` | GET, PATCH, DELETE | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/coe` | POST | `requireFeatureEdit` | — **no doc** |

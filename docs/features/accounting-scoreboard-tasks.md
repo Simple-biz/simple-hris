@@ -17,8 +17,10 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 | The progress message (pure) | `src/lib/accounting-scoreboard/chat-summary.ts` (+ `.test.ts`) |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` § Task boards (+ `tasks-validate.test.ts`) |
 | Reads, writes, the Chat post | `src/lib/accounting-scoreboard/server.ts` § Task boards |
-| Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET / POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/post-progress/route.ts` (POST) |
-| UI | `src/components/accounting-scoreboard/TasksPanel.tsx`; the switch in `ScoreboardApp.tsx` |
+| Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET / POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/frequency/route.ts` (POST, change how often) · `tasks/post-progress/route.ts` (POST) |
+| Changing how often: add, then archive, then undo on failure (pure) | `changeFrequencyInOrder` in `src/lib/accounting-scoreboard/tasks.ts` (+ `tasks.test.ts`) |
+| Browser cache: one key per view, never the viewer | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `tab-cache.test.ts`) |
+| UI | `src/components/accounting-scoreboard/TasksPanel.tsx` (the boards, the edit form, the skeletons); the switch and the picked view in `ScoreboardApp.tsx` |
 | Scheduled posts: when (pure) | `src/lib/accounting-scoreboard/chat-schedule.ts` (+ `.test.ts`, which also checks `vercel.json`) |
 | Scheduled posts: claim → post → stamp (pure, effects injected) | `src/lib/accounting-scoreboard/scheduled-chat-core.ts` (+ `.test.ts`) |
 | Scheduled posts: the wiring, the cron route, the schedule | `src/lib/accounting-scoreboard/scheduled-chat.ts` · `app/api/cron/accounting-scoreboard-chat/route.ts` · `vercel.json` |
@@ -32,7 +34,7 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 |---|---|---|---|
 | Own board, tick own tasks | yes | yes | yes |
 | See a person's board, or Everyone | no | yes (`view_all_tasks`) | yes |
-| Add, rename, remove tasks | no | no | yes (`manage_tasks`) |
+| Add, rename, change how often, remove tasks | no | no | yes (`manage_tasks`) |
 | Untick someone else's task | no | no | yes |
 | Copy message | no | yes | yes |
 | Post to Chat | no | no | yes |
@@ -41,7 +43,8 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
   did the work. This is the Payment Verified pattern.
 - The route is the board's: `resolveAccess` on every request, and the Tasks view reads its own route
   (`GET /api/accounting-scoreboard/tasks`), **never the board payload**. Nothing about tasks is in `readBoard`, its
-  progress lines or its browser cache. The viewer's role is resolved per request and never cached.
+  progress lines or the board's cached blob: the Tasks view has cache keys of its own (§ Loading and the browser
+  cache). The viewer's role is resolved per request and never cached.
 - **A task's owner is one of the board's people**: a live person row (named by its row label, what the team calls
   them), a member, or a role grant (`listTaskPeople`). Not any HRIS address: a task on someone who cannot open the board
   helps no one. Someone signed in under an alternate address sees their own board through their aliases.
@@ -80,6 +83,68 @@ Kane, 2026-10-08: *"make sure all of the data … is saved so we can have a hist
 - So any past period can be counted again: the tasks live at a time *t* are those with `created_at <= t` and no
   `archived_at` before *t*; a period's done count is its live ticks with that `period_key`; `checked_at` says when in
   the day the work was ticked. That is everything a completion histogram (per person, per frequency, per week) needs.
+
+### Changing how often (2026-10-08)
+
+Kane, 2026-10-08: *"the tasks edit button can also edit the frequency like we can change the daily weekly biweekly and
+all that"*. The pencil on a task (Admin) opens one form with the title **and How often**.
+
+- **A new frequency is a new task, never an in-place edit** (the rule above, the table's trigger and
+  `tasks-validate.test.ts`, which pins that PATCH refuses `frequency`, all stand). Saving with a different frequency
+  calls `POST /tasks/frequency`: the server **adds** a task with the same owner, the new frequency and the title (or the
+  new one, in the same save), last on the owner's list like any new task, then **archives** the old one.
+- **The old task keeps its ticks, and the new one starts unticked.** A weekly task ticked on Monday and made daily on
+  Tuesday shows Tuesday as not done. The form says so before saving: *"Saving makes this a new weekly task and archives
+  this one. Ticks stay with the old task, so the new one starts unticked."* Made as-needed, it adds that as-needed tasks
+  are never ticked or counted.
+- **Order is the guard** (`changeFrequencyInOrder`, `tasks.test.ts`), because the two writes cannot share a transaction
+  over PostgREST. Add first: a failed add changes nothing. Then archive: if that fails (or someone removed the task
+  meanwhile), the new task is archived again, so the change never leaves the task on the board twice, and the old one is
+  still live. If that undo fails too, the answer is 500 `on_board_twice` and says to refresh and remove one, never a
+  plain "failed". Archive-first was rejected: a failed add would take the task off the board for good, because
+  archived is final.
+- The same frequency is 422 `same_frequency` (the form renames in place instead). The owner never changes here either
+  (400). The owner must still be one of the board's people, as for Add.
+- A title alone is still renamed in place (`PATCH`), and keeps its ticks.
+- Like Add, it does not refuse a title that is already live at the new frequency.
+
+## Loading and the browser cache (2026-10-08)
+
+Kane, 2026-10-08: *"Scoreboard Accounting - Please enhance skeleton loading on the table and store cache data"*. Before
+this, the panel unmounted on every Scoreboard → Tasks switch, so every switch and every person picked showed
+*"Loading tasks…"* with a spinner and waited for the server.
+
+- **A view is cached in `sessionStorage`** under its own key, `acct-sb:tasks:<view>` (`me`, `all`, or a person's work
+  email), on the board's envelope (`tab-cache.ts`: bound to the viewer, 12 h ceiling, a different viewer purges first).
+  The **8** most recently written views are kept. Tasks are never inside a board blob.
+- **The board's rules, unchanged** (accounting-scoreboard.md § Browser cache): a cached view **paints, it never decides**.
+  Every open, switch back and person picked fetches again, silently, and the server's answer replaces it. **Only the
+  server's answer is written back** (and edits made on top of it), never the seed. The seed runs in a layout effect,
+  before the browser paints. **The viewer is never cached**: it comes from the page on every load.
+- **Two guards of its own**, because a task view is both a permission and a period (`readCachedTasks`, pinned in
+  `tab-cache.test.ts`):
+  - **Someone else's board, or Everyone, paints only for a role that may see it now** (`view_all_tasks`, from the role the
+    page just resolved). An Assistant demoted to Team member never sees a cached Everyone, even for a frame. A 401 or 403
+    from the server forgets that view and takes it off the screen.
+  - **A view paints only on the Eastern day it was read.** A tick counts for its period, so yesterday's daily ticks would
+    paint as done today. A view from another day is a miss, and the skeleton shows instead.
+  - A blob filed under the wrong view (my key holding someone else's board) is refused.
+- **The picked view lives in `ScoreboardApp`**, so Scoreboard → Tasks lands on the board you left, painted at once.
+- **Skeleton, never a spinner** (`ui-standards.md` § 12.3): a view with nothing of it on screen shows a skeleton **shaped
+  like what arrives**, on the same cards. *My tasks* or a person: the Add form (Admins), then frequency cards of task rows,
+  at the board's own heights (header 37 px, an Admin's row 45 px). *Everyone*: the progress message card, then the table
+  (`table-keep`). The heading already names the view picked, the previous person's board is never shown under the new
+  name, and the picker keeps its list. Screen readers hear *"Loading tasks…"* (`aria-busy`). The shimmer goes still under
+  reduced motion. **A refetch never re-skeletons**: revalidating a painted view is silent, and only a Refresh click spins
+  its button. A failed refresh keeps the view on screen under *"Couldn't refresh (…). You're seeing these tasks as of the
+  last good load."*
+- **Verified 2026-10-08** in headless Chromium on the real `ScoreboardApp` with a mocked API and **synthetic** tasks
+  (fictional people, a 1.5 s read), **64 scripted checks** at 1360 px light and dark and 390 px: the skeleton on first open
+  with no spinner; tasks painted at once on switching back, with the fetch still made and no spinner; the Everyone table
+  skeleton under the right heading, with the previous board not shown; My tasks instant from the cache; the How often
+  picker, its note, the POST body, the task under its new frequency and the counts; a rename as a PATCH; a reload painting
+  from the cache with the edits and no viewer or role in the blob; no page-wide horizontal scroll; no console errors; the
+  shimmer still under reduced motion. **Not clicked through signed in.**
 
 ## The Everyone view and the progress message
 
@@ -192,13 +257,18 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
 
 ## Deploy notes
 
-- **Migration: PENDING (Kane).** `node --import tsx scripts/apply-accounting-scoreboard-tasks-migration.mts` (dry run, rolled
-  back) passed every check on 2026-10-08, including 2 positive and 17 negative controls and the anon refusal on both
-  tables. Then `--apply`, then `--verify`. The board read never touches these tables, so an unapplied migration only
-  makes the Tasks view say "not set up yet"; the scoreboard itself is unaffected. Apply it before the push anyway.
+- **Migration: APPLIED, measured 2026-10-08** (Open item 393: its `--verify` passes, and `0ded334b` is on origin/main).
+  `node --import tsx scripts/apply-accounting-scoreboard-tasks-migration.mts` (dry run, rolled back) had passed every
+  check that day, including 2 positive and 17 negative controls and the anon refusal on both tables. The board read never
+  touches these tables, so an unapplied migration only makes the Tasks view say "not set up yet"; the scoreboard itself
+  is unaffected. Re-check any time with `--verify`.
+- **Changing how often and the browser cache (2026-10-08): no migration, no env var, no table change.** The new route
+  writes only what Add and Remove already write (an insert and the archive stamp). **The push: PENDING** (Kane).
 - **Env:** `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL` is in `.env.local` (2026-10-08; proven with two manual posts) and in
   `.env.example` with no value. Vercel Production: Kane (he was deploying it on 2026-10-08).
-- **Import:** after the migration, fill the 18 null tabs in the map, dry-run, then `--apply` on Kane's go.
+- **Import: APPLIED 2026-10-08 14:05Z** on Kane's *"Go"* (Open item 393, `0b7d39c9`): 338 tasks on 23 boards. The 7 Florida
+  tabs whose people are not on the board are "skip" in the map (99 tasks): add them under Setup → Members, map them, and
+  re-run (it skips what is already live).
 - **Scheduled posts migration: PENDING (Kane). Apply it BEFORE the push.**
   `node --import tsx scripts/apply-accounting-scoreboard-chat-posts-migration.mts` (dry run, rolled back) passed every
   check on 2026-10-08: 16 object and privilege checks, the anon refusal, 7 positive and 13 negative controls. Then
@@ -215,4 +285,5 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
   cron yet.**
 - **Verified:** 18 task tests + 5 import tests; the scoreboard suite 227/227 and `npm test` 6,402/6,402 before the import
   module; `tsc` clean apart from two stale `.next/types/validator.ts` entries for another feature's routes. **Not
-  rendered in a browser and not clicked through signed in.**
+  rendered in a browser and not clicked through signed in.** Rendered on 2026-10-08 with the frequency change and the cache
+  (headless Chromium, synthetic tasks, 64 checks: § Loading and the browser cache); still **not clicked through signed in**.

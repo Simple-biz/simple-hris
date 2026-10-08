@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTaskCheck, parseTaskCreate, parseTaskPatch, parseTaskView, TASK_TITLE_MAX } from './validate';
+import { parseTaskCheck, parseTaskCreate, parseTaskFrequencyChange, parseTaskPatch, parseTaskView, TASK_TITLE_MAX } from './validate';
 
 const ID = '7d0f3c1e-2b4a-4c6d-8e9f-0a1b2c3d4e5f';
 
@@ -41,4 +41,22 @@ test('the view: me by default, all, or a work email', () => {
   assert.deepEqual(parseTaskView('all'), { ok: true, value: { kind: 'all' } });
   assert.deepEqual(parseTaskView('Joana@Simple.biz'), { ok: true, value: { kind: 'person', email: 'joana@simple.biz' } });
   assert.equal(parseTaskView('nobody').ok, false);
+});
+
+test('changing how often: a task id and one of the eight; the title may change in the same save', () => {
+  assert.deepEqual(parseTaskFrequencyChange({ id: ID, frequency: 'weekly' }), { ok: true, value: { id: ID, frequency: 'weekly' } });
+  assert.deepEqual(parseTaskFrequencyChange({ id: ID, frequency: 'as_needed', title: '  Send   the report ' }), {
+    ok: true,
+    value: { id: ID, frequency: 'as_needed', title: 'Send the report' },
+  });
+  assert.deepEqual(parseTaskFrequencyChange({ id: ID }), { ok: false, error: 'Pick how often the task is done' });
+  assert.deepEqual(parseTaskFrequencyChange({ id: ID, frequency: 'hourly' }), { ok: false, error: 'Pick how often the task is done' });
+  assert.deepEqual(parseTaskFrequencyChange({ id: ID, frequency: 'weekly', title: '  ' }), { ok: false, error: 'A task needs a title' });
+  assert.equal(parseTaskFrequencyChange({ id: 'not-a-uuid', frequency: 'weekly' }).ok, false);
+});
+
+test('changing how often never moves the owner', () => {
+  const r = parseTaskFrequencyChange({ id: ID, frequency: 'weekly', ownerEmail: 'b@simple.biz' });
+  assert.equal(r.ok, false);
+  assert.match(!r.ok ? r.error : '', /owner never changes/);
 });
