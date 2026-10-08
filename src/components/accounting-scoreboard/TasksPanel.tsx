@@ -8,6 +8,8 @@
  * - An Admin or an Assistant gets a picker: a person's board, or Everyone (the All view: done of total per person).
  * - An Admin adds, renames and removes tasks, changes how often one is done (a new task: the old one is archived with
  *   its ticks), unticks anyone's, and posts the team's progress to Google Chat.
+ * - Everyone rearranges their OWN list by its grip, within a card (Aliviah, relayed by Kane 2026-10-08: "each user
+ *   could rearrange their task list"); an Admin can rearrange anyone's. Mouse, touch, or keyboard (Space, arrows, Space).
  * - As-needed tasks are listed last, never counted and never ticked.
  * Reads its own route (GET /api/accounting-scoreboard/tasks), never the board payload.
  *
@@ -22,9 +24,22 @@
  * answers. Only a read with a skeleton under it has a card; a silent revalidation and a Refresh click have none.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Check, ClipboardCopy, Loader2, MessageSquareShare, Pencil, Plus, RefreshCw, Users } from 'lucide-react';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type DragEndEvent,
+  type UniqueIdentifier,
+} from '@dnd-kit/core';
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Check, ClipboardCopy, GripVertical, Loader2, MessageSquareShare, Pencil, Plus, RefreshCw, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +57,7 @@ import {
   type TaskLike,
 } from '@/lib/accounting-scoreboard/tasks';
 import { buildProgressMessage } from '@/lib/accounting-scoreboard/chat-summary';
+import { compareTaskOrder } from '@/lib/accounting-scoreboard/task-order';
 import { dayHeader, todayEastern } from '@/lib/accounting-scoreboard/week';
 import { clearCachedTasks, readCachedTasks, writeCachedTasks } from '@/lib/accounting-scoreboard/tab-cache';
 import {
@@ -388,6 +404,28 @@ export function TasksPanel({
     return true;
   };
 
+  // One card in a new order (task-order.ts): moved on screen at once, put back if the server refuses.
+  const onReorder = async (ids: string[]) => {
+    const at = new Map(ids.map((id, i) => [id, i]));
+    const before: { tasks: BoardTask[] | null } = { tasks: null };
+    edit((d) => {
+      before.tasks = d.tasks;
+      const tasks = d.tasks.map((t) => (at.has(t.id) ? { ...t, sortOrder: at.get(t.id)! } : t)).sort(compareTaskOrder);
+      return { ...d, tasks };
+    });
+    const res = await api<{ order: Array<{ id: string; sortOrder: number }> }>('/api/accounting-scoreboard/tasks/order', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) {
+      toast.error(res.error);
+      const back = before.tasks;
+      if (back) edit((d) => ({ ...d, tasks: back }));
+      return false;
+    }
+    return true;
+  };
+
   const today = shown?.today;
   const todayText = today ? `${dayHeader(today).weekday} ${dayHeader(today).short}` : '';
   const eastern = dayHeader(todayEastern());
@@ -452,17 +490,19 @@ export function TasksPanel({
               data={shown}
               canTick={shown.view.own}
               canUntickAny={manages}
+              canReorder={shown.view.own || manages}
               manages={manages}
               onTick={onTick}
               onAdd={(title, frequency) => (shown.view.kind === 'person' ? onAdd(shown.view.person.email, title, frequency) : Promise.resolve(false))}
               onPatch={onPatch}
               onChangeFrequency={onChangeFrequency}
+              onReorder={onReorder}
             />
           )
         ) : viewError ? null : view === 'all' ? (
           <EveryoneSkeleton manages={manages} />
         ) : (
-          <PersonBoardSkeleton manages={manages} />
+          <PersonBoardSkeleton manages={manages} grips={view === 'me' || manages} />
         )}
         {card && card.view === view ? (
           <TasksLoadCard progress={card.progress} titles={card.titles} subtitle={cardSubtitle} leaving={card.leaving} />
@@ -487,8 +527,11 @@ function TasksLoading({ children }: { children: ReactNode }) {
   );
 }
 
-/** One person's board: the Add form (Admins), then frequency cards of task rows, a checkbox and a title each. */
-function PersonBoardSkeleton({ manages }: { manages: boolean }) {
+/**
+ * One person's board: the Add form (Admins), then frequency cards of task rows, a checkbox and a title each, behind a
+ * grip on boards the viewer may rearrange (their own; any, for an Admin).
+ */
+function PersonBoardSkeleton({ manages, grips }: { manages: boolean; grips: boolean }) {
   return (
     <TasksLoading>
       {manages ? (
@@ -508,6 +551,11 @@ function PersonBoardSkeleton({ manages }: { manages: boolean }) {
             {Array.from({ length: rows }, (_, i) => (
               // An Admin's rows carry the pencil and Remove, which make them 45px: the skeleton holds that height.
               <li key={i} className={cn('flex items-center gap-3 px-4 py-2.5', manages && 'min-h-[45px]')}>
+                {grips ? (
+                  <div className={GRIP_BOX}>
+                    <div className="skeleton-shimmer h-3.5 w-2 rounded-sm" />
+                  </div>
+                ) : null}
                 <div className="skeleton-shimmer size-4 shrink-0 rounded" />
                 <div className="flex h-5 min-w-0 flex-1 items-center">
                   <div className={cn(BAR, 'h-3.5', TITLE_WIDTHS[(i + s * 2) % TITLE_WIDTHS.length])} />
@@ -579,20 +627,25 @@ function PersonBoard({
   data,
   canTick,
   canUntickAny,
+  canReorder,
   manages,
   onTick,
   onAdd,
   onPatch,
   onChangeFrequency,
+  onReorder,
 }: {
   data: TasksPayload;
   canTick: boolean;
   canUntickAny: boolean;
+  /** Their own board, or any board for an Admin: each card's rows carry a grip. */
+  canReorder: boolean;
   manages: boolean;
   onTick: (task: BoardTask, done: boolean) => Promise<boolean>;
   onAdd: (title: string, frequency: TaskFrequency) => Promise<boolean>;
   onPatch: (task: BoardTask, patch: { title?: string; archived?: true }) => Promise<boolean>;
   onChangeFrequency: ChangeFrequency;
+  onReorder: (ids: string[]) => Promise<boolean>;
 }) {
   const done = new Set(data.checks.map((c) => c.taskId));
   const progress = taskProgress(data.tasks.map(asLike), data.checks, data.today);
@@ -628,25 +681,144 @@ function PersonBoard({
                 <span className="text-xs text-zinc-500">Look at these before the end of the day. Not counted.</span>
               )}
             </header>
-            <ul className="divide-y divide-zinc-100 dark:divide-zinc-900">
-              {tasks.map((task) => (
-                <TaskRow
-                  key={task.id}
-                  task={task}
-                  done={done.has(task.id)}
-                  canTick={canTick}
-                  canUntick={canTick || canUntickAny}
-                  manages={manages}
-                  onTick={onTick}
-                  onPatch={onPatch}
-                  onChangeFrequency={onChangeFrequency}
-                />
-              ))}
-            </ul>
+            <TaskList
+              label={FREQUENCY_LABEL[frequency]}
+              tasks={tasks}
+              done={done}
+              canReorder={canReorder}
+              onReorder={onReorder}
+              row={{ canTick, canUntick: canTick || canUntickAny, manages, onTick, onPatch, onChangeFrequency }}
+            />
           </section>
         );
       })}
     </div>
+  );
+}
+
+/** The grip's box: it sits in the row's left padding, so a row with a grip is no taller than one without. */
+const GRIP_BOX = '-ml-2 -mr-1.5 flex size-5 shrink-0 items-center justify-center';
+
+/** What every row of a card shares (TaskRow's props, less the task itself). */
+type RowShared = {
+  canTick: boolean;
+  canUntick: boolean;
+  manages: boolean;
+  onTick: (task: BoardTask, done: boolean) => Promise<boolean>;
+  onPatch: (task: BoardTask, patch: { title?: string; archived?: true }) => Promise<boolean>;
+  onChangeFrequency: ChangeFrequency;
+};
+
+/** A row's part in a drag: its node, its moving style, and the grip that starts it. */
+type RowDrag = { setNodeRef: (el: HTMLElement | null) => void; style: CSSProperties; dragging: boolean; handle: ReactNode };
+
+/**
+ * One card's rows. Where the viewer may rearrange (their own board; any, for an Admin), the rows sort within the card
+ * only: a task never moves to another card (that is changing how often). A card of one task has nothing to rearrange,
+ * so it keeps an empty grip box to line up with the others. While a new order saves, the grips rest.
+ */
+function TaskList({
+  label,
+  tasks,
+  done,
+  canReorder,
+  onReorder,
+  row,
+}: {
+  label: string;
+  tasks: BoardTask[];
+  done: Set<string>;
+  canReorder: boolean;
+  onReorder: (ids: string[]) => Promise<boolean>;
+  row: RowShared;
+}) {
+  const [saving, setSaving] = useState(false);
+  const sensors = useSensors(
+    // 5 px of travel before a drag starts, so a click on the grip does nothing (the tickets board's rule).
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const ids = tasks.map((t) => t.id);
+  const sortable = canReorder && tasks.length > 1;
+  const list = (
+    <ul className="divide-y divide-zinc-100 dark:divide-zinc-900">
+      {tasks.map((task) =>
+        sortable ? (
+          <SortableTaskRow key={task.id} task={task} done={done.has(task.id)} resting={saving} {...row} />
+        ) : (
+          <TaskRow key={task.id} task={task} done={done.has(task.id)} spacer={canReorder} {...row} />
+        ),
+      )}
+    </ul>
+  );
+  if (!sortable) return list;
+
+  const titleOf = (id: UniqueIdentifier) => tasks.find((t) => t.id === id)?.title ?? 'This task';
+  const place = (id: UniqueIdentifier) => `${ids.indexOf(String(id)) + 1} of ${ids.length}`;
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `Picked up ${titleOf(active.id)}, ${place(active.id)} in ${label}.`,
+    onDragOver: ({ active, over }) => (over ? `${titleOf(active.id)} is over place ${place(over.id)}.` : `${titleOf(active.id)} is outside the list.`),
+    onDragEnd: ({ active, over }) => (over ? `${titleOf(active.id)} dropped at place ${place(over.id)}.` : `${titleOf(active.id)} dropped where it was.`),
+    onDragCancel: ({ active }) => `Moving ${titleOf(active.id)} cancelled. It is back where it was.`,
+  };
+  const onDragEnd = async ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const next = arrayMove(ids, ids.indexOf(String(active.id)), ids.indexOf(String(over.id)));
+    setSaving(true);
+    await onReorder(next);
+    setSaving(false);
+  };
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={(e) => void onDragEnd(e)}
+      accessibility={{
+        announcements,
+        screenReaderInstructions: {
+          draggable: 'To move this task, press Space, move it with the up and down arrows, then press Space to drop it, or Escape to cancel.',
+        },
+      }}
+    >
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        {list}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableTaskRow({ resting, ...props }: RowShared & { task: BoardTask; done: boolean; resting: boolean }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.task.id,
+    disabled: resting,
+  });
+  return (
+    <TaskRow
+      {...props}
+      drag={{
+        setNodeRef,
+        // Up and down only: a task stays in its card.
+        style: { transform: CSS.Transform.toString(transform ? { ...transform, x: 0 } : null), transition },
+        dragging: isDragging,
+        handle: (
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            className={cn(
+              GRIP_BOX,
+              'cursor-grab touch-none rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 active:cursor-grabbing disabled:cursor-default disabled:opacity-40 dark:text-zinc-500 dark:hover:bg-zinc-900 dark:hover:text-zinc-300',
+            )}
+            title="Drag to rearrange (or press Space, then the arrow keys)"
+            disabled={resting}
+            {...attributes}
+            {...listeners}
+            aria-label={`Move ${props.task.title}`}
+          >
+            <GripVertical className="size-4" />
+          </button>
+        ),
+      }}
+    />
   );
 }
 
@@ -659,15 +831,15 @@ function TaskRow({
   onTick,
   onPatch,
   onChangeFrequency,
-}: {
+  drag,
+  spacer,
+}: RowShared & {
   task: BoardTask;
   done: boolean;
-  canTick: boolean;
-  canUntick: boolean;
-  manages: boolean;
-  onTick: (task: BoardTask, done: boolean) => Promise<boolean>;
-  onPatch: (task: BoardTask, patch: { title?: string; archived?: true }) => Promise<boolean>;
-  onChangeFrequency: ChangeFrequency;
+  /** Present when this row can be dragged within its card. */
+  drag?: RowDrag;
+  /** No grip on this row, but rows on this board have one: keep the box so the checkboxes line up. */
+  spacer?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -679,7 +851,15 @@ function TaskRow({
   const enabled = counted && !busy && (done ? canUntick : canTick);
 
   return (
-    <li className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+    <li
+      ref={drag?.setNodeRef}
+      style={drag?.style}
+      className={cn(
+        'flex flex-wrap items-center gap-3 px-4 py-2.5',
+        drag?.dragging && 'relative z-10 bg-white shadow-md ring-1 ring-orange-300 dark:bg-zinc-900 dark:ring-orange-800',
+      )}
+    >
+      {drag ? drag.handle : spacer ? <span aria-hidden className={GRIP_BOX} /> : null}
       {counted ? (
         <input
           type="checkbox"

@@ -3447,7 +3447,7 @@ decides it. `showOnOverview: false` (2026-10-07) takes its card off the Overview
 
 Managers. The people picker: `{ people: [{ name, department, workEmail }] }` from `active_employees`, paged; no other column.
 
-### Tasks: `GET /api/accounting-scoreboard/tasks` · `POST` · `PATCH` · `tasks/checks` · `tasks/frequency` · `tasks/post-progress` *(2026-10-08)*
+### Tasks: `GET /api/accounting-scoreboard/tasks` · `POST` · `PATCH` · `tasks/checks` · `tasks/frequency` · `tasks/order` · `tasks/post-progress` *(2026-10-08)*
 
 The per-person task boards ([accounting-scoreboard-tasks.md](../features/accounting-scoreboard-tasks.md)). Their own read, never the
 board payload, and no live announce (`live.test.ts` names why). Archived, never deleted; a tick is unchecked by a stamp.
@@ -3460,6 +3460,10 @@ board payload, and no live announce (`live.test.ts` names why). Archived, never 
 - `POST { ownerEmail, title, frequency }` (Admin) → 201 `{ task }`, last on the owner's list; the owner must be one of the board's people.
 - `PATCH { id, title?, sortOrder?, archived?: true }` (Admin) → `{ task, archived }`. **Refuses `ownerEmail` and `frequency`**: neither
   changes in place.
+- `POST tasks/order { ids }` (any role; the server lets through only the OWNER of those tasks, by any address, or an Admin: 403
+  otherwise) → `{ order: [{ id, sortOrder }] }`. `ids` = every live task of ONE owner and ONE frequency (a card), each once, at most
+  100, in the new order. 409 `stale` when the list misses a live task or names a removed one (never applied in part); 422 when it mixes
+  people or cards; 409 `partly_saved` if a write fails part way.
 - `POST tasks/frequency { id, frequency, title? }` (Admin) → 201 `{ task, replacedId }`: changes how often a task is done by ADDING a new
   task with the new frequency (and the title, or the new one) and then ARCHIVING the old one, which keeps its ticks; the new one starts
   unticked. 422 `same_frequency` for no change; 404 if the task is archived or gone. If the archive fails, the new task is archived again,
@@ -3542,6 +3546,7 @@ of cells — the matches were not re-run).
 | `/api/accounting-scoreboard/tasks` | GET, POST, PATCH | GET: `resolveAccess()` · POST, PATCH: `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
 | `/api/accounting-scoreboard/tasks/checks` | POST | `resolveAccess()` (the owner ticks; the server checks) | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
 | `/api/accounting-scoreboard/tasks/frequency` | POST | `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
+| `/api/accounting-scoreboard/tasks/order` | POST | `resolveAccess()` + the tasks' owner (any alias) or `manage_tasks`, checked in `setTaskOrder` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
 | `/api/accounting-scoreboard/tasks/post-progress` | POST | `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
 | `/api/accounting/documents` | GET | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/[id]` | GET, PATCH, DELETE | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |

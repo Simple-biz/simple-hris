@@ -29,6 +29,7 @@ import {
 } from './sections';
 import { isIsoDate, weekdayOf } from './week';
 import { isTaskFrequency, type TaskFrequency } from './tasks';
+import { TASK_ORDER_MAX } from './task-order';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -663,6 +664,21 @@ export function parseTaskFrequencyChange(body: unknown): Parsed<TaskFrequencyCha
     out.title = title.value;
   }
   return { ok: true, value: out };
+}
+
+/**
+ * POST /tasks/order: one card's tasks in their new order (task-order.ts). Every live task of that card, each once;
+ * whose card it is, and whether the viewer may order it, are the server's checks.
+ */
+export function parseTaskOrder(body: unknown): Parsed<{ ids: string[] }> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  if (!Array.isArray(b.ids) || b.ids.length === 0) return { ok: false, error: 'ids is the list of tasks in their new order' };
+  if (b.ids.length > TASK_ORDER_MAX) return { ok: false, error: `At most ${TASK_ORDER_MAX} tasks are ordered at once` };
+  if (!b.ids.every(isUuid)) return { ok: false, error: 'Every id must be a task id' };
+  const ids = b.ids.map((id) => id.toLowerCase());
+  if (new Set(ids).size !== ids.length) return { ok: false, error: 'A task is listed twice' };
+  return { ok: true, value: { ids } };
 }
 
 /** A tick or an untick. The period is the server's, from today (US Eastern), never the body's. */

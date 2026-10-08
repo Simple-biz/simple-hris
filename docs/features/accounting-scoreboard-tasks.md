@@ -18,8 +18,9 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 | The ONE Chat sender (the click and the schedule) | `src/lib/accounting-scoreboard/chat-webhook.ts` (+ `.test.ts`, which also pins that nothing else calls `fetch` for it) |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` § Task boards (+ `tasks-validate.test.ts`) |
 | Reads, writes, the Chat post | `src/lib/accounting-scoreboard/server.ts` § Task boards |
-| Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET, `&stream=1` streams it for the loading card · POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/frequency/route.ts` (POST, change how often) · `tasks/post-progress/route.ts` (POST) |
+| Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET, `&stream=1` streams it for the loading card · POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/frequency/route.ts` (POST, change how often) · `tasks/order/route.ts` (POST, rearrange a card) · `tasks/post-progress/route.ts` (POST) |
 | Loading card: the lines ↔ the reads, the reporter, the fail-closed stream assembler (pure) | `src/lib/accounting-scoreboard/task-load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the card `src/components/accounting-scoreboard/TasksLoadCard.tsx` |
+| Rearranging a card: the whole card or nothing (pure) | `src/lib/accounting-scoreboard/task-order.ts` (+ `.test.ts`) · `setTaskOrder` in `server.ts` · the grips in `TasksPanel.tsx` (`TaskList`, `SortableTaskRow`) |
 | Changing how often: add, then archive, then undo on failure (pure) | `changeFrequencyInOrder` in `src/lib/accounting-scoreboard/tasks.ts` (+ `tasks.test.ts`) |
 | Browser cache: one key per view, never the viewer | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `tab-cache.test.ts`) |
 | UI | `src/components/accounting-scoreboard/TasksPanel.tsx` (the boards, the edit form, the skeletons); the switch and the picked view in `ScoreboardApp.tsx` |
@@ -35,6 +36,8 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 | | Team member | Assistant | Admin |
 |---|---|---|---|
 | Own board, tick own tasks | yes | yes | yes |
+| Rearrange own tasks (within a card) | yes | yes | yes |
+| Rearrange someone else's tasks | no | no | yes (`manage_tasks`) |
 | See a person's board, or Everyone | no | yes (`view_all_tasks`) | yes |
 | Add, rename, change how often, remove tasks | no | no | yes (`manage_tasks`) |
 | Untick someone else's task | no | no | yes |
@@ -43,6 +46,30 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 
 - **Only the owner ticks a task.** An Admin may untick anyone's (a wrong tick), never tick for them: a tick says who
   did the work. This is the Payment Verified pattern.
+- **Everyone rearranges their own list** (Aliviah, relayed by Kane 2026-10-08: *"each user could rearrange their task
+  list"*). Until then only an Admin could reorder: a default CHOSEN in the round-4 plan (Task 7, "confirmable"), now
+  changed. Adding, renaming, changing how often and removing stay Admin-only. § Rearranging a list.
+
+## Rearranging a list
+
+- **A grip on each row** of a board the viewer may rearrange: their own (by any of their addresses), or any board for
+  an Admin. An Assistant looking at someone else's board sees no grips. Drag by the grip (a click on it does nothing:
+  5 px of travel starts a drag, the tickets board's rule), or with the keyboard: focus the grip, **Space**, the up and
+  down arrows, **Space** to drop, **Escape** to cancel. Screen readers hear the task's title and its place ("3 of 16").
+- **A task moves only within its card.** Moving it to another frequency is changing how often, which makes a new task
+  (§ Tasks and ticks are history). Each card is its own drag area, and the server refuses a list that mixes cards or
+  people.
+- **The order is the owner's list**, stored on each task (`sort_order`), so an Admin looking at that board sees the same
+  order. It is not a private view per viewer.
+- **A new order is the whole card or nothing** (`task-order.ts`, `POST /tasks/order { ids }`). The request lists every
+  live task of that card, each once. A list that misses one (it was added since the page loaded) or names one that was
+  removed is refused **409, "This list changed since it was loaded. Refresh and try again."**, never applied in part,
+  so no task drops out of the order. The page moves the rows at once and puts them back if the server refuses.
+- It writes `sort_order` 0, 1, 2… down the card, only on the rows that move. New tasks still go last (`createTask`
+  takes the owner's highest `sort_order` + 1). The writes are not one transaction: if one fails part way the answer is
+  409 `partly_saved` and a refresh shows the order as saved. An order is not money and not history, so it is not
+  audited and its past orders are not kept (the histogram rule above is about tasks and ticks).
+- `PATCH /tasks { sortOrder }` is still Admin-only and still accepted. The board does not use it.
 - The route is the board's: `resolveAccess` on every request, and the Tasks view reads its own route
   (`GET /api/accounting-scoreboard/tasks`), **never the board payload**. Nothing about tasks is in `readBoard`, its
   progress lines or the board's cached blob: the Tasks view has cache keys of its own (§ Loading and the browser
@@ -312,8 +339,8 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
 
 ## Not built
 
-- The personal nudge, a reorder control (the API takes `sortOrder`; new tasks go last), ticks on
-  someone else's behalf, live refresh of the Tasks view (the board's Broadcast refresh is a separate change).
+- The personal nudge, ticks on someone else's behalf, live refresh of the Tasks view (the board's Broadcast refresh is
+  a separate change). (A reorder control was on this list until 2026-10-08: § Rearranging a list.)
 
 ## Deploy notes
 
@@ -346,6 +373,11 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
 - **Scheduled posts verified (2026-10-08):** 9 schedule tests + 10 claim/post tests; the scoreboard suite 290/290; `tsc`
   clean apart from the same two stale `.next/types/validator.ts` entries. **Not run against Google from the deployed
   cron yet.**
+- **Rearranging, verified 2026-10-08:** `task-order.test.ts` 8 tests (the numbering, ties from the import, a stale or
+  shrunk list refused whole, a removed task, mixed cards and people, the card read narrowed, the board order) and the
+  parser test; scoreboard + audit suites 352/352; `tsc` clean apart from the same two `.next` entries. **PENDING: not
+  rendered or dragged in a browser, and not tried signed in** (the page resolves the viewer on the server, so the
+  browser-side mocks of the earlier harness cannot sign in). No migration: the table already lets `sort_order` change.
 - **The bars card, verified 2026-10-08:** chat-summary 10 tests (cells, percent, colours, heading, the post), the
   sender 10 (every Google answer, the 400 re-send, never the URL, and the source pin), the core 11; the scoreboard and
   audit suites 342/342; `tsc` clean apart from the same two `.next` entries. **PENDING: the first real post.** Google

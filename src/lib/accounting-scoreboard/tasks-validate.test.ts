@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTaskCheck, parseTaskCreate, parseTaskFrequencyChange, parseTaskPatch, parseTaskView, TASK_TITLE_MAX } from './validate';
+import {
+  parseTaskCheck,
+  parseTaskCreate,
+  parseTaskFrequencyChange,
+  parseTaskOrder,
+  parseTaskPatch,
+  parseTaskView,
+  TASK_TITLE_MAX,
+} from './validate';
+import { TASK_ORDER_MAX } from './task-order';
 
 const ID = '7d0f3c1e-2b4a-4c6d-8e9f-0a1b2c3d4e5f';
 
@@ -59,4 +68,18 @@ test('changing how often never moves the owner', () => {
   const r = parseTaskFrequencyChange({ id: ID, frequency: 'weekly', ownerEmail: 'b@simple.biz' });
   assert.equal(r.ok, false);
   assert.match(!r.ok ? r.error : '', /owner never changes/);
+});
+
+test('a new order: task ids, each once, lower-cased, at most the cap', () => {
+  const ID2 = '8E1F4D2F-3C5B-4D7E-9FA0-1B2C3D4E5F60';
+  assert.deepEqual(parseTaskOrder({ ids: [ID, ID2] }), { ok: true, value: { ids: [ID, ID2.toLowerCase()] } });
+  assert.equal(parseTaskOrder({ ids: [] }).ok, false);
+  assert.equal(parseTaskOrder({ ids: 'x' }).ok, false);
+  assert.equal(parseTaskOrder({ ids: [ID, 'nope'] }).ok, false);
+  assert.deepEqual(parseTaskOrder({ ids: [ID, ID.toUpperCase()] }), { ok: false, error: 'A task is listed twice' });
+  const many = Array.from({ length: TASK_ORDER_MAX + 1 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+  assert.equal(parseTaskOrder({ ids: many }).ok, false);
+  assert.equal(parseTaskOrder({ ids: many.slice(0, TASK_ORDER_MAX) }).ok, true);
+  // Whose card it is never comes from the body.
+  assert.deepEqual(parseTaskOrder({ ids: [ID], ownerEmail: 'b@simple.biz' }), { ok: true, value: { ids: [ID] } });
 });

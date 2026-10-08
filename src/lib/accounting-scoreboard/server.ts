@@ -80,6 +80,7 @@ import {
   taskProgress,
   type TaskLike,
 } from './tasks';
+import { planTaskOrder, type OrderableTask } from './task-order';
 import { buildProgressPost } from './chat-summary';
 import { sendChatPost } from './chat-webhook';
 import type { TaskReadProgress } from './task-load-progress';
@@ -1548,6 +1549,73 @@ export async function changeTaskFrequency(
     );
   }
   return run.failure;
+}
+
+type TaskOrderRecord = { id: string; owner_email: string; frequency: string; sort_order: number; created_at: string; archived_at: string | null };
+const TASK_ORDER_COLS = 'id, owner_email, frequency, sort_order, created_at, archived_at';
+
+function toOrderable(r: TaskOrderRecord): OrderableTask | null {
+  if (!isTaskFrequency(r.frequency)) return null;
+  return { id: r.id, ownerEmail: r.owner_email, frequency: r.frequency, sortOrder: r.sort_order, createdAt: r.created_at, archived: r.archived_at !== null };
+}
+
+/**
+ * Rearrange one card: one owner's live tasks of one frequency, in a new order (Aliviah, relayed by Kane 2026-10-08:
+ * "each user could rearrange their task list"). The OWNER (by any of their addresses) or an Admin; adding, renaming,
+ * removing and changing how often stay Admin-only. task-order.ts decides; this reads, checks who, and writes
+ * sort_order on the rows that move. Not a transaction: if a write fails part way, the answer says so and a refresh
+ * shows the order as saved (an order is never money and never history).
+ */
+export async function setTaskOrder(viewer: Viewer, ids: string[]): Promise<Result<{ order: Array<{ id: string; sortOrder: number }> }>> {
+  // At most TASK_ORDER_MAX ids (the parser's cap), so this `.in` stays far below the URL ceiling and the 1,000-row cap.
+  const { data, error } = await client().from(TASKS).select(TASK_ORDER_COLS).in('id', ids);
+  if (error) return dbFailure(error, 'Could not read the tasks');
+  const named = ((data ?? []) as TaskOrderRecord[]).map(toOrderable).filter((t): t is OrderableTask => t !== null);
+
+  // Who may, settled on the first task's board before anything else about the list is said.
+  const first = named.find((t) => t.id === ids[0]);
+  if (first && !viewer.aliases.includes(first.ownerEmail) && !can(viewer.role, 'manage_tasks')) {
+    return fail(403, 'not_owner', "You can rearrange your own tasks. Only an Admin rearranges someone else's.");
+  }
+  let card: OrderableTask[] = [];
+  if (first) {
+    const cardRead = await selectAllPaged<TaskOrderRecord>((from, to) =>
+      client()
+        .from(TASKS)
+        .select(TASK_ORDER_COLS)
+        .eq('owner_email', first.ownerEmail)
+        .eq('frequency', first.frequency)
+        .is('archived_at', null)
+        .order('id')
+        .range(from, to),
+    );
+    if (cardRead.error) return dbFailure({ message: cardRead.error }, 'Could not read the tasks');
+    card = cardRead.rows.map(toOrderable).filter((t): t is OrderableTask => t !== null);
+  }
+  const plan = planTaskOrder(ids, named, card);
+  if (!plan.ok) return fail(plan.status, plan.code, plan.message);
+
+  const writes = await Promise.all(
+    plan.updates.map(({ id, sortOrder }) =>
+      client()
+        .from(TASKS)
+        .update({ sort_order: sortOrder })
+        .eq('id', id)
+        .eq('owner_email', plan.ownerEmail)
+        .eq('frequency', plan.frequency)
+        .is('archived_at', null)
+        .select('id'),
+    ),
+  );
+  const missed = writes.filter((w) => w.error || !(w.data ?? []).length).length;
+  if (missed) {
+    return fail(
+      409,
+      'partly_saved',
+      `${missed} of ${plan.updates.length} moves were not saved (a task may have just changed). Refresh to see the order as it is now.`,
+    );
+  }
+  return { ok: true, value: { order: ids.map((id, i) => ({ id, sortOrder: i })) } };
 }
 
 async function readLiveTaskCheck(taskId: string, periodKey: string): Promise<Result<TaskCheckRecord | null>> {
