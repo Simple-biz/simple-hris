@@ -165,13 +165,31 @@ one at a glance.
 Until the ALTER is applied the database refuses `offboarded.read`. The admin routes turn that CHECK
 violation into a **503 naming the migration script**, not a 500 (`SCOPE_MIGRATION_PENDING`).
 
+## Who reads it — measured
+
+**2026-10-07 (item 395), `scripts/probe-external-api-offboarded-usage.mts`, read-only.** One key
+holds `offboarded.read`. It is **Job Portal - HRIS**, the job portal (Rainer B., per Kane). It was
+created 2026-10-07, is live, has no expiry, and holds Offboarded only, not the roster. It made **40
+successful REST reads** of `/api/external/v1/offboarded` between 16:27Z and 18:04Z on 10-07, with 0
+refused and 0 over MCP. The first read came before the 16:50Z call where Kane told Carla the portal
+*"already"* reads the list. The 40 reads prove the portal **reads** the list. They cannot show that a
+match **blocks a reapplication**: that is the portal's own code (Rainer).
+
+One unattributed `403 scope` was logged on MCP `tools/list` at 16:15:03Z. The gate logs a scope
+denial with no client id (`authenticate.ts:66-68`), so the caller held a valid key that lacked the
+route's scope. Today's MCP gate accepts every known scope, and the SQL CHECK forbids a key with none.
+So the call most likely hit the pre-`4cf42388` build, whose MCP route demanded the roster scope, with
+the job portal key, the only key without that scope. **Inferred from the code, not measured.** A
+key-prefix comparison was refused by the session's permission check.
+
+To re-measure, re-run the probe. It reads both tables and prints names, scopes and counts, never key
+hashes or prefixes. **Never curl `/api/external/*` on local dev to test:** even a denied call writes a
+production `external_api_requests` row, which the panel shows as an unattributed (key-guessing) call.
+
 ## Not verified
 
-No key holding `offboarded.read` exists yet, so the route has not answered a real call. The
-migration is applied (2026-10-07); the first real call needs the push and a key with Offboarded ticked. The pipeline was run read-only over the full production ledger, and the panel was
-typechecked but **not clicked through signed in** (Admin needs SSO). Local `curl` against the dev
-server was deliberately skipped: even a denied call writes a production `external_api_requests` row,
-which the panel would show as an unattributed (key-guessing) call.
+The panel was typechecked but **not clicked through signed in** (Admin needs SSO). The pipeline was
+run read-only over the full production ledger before it shipped.
 
 ## Deploy notes
 
@@ -180,7 +198,8 @@ which the panel would show as an unattributed (key-guessing) call.
   kept its scopes. It changes only `external_api_clients_scopes_known`. No row, no table.
 - Order does not matter: before the ALTER, the route and tool exist but no key can hold the scope,
   and ticking Offboarded gives the 503 above.
-- **Push PENDING** (Kane).
+- **Pushed:** `4cf42388` is on `origin/main` (measured 2026-10-07, item 395). The job portal's 40
+  `200`s on 10-07 are production log rows. Kane has not separately confirmed the deploy.
 - No env var, no n8n, no proxy change (`/api/external/` already bypasses SSO, and
   `admitExternalCall` is the gate).
 - Then: Admin → Webhooks & Integrations → Integrations → New client (or Edit) → tick **Offboarded**.

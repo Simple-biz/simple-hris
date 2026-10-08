@@ -126,7 +126,7 @@ W0.3 (h). They are probably emoji typed into section names, which is not code.
 | W0.6 | **The second Admin** besides Carla ("Claire" in the transcript) | Carla | Task 4 seed |
 | W0.7 | Ask Kentshin for the endpoint specified in Task 10 | Kane → Kentshin | Task 10 |
 | W0.8 | Ralph: are hours over 5 payable; the monthly payout's rules; the PAB amount. Then Kane: the adjustment. **Kane: HOLD (2026-10-07)** | Alivia → Ralph, then Kane | Task 12 Steps 6+ |
-| W0.9 | Run the Task 11 probe | Kane | Task 11 |
+| W0.9 | Run the Task 11 probe. **RAN 2026-10-07: verified**, the job portal key holds `offboarded.read` and read it 40 times | Kane | Task 11 (done) |
 
 ## 2. Build order, and why
 
@@ -1294,59 +1294,21 @@ only through the existing entries path (stamped, lock-aware) into four Complianc
 
 ### Task 11: Prove the job portal reads the Offboarded list (395)
 
-Read-only. Kane runs it (this session's attempt was refused by the permission check). It **reads tables directly**.
-Never curl `/api/external/*` on local dev: even a denied call writes a production `external_api_requests` row (memory
-`external-api-offboarded`).
+**DONE 2026-10-07: VERIFIED.** Read-only. It **reads tables directly**. Never curl `/api/external/*` on local dev: even
+a denied call writes a production `external_api_requests` row (memory `external-api-offboarded`).
 
-- [ ] **Step 1: Create `scripts/probe-external-api-offboarded-usage.mts`.**
-
-```ts
-// READ-ONLY. Which external API keys hold offboarded.read, and have they called the offboarded route since 10-06?
-// Prints key names, scopes and counts. Never prints key hashes or prefixes.
-import { createClient } from '@supabase/supabase-js';
-import fs from 'node:fs';
-
-const env = Object.fromEntries(
-  fs.readFileSync('.env.local', 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l)).map((l) => {
-    const i = l.indexOf('=');
-    return [l.slice(0, i), l.slice(i + 1).replace(/^"|"$/g, '')];
-  }),
-);
-const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-const { data: clients, error } = await sb
-  .from('external_api_clients')
-  .select('id,name,system,scopes,revoked_at,last_used_at')
-  .order('created_at');
-if (error) throw new Error(error.message);
-for (const c of clients) {
-  console.log(`${c.name} (${c.system}) scopes=${c.scopes.join(',')} revoked=${!!c.revoked_at} last_used=${c.last_used_at ?? 'never'}`);
-}
-
-const { data: reqs, error: e2 } = await sb
-  .from('external_api_requests')
-  .select('client_id,status,denial,created_at')
-  .ilike('path', '%offboarded%')
-  .gte('created_at', '2026-10-06T00:00:00Z')
-  .limit(1000);
-if (e2) throw new Error(e2.message);
-const byClient = new Map<string, number>();
-for (const r of reqs) {
-  const name = clients.find((c) => c.id === r.client_id)?.name ?? '(no key)';
-  const k = `${name} ${r.status}${r.denial ? ` ${r.denial}` : ''}`;
-  byClient.set(k, (byClient.get(k) ?? 0) + 1);
-}
-console.log(`offboarded-route requests since 2026-10-06: ${reqs.length}${reqs.length === 1000 ? ' (capped at 1000)' : ''}`);
-for (const [k, n] of byClient) console.log(`  ${k}: ${n}`);
-```
-
-- [ ] **Step 2: Kane runs** `node --import tsx scripts/probe-external-api-offboarded-usage.mts`.
-  **Expected if Kane's claim holds:** the job portal's key lists `offboarded.read`, and at least one `200` from it.
-- [ ] **Step 3: If the scope is missing,** Kane ticks Offboarded on that key (Admin → Webhooks & Integrations →
-  Integrations, the Datasets step) and tells Rainer. **If the scope is there but there are no calls,** ask Rainer whether
-  the portal's reapply check is live ("Unless Rainer is not done with us yet").
-- [ ] **Step 4: Record the result** on Open items 395 and 343 and in memory `external-api-offboarded`; commit the probe
-  script and the log edit by explicit path.
+- [x] **Step 1: Create `scripts/probe-external-api-offboarded-usage.mts`.** Committed. **The draft that stood here was
+  replaced, because the code disagreed with it** (plan header rule: the code wins):
+  (a) it filtered `path ILIKE '%offboarded%'`, but an MCP read logs `path = /api/external/mcp` with the tool in
+  `query.tool` (`app/api/external/mcp/route.ts:17-20`), so every `query_offboarded` call would have been missed;
+  (b) it read with `.limit(1000)`, against the paging rule; the script pages both reads with `selectAllPaged`;
+  (c) it ignored `expires_at`; the script reports each key live / REVOKED / EXPIRED through the gate's own `isExpired`.
+- [x] **Step 2: Run** `node --import tsx scripts/probe-external-api-offboarded-usage.mts`. It ran in the session itself
+  on 2026-10-07. **Result:** one key holds `offboarded.read`, **Job Portal - HRIS** (live, no expiry, Offboarded only),
+  with **40 successful REST reads** of `/api/external/v1/offboarded` between 16:27Z and 18:04Z, 0 refused, 0 over MCP.
+- [x] **Step 3:** not needed. The scope is held and in use.
+- [x] **Step 4: Recorded** on Open items 395 and 343, in `external-api-offboarded.md`, and in memories
+  `external-api-offboarded` and `orientation-noshow-never-reaches-offboarded`.
 
 ---
 
