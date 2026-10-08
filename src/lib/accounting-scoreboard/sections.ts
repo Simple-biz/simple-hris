@@ -42,10 +42,12 @@ export const SLOTS = ['am', 'pm', 'day', 'mtg', 'start', 'end', 'usd', 'count'] 
 export type Slot = (typeof SLOTS)[number];
 
 /**
- * What a Chargeback Outcomes line counts as for the win ratio (accounting_scoreboard_rows.outcome; the
- * SQL CHECK acct_sb_rows_outcome_valid lists the same values). Pre-arb is neither: it is not decided.
+ * What a Chargeback Outcomes line counts as (accounting_scoreboard_rows.outcome; the SQL CHECK
+ * acct_sb_rows_outcome_valid lists the same values, pinned in sections.test.ts). In the Net a win counts plus and
+ * a loss or Pre-arb minus (Carla, 2026-10-07: "Wins positive. PR losses have negative."), so the sign comes from
+ * this flag, never from a typed minus. Null = not counted.
  */
-export const OUTCOMES = ['win', 'loss'] as const;
+export const OUTCOMES = ['win', 'loss', 'pre_arb'] as const;
 export type Outcome = (typeof OUTCOMES)[number];
 
 export function isOutcome(value: unknown): value is Outcome {
@@ -263,7 +265,7 @@ export const SECTIONS: readonly SectionDef[] = [
     // line counts as a win or a loss by its row flag (rows.outcome), never by its label.
     goal: { value: 50, direction: 'at_least', measure: 'ratio', unit: '%' },
     rowNoun: 'outcome',
-    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks. Win ratio = wins ÷ (wins + losses), by count.',
+    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks. Type the amount; a loss or Pre-arb shows as negative, and the Net is wins − losses − Pre-arb. Win ratio = wins ÷ (wins + losses), by count.',
     hostTab: 'chargebacks',
   },
   {

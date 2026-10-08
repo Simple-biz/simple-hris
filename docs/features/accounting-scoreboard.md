@@ -22,7 +22,8 @@ every payroll problem, and custom sections.
 | A custom section shown inside a built-in tab (`host_section_key`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_custom_section_host.sql` |
 | Win/loss flags on Outcomes lines (`rows.outcome`) + 0–1000 payroll problems (2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql` |
 | Hidden from the Overview (`show_on_overview` on both section tables, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_overview_visibility.sql` |
-| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` · `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts` · `scripts/apply-accounting-scoreboard-overview-visibility-migration.mts` |
+| A Pre-arb flag on Outcomes lines (`rows.outcome = 'pre_arb'`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_pre_arb_flag.sql` |
+| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` · `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts` · `scripts/apply-accounting-scoreboard-overview-visibility-migration.mts` · `scripts/apply-accounting-scoreboard-pre-arb-flag-migration.mts` |
 | The 11 built-in sections (kind, days, slots, goals), custom sections, tabs | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
@@ -103,7 +104,7 @@ Managers can also add sections of their own (§ Custom sections).
 | Sales — Payments (the Sales Onboarding tab; "Customer Sales Onboarding" until 2026-10-07) | daily | Mon–Fri | week total | none by default; "at least N payments", set in Setup |
 | Email Inbox | AM/PM | Mon–Fri | 10 − average PM count (0 → 10, ≥ 9 → 1); headline = score of the team average | ≥ 9 |
 | Chargebacks · Open Disputes | AM/PM | Mon–Fri | **scored like Buckets** since 2026-10-07: the overall 0–10, over the lines not marked "due in 7 days"; open now and the due-in-7-days line are called out beside it | none by default; a 0–10 score, set in Setup |
-| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | **win ratio** = wins ÷ (wins + losses), by count; per outcome: week $ and week # | ≥ 50% (Carla, 2026-10-07) |
+| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | **win ratio** = wins ÷ (wins + losses), by count; per outcome: week $ (signed by its flag) and week #; **Net** = wins − losses − Pre-arb, in $ | ≥ 50% (Carla, 2026-10-07) |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | none by default; "at least N reviewed", set in Setup |
 | Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
@@ -164,18 +165,34 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
   disputes twice. Before 2026-10-07 the grid had no Day total at all, for the same reason.
 - **Outcomes** (section `chargeback_outcomes`) holds Pre-arb, Wins and Losses: per day, the **dollar amount**
   (`usd`, dollars and cents) and the **number of chargebacks** (`count`, a whole number). Carla's example:
-  one dispute won for $99 → Wins: $99 / 1. Each outcome has its week $ and week #. There is **no total across
-  outcomes**: a win plus a loss means nothing.
+  one dispute won for $99 → Wins: $99 / 1. Each outcome has its week $ and week #. Counts are never added across
+  outcomes.
+- **Signs and the Net** (Carla, 2026-10-07 meeting, item 392: *"a loss is a negative, but I can't put a dash right
+  here […] I want to show like it's actually we're in the hole"*; Kane: *"Wins positive. PR losses have negative."*;
+  Carla: *"Yes."*). **The sign comes from the line's flag, never from a typed minus** (CHOSEN in the plan): amounts
+  are typed positive, every box keeps its 0–100,000 rule, and a typed minus beside a "loss" flag cannot
+  double-negate. A Loss or Pre-arb line's week $ and last week's $ print with a minus, in rose ("−$244.00"); a win
+  prints as typed; an unmarked line prints as typed and is left out of the Net (`signedOutcomeUsd`).
+  - **Net = wins − losses − Pre-arb, in dollars** (`outcomesNet`, summed in whole cents): a footer line under the
+    win ratio, this week and last, emerald at $0 or above and rose below ("+$19.00", "−$31.00"), and a header chip.
+    Nothing marked or nothing typed is "—", never $0.00; a typed $0 is a real $0.00.
+  - **The $25 fee per loss is NOT added** (plan W0.3 (d)): Carla said a loss costs *"that and $25 on top of
+    that"*, but whether the fee is typed into the amount or added by the board is hers to say (meeting, question 2).
+    Until she says, the Net is the typed amounts only, and the footer says so.
+  - This replaced the rule that there was no total across outcomes (*"a win plus a loss means nothing"*, round 3,
+    2026-10-06): Carla asked for the Net on 2026-10-07.
 - **The win ratio** (Carla, via Kane, 2026-10-07: *"I need to get a win ratio of 50% or higher each week"*) is
   Outcomes' headline: **wins ÷ (wins + losses), by COUNT** (the number of chargebacks, never dollars), one
   decimal. Pre-arb is left out because it is not decided. Its goal is **≥ 50%**, a ratio, so it is never
   paced. Nothing decided is "—", never 0%; all lost is a real 0%. It shows as the grid's *Win ratio* footer, a
   header chip ("3 won · 1 lost"), and an Overview card.
-- **What a line counts as is marked on the row** (`rows.outcome`: `win`, `loss` or null, Setup → Rows →
-  "Counts as a win / a loss / Not counted"), **never read from its label**, the same as `bucket_day` and
-  `due_soon`, so a rename keeps it. CHECK `acct_sb_rows_outcome_valid` allows it only on an Outcomes line. The
-  migration flags the live "Wins" and "Losses". Several lines may count as wins, and they add up. With no line
-  marked, the footer says so instead of showing a ratio.
+- **What a line counts as is marked on the row** (`rows.outcome`: `win`, `loss`, `pre_arb` (since 2026-10-07) or
+  null, Setup → Rows → "Counts as a win / a loss / Pre-arb / Not counted"), **never read from its label**, the same
+  as `bucket_day` and `due_soon`, so a rename keeps it. CHECK `acct_sb_rows_outcome_valid` allows it only on an
+  Outcomes line (and the server refuses it elsewhere, naming the rule). The 2026-10-07 outcomes migration flagged
+  the live "Wins" and "Losses"; the Pre-arb flag migration flags the one live "Pre-arb" (its script refuses unless
+  exactly one live line matches, and never overwrites a line a manager marked). Several lines may count as wins,
+  and they add up. With no line marked, the footer says so instead of showing a ratio or a Net.
 - CHOSEN (session `728157e2`), not Carla's words: the count, not dollars; Pre-arb left out. If she means
   dollars, change `winRatio` in `scoring.ts` and its test.
 - Outcomes shows inside the Chargebacks tab while Open Disputes is on. If Open Disputes is switched off,
@@ -183,9 +200,9 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
   since 2026-10-07 **its own Overview card** (the win ratio is its single number), right after Open Disputes'.
 - The old AM/PM rows Pre-arb, Wins and Losses were **archived, not deleted**, on 2026-10-06. They still show,
   read-only, for the weeks that hold their numbers (all 0s typed on Oct 5), and then drop away.
-- **Not built:** Carla's 2026-10-01 meeting asks (pre-arbitrations as negative amounts, "won chargebacks as
-  negative losses", a net total, two-weeks-ago dates; Open item 317 (a)). Her 2026-10-02 email does not ask
-  for them, so they wait for her to confirm.
+- **Carla's 2026-10-01 asks (Open item 317 (a)) were answered on 2026-10-07 and built** (item 392): Pre-arb and
+  Losses negative, wins positive (not "won chargebacks as negative losses"), and a Net. **Still not built:** the
+  "two weeks ago" column; the grid shows this week and last.
 
 ## PM Buckets: the No Meeting Streak
 
@@ -840,6 +857,17 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   stays true for good: the three seeded types still exist, live or archived (a type is never deleted). It re-passed.
 - **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **The push:
   PENDING** (Kane).
+- **Pre-arb flag migration: PENDING `--apply` (Kane's go), then the push.**
+  `2026-10-07_accounting_scoreboard_pre_arb_flag.sql` re-declares CHECK `acct_sb_rows_outcome_valid` with `'pre_arb'`
+  added (the 2026-10-07 text copied verbatim otherwise). Its script's data step flags the one live "Pre-arb" Outcomes
+  line, after writing that row to `docs/audits/backups/` on `--apply`. **Dry run 2026-10-07: 23/23 PASS, rolled
+  back** (flagged `e740e66f…`; Wins and Losses unchanged; the CHECK in force lists exactly `OUTCOMES`; nothing off
+  Outcomes carries a flag; RLS, zero policies and no anon/authenticated privilege; `SET ROLE anon` refused with
+  `42501`; Pre-arb → win → loss → none writes; Pre-arb on a bucket, `'draw'` and the label `'Pre-arb'` refused). Run
+  `node --import tsx scripts/apply-accounting-scoreboard-pre-arb-flag-migration.mts --apply`, then `--verify`, then
+  push. Pushed first, the board still reads (no new column), but Setup's "Counts as Pre-arb" is refused by the old
+  CHECK and the Pre-arb line is unmarked, so its dollars are left out of the Net. After it, the 2026-10-07 outcomes
+  script is superseded: run only its `--verify` (its SQL would re-add the two-value CHECK).
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.

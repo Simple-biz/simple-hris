@@ -647,11 +647,15 @@ function GoalEditor({
 
 // ---------------------------------------------------------------------------
 
-/** Chargeback Outcomes: what a line counts as in the win ratio (rows.outcome). Pre-arb is neither. */
+/**
+ * Chargeback Outcomes: what a line counts as (rows.outcome). Wins count plus in the Net, Losses and Pre-arb minus
+ * (Carla, 2026-10-07); the win ratio is wins ÷ (wins + losses), by count.
+ */
 const OUTCOME_OPTIONS = [
-  { value: '', label: 'Not counted (e.g. Pre-arb)' },
+  { value: '', label: 'Not counted' },
   { value: 'win', label: 'Counts as a win' },
   { value: 'loss', label: 'Counts as a loss' },
+  { value: 'pre_arb', label: 'Counts as Pre-arb' },
 ];
 
 const BUCKET_DAY_OPTIONS = [
@@ -890,7 +894,10 @@ function RowLine({
         </label>
       ) : null}
       {onOutcome ? (
-        <div className="w-52" title="The win ratio is wins ÷ (wins + losses), by count. Pre-arb is not decided, so it counts as neither.">
+        <div
+          className="w-52"
+          title="Wins count plus in the Net, Losses and Pre-arb minus. The win ratio is wins ÷ (wins + losses), by count; Pre-arb is not decided, so it is left out of it."
+        >
           <SmoothSelect
             value={row.outcome ?? ''}
             onChange={(v) => void onOutcome(v === '' ? null : (v as Outcome))}
@@ -898,7 +905,7 @@ function RowLine({
             accent="orange"
             align="start"
             portal
-            aria-label={`${row.label}: counts in the win ratio as`}
+            aria-label={`${row.label}: counts as`}
             triggerClassName="h-8 text-xs"
           />
         </div>

@@ -250,7 +250,7 @@ export interface RowPatch {
   bucketDay?: Weekday | null;
   /** Open Disputes only (checked on the server). */
   dueSoon?: boolean;
-  /** Chargeback Outcomes only (checked on the server): null = neither (Pre-arb). */
+  /** Chargeback Outcomes only (checked on the server): win, loss or pre_arb; null = not counted. */
   outcome?: Outcome | null;
 }
 
@@ -285,7 +285,7 @@ export function parseRowPatch(body: unknown): Parsed<RowPatch> {
     out.dueSoon = b.dueSoon;
   }
   if (b.outcome !== undefined) {
-    if (b.outcome !== null && !isOutcome(b.outcome)) return { ok: false, error: 'outcome is win, loss or null' };
+    if (b.outcome !== null && !isOutcome(b.outcome)) return { ok: false, error: 'outcome is win, loss, pre_arb or null' };
     out.outcome = b.outcome;
   }
   if (

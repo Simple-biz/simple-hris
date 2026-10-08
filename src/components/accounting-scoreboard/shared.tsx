@@ -204,6 +204,16 @@ export function fmtUsd(n: number | null): string {
   return n === null ? '—' : `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/**
+ * Dollars with their sign in front of the "$": "−$244.00" (a true minus sign), and with `plus` "+$19.00" (the
+ * Chargebacks Net). 0 is "$0.00", never signed. Nothing typed is "—".
+ */
+export function fmtSignedUsd(n: number | null, plus = false): string {
+  if (n === null) return '—';
+  const abs = fmtUsd(Math.abs(n));
+  return n < 0 ? `−${abs}` : plus && n > 0 ? `+${abs}` : abs;
+}
+
 export function handle(email: string): string {
   return email.split('@')[0];
 }

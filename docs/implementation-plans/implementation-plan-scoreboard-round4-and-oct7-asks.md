@@ -302,8 +302,28 @@ negative."* Carla: *"Yes."* **CHOSEN: the sign comes from the line's flag, never
 "loss" flag would double-negate. People keep typing positive amounts, and the board shows Losses and Pre-arb with a
 minus and adds a **Net** line.
 
+> **Steps 0–5 BUILT 2026-10-07** (migration dry run 23/23; `--apply` PENDING Kane). **Corrected against the code in
+> the same commit (Step 0; the code wins):**
+> - **There is no `OutcomeFlag` type.** The flag's values are `OUTCOMES` in `sections.ts:48` (type `Outcome`), pinned
+>   to the SQL CHECK by `sections.test.ts`; `'pre_arb'` is added there. `types.ts` is unchanged (`BoardRow.outcome` is
+>   already `Outcome | null`).
+> - **The live CHECK text** (`2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql:27-28`) is
+>   `check (outcome is null or (section_key = 'chargeback_outcomes' and outcome in ('win', 'loss')))`, not the
+>   plan's ordering; it is copied verbatim with only `'pre_arb'` added. The SQL is dated 2026-10-07, not 2026-10-08.
+> - **`parseRowPatch` cannot see the row's section** (`validate.ts:257-300`): "refused on any other section" is the
+>   server's check (`server.ts:877-881`) and the CHECK's, proven by the apply script's negative control, not by
+>   `validate.test.ts`. That test pins the values, and its old assertion that `'pre_arb'` is refused flips by design
+>   (so does `isOutcome('pre_arb')` in `sections.test.ts`).
+> - **The week $ is summed in `amountCountSectionStats`** (`scoring.ts`); the footer is built in `AmountCountTable`
+>   (`SectionGrid.tsx`). Added: `signedOutcomeUsd` (the sign a flag gives), `outcomesWeekNet` (the grid's Net, reading
+>   the flag with `isOutcome` so a cached board without `outcome` reads unmarked), `fmtSignedUsd` (`−$244.00` with a
+>   true minus sign), and a Net chip in the header beside "won · lost".
+> - **The 2026-10-07 outcomes script's `--verify` asserted "Pre-arb counts as neither"**, which this migration makes
+>   false. Its three data-step checks now run on dry/apply only (Open item 399's rule), and its header says it is
+>   superseded: its SQL would re-add the two-value CHECK.
+
 **Files:**
-- Create: `references/sql/create/2026-10-08_accounting_scoreboard_pre_arb_flag.sql`,
+- Create: `references/sql/create/2026-10-07_accounting_scoreboard_pre_arb_flag.sql`,
   `scripts/apply-accounting-scoreboard-pre-arb-flag-migration.mts`
 - Modify: `src/lib/accounting-scoreboard/scoring.ts` (add `outcomesNet`; later `winRatio`), `types.ts`, `validate.ts`
   (accept `pre_arb` in the row's outcome), `SetupPanel.tsx` (Rows → "Counts as Pre-arb"), the Outcomes grid footer in
@@ -316,11 +336,11 @@ minus and adds a **Net** line.
   `outcomesNet(lines: readonly { outcome: OutcomeFlag; weekUsd: number | null }[]): number | null`
 - Consumes: `rows.outcome`, each Outcomes line's week `usd`.
 
-- [ ] **Step 0: Read and cite** `winRatio` and its test, the live text of CHECK `acct_sb_rows_outcome_valid` (from
+- [x] **Step 0: Read and cite** `winRatio` and its test, the live text of CHECK `acct_sb_rows_outcome_valid` (from
   `references/sql/create/2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql`), how the Outcomes footer is
   built, and where a line's week `usd` is summed.
 
-- [ ] **Step 1: Write the failing tests** (add to `scoring.test.ts`):
+- [x] **Step 1: Write the failing tests** (add to `scoring.test.ts`):
 
 ```ts
 test('Net = wins minus losses minus pre-arb, by dollars', () => {
@@ -348,10 +368,10 @@ test('until W0.1 is ruled, pre-arb stays out of the win ratio', () => {
   In `validate.test.ts`: a row PATCH with `outcome: 'pre_arb'` is accepted on an Outcomes line and refused on any
   other section.
 
-- [ ] **Step 2: Run** `node --import tsx --test src/lib/accounting-scoreboard/scoring.test.ts src/lib/accounting-scoreboard/validate.test.ts`.
+- [x] **Step 2: Run** `node --import tsx --test src/lib/accounting-scoreboard/scoring.test.ts src/lib/accounting-scoreboard/validate.test.ts`.
   Expected: FAIL (`outcomesNet` not exported; `pre_arb` refused).
 
-- [ ] **Step 3: Write the migration.** Copy the live CHECK from Step 0 **verbatim** and add only `'pre_arb'` to its
+- [x] **Step 3: Write the migration.** Copy the live CHECK from Step 0 **verbatim** and add only `'pre_arb'` to its
   value list. If the live CHECK reads as below, the change is:
 
 ```sql
@@ -366,7 +386,7 @@ alter table public.accounting_scoreboard_rows add constraint acct_sb_rows_outcom
   `--verify`: `'pre_arb'` accepted on an Outcomes row inside a rolled-back transaction, refused on another section,
   `'draw'` refused, the live Pre-arb row flagged, Wins/Losses unchanged, anon `42501`.
 
-- [ ] **Step 4: Implement** `outcomesNet` in `scoring.ts`:
+- [x] **Step 4: Implement** `outcomesNet` in `scoring.ts`:
 
 ```ts
 export type OutcomeFlag = 'win' | 'loss' | 'pre_arb' | null;
@@ -390,7 +410,7 @@ export function outcomesNet(
   shows as negative."*
 
 - [ ] **Step 5: Run the tests, `npm test`, `npm run lint`; dry-run the migration; stop for Kane's go; `--apply`,
-  `--verify`; commit** by explicit path:
+  `--verify`; commit** by explicit path (tests, dry run 23/23 and the commit DONE 2026-10-07; `--apply` PENDING):
   `feat(accounting-scoreboard): Losses and Pre-arb show negative, with a Net, by flag never by typed sign (item 392)`.
 
 - [ ] **Step 6 (only after W0.1 = (a)):** change `winRatio` to count `pre_arb` lines as losses. Change the Step 1 test to

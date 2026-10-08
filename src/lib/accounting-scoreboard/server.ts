@@ -876,7 +876,7 @@ export async function patchRow(viewer: Viewer, p: RowPatch): Promise<Result<Boar
   }
   if (p.outcome !== undefined) {
     if (current.value.sectionKey !== 'chargeback_outcomes') {
-      return fail(422, 'refused', 'Only a Chargeback Outcomes line counts as a win or a loss.');
+      return fail(422, 'refused', 'Only a Chargeback Outcomes line counts as a win, a loss or Pre-arb.');
     }
     update.outcome = p.outcome;
   }

@@ -22,6 +22,12 @@
  * board read answers "not set up yet" (server.ts isMissingTable).
  * Do not double-click this file: Windows opens .mts as video.
  * Governing doc: docs/features/accounting-scoreboard.md.
+ *
+ * SUPERSEDED 2026-10-07 by 2026-10-07_accounting_scoreboard_pre_arb_flag.sql (item 392): the outcome CHECK now also
+ * takes 'pre_arb', and the live Pre-arb line carries it. Do NOT re-run this file's --dry or --apply after that: its
+ * SQL re-adds the old two-value CHECK, which the flagged Pre-arb line violates. --verify is the mode to run. Its
+ * checks of what the data step did ("Wins" = win, "Losses" = loss, Pre-arb = neither) run on dry/apply only, since
+ * managers re-mark lines in Setup → Rows afterwards (Open item 399's rule).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -63,14 +69,8 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const CHECKS: Array<[string, string]> = [
-  [
-    'accounting_scoreboard_rows.outcome exists, text, nullable',
-    `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='accounting_scoreboard_rows'
-       AND column_name='outcome' AND data_type='text' AND is_nullable='YES') AS ok`,
-  ],
-  ['constraint acct_sb_rows_outcome_valid', `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'acct_sb_rows_outcome_valid') AS ok`],
-  ['constraint acct_sb_prob_count_range', `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'acct_sb_prob_count_range') AS ok`],
+/** What the data step did: dry run and --apply only (see the header). */
+const SEED_CHECKS: Array<[string, string]> = [
   [
     'the live "Wins" line counts as a win',
     `SELECT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE section_key = 'chargeback_outcomes'
@@ -86,6 +86,18 @@ const CHECKS: Array<[string, string]> = [
     `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE section_key = 'chargeback_outcomes'
        AND label = 'Pre-arb' AND outcome IS NOT NULL) AS ok`,
   ],
+];
+
+const CHECKS: Array<[string, string]> = [
+  [
+    'accounting_scoreboard_rows.outcome exists, text, nullable',
+    `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='accounting_scoreboard_rows'
+       AND column_name='outcome' AND data_type='text' AND is_nullable='YES') AS ok`,
+  ],
+  ['constraint acct_sb_rows_outcome_valid', `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'acct_sb_rows_outcome_valid') AS ok`],
+  ['constraint acct_sb_prob_count_range', `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'acct_sb_prob_count_range') AS ok`],
+  ...(verifyOnly ? [] : SEED_CHECKS),
+
   [
     'no line outside Chargeback Outcomes carries an outcome',
     `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE outcome IS NOT NULL AND section_key <> 'chargeback_outcomes') AS ok`,

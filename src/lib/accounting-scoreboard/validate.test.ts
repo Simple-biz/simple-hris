@@ -206,7 +206,14 @@ test('rows: a custom row names its custom section; a bucket day and the due-soon
 test('rows: a Chargeback Outcomes line counts as a win, a loss or neither (null)', () => {
   assert.deepEqual(parseRowPatch({ id: ROW, outcome: 'win' }), { ok: true, value: { id: ROW, outcome: 'win' } });
   assert.deepEqual(parseRowPatch({ id: ROW, outcome: null }), { ok: true, value: { id: ROW, outcome: null } }, 'null clears it, and counts as a change');
-  for (const bad of ['Wins', 'won', 'pre_arb', '', 1, true]) assert.equal(parseRowPatch({ id: ROW, outcome: bad }).ok, false, String(bad));
+  // Carla, 2026-10-07 (item 392): a Pre-arb line is flagged too, so it shows negative and joins the Net. Which section
+  // may carry the flag is the server's check (patchRow) and the SQL CHECK's, not the parser's: it cannot see the row.
+  assert.deepEqual(parseRowPatch({ id: ROW, outcome: 'pre_arb' }), { ok: true, value: { id: ROW, outcome: 'pre_arb' } });
+  for (const bad of ['Wins', 'won', 'Pre-arb', 'prearb', 'draw', '', 1, true]) {
+    const r = parseRowPatch({ id: ROW, outcome: bad });
+    assert.equal(r.ok, false, String(bad));
+    assert.match(r.ok ? '' : r.error, /pre_arb/, 'the refusal lists every value');
+  }
 });
 
 test('Payment Verified: a collection id and a true/false', () => {

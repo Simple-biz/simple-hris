@@ -3407,8 +3407,9 @@ Managers. POST `{ label }` (1–60 characters, unique among live types); PATCH `
 
 Managers. POST `{ sectionKey, customSectionId?, label, workEmail? }` (a work email must be on `active_employees`; `sectionKey: 'custom'`
 needs a live `customSectionId`); PATCH `{ id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon?, outcome? }` (never un-archived;
-`bucketDay` 'mon'…'fri' | null on a Buckets row only; `dueSoon` on an Open Disputes row only; `outcome` 'win' | 'loss' | null on a
-Chargeback Outcomes row only, 2026-10-07, what the line counts as in the win ratio; 422 on any other row).
+`bucketDay` 'mon'…'fri' | null on a Buckets row only; `dueSoon` on an Open Disputes row only; `outcome` 'win' | 'loss' | 'pre_arb' | null on
+a Chargeback Outcomes row only, 2026-10-07, what the line counts as: the win ratio's wins and losses, and the Net's sign (wins +,
+losses and `pre_arb` −; `pre_arb` since the 2026-10-07 Pre-arb flag migration); 422 on any other row).
 
 ### `POST /api/accounting-scoreboard/members` · `DELETE ?email=`
 

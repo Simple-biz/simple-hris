@@ -23,13 +23,15 @@ import {
   type MeetingPill,
   type MeetingPillState,
 } from '@/lib/accounting-scoreboard/meeting-pills';
-import { WEEKDAY_LABEL, isOutcome, type BoardSection, type GoalRule, type Slot } from '@/lib/accounting-scoreboard/sections';
+import { WEEKDAY_LABEL, isOutcome, type BoardSection, type GoalRule, type Outcome, type Slot } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader } from '@/lib/accounting-scoreboard/week';
 import {
   amountCountSectionStats,
   amPmSectionStats,
   dailySectionStats,
   noMeetingStreak,
+  outcomesWeekNet,
+  signedOutcomeUsd,
   timeSpanSectionHours,
   winRatio,
   type AmPmRowStats,
@@ -54,7 +56,7 @@ import {
   fmtNum,
   fmtPct,
   fmtScore,
-  fmtUsd,
+  fmtSignedUsd,
   goalFormat,
   handle,
   type EditingSignal,
@@ -102,13 +104,26 @@ function RowLabel({ row }: { row: BoardRow }) {
             due in 7 days
           </RowTag>
         ) : null}
-        {row.outcome ? (
-          <RowTag title={`Its count is a ${row.outcome} in the win ratio`}>{row.outcome === 'win' ? 'counts as won' : 'counts as lost'}</RowTag>
+        {isOutcome(row.outcome) ? (
+          <RowTag title={OUTCOME_TAG[row.outcome].title}>{OUTCOME_TAG[row.outcome].text}</RowTag>
         ) : null}
         {row.archived ? <RowTag>removed</RowTag> : null}
       </div>
     </div>
   );
+}
+
+/** What a Chargeback Outcomes line counts as, on its label (rows.outcome; Setup → Rows). */
+const OUTCOME_TAG: Record<Outcome, { text: string; title: string }> = {
+  win: { text: 'counts as won', title: 'Its count is a win in the win ratio, and its dollars count plus in the Net' },
+  loss: { text: 'counts as lost', title: 'Its count is a loss in the win ratio, and its dollars count minus in the Net' },
+  pre_arb: { text: 'counts as Pre-arb', title: 'Pre-arb: its dollars count minus in the Net. Not decided, so it is left out of the win ratio' },
+};
+
+/** The Net's tone: emerald when we are even or ahead, rose when we are in the hole (ui-standards § 8.2). */
+function netTone(net: number | null): string {
+  if (net === null) return 'text-zinc-800 dark:text-zinc-200';
+  return net < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300';
 }
 
 export function SectionGrid({
@@ -151,6 +166,8 @@ export function SectionGrid({
   const unitFormat = goalFormat(section.goal);
   const disputes = isOpenDisputes ? amPmSectionStats(rows, dates, lookup, section.score, today) : null;
   const wins = section.kind === 'amount_count' ? winRatio(rows, dates, lookup) : null;
+  // Carla, 2026-10-07: "I want to show like it's actually we're in the hole."
+  const net = section.kind === 'amount_count' ? outcomesWeekNet(rows, dates, lookup) : null;
   const streak = section.kind === 'daily_flag' ? noMeetingStreak(lastMeetingDate, today) : null;
   // This week's pills come from the ticks the grid already holds (the same rows and the same "met" rule
   // as its Met column), never a read of their own.
@@ -205,6 +222,17 @@ export function SectionGrid({
             <span className={CHIP} title="Wins ÷ (wins + losses), by the number of chargebacks. Pre-arb is not decided, so it is left out.">
               <span className="font-mono tabular-nums">{fmtNum(wins.won)}</span> won ·{' '}
               <span className="font-mono tabular-nums">{fmtNum(wins.lost)}</span> lost
+            </span>
+          ) : null}
+          {wins ? (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold',
+                net === null ? LIGHT_STYLE.none.chip : net < 0 ? LIGHT_STYLE.red.chip : LIGHT_STYLE.green.chip,
+              )}
+              title="Net = wins − losses − Pre-arb, in dollars, this week. Amounts are typed positive; the line's flag gives the sign. The $25 fee per loss is not added."
+            >
+              Net <span className="font-mono tabular-nums">{fmtSignedUsd(net, true)}</span>
             </span>
           ) : null}
           <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -782,10 +810,16 @@ function DailyTable({ section, rows, dates, lastDates, today, lookup, onSave, on
 
 /**
  * Chargeback Outcomes (Carla, 2026-10-02): per outcome, per day, the dollar amount and how many
- * chargebacks ("one dispute won for $99 → Wins: $99 / 1"). Per-outcome week totals only: there is
- * no total across outcomes, because adding a win to a loss means nothing. The footer is the week's
- * win ratio (Carla, 2026-10-07): wins ÷ (wins + losses), by count, from the lines' outcome flags.
+ * chargebacks ("one dispute won for $99 → Wins: $99 / 1"). Amounts are typed positive. A line's week $
+ * carries the sign of its flag (Carla, 2026-10-07: wins positive, Losses and Pre-arb negative), and the
+ * footer has the week's win ratio (by count) and its Net (wins − losses − Pre-arb, in dollars). Counts are
+ * never summed across outcomes.
  */
+/** A line's flag, or null: a board cached before 2026-10-07 has no `outcome` on its rows at all. */
+function outcomeOf(row: BoardRow): Outcome | null {
+  return isOutcome(row.outcome) ? row.outcome : null;
+}
+
 function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSave, onEditing, scope }: TableProps) {
   const ids = rows.map((r) => r.id);
   const stats = amountCountSectionStats(ids, dates, lookup);
@@ -795,6 +829,9 @@ function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSa
   const ratioLight = goalLight(section.goal, ratio.ratio);
   // A real flag, never "not null": a board cached before 2026-10-07 has no `outcome` on its rows at all.
   const flagged = rows.some((r) => isOutcome(r.outcome));
+  // Carla, 2026-10-07: wins plus, losses and Pre-arb minus. The sign comes from the line's flag, never typed.
+  const net = outcomesWeekNet(rows, dates, lookup);
+  const lastNet = outcomesWeekNet(rows, lastDates, lookup);
   return (
     <table className="table-keep w-full border-collapse text-sm">
       <thead className="border-b border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
@@ -851,19 +888,19 @@ function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSa
                   </FragmentCells>
                 );
               })}
-              <td className={cn(TD, NUM, 'font-semibold')}>
-                <Flash value={s.weekUsd} scope={scope}>{s.weekUsd === null ? '—' : fmtUsd(s.weekUsd)}</Flash>
+              <td className={cn(TD, NUM, 'font-semibold', (signedOutcomeUsd(outcomeOf(row), s.weekUsd) ?? 0) < 0 && 'text-rose-700 dark:text-rose-300')}>
+                <Flash value={s.weekUsd} scope={scope}>{fmtSignedUsd(signedOutcomeUsd(outcomeOf(row), s.weekUsd))}</Flash>
               </td>
               <td className={cn(TD, NUM, 'font-semibold')}>
                 <Flash value={s.weekCount} scope={scope}>{fmtNum(s.weekCount)}</Flash>
               </td>
-              <td className={cn(TD, NUM, DIM)}>{l.weekUsd === null ? '—' : fmtUsd(l.weekUsd)}</td>
+              <td className={cn(TD, NUM, DIM)}>{fmtSignedUsd(signedOutcomeUsd(outcomeOf(row), l.weekUsd))}</td>
               <td className={cn(TD, NUM, DIM)}>{fmtNum(l.weekCount)}</td>
             </tr>
           );
         })}
       </tbody>
-      {/* Carla, 2026-10-07: the win ratio, by count. Still no total across outcomes: it is a ratio, not a sum. */}
+      {/* Carla, 2026-10-07: the win ratio, by count, then the Net, by dollars ("we're in the hole"). */}
       <tfoot className="border-t border-zinc-200 bg-zinc-50/80 dark:border-zinc-800 dark:bg-zinc-900/60">
         <tr>
           <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Win ratio</td>
@@ -885,6 +922,20 @@ function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSa
             </Flash>
           </td>
           <td colSpan={2} className={cn(TD, NUM, DIM)}>{fmtPct(lastRatio.ratio)}</td>
+        </tr>
+        <tr className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+          <td className={cn(TD, TINY_CAPS, 'sticky left-0 z-10 bg-zinc-50 text-zinc-500 dark:bg-zinc-900')}>Net</td>
+          <td colSpan={dates.length * 2} className={cn(TD, 'text-[11px] text-zinc-500 dark:text-zinc-400')}>
+            {flagged
+              ? 'Wins − losses − Pre-arb, in dollars. Amounts are typed positive; the line’s flag gives the sign. The $25 fee per loss is not added.'
+              : 'No line is marked yet: a manager marks each one under Setup → Rows.'}
+          </td>
+          <td colSpan={2} className={cn(TD, NUM, 'font-semibold')}>
+            <Flash value={net} scope={scope}>
+              <span className={netTone(net)}>{fmtSignedUsd(net, true)}</span>
+            </Flash>
+          </td>
+          <td colSpan={2} className={cn(TD, NUM, DIM)}>{fmtSignedUsd(lastNet, true)}</td>
         </tr>
       </tfoot>
     </table>

@@ -27,7 +27,7 @@
  * the browser sends.
  */
 
-import type { GoalRule, Outcome, ScoreRule, Slot, Weekday } from './sections';
+import { isOutcome, type GoalRule, type Outcome, type ScoreRule, type Slot, type Weekday } from './sections';
 import { weekdayOf, weekStartOf } from './week';
 
 export function entryKey(rowId: string, date: string, slot: Slot): string {
@@ -384,9 +384,50 @@ export interface AmountCountRowStats {
 }
 
 /**
- * Per outcome only. There is no team total across outcomes: adding a win to a loss means nothing,
- * and Carla's earlier "won chargebacks as negative losses" was never pinned down (Open item 317 (a)).
+ * A line's week dollars with the sign its flag gives it (Carla, 2026-10-07, item 392: "a loss is a negative, but I
+ * can't put a dash right here"; Kane: "Wins positive. PR losses have negative."): a loss or Pre-arb is negative,
+ * a win positive, an unmarked line as typed. Amounts are always typed positive; the sign is never typed.
+ * Nothing typed stays null.
  */
+export function signedOutcomeUsd(outcome: Outcome | null, usd: number | null): number | null {
+  if (usd === null) return null;
+  return (outcome === 'loss' || outcome === 'pre_arb') && usd !== 0 ? -usd : usd;
+}
+
+/**
+ * The Net (Carla, 2026-10-07): wins minus losses minus Pre-arb, in dollars, over the lines that carry a flag
+ * and have dollars typed. An unmarked line is left out. Nothing marked or nothing typed is null ("—"), never 0.
+ * Summed in whole cents, so 10.10 − 0.20 is 9.90 and never 9.899999. The $25 fee per loss is NOT added (plan
+ * W0.3 (d): typed into the amount until Carla says otherwise).
+ */
+export function outcomesNet(lines: readonly { outcome: Outcome | null; weekUsd: number | null }[]): number | null {
+  const counted = lines.filter((l) => l.outcome !== null && l.weekUsd !== null);
+  if (!counted.length) return null;
+  const cents = counted.reduce((total, l) => total + Math.round((signedOutcomeUsd(l.outcome, l.weekUsd) as number) * 100), 0);
+  // A Net of exactly 0 prints "$0.00", never "-$0.00".
+  return cents === 0 ? 0 : cents / 100;
+}
+
+/**
+ * The week's Net for the Outcomes grid: each line's week $ (Σ of its typed days) through `outcomesNet`. A line's
+ * flag is read with `isOutcome`, never "not null": a board cached before 2026-10-07 has no `outcome` at all.
+ */
+export function outcomesWeekNet(
+  rows: readonly Pick<AmPmRowMeta, 'id' | 'outcome'>[],
+  dates: readonly string[],
+  lookup: EntryLookup,
+): number | null {
+  const stats = amountCountSectionStats(
+    rows.map((r) => r.id),
+    dates,
+    lookup,
+  );
+  return outcomesNet(
+    rows.map((r) => ({ outcome: isOutcome(r.outcome) ? r.outcome : null, weekUsd: stats.rows.get(r.id)?.weekUsd ?? null })),
+  );
+}
+
+/** Wins and losses, by count, for the win ratio. Dollars never weigh in. */
 export interface WinRatio {
   /** Σ this week's chargeback counts on the lines marked "win"; null when none was typed. */
   won: number | null;

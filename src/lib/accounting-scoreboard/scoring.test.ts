@@ -22,8 +22,11 @@ import {
   minutesToClock,
   minutesToTimeInput,
   noMeetingStreak,
+  outcomesNet,
+  outcomesWeekNet,
   problemsWeekStats,
   round2,
+  signedOutcomeUsd,
   timeInputToMinutes,
   timeSpanSectionHours,
   UNTYPED_PROBLEMS,
@@ -423,6 +426,79 @@ test('win ratio (Carla, 2026-10-07): wins ÷ (wins + losses) by COUNT, flagged l
     { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 2 },
   ]);
   assert.equal(winRatio(twoWinLines, MON_FRI, more).ratio, 50, 'every line marked "win" counts');
+});
+
+// Carla, 2026-10-07 (item 392): "a loss is a negative, but I can't put a dash right here"; Kane: "Wins positive.
+// PR losses have negative." Carla: "Yes." The sign comes from the line's flag, never from a typed minus.
+
+test('Net = wins minus losses minus Pre-arb, by dollars', () => {
+  assert.equal(
+    outcomesNet([
+      { outcome: 'win', weekUsd: 99 },
+      { outcome: 'loss', weekUsd: 50 },
+      { outcome: 'pre_arb', weekUsd: 30 },
+    ]),
+    19,
+  );
+});
+
+test('Net: all losses is a real negative, never hidden', () => {
+  assert.equal(outcomesNet([{ outcome: 'loss', weekUsd: 50 }]), -50);
+  assert.equal(outcomesNet([{ outcome: 'pre_arb', weekUsd: 244 }]), -244);
+});
+
+test('Net: nothing marked, or nothing typed, is "—" (null), never 0; an unmarked line is left out', () => {
+  assert.equal(outcomesNet([{ outcome: null, weekUsd: 80 }]), null);
+  assert.equal(outcomesNet([{ outcome: 'win', weekUsd: null }]), null);
+  assert.equal(outcomesNet([]), null);
+  assert.equal(outcomesNet([{ outcome: null, weekUsd: 80 }, { outcome: 'loss', weekUsd: 5 }]), -5, 'the unmarked $80 never counts');
+  assert.equal(outcomesNet([{ outcome: 'win', weekUsd: 0 }]), 0, 'a typed $0 is a real $0.00');
+});
+
+test('Net: cents survive, with no float drift', () => {
+  assert.equal(outcomesNet([{ outcome: 'win', weekUsd: 10.1 }, { outcome: 'loss', weekUsd: 0.2 }]), 9.9);
+  assert.equal(outcomesNet([{ outcome: 'win', weekUsd: 0.1 }, { outcome: 'win', weekUsd: 0.2 }]), 0.3);
+});
+
+test('signs: a loss or Pre-arb week $ shows negative, a win positive, an unmarked line as typed; nothing typed stays null', () => {
+  assert.equal(signedOutcomeUsd('loss', 50), -50);
+  assert.equal(signedOutcomeUsd('pre_arb', 30), -30);
+  assert.equal(signedOutcomeUsd('win', 99), 99);
+  assert.equal(signedOutcomeUsd(null, 80), 80);
+  assert.equal(signedOutcomeUsd('loss', null), null);
+  assert.equal(Object.is(signedOutcomeUsd('loss', 0), -0), false, 'a $0 loss is 0, never "-0"');
+});
+
+test("the week's Net from the grid: production's week of Oct 5 (Losses $244 on Tue, $0 typed on Pre-arb and Wins) is −$244.00", () => {
+  const lookup = buildLookup([
+    { rowId: 'prearb', date: MON_FRI[0], slot: 'usd', value: 0 },
+    { rowId: 'wins', date: MON_FRI[0], slot: 'usd', value: 0 },
+    { rowId: 'losses', date: MON_FRI[0], slot: 'usd', value: 0 },
+    { rowId: 'prearb', date: MON_FRI[1], slot: 'usd', value: 0 },
+    { rowId: 'wins', date: MON_FRI[1], slot: 'usd', value: 0 },
+    { rowId: 'losses', date: MON_FRI[1], slot: 'usd', value: 244 },
+  ]);
+  const rows = [row('prearb', { outcome: 'pre_arb' }), row('wins', { outcome: 'win' }), row('losses', { outcome: 'loss' })];
+  assert.equal(outcomesWeekNet(rows, MON_FRI, lookup), -244);
+  assert.equal(outcomesWeekNet(rows, MON_FRI, new Map()), null, 'nothing typed: —');
+  // A board cached before the flags existed: no `outcome` key at all, so nothing is marked and the Net is "—".
+  const cached = rows.map((r) => {
+    const old: Partial<typeof r> = { ...r };
+    delete old.outcome;
+    return old;
+  }) as typeof rows;
+  assert.equal(outcomesWeekNet(cached, MON_FRI, lookup), null);
+});
+
+test('a Pre-arb line can be FLAGGED (rows.outcome = pre_arb); its count is only ever read through that flag', () => {
+  const lookup = buildLookup([
+    { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 3 },
+    { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 1 },
+    { rowId: 'prearb', date: MON_FRI[0], slot: 'count', value: 1 },
+  ]);
+  const rows = [row('wins', { outcome: 'win' }), row('losses', { outcome: 'loss' }), row('prearb', { outcome: 'pre_arb' })];
+  // Until Step 6 (W0.1) changes winRatio, the flag alone moves nothing in the ratio.
+  assert.equal(winRatio(rows, MON_FRI, lookup).ratio, 75);
 });
 
 test('Payroll Problems: a logged 0 is a real 0 problems (Kane, 2026-10-07); nothing logged is still —', () => {

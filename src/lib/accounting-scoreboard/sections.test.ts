@@ -49,6 +49,8 @@ const ROUND3_SQL = read('2026-10-06_accounting_scoreboard_round3.sql');
 const HOST_SQL = read('2026-10-07_accounting_scoreboard_custom_section_host.sql');
 /** 2026-10-07: rows.outcome (the win ratio) and the Payroll Problems count, 0–1000. */
 const OUTCOMES_SQL = read('2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql');
+/** 2026-10-07: rows.outcome may be 'pre_arb' (Carla: "it's still considered a loss"; item 392). The outcome CHECK in force. */
+const PRE_ARB_SQL = read('2026-10-07_accounting_scoreboard_pre_arb_flag.sql');
 /** 2026-10-07: show_on_overview on both section tables (Carla: "I don't want this one on the overview"). */
 const VISIBILITY_SQL = read('2026-10-07_accounting_scoreboard_overview_visibility.sql');
 
@@ -132,8 +134,9 @@ test('every built-in section can carry a goal (Carla, 2026-10-07), and never has
 test('Open Disputes is scored like Buckets (Carla, 2026-10-07); Outcomes is judged on its win ratio', () => {
   assert.equal(sectionDef('chargebacks').score, 'cleared');
   assert.equal(sectionDef('chargeback_outcomes').goal?.measure, 'ratio');
-  assert.ok(isOutcome('win') && isOutcome('loss'));
-  assert.ok(!isOutcome('Wins') && !isOutcome('pre_arb') && !isOutcome(null));
+  // Pre-arb is a flag of its own since 2026-10-07 (item 392): its dollars count minus in the Net.
+  assert.ok(isOutcome('win') && isOutcome('loss') && isOutcome('pre_arb'));
+  assert.ok(!isOutcome('Wins') && !isOutcome('Pre-arb') && !isOutcome('draw') && !isOutcome(null) && !isOutcome(undefined), 'a label is never a flag');
 });
 
 test('slots follow the kind; collections has no grid slot', () => {
@@ -305,9 +308,14 @@ test('hosted sections: the built-in ones first, then custom ones newest first', 
   assert.deepEqual(hostedSections(all, host).map((s) => s.title), ['Outcomes', 'Newer', 'Older']);
 });
 
-test('the outcome CHECK lists exactly OUTCOMES; the problem-count CHECK is MIN–MAX_PROBLEMS_PER_LINE (2026-10-07)', () => {
-  const outcomes = checkList(OUTCOMES_SQL, 'acct_sb_rows_outcome_valid').filter((v) => v !== 'chargeback_outcomes');
-  assert.deepEqual([...outcomes].sort(), [...OUTCOMES].sort());
+test('the outcome CHECK in force lists exactly OUTCOMES; the problem-count CHECK is MIN–MAX_PROBLEMS_PER_LINE (2026-10-07)', () => {
+  const inForce = checkList(PRE_ARB_SQL, 'acct_sb_rows_outcome_valid').filter((v) => v !== 'chargeback_outcomes');
+  assert.deepEqual([...inForce].sort(), [...OUTCOMES].sort());
+  // The Pre-arb flag only ADDS a value: win and loss keep their meaning, and still only on an Outcomes line.
+  const before = checkList(OUTCOMES_SQL, 'acct_sb_rows_outcome_valid').filter((v) => v !== 'chargeback_outcomes');
+  assert.deepEqual([...inForce].filter((v) => !before.includes(v)), ['pre_arb']);
+  assert.ok(before.every((v) => inForce.includes(v)));
+  assert.match(PRE_ARB_SQL, /section_key = 'chargeback_outcomes' and outcome in \('win', 'loss', 'pre_arb'\)/);
   const at = OUTCOMES_SQL.indexOf('add constraint acct_sb_prob_count_range');
   assert.ok(at >= 0);
   const m = /between (\d+) and (\d+)/.exec(OUTCOMES_SQL.slice(at));
