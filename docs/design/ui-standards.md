@@ -1235,6 +1235,11 @@ Fifth user (2026-10-06): the Accounting Scoreboard's loading modal (`ScoreboardL
 Refresh click, so it is its own dialog on the refresh model, never `useTableRefresh`. Its lines are groups of real
 reads that the GET streams as they answer (`load-progress.ts`).
 
+Sixth user (2026-10-08): the Accounting Scoreboard Tasks view's loading card (`TasksLoadCard.tsx`,
+[accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) § Loading and the browser cache). It is NPD's card
+(floating over the skeleton, never blocking) on the board modal's refresh model, and its lines are the three reads
+`GET /tasks?stream=1` streams as they answer (`task-load-progress.ts`).
+
 ### 10.2 Full-screen viewer (2026-09-26, used by `ProofLightbox`)
 
 `ProofLightbox` (`TimeAdjustmentIssueRows.tsx:248-473`, 2aebfde3), the Accounting → Issues

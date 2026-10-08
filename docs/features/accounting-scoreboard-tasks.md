@@ -17,7 +17,8 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 | The progress message (pure) | `src/lib/accounting-scoreboard/chat-summary.ts` (+ `.test.ts`) |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` § Task boards (+ `tasks-validate.test.ts`) |
 | Reads, writes, the Chat post | `src/lib/accounting-scoreboard/server.ts` § Task boards |
-| Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET / POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/frequency/route.ts` (POST, change how often) · `tasks/post-progress/route.ts` (POST) |
+| Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET, `&stream=1` streams it for the loading card · POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/frequency/route.ts` (POST, change how often) · `tasks/post-progress/route.ts` (POST) |
+| Loading card: the lines ↔ the reads, the reporter, the fail-closed stream assembler (pure) | `src/lib/accounting-scoreboard/task-load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the card `src/components/accounting-scoreboard/TasksLoadCard.tsx` |
 | Changing how often: add, then archive, then undo on failure (pure) | `changeFrequencyInOrder` in `src/lib/accounting-scoreboard/tasks.ts` (+ `tasks.test.ts`) |
 | Browser cache: one key per view, never the viewer | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `tab-cache.test.ts`) |
 | UI | `src/components/accounting-scoreboard/TasksPanel.tsx` (the boards, the edit form, the skeletons); the switch and the picked view in `ScoreboardApp.tsx` |
@@ -134,10 +135,36 @@ this, the panel unmounted on every Scoreboard → Tasks switch, so every switch 
   like what arrives**, on the same cards. *My tasks* or a person: the Add form (Admins), then frequency cards of task rows,
   at the board's own heights (header 37 px, an Admin's row 45 px). *Everyone*: the progress message card, then the table
   (`table-keep`). The heading already names the view picked, the previous person's board is never shown under the new
-  name, and the picker keeps its list. Screen readers hear *"Loading tasks…"* (`aria-busy`). The shimmer goes still under
-  reduced motion. **A refetch never re-skeletons**: revalidating a painted view is silent, and only a Refresh click spins
-  its button. A failed refresh keeps the view on screen under *"Couldn't refresh (…). You're seeing these tasks as of the
-  last good load."*
+  name, and the picker keeps its list. The skeleton is `aria-busy`; the card over it does the talking. The shimmer goes
+  still under reduced motion. **A refetch never re-skeletons**: revalidating a painted view is silent, and only a Refresh
+  click spins its button. A failed refresh keeps the view on screen under *"Couldn't refresh (…). You're seeing these
+  tasks as of the last good load."*
+- **Over the skeleton, the loading card** (Kane, 2026-10-08: *"on top of the skeleton lets add the modal loading similar to
+  HRIS - NPD"*; `TasksLoadCard`): NPD's card (npd-dashboard.md § Loading a sheet) in the board's orange, on the shared
+  step model the board's own modal uses. **Only a read with a skeleton under it has a card**: a board painted from the
+  cache, the silent revalidation and a Refresh click have none. One per board picked: picking another board cancels the
+  read and its card.
+  - **Every line is a real read** (`task-load-progress.ts`). *Checking you're on the scoreboard* is done when the route
+    answers: the member check and who may see that board are settled **before** the stream starts, so a refusal is still a
+    plain 401 / 403 / 400. Then `GET /tasks?person=…&stream=1` (NDJSON) sends a line the moment each of `readTasks`' three
+    reads answers, saying what came back: *Found 14 people on the board* · *Read 23 tasks* · *4 tasks ticked this period*
+    (the ticks line also waits for the tasks, because a tick is matched to its task's period before it counts). Then the
+    view, or an `error` line naming whose read failed. The three reads run **side by side** (they never depended on each
+    other; until 2026-10-08 they ran one after another), so the lines tick in the order they really answer.
+  - **No percentage is printed**; the bar **never moves backwards**; it is **full and green only once the tasks are
+    painted** (two animation frames; a timer in a hidden tab). *Your tasks are ready* holds 450 ms, then the card fades
+    (300 ms) and goes.
+  - **Assembled fail-closed** (`createTasksStreamAssembler`): a stream that stops early, a line it cannot read, an unknown
+    line, a view that is not the board asked for (Blake's board never paints as mine), or anything after the view is a
+    failed load, never a partial board.
+  - **A failure** holds the card red where it stopped, marking **only the failed read's line** (a read beside it that
+    answered stays done). The amber box above carries the server's sentence and *Try again*, and no skeleton is left
+    promising an arrival. *Try again* is a new read: the box goes, and the skeleton and a new card come back.
+  - **It never blocks**: the card is absolute and `pointer-events: none`, so the picker and Refresh stay usable under it.
+    It announces each line (`aria-live`) and is a `progressbar` whose value text is the current line. Reduced motion: the
+    fill steps, nothing sweeps or fades.
+  - `readTasks` reports as `lines`, never `progress`: the board's own pin (`load-progress.test.ts`) reads every
+    `progress?.done(` in `server.ts` as a board read.
 - **Verified 2026-10-08** in headless Chromium on the real `ScoreboardApp` with a mocked API and **synthetic** tasks
   (fictional people, a 1.5 s read), **64 scripted checks** at 1360 px light and dark and 390 px: the skeleton on first open
   with no spinner; tasks painted at once on switching back, with the fetch still made and no spinner; the Everyone table
@@ -145,6 +172,15 @@ this, the panel unmounted on every Scoreboard → Tasks switch, so every switch 
   picker, its note, the POST body, the task under its new frequency and the counts; a rename as a PATCH; a reload painting
   from the cache with the edits and no viewer or role in the blob; no page-wide horizontal scroll; no console errors; the
   shimmer still under reduced motion. **Not clicked through signed in.**
+- **The loading card, verified 2026-10-08:** 11 tests in `task-load-progress.test.ts` (the plan, the sentences, the
+  reporter, fail-closed assembly, and source pins: every line reported in `readTasks`, the route refusing before it
+  streams). The same headless harness, now **110 checks**: the card over the skeleton on first open, titled *Loading your
+  tasks*; *You're on the scoreboard* once the route answered; the lines in the order the reads answered; each done line's
+  sentence; no `%`; the fill never backwards, never full before the tasks were painted, green *ready* only with them on
+  screen, then gone; no card for a cached board, a silent revalidation (plain JSON, not the stream) or a Refresh click;
+  Everyone's own card over its table skeleton, and clicks passing through it; a failed ticks read holding red with only
+  that line marked, the box with *Try again*, no skeleton, then *Try again* bringing a new card and the board; the fill
+  not animating under reduced motion. **Not clicked through signed in, and not watched streaming through Vercel.**
 
 ## The Everyone view and the progress message
 
@@ -264,6 +300,9 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
   is unaffected. Re-check any time with `--verify`.
 - **Changing how often and the browser cache (2026-10-08): no migration, no env var, no table change.** The new route
   writes only what Add and Remove already write (an insert and the archive stamp). **The push: PENDING** (Kane).
+- **The loading card (2026-10-08): no migration, no env var.** `GET /tasks` gains `&stream=1`; without it the answer is
+  unchanged (the silent revalidation and a Refresh click read it). The scheduled post calls `readTasks` directly, with no
+  `lines`, so its reads now run side by side too and nothing else changes for it. **The push: PENDING** (Kane).
 - **Env:** `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL` is in `.env.local` (2026-10-08; proven with two manual posts) and in
   `.env.example` with no value. Vercel Production: Kane (he was deploying it on 2026-10-08).
 - **Import: APPLIED 2026-10-08 14:05Z** on Kane's *"Go"* (Open item 393, `0b7d39c9`): 338 tasks on 23 boards. The 7 Florida

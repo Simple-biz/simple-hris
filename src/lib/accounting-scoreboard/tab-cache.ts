@@ -36,6 +36,7 @@
 
 import { createTabCache } from '@/lib/dashboard-cache/create-tab-cache';
 import { can, type BoardRole } from './roles';
+import { payloadShowsView as showsView } from './task-load-progress';
 import type { BoardPayload, RosterPerson, TasksPayload } from './types';
 
 export const scoreboardTabCache = createTabCache('acct-sb:');
@@ -97,14 +98,6 @@ export function readCachedRoster(): RosterPerson[] | undefined {
 
 export function writeCachedRoster(people: RosterPerson[]): void {
   scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.roster, people);
-}
-
-/** Does a payload show the view it is filed under? `me` is the viewer's own board, `all` Everyone, else that person. */
-function showsView(view: string, shown: CachedTasks['view'] | undefined): boolean {
-  if (!shown || typeof shown !== 'object') return false;
-  if (view === 'me') return shown.kind === 'person' && shown.own === true;
-  if (view === 'all') return shown.kind === 'all';
-  return shown.kind === 'person' && shown.person?.email === view;
 }
 
 /**

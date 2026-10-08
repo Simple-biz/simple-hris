@@ -81,6 +81,7 @@ import {
   type TaskLike,
 } from './tasks';
 import { buildProgressMessage } from './chat-summary';
+import type { TaskReadProgress } from './task-load-progress';
 import type { BoardRead, BoardReadProgress } from './load-progress';
 import {
   customGoal,
@@ -1357,53 +1358,81 @@ export async function listTaskPeople(): Promise<Result<TaskPerson[]>> {
 export type TaskViewRequest = { kind: 'me' } | { kind: 'all' } | { kind: 'person'; email: string };
 
 /**
+ * Who may read which board, decided before anything is read. The route asks it BEFORE a streamed read starts, so a
+ * refusal is still a plain 403 (task-load-progress.ts); `readTasks` asks it again for every other caller.
+ */
+export function refuseTaskView(viewer: Viewer, view: TaskViewRequest): Failure | null {
+  return view.kind !== 'me' && !can(viewer.role, 'view_all_tasks') ? fail(403, 'not_allowed', REFUSED.view_all_tasks) : null;
+}
+
+/**
  * GET /tasks. A Team member sees only their own board (by every address they sign in with). An Admin or an
  * Assistant may pick a person, or All. Only live tasks and their ticks in the CURRENT periods are sent.
+ *
+ * The three reads (the board's people, the tasks, the live ticks of the current periods) depend on nothing but the
+ * view and today, so they run side by side. `lines` (the loading card, task-load-progress.ts) hears each one the
+ * moment it answers; `ticks` waits for `tasks` too, because a tick is matched to its task's period before it counts.
  */
-export async function readTasks(viewer: Viewer, view: TaskViewRequest): Promise<Result<TasksPayload>> {
+export async function readTasks(viewer: Viewer, view: TaskViewRequest, lines?: TaskReadProgress): Promise<Result<TasksPayload>> {
+  const refused = refuseTaskView(viewer, view);
+  if (refused) return refused;
   const seesAll = can(viewer.role, 'view_all_tasks');
-  if (view.kind !== 'me' && !seesAll) return fail(403, 'not_allowed', REFUSED.view_all_tasks);
   const today = todayEastern();
-
-  const people = await listTaskPeople();
-  if (!people.ok) return people;
-  const nameOf = (email: string) => people.value.find((p) => p.email === email)?.name ?? email.split('@')[0];
-
-  let owners: string[] | null;
-  let shown: TasksPayload['view'];
-  if (view.kind === 'all') {
-    owners = null;
-    shown = { kind: 'all' };
-  } else if (view.kind === 'person' && !viewer.aliases.includes(view.email)) {
-    owners = [view.email];
-    shown = { kind: 'person', person: { email: view.email, name: nameOf(view.email) }, own: false };
-  } else {
-    owners = viewer.aliases;
-    const mine = people.value.find((p) => viewer.aliases.includes(p.email));
-    shown = { kind: 'person', person: mine ?? { email: viewer.email, name: nameOf(viewer.email) }, own: true };
-  }
-
-  const taskRead = await selectAllPaged<TaskRecord>((from, to) => {
-    const q = client().from(TASKS).select(TASK_COLS).is('archived_at', null);
-    return (owners ? q.in('owner_email', owners) : q).order('id').range(from, to);
-  });
-  if (taskRead.error) return dbFailure({ message: taskRead.error }, 'Could not read the tasks');
-  const tasks = taskRead.rows.map(mapTask).filter((t): t is BoardTask => t !== null).sort(byTaskOrder);
-
+  const owners: string[] | null =
+    view.kind === 'all' ? null : view.kind === 'person' && !viewer.aliases.includes(view.email) ? [view.email] : viewer.aliases;
   // Ticks are read by the current period keys (at most seven), never by a list of task ids: hundreds of ids would
   // overflow the URL (memory postgrest-url-ceiling). A tick counts only for its task's own current period.
   const keys = [...new Set(Object.values(currentPeriodKeys(today)))];
-  const checkRead = await selectAllPaged<TaskCheckRecord>((from, to) =>
+
+  const peopleRead = listTaskPeople().then((r) => {
+    if (r.ok) lines?.done('people', r.value.length);
+    else lines?.failed('people');
+    return r;
+  });
+  const taskRead = selectAllPaged<TaskRecord>((from, to) => {
+    const q = client().from(TASKS).select(TASK_COLS).is('archived_at', null);
+    return (owners ? q.in('owner_email', owners) : q).order('id').range(from, to);
+  }).then((r) => {
+    const tasks = r.error ? null : r.rows.map(mapTask).filter((t): t is BoardTask => t !== null).sort(byTaskOrder);
+    if (tasks) lines?.done('tasks', tasks.length);
+    else lines?.failed('tasks');
+    return { error: r.error, tasks };
+  });
+  const checkRead = selectAllPaged<TaskCheckRecord>((from, to) =>
     client().from(TASK_CHECKS).select(TASK_CHECK_COLS).is('unchecked_at', null).in('period_key', keys).order('id').range(from, to),
-  );
-  if (checkRead.error) return dbFailure({ message: checkRead.error }, 'Could not read the ticks');
-  const byId = new Map(tasks.map((t) => [t.id, t]));
-  const checks = checkRead.rows
-    .filter((c) => {
-      const t = byId.get(c.task_id);
-      return !!t && taskPeriodKey(t.frequency, today) === c.period_key;
-    })
-    .map(mapTaskCheck);
+  ).then((r) => {
+    if (r.error) lines?.failed('ticks');
+    return r;
+  });
+  const matched = Promise.all([taskRead, checkRead]).then(([t, c]) => {
+    if (!t.tasks || c.error) return null;
+    const byId = new Map(t.tasks.map((task) => [task.id, task]));
+    const checks = c.rows
+      .filter((row) => {
+        const task = byId.get(row.task_id);
+        return !!task && taskPeriodKey(task.frequency, today) === row.period_key;
+      })
+      .map(mapTaskCheck);
+    lines?.done('ticks', checks.length);
+    return checks;
+  });
+
+  const [people, tasksRead, checkRows, checks] = await Promise.all([peopleRead, taskRead, checkRead, matched]);
+  if (!people.ok) return people;
+  if (tasksRead.error || !tasksRead.tasks) return dbFailure({ message: tasksRead.error ?? undefined }, 'Could not read the tasks');
+  if (checkRows.error || !checks) return dbFailure({ message: checkRows.error ?? undefined }, 'Could not read the ticks');
+  const tasks = tasksRead.tasks;
+
+  const nameOf = (email: string) => people.value.find((p) => p.email === email)?.name ?? email.split('@')[0];
+  let shown: TasksPayload['view'];
+  if (view.kind === 'all') {
+    shown = { kind: 'all' };
+  } else if (view.kind === 'person' && !viewer.aliases.includes(view.email)) {
+    shown = { kind: 'person', person: { email: view.email, name: nameOf(view.email) }, own: false };
+  } else {
+    const mine = people.value.find((p) => viewer.aliases.includes(p.email));
+    shown = { kind: 'person', person: mine ?? { email: viewer.email, name: nameOf(viewer.email) }, own: true };
+  }
 
   return {
     ok: true,

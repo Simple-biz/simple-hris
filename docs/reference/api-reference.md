@@ -3448,6 +3448,9 @@ board payload, and no live announce (`live.test.ts` names why). Archived, never 
 
 - `GET ?person=me|all|<work email>` (any role; `all` or a person: Admin, Assistant) → `{ today, viewer, view, people, tasks, checks,
   teamProgress, chatConfigured }`, the live tasks and their ticks in the CURRENT periods (US Eastern, computed by the server).
+  **`&stream=1`** (2026-10-08, the loading card) answers the same view as NDJSON: `{ type: 'line', line: 'people' | 'tasks' | 'ticks',
+  detail }` as each read answers, then `{ type: 'tasks', tasks }`, or `{ type: 'error', error, code, line }`. The member check, the
+  `person` and who may see it are settled before the stream, so a refusal is still a plain 401 / 403 / 400.
 - `POST { ownerEmail, title, frequency }` (Admin) → 201 `{ task }`, last on the owner's list; the owner must be one of the board's people.
 - `PATCH { id, title?, sortOrder?, archived?: true }` (Admin) → `{ task, archived }`. **Refuses `ownerEmail` and `frequency`**: neither
   changes in place.

@@ -16,6 +16,10 @@
  * silently. A view with nothing of it on screen shows a skeleton shaped like what arrives, never a spinner, and a
  * refetch never re-skeletons. The viewer's role is a permission: it comes from the page on every load and is never
  * cached, and someone else's board or Everyone paints from the cache only for a role that may see it now.
+ *
+ * Over the skeleton, the loading card (Kane, 2026-10-08: "on top of the skeleton lets add the modal loading similar to
+ * HRIS - NPD"; `TasksLoadCard`): that read streams (`?stream=1`, task-load-progress.ts) and each line ticks as its read
+ * answers. Only a read with a skeleton under it has a card; a silent revalidation and a Refresh click have none.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -40,7 +44,25 @@ import {
 import { buildProgressMessage } from '@/lib/accounting-scoreboard/chat-summary';
 import { dayHeader, todayEastern } from '@/lib/accounting-scoreboard/week';
 import { clearCachedTasks, readCachedTasks, writeCachedTasks } from '@/lib/accounting-scoreboard/tab-cache';
+import {
+  TASK_LOAD_LINES,
+  createTasksStreamAssembler,
+  tasksLoadPlan,
+  type TaskServerLine,
+  type TasksStreamEvent,
+} from '@/lib/accounting-scoreboard/task-load-progress';
 import type { BoardPayload, BoardTask, TaskCheck, TasksPayload } from '@/lib/accounting-scoreboard/types';
+import {
+  applyRefresh,
+  beginStep,
+  completeStep,
+  failRefresh,
+  finishRefresh,
+  startRefresh,
+  type RefreshProgress,
+} from '@/lib/refresh-progress/refresh-progress';
+import type { LoadTitles } from './ScoreboardLoadDialog';
+import { TASKS_CARD_FADE_MS, TASKS_CARD_HOLD_MS, TasksLoadCard } from './TasksLoadCard';
 import { api, TINY_CAPS } from './shared';
 
 /** 'me' (your own board), 'all' (Everyone), or a board person's work email. */
@@ -57,6 +79,70 @@ const asLike = (t: BoardTask): TaskLike => ({ id: t.id, ownerEmail: t.ownerEmail
 
 /** Runs before paint in the browser; a plain effect on the server, where there is nothing to seed. */
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const SERVER_LINES = TASK_LOAD_LINES.filter((l): l is TaskServerLine => l !== 'access');
+const reducedMotion = () =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+type LoadResult = { ok: true; data: TasksPayload } | { ok: false; status: number; error: string; code: string };
+
+/**
+ * Read one board as a stream (GET ?stream=1, task-load-progress.ts), reporting `opened` when the route answered and
+ * each `line` as it arrives. Fail-closed: anything short of a whole, valid view of `view` is a failure with the reason
+ * (and, when the server said, whose read failed).
+ */
+async function streamTasks(
+  view: TasksView,
+  signal: AbortSignal,
+  on: (event: { kind: 'opened' } | TasksStreamEvent) => void,
+): Promise<{ ok: true; tasks: TasksPayload } | { ok: false; status: number; error: string; code: string; line: TaskServerLine | null }> {
+  try {
+    const res = await fetch(`/api/accounting-scoreboard/tasks?person=${encodeURIComponent(view)}&stream=1`, { cache: 'no-store', signal });
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+      return { ok: false, status: res.status, error: body?.error ?? `The server answered ${res.status}.`, code: body?.code ?? 'http_error', line: null };
+    }
+    on({ kind: 'opened' });
+    const assembler = createTasksStreamAssembler(view);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf('\n');
+      while (nl >= 0) {
+        const event = assembler.push(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        if (event) on(event);
+        nl = buffer.indexOf('\n');
+      }
+    }
+    buffer += decoder.decode();
+    const last = assembler.push(buffer);
+    if (last) on(last);
+    const result = assembler.finish();
+    return result.ok ? result : { ...result, status: 500 };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : 'Network error', code: 'network', line: null };
+  }
+}
+
+/** The card's words for one board: whose tasks, as its title and lines say them. */
+function cardWords(view: TasksView, nameOf: (email: string) => string): { titles: LoadTitles; whose: string; subject: string } {
+  const whose = view === 'me' ? 'your' : view === 'all' ? "everyone's" : `${nameOf(view)}'s`;
+  const Whose = whose.charAt(0).toUpperCase() + whose.slice(1);
+  return {
+    whose,
+    subject: `${whose} tasks`,
+    titles: { running: `Loading ${whose} tasks`, done: `${Whose} tasks are ready`, failed: `Couldn't load ${whose} tasks` },
+  };
+}
+
+/** The loading card of one streamed read. Only the card of the board picked is shown. */
+type Card = { id: number; view: TasksView; progress: RefreshProgress; titles: LoadTitles; leaving: boolean };
 
 function progressTone(p: FrequencyProgress): string {
   if (p.done === p.total) return 'text-emerald-700 dark:text-emerald-300';
@@ -84,6 +170,14 @@ export function TasksPanel({
   const seq = useRef(0);
   /** The view the server last answered for. Only THAT view is written back to the cache, never a cached seed. */
   const liveView = useRef<TasksView | null>(null);
+  /** The view whose tasks are on screen (painted from the cache or fetched). Its read is silent: no card. */
+  const shownView = useRef<TasksView | null>(null);
+  /** The streamed read in flight, so a newer read (another board picked) cancels it, and its card goes with it. */
+  const foreground = useRef<AbortController | null>(null);
+  const [card, setCard] = useState<Card | null>(null);
+  /** For the card's words: the last people list the server sent (the picker's). */
+  const peopleRef = useRef<TasksPayload['people']>(null);
+  peopleRef.current = data?.payload.people ?? peopleRef.current;
 
   // Paint the view from the cache before the browser paints. It never decides: the fetch below runs anyway, and its
   // answer replaces it. `viewer` is deliberately not a dependency (the board's rule): a role change arrives with the
@@ -91,26 +185,77 @@ export function TasksPanel({
   useIsoLayoutEffect(() => {
     const cached = readCachedTasks(view, todayEastern(), viewer.role);
     if (!cached) return;
+    shownView.current = view;
     setData((prev) => (prev?.view === view ? prev : { view, payload: { ...cached, viewer } }));
   }, [view]);
 
+  /**
+   * A view already on screen is re-read silently (plain JSON; a Refresh click spins its button). A view with nothing
+   * on screen streams, and its card over the skeleton reports each read as it really answers.
+   */
   const load = useCallback(async (next: TasksView, click: boolean) => {
     const id = ++seq.current;
-    if (click) setRefreshing(true);
-    const res = await api<TasksPayload>(`/api/accounting-scoreboard/tasks?person=${encodeURIComponent(next)}`);
-    if (id !== seq.current) return;
-    setRefreshing(false);
+    foreground.current?.abort();
+    foreground.current = null;
+    let res: LoadResult;
+    if (shownView.current === next) {
+      setCard(null); // a superseded read's card goes with it
+      if (click) setRefreshing(true);
+      res = await api<TasksPayload>(`/api/accounting-scoreboard/tasks?person=${encodeURIComponent(next)}`);
+      if (id !== seq.current) return;
+      setRefreshing(false);
+    } else {
+      const ctrl = new AbortController();
+      foreground.current = ctrl;
+      // A new attempt (Try again, or this board picked again): the old failure goes, the skeleton and a new card say
+      // what this read is doing, and a new failure brings the box back.
+      setError((e) => (e?.view === next ? null : e));
+      const words = cardWords(next, (email) => peopleRef.current?.find((p) => p.email === email)?.name ?? email.split('@')[0]);
+      setCard({
+        id,
+        view: next,
+        titles: words.titles,
+        progress: beginStep(startRefresh(tasksLoadPlan(words.subject, words.whose), clock()), 'access', clock()),
+        leaving: false,
+      });
+      const update = (fn: (p: RefreshProgress) => RefreshProgress) => {
+        if (id !== seq.current) return;
+        setCard((c) => (c && c.id === id ? { ...c, progress: fn(c.progress) } : c));
+      };
+      const streamed = await streamTasks(next, ctrl.signal, (event) => {
+        // The route answered: the member check passed, who may see this board is settled, and every read was sent.
+        if (event.kind === 'opened') {
+          update((p) => SERVER_LINES.reduce((q, line) => beginStep(q, line, clock()), completeStep(p, 'access', null, clock())));
+        } else if (event.kind === 'line') {
+          update((p) => completeStep(p, event.line, event.detail, clock()));
+        }
+      });
+      if (id !== seq.current) return;
+      foreground.current = null;
+      setRefreshing(false);
+      if (streamed.ok) {
+        // Every read answered and the tasks go on screen in this same render; the effect below fills the bar only
+        // once they have been painted.
+        update((p) => applyRefresh(p, clock()));
+        res = { ok: true, data: streamed.tasks };
+      } else {
+        update((p) => failRefresh(p, streamed.error, clock(), streamed.line ?? undefined));
+        res = { ok: false, status: streamed.status, error: streamed.error, code: streamed.code };
+      }
+    }
     if (!res.ok) {
       // A refusal is the server deciding this viewer may not see the view: it leaves the screen and never paints from
       // the cache again. Any other failure keeps the last good view on screen and says so; it never blanks it.
       if (res.status === 401 || res.status === 403) {
         clearCachedTasks(next);
+        if (shownView.current === next) shownView.current = null;
         setData((d) => (d?.view === next ? null : d));
       }
       setError({ view: next, message: res.error });
       return;
     }
     liveView.current = next;
+    shownView.current = next;
     setError(null);
     setData({ view: next, payload: res.data });
   }, []);
@@ -118,6 +263,39 @@ export function TasksPanel({
   useEffect(() => {
     void load(view, false);
   }, [load, view]);
+
+  // Leaving the Tasks view cancels a streamed read; nothing it would have painted is on screen any more.
+  useEffect(() => () => foreground.current?.abort(), []);
+
+  // The tasks of a streamed read have been committed: one painted frame later they are on screen, and only then is
+  // the bar full and green. "Tasks ready" holds long enough to read, then the card fades and goes.
+  const applyingId = card?.progress.phase === 'applying' ? card.id : null;
+  useEffect(() => {
+    if (applyingId === null) return;
+    let raf = 0;
+    let timer = 0;
+    const finish = () => setCard((c) => (c && c.id === applyingId ? { ...c, progress: finishRefresh(c.progress, clock()) } : c));
+    // A hidden browser tab paints no frames, so it gets a timer instead.
+    if (document.hidden) timer = window.setTimeout(finish, 0);
+    else raf = window.requestAnimationFrame(() => {
+      raf = window.requestAnimationFrame(finish);
+    });
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+    };
+  }, [applyingId]);
+  const doneId = card?.progress.phase === 'done' ? card.id : null;
+  useEffect(() => {
+    if (doneId === null) return;
+    const fade = reducedMotion() ? 0 : TASKS_CARD_FADE_MS;
+    const t1 = window.setTimeout(() => setCard((c) => (c && c.id === doneId ? { ...c, leaving: true } : c)), TASKS_CARD_HOLD_MS);
+    const t2 = window.setTimeout(() => setCard((c) => (c && c.id === doneId ? null : c)), TASKS_CARD_HOLD_MS + fade);
+    return () => {
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+    };
+  }, [doneId]);
 
   // Write back what the server answered (and edits made on top of it), never the seed: re-writing a seed would
   // restamp stale data as fresh.
@@ -212,6 +390,8 @@ export function TasksPanel({
 
   const today = shown?.today;
   const todayText = today ? `${dayHeader(today).weekday} ${dayHeader(today).short}` : '';
+  const eastern = dayHeader(todayEastern());
+  const cardSubtitle = `Today is ${eastern.weekday} ${eastern.short}, US Eastern`;
   const nameOf = (email: string) => people?.find((p) => p.email === email)?.name ?? email.split('@')[0];
   const heading = shown
     ? shown.view.kind === 'all'
@@ -262,26 +442,32 @@ export function TasksPanel({
         </div>
       ) : null}
 
-      {shown ? (
-        shown.view.kind === 'all' ? (
-          <EveryoneView data={shown} manages={manages} onOpen={(email) => onViewChange(email)} />
+      {/* The frame the loading card floats in: over the skeleton, then over the tasks while "ready" holds. */}
+      <div className={cn('relative', !shown && viewError && card?.view === view && 'min-h-72')}>
+        {shown ? (
+          shown.view.kind === 'all' ? (
+            <EveryoneView data={shown} manages={manages} onOpen={(email) => onViewChange(email)} />
+          ) : (
+            <PersonBoard
+              data={shown}
+              canTick={shown.view.own}
+              canUntickAny={manages}
+              manages={manages}
+              onTick={onTick}
+              onAdd={(title, frequency) => (shown.view.kind === 'person' ? onAdd(shown.view.person.email, title, frequency) : Promise.resolve(false))}
+              onPatch={onPatch}
+              onChangeFrequency={onChangeFrequency}
+            />
+          )
+        ) : viewError ? null : view === 'all' ? (
+          <EveryoneSkeleton manages={manages} />
         ) : (
-          <PersonBoard
-            data={shown}
-            canTick={shown.view.own}
-            canUntickAny={manages}
-            manages={manages}
-            onTick={onTick}
-            onAdd={(title, frequency) => (shown.view.kind === 'person' ? onAdd(shown.view.person.email, title, frequency) : Promise.resolve(false))}
-            onPatch={onPatch}
-            onChangeFrequency={onChangeFrequency}
-          />
-        )
-      ) : viewError ? null : view === 'all' ? (
-        <EveryoneSkeleton manages={manages} />
-      ) : (
-        <PersonBoardSkeleton manages={manages} />
-      )}
+          <PersonBoardSkeleton manages={manages} />
+        )}
+        {card && card.view === view ? (
+          <TasksLoadCard progress={card.progress} titles={card.titles} subtitle={cardSubtitle} leaving={card.leaving} />
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -292,10 +478,10 @@ const BAR = 'skeleton-shimmer rounded';
 const TITLE_WIDTHS = ['w-2/3', 'w-1/2', 'w-3/4', 'w-5/12', 'w-7/12', 'w-1/3'];
 const NAME_WIDTHS = ['w-28', 'w-36', 'w-24', 'w-32', 'w-20', 'w-28'];
 
+/** The card over it announces each read (aria-live), so the skeleton itself only says it is busy. */
 function TasksLoading({ children }: { children: ReactNode }) {
   return (
-    <div className="space-y-4" aria-busy="true" aria-live="polite">
-      <span className="sr-only">Loading tasks…</span>
+    <div className="space-y-4" aria-busy="true">
       {children}
     </div>
   );
