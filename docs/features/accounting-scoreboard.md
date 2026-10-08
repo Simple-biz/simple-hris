@@ -916,8 +916,16 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   three types live), and Admins change all of that on purpose in Setup afterwards. Under `--verify` one of them
   failed on normal use (Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV"). `--verify` now checks what
   stays true for good: the three seeded types still exist, live or archived (a type is never deleted). It re-passed.
-- **Board-local roles migration (2026-10-08, item 393): NOT applied. PENDING: the second Admin's email (Carla, plan
-  W0.6), then Kane's go.** `2026-10-08_accounting_scoreboard_roles.sql` creates `accounting_scoreboard_roles`, its
+- **Board-local roles migration (2026-10-08, item 393): APPLIED 2026-10-08 on Kane's *"Run the migration please"*,
+  AFTER the push.** Same failure as item 387: `74f6d2ee` reached origin/main first, so the live board answered "The
+  scoreboard is not set up yet" until the migration ran (Kane's screenshot). The second Admin (W0.6) is
+  `claire@simple.biz`. Kane picked her: she is the "Claire" Carla named on 10-07, live in USEE like Carla, and already
+  holds HRIS admin + accounting. Before the apply, the other two newest migrations still verified clean (Pre-arb flag,
+  hidden from Overview), so this table was the only one missing. Run: dry 32/32 with both Admins (rolled back), then
+  `--apply`, then `--verify` 31 PASS ("live grants: 2 Admin, 0 Assistant"), and PostgREST (service role) read back
+  `carla@` + `claire@`, both `admin`, not revoked. The counts did not change (11 · 4 · 7 · 5 · 2). **Still open:** whether
+  the 2 who lost access should be added under Setup → Members (Carla or Claire, in the UI), and a signed-in pass.
+  Original state, kept below. `2026-10-08_accounting_scoreboard_roles.sql` creates `accounting_scoreboard_roles`, its
   append-only + last-Admin trigger, RLS with no policies, and revokes anon / authenticated. The script seeds the two
   Admin grants and **refuses `--apply` without exactly two distinct `--admin` emails**. **Dry run 2026-10-08 (rolled
   back), with only `carla@simple.biz` seeded: 32/32 checks**: the seed, 17 object and privilege checks, the access

@@ -41,7 +41,7 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 - [x] W0.4 The Google Chat webhook URL: **set in `.env.local` 2026-10-08** as `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL`
   (the accounting team space, avatar = the HRIS favicon). **Vercel Production: still Kane.**
 - [ ] W0.5 Joana's sales sheet link (Carla).
-- [ ] W0.6 The second Admin's work email (Carla).
+- [x] W0.6 The second Admin's work email: **`claire@simple.biz`** (Kane, 2026-10-08). The roles migration was APPLIED that day.
 - [ ] W0.7 Kentshin builds the endpoint in plan Task 10.
 - [ ] W0.8 Ralph answers on interns' hours over 5, the monthly payout and the PAB. **Kane: HOLD** (2026-10-07) until then.
 - [ ] W0.9 Run the probe from session 11.
