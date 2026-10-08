@@ -217,13 +217,17 @@ ghost `ncns` dated **10-07**, wrote a second `offboarded_sheet` departure (46418
 re-fired teardown are the three things this section exists to prevent. Edit a ghost's emails only
 to retire it by script, never to make the queue accept it.
 
-**Arriola state, 2026-10-07 (item 384):** the stamp script was never applied. Its plan run now exits
-*"Already stamped by someone else"* before any guard, and that check is not to be loosened.
-`scripts/revert-arriola-ghost-fields.mts` puts the three fields back from the 10-06 14:04Z
-pre-edit backup and leaves `off_boarded_*` untouched. Its plan run passes and its **`--apply` is
-PENDING Kane**. Kane rules whether the 10-07 `ncns` stamp stays, or a new guarded script re-dates it
-to 07-16 `duplicate_cleanup`. Undo for the stamp script: `--revert`, which clears only what that
-script's actor stamped. Undo for the field revert: `--revert <its --apply backup>`.
+**Arriola state, APPLIED 2026-10-08 01:28Z (item 384, Kane's ruling (b)):** the ghost is retired as
+the first rule says. `scripts/revert-arriola-ghost-fields.mts --apply` put the three addresses back
+from the 10-06 14:04Z pre-edit backup. Then `scripts/redate-arriola-ghost-stamp.mts --apply`
+replaced exactly the queue's 10-07 `ncns` stamp with 07-16 `duplicate_cleanup` (actor
+`system:arriola-ghost-redate-2026-10-07`). Verified read-only: the row differs from its pre-edit
+backup only in the four `off_boarded_*` columns, it is off `active_employees` and out of the 10-04
+re-deal window, and `marka@` is on 5dba371f alone. The stamp script was never applied and is not to be
+loosened. Its plan run stops at *"Already stamped by someone else"*. Still open: `offboarded_sheet`
+46418 (the queue's second departure row) and HR's Dismiss of `cf57ab93`. Undo, newest first:
+`redate-arriola-ghost-stamp.mts --revert` (restores jakec@'s exact stamp), then
+`revert-arriola-ghost-fields.mts --revert <its --apply backup>`.
 
 ---
 
