@@ -209,8 +209,21 @@ Three rules for any script that retires one of these rows:
   2026-10-06, `bonus_catalog_applied` returned 0 rows for the Arriola key through `.in()` and 2
   through `.eq()`. A zero from that filter proves nothing.
 
-The ghost-row script is **PENDING Kane's `--apply`**. Undo: `--revert`, which clears only what that
-script's actor stamped.
+**Giving a ghost the real person's addresses makes it offboardable.** Measured on the Arriola row:
+on 2026-10-06 16:27Z People wrote `marka@` and his other two addresses onto the ghost. On 10-07
+13:28Z a new queue request (`badf971b`) was completed by `marka@`. `/api/hr/offboard` stamped the
+ghost `ncns` dated **10-07**, wrote a second `offboarded_sheet` departure (46418) and re-fired
+`offboarding_delete` for an account torn down in July. A today date, a second departure and a
+re-fired teardown are the three things this section exists to prevent. Edit a ghost's emails only
+to retire it by script, never to make the queue accept it.
+
+**Arriola state, 2026-10-07 (item 384):** the stamp script was never applied. Its plan run now exits
+*"Already stamped by someone else"* before any guard, and that check is not to be loosened.
+`scripts/revert-arriola-ghost-fields.mts` puts the three fields back from the 10-06 14:04Z
+pre-edit backup and leaves `off_boarded_*` untouched. Its plan run passes and its **`--apply` is
+PENDING Kane**. Kane rules whether the 10-07 `ncns` stamp stays, or a new guarded script re-dates it
+to 07-16 `duplicate_cleanup`. Undo for the stamp script: `--revert`, which clears only what that
+script's actor stamped. Undo for the field revert: `--revert <its --apply backup>`.
 
 ---
 
