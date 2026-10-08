@@ -7,6 +7,13 @@ import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay'
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { createLoadFence } from '@/lib/payroll/load-fence';
 import { fetchCyclePaidDispatches } from '@/lib/payroll/paid-dispatch-read';
+import {
+  decideSync,
+  signatureOf,
+  signatureOfRows,
+  type DispatchSignature,
+  type SyncTrigger,
+} from '@/lib/payroll/dispatch-sync-decision';
 import type { PaystubQueueListItem, ArrearsEntry } from '@/lib/supabase/paystub-dispatch-queue';
 import {
   applyBankOwnerHold,
@@ -270,6 +277,9 @@ async function loadAll(
   contractorAdvisory: string | null;
   /** See {@link DispatchQueueState.valuesWarning}. */
   valuesWarning: string | null;
+  /** What this load put on screen, for the live-sync checks: the cycle its paid
+   *  list was read for and that list's signature. Null on an aborted load. */
+  dispatchSync: { cycleId: string | null; signature: DispatchSignature } | null;
 }> {
   // When the clerk picks a PAST week in the dispatch CSV selector, pay + cycle
   // are computed for that source file instead of the live `is_current` cycle.
@@ -287,12 +297,16 @@ async function loadAll(
   // person back into Pending. load() then keeps the last good queue.
   const dispatchesPromise = fetchCyclePaidDispatches(fetch, q, signal);
 
-  const [ratesRes, payRes, idsRes, paid] = await Promise.all([
+  const [ratesRes, payRes, idsRes, dispatchRead] = await Promise.all([
     fetch('/api/employee-hourly-rates', { cache: 'no-store', signal }),
     fetch(`/api/payroll-current-pay${q}`, { cache: 'no-store', signal }),
     fetch('/api/employee-ids', { cache: 'no-store', signal }),
     dispatchesPromise,
   ]);
+  const paid = dispatchRead.rows;
+  // Taken from the raw rows (all statuses), before the wizard-ready gate below
+  // empties `paid`: the signature endpoint counts every row of the cycle.
+  const dispatchSync = { cycleId: dispatchRead.cycleId, signature: signatureOfRows(dispatchRead.rows) };
   const ratesJson = (await ratesRes.json()) as {
     rows?: EmployeeHourlyRateRow[];
     error?: string | null;
@@ -325,6 +339,7 @@ async function loadAll(
       contractorError: null,
       contractorAdvisory: null,
       valuesWarning: null,
+      dispatchSync: null,
     };
   }
 
@@ -1070,6 +1085,7 @@ async function loadAll(
     contractorError,
     contractorAdvisory,
     valuesWarning,
+    dispatchSync,
   };
 }
 
@@ -1111,6 +1127,18 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
   // Only the newest load may write state; anything older is dropped on arrival.
   const fenceRef = useRef(createLoadFence());
 
+  // ── What is on screen, for the live-sync checks below (2026-10-08) ─────────
+  // `loadedSyncRef` is the signature of the paid list the screen is showing; a
+  // remote trigger reloads only when the database holds something it has not
+  // loaded (`decideSync`). `inFlightRef` counts running loads: a trigger that
+  // lands mid-load is judged once that load has applied, against what IT put on
+  // screen, so the payer's own write echoing back does not cost a second load.
+  const loadedSyncRef = useRef<{ cycleId: string | null; signature: DispatchSignature } | null>(null);
+  const triedSigRef = useRef<DispatchSignature | null>(null);
+  const inFlightRef = useRef(0);
+  const deferredTriggerRef = useRef<SyncTrigger | null>(null);
+  const syncCheckRef = useRef<((trigger: SyncTrigger) => Promise<void>) | null>(null);
+
   // Every caller but the Refresh modal ignores the returned outcome.
   const load = useCallback(async (signal?: AbortSignal, opts?: { silent?: boolean }): Promise<DispatchLoadOutcome> => {
     const ticket = fenceRef.current.start();
@@ -1118,6 +1146,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     // skip the loading flag so the table isn't torn down to a skeleton and
     // re-mounted — no visible reload.
     if (!opts?.silent) setState((s) => ({ ...s, loading: true }));
+    inFlightRef.current += 1;
     try {
       const result = await loadAll(signal, sel);
       if (signal?.aborted) return { kind: 'superseded' };
@@ -1150,6 +1179,8 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         contractorAdvisory: result.contractorAdvisory,
         valuesWarning: result.valuesWarning,
       });
+      loadedSyncRef.current = result.error ? null : result.dispatchSync;
+      if (!result.error) triedSigRef.current = null;
       return { kind: 'applied', rows: result.rows.length, error: result.error };
     } catch (e) {
       if (signal?.aborted) return { kind: 'superseded' };
@@ -1162,6 +1193,7 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         setState((s) => ({ ...s, loading: false }));
         return { kind: 'kept', error: message };
       }
+      loadedSyncRef.current = null;
       setState({
         rows: [],
         excluded: [],
@@ -1178,6 +1210,13 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
         valuesWarning: null,
       });
       return { kind: 'applied', rows: 0, error: message };
+    } finally {
+      inFlightRef.current -= 1;
+      const deferred = deferredTriggerRef.current;
+      if (inFlightRef.current === 0 && deferred) {
+        deferredTriggerRef.current = null;
+        void syncCheckRef.current?.(deferred);
+      }
     }
   }, [sel, cacheKey]);
 
@@ -1188,8 +1227,13 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
     // visible state from the NEW week's cache (or a blank shell) so the previous
     // week's rows can never linger on screen while the async load runs — even on
     // a silent warm-cache revalidate. Mount is already seeded by useState.
-    if (mountedRef.current) setState(seedState(cacheKey));
-    else mountedRef.current = true;
+    if (mountedRef.current) {
+      setState(seedState(cacheKey));
+      loadedSyncRef.current = null;
+      triedSigRef.current = null;
+    } else {
+      mountedRef.current = true;
+    }
     void load(controller.signal, { silent: hasTabCache(cacheKey) });
     return () => controller.abort();
   }, [load, cacheKey]);
@@ -1219,23 +1263,67 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
   stateSourceFileRef.current = state.period.sourceFile;
   const cycleIdRef = useRef<string | null>(null);
   cycleIdRef.current = state.period.cycleId;
-  const signatureRef = useRef<string | null>(null);
-  /** Reload WITHOUT announcing it — the remote-change path, so two screens can't
-   *  ping-pong broadcasts at each other forever. */
-  const reloadQuietly = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      debounceRef.current = null;
-      void load(undefined, { silent: true });
-    }, DISPATCH_SYNC_DEBOUNCE_MS);
+  /** A broadcast arrived while the tab was hidden; checked when it is shown. */
+  const hiddenDirtyRef = useRef(false);
+
+  // Every remote trigger lands here. Since 2026-10-08 none of them reloads on its
+  // own: each asks for the live signature and reloads only when the database
+  // holds something this screen has not loaded (`decideSync`). Before that, every
+  // open screen ran the full ~11-call queue load TWICE per payment (the broadcast,
+  // then the poll, whose baseline was its own last reading), the payer's screen
+  // ran it twice (its refresh, then the server's echo), and hidden tabs ran it
+  // too. With 3–5 clerks paying, the database reached load average 43.
+  // Reloads here never re-announce, so two screens can't ping-pong broadcasts.
+  const syncCheck = useCallback(async (trigger: SyncTrigger) => {
+    // A hidden tab shows nothing. It checks the moment it is looked at again.
+    if (document.visibilityState === 'hidden') {
+      if (trigger === 'broadcast') hiddenDirtyRef.current = true;
+      return;
+    }
+    const deferIfLoading = () => {
+      if (inFlightRef.current === 0) return false;
+      // Judged when the running load applies. A broadcast outranks a poll: it
+      // reloads when it cannot prove the screen is current.
+      if (deferredTriggerRef.current !== 'broadcast') deferredTriggerRef.current = trigger;
+      return true;
+    };
+    if (deferIfLoading()) return;
+
+    const cycleId = loadedSyncRef.current?.cycleId ?? cycleIdRef.current;
+    let live: DispatchSignature | null = null;
+    if (cycleId) {
+      try {
+        const res = await fetch(
+          `/api/payment-dispatches?cycle_id=${encodeURIComponent(cycleId)}&signature=1`,
+          { cache: 'no-store' },
+        );
+        const json = (await res.json()) as { count?: number; latest?: string | null; error?: string | null };
+        if (res.ok && !json.error) live = signatureOf(json.count ?? 0, json.latest ?? null);
+      } catch {
+        /* offline / aborted: `live` stays null, which decideSync treats as unknown */
+      }
+    }
+    if (deferIfLoading()) return; // a load started while the signature was in flight
+
+    const decision = decideSync({
+      trigger,
+      live,
+      loaded: loadedSyncRef.current?.signature ?? null,
+      tried: triedSigRef.current,
+    });
+    if (decision === 'skip') return;
+    triedSigRef.current = live;
+    if (decision === 'baseline') return;
+    void load(undefined, { silent: true });
   }, [load]);
+  syncCheckRef.current = syncCheck;
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     const channel = supabase.channel(DISPATCH_SYNC_CHANNEL, {
-      // Our own writes are already reflected locally by refresh(); hearing them
-      // back would just double the work.
+      // Only stops this socket's OWN sends echoing back. The SERVER's broadcast
+      // after a Mark Paid still reaches the payer; syncCheck absorbs it.
       config: { broadcast: { self: false } },
     });
     channel.on('broadcast', { event: DISPATCH_SYNC_EVENT }, ({ payload }) => {
@@ -1245,7 +1333,13 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
       const other = typeof p.sourceFile === 'string' ? p.sourceFile : null;
       if (other && sel && other !== sel) return;
       if (other && !sel && other !== stateSourceFileRef.current) return;
-      reloadQuietly();
+      // The client's and the server's broadcast for one payment arrive together;
+      // the debounce makes them one check.
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        void syncCheck('broadcast');
+      }, DISPATCH_SYNC_DEBOUNCE_MS);
     });
     channel.subscribe((status, err) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -1269,51 +1363,36 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
       if (debounceRef.current) clearTimeout(debounceRef.current);
       void supabase.removeChannel(channel);
     };
-  }, [sel, reloadQuietly]);
+  }, [sel, syncCheck]);
 
-  // Fallback poll: ask ONLY "did anything change?" (count + newest timestamp) and
-  // reload the queue when the answer differs. Skipped while the tab is hidden —
-  // the focus listener catches up on return, so a background tab costs nothing.
+  // Fallback poll: ask ONLY "did anything change?" (count + newest timestamp),
+  // every 15 s while the tab is visible, and on focus. A tab coming back into
+  // view that missed a broadcast while hidden is checked with the broadcast's
+  // rule (reload when unsure).
   useEffect(() => {
-    const checkSignature = async () => {
-      const cycleId = cycleIdRef.current;
-      if (!cycleId) return;
-      try {
-        const res = await fetch(
-          `/api/payment-dispatches?cycle_id=${encodeURIComponent(cycleId)}&signature=1`,
-          { cache: 'no-store' },
-        );
-        if (!res.ok) return;
-        const json = (await res.json()) as { count?: number; latest?: string | null; error?: string | null };
-        if (json.error) return;
-        const next = `${json.count ?? 0}|${json.latest ?? ''}`;
-        const prev = signatureRef.current;
-        signatureRef.current = next;
-        // First observation only establishes the baseline — the queue it belongs
-        // to was just loaded, so there is nothing to reconcile.
-        if (prev !== null && prev !== next) reloadQuietly();
-      } catch {
-        /* offline / aborted — the next tick tries again */
-      }
-    };
     const id = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      void checkSignature();
+      void syncCheck('poll');
     }, DISPATCH_POLL_INTERVAL_MS);
-    const onFocus = () => void checkSignature();
+    const onFocus = () => void syncCheck('poll');
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') return;
+      const missed = hiddenDirtyRef.current;
+      hiddenDirtyRef.current = false;
+      void syncCheck(missed ? 'broadcast' : 'poll');
+    };
     window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       window.clearInterval(id);
       window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [reloadQuietly]);
+  }, [syncCheck]);
 
   // A LOCAL action (mark paid, undo, a wizard lock flip) reloads this screen and
   // tells every other open screen to do the same.
   const refresh = useCallback(async () => {
-    signatureRef.current = null; // re-baseline; our own write must not read as remote
     // Announce FIRST: the other screens' reload runs in parallel with ours instead
     // of queueing behind it, so their counters move within ~a second of the click.
     broadcastRef.current?.(stateSourceFileRef.current);
@@ -1322,7 +1401,6 @@ export function useDispatchQueue(sourceFile?: string | null): DispatchQueueState
 
   // The Refresh button: exactly `refresh`, plus an honest line in the modal.
   const refreshWithProgress = useCallback(async (tracker: RefreshTracker) => {
-    signatureRef.current = null;
     broadcastRef.current?.(stateSourceFileRef.current);
     await tracker.step(
       'queue',

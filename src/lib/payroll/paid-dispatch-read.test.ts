@@ -32,7 +32,8 @@ test('a clean read returns the paid rows for the cycle', async () => {
     '/api/current-cycle': { status: 200, body: { cycleId: 'c-1', error: null } },
     '/api/payment-dispatches': { status: 200, body: { rows: PAID, error: null } },
   });
-  const rows = await fetchCyclePaidDispatches(fetchImpl, '');
+  const { cycleId, rows } = await fetchCyclePaidDispatches(fetchImpl, '');
+  assert.equal(cycleId, 'c-1');
   assert.deepEqual(rows, PAID);
   assert.equal(calls[1], '/api/payment-dispatches?cycle_id=c-1');
 });
@@ -41,7 +42,7 @@ test('a successful "no cycle yet" is the only answer that means nobody is paid',
   const { fetchImpl, calls } = fakeFetch({
     '/api/current-cycle': { status: 200, body: { cycleId: null, error: null } },
   });
-  assert.deepEqual(await fetchCyclePaidDispatches(fetchImpl, ''), []);
+  assert.deepEqual(await fetchCyclePaidDispatches(fetchImpl, ''), { cycleId: null, rows: [] });
   assert.equal(calls.length, 1);
 });
 

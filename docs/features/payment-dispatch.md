@@ -1097,6 +1097,32 @@ Two independent paths now keep every open screen level:
    `getPaymentDispatchSignature`), and only a *changed* signature triggers a reload.
    Paging ~1,000 full rows on a timer, per open tab, would not be acceptable.
 
+**No remote trigger reloads on its own (2026-10-08).** A full queue load is about 11 API
+calls, and one of them recomputes the whole week's pay. Before this date, each payment cost
+every open screen **two** of them. The broadcast triggered the first. The poll triggered the
+second, because its baseline was its own last reading, not the last load. The payer's screen
+also ran two: its `refresh()`, then the **server's** broadcast, which `self: false` does not
+filter. Hidden tabs reloaded on every broadcast too. So the database load grew with payments
+× open screens, roughly the **square** of the number of clerks. On 2026-10-08, with three to
+five clerks paying (peak 18 payments in 10 minutes), the database reached load average 43 and
+Mark Paid failed (item 415).
+
+Now the broadcast, the poll and focus all go through `syncCheck`. It reads the live signature
+and decides with `decideSync` (`src/lib/payroll/dispatch-sync-decision.ts`, tests beside it)
+against **the signature of the paid list on screen**. `loadAll` returns that signature as
+`dispatchSync`, taken from the raw rows before the wizard-ready gate. The rules:
+- **Broadcast:** reload unless the live signature equals the loaded one. A failed signature
+  read, or nothing loaded yet, still reloads, as every broadcast did before.
+- **Poll / focus:** reload only on a change that is neither loaded nor already tried. A failed
+  read is skipped. With nothing loaded or tried, the first reading is a baseline.
+- **A trigger that lands while a load is running** is judged after that load applies, so the
+  payer's own echo costs nothing.
+- **A hidden tab** loads nothing. A broadcast it missed is checked with the broadcast rule the
+  moment it is shown again. The POST guard (§4.3) covers the seconds before that reload lands.
+
+Each payment now costs one full load per visible screen, and none for hidden tabs. The load
+still grows with clerks × screens. Item 416 has the capacity estimate and the next step.
+
 > **Why Broadcast and not `postgres_changes`.** The browser client connects as
 > `anon` and `payment_dispatches` is RLS-protected, so row-change events never reach
 > it. This was already paid for once by the CEO "Payments to send" card — the

@@ -20,7 +20,7 @@ export async function fetchCyclePaidDispatches(
   /** `''` for the live cycle, or `?source_file=…` for a picked past week. */
   cycleQuery: string,
   signal?: AbortSignal,
-): Promise<PaymentDispatchRow[]> {
+): Promise<{ cycleId: string | null; rows: PaymentDispatchRow[] }> {
   const cycleRes = await fetchImpl(`/api/current-cycle${cycleQuery}`, { cache: 'no-store', signal });
   const cycleJson = (await cycleRes.json().catch(() => ({}))) as {
     cycleId?: string | null;
@@ -32,7 +32,7 @@ export async function fetchCyclePaidDispatches(
     );
   }
   const cycleId = cycleJson.cycleId ?? null;
-  if (!cycleId) return [];
+  if (!cycleId) return { cycleId: null, rows: [] };
 
   const dispatchRes = await fetchImpl(
     `/api/payment-dispatches?cycle_id=${encodeURIComponent(cycleId)}`,
@@ -47,5 +47,5 @@ export async function fetchCyclePaidDispatches(
       `Could not read who is already paid this week: ${dispatchJson.error || `HTTP ${dispatchRes.status}`}`,
     );
   }
-  return dispatchJson.rows;
+  return { cycleId, rows: dispatchJson.rows };
 }
