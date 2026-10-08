@@ -2698,7 +2698,7 @@ Done row. The board now holds 32 Pending Deploy, 3 In Progress and 1 Done. No ep
 until a full reconcile. `74f6d2ee` (scoreboard roles, item 393) landed after the review and belongs to
 the next pass.
 
-**Pass 42b (hash `72b77167d2b5`, STAGED):** what closes on evidence after Kane's push. Kane asked
+**Pass 42b (hash `72b77167d2b5`, APPLIED 2026-10-08 on Kane's "Approve", re-read 7/7):** what closes on evidence after Kane's push. Kane asked
 *"Anything in there we can close? I have pushed it already"*. A push proves nothing about live, so a row
 closes here only on measured production use or a measured data state. That is 5 rows / 26 SP: a Proof
 of Address letter signed in prod (10-07 16:42Z), the job portal's 40 production reads of the Offboarded
