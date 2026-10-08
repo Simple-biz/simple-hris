@@ -231,10 +231,21 @@ type CustomSectionRecord = {
   goal: number | string | null;
   goal_direction: string | null;
   enabled: boolean;
+  show_on_overview: boolean;
   sort_order: number;
   archived_at: string | null;
   host_section_key: string | null;
 };
+type SectionSettingRecord = { section_key: string; enabled: boolean; goal: number | string | null; show_on_overview: boolean };
+
+function mapSetting(s: SectionSettingRecord & { section_key: SectionKey }): SectionSetting {
+  return {
+    sectionKey: s.section_key,
+    enabled: s.enabled,
+    goal: s.goal === null ? null : Number(s.goal),
+    showOnOverview: s.show_on_overview,
+  };
+}
 
 function mapRow(r: RowRecord): BoardRow | null {
   if (!isRowSectionKey(r.section_key)) return null;
@@ -296,6 +307,7 @@ function mapCustomSection(r: CustomSectionRecord): CustomSection | null {
     goal,
     goalDirection: goal === null ? null : direction,
     enabled: r.enabled,
+    showOnOverview: r.show_on_overview,
     sortOrder: r.sort_order,
     hostSectionKey: isHostSectionKey(r.host_section_key) ? r.host_section_key : null,
   };
@@ -306,7 +318,9 @@ const COLLECTION_COLS = 'id, entry_date, row_id, business_name, points, amount_u
 /** The collection plus its live Payment Verified tick, embedded (no `.in()` of ids: the URL would outgrow PostgREST). */
 const COLLECTION_WITH_VERIFIED = `${COLLECTION_COLS}, verifications:${VERIFICATIONS}(verified_by, verified_by_name, verified_at)`;
 const PROBLEM_COLS = 'id, entry_date, row_id, type_id, problem_count, created_by, created_at';
-const CUSTOM_COLS = 'id, title, kind, goal, goal_direction, enabled, sort_order, archived_at, host_section_key';
+const CUSTOM_COLS = 'id, title, kind, goal, goal_direction, enabled, show_on_overview, sort_order, archived_at, host_section_key';
+/** A built-in section's stored switches. show_on_overview needs the 2026-10-07 visibility migration applied first. */
+const SECTION_COLS = 'section_key, enabled, goal, show_on_overview';
 
 async function readBonusCandidates(): Promise<PreviewVerdict> {
   const sb = client();
@@ -407,7 +421,7 @@ export async function readBoard(
         .order('week_start')
         .range(from, to),
     )),
-    single('settings', sb.from(SECTIONS_TABLE).select('section_key, enabled, goal'), (d) => (Array.isArray(d) ? d.length : 0)),
+    single('settings', sb.from(SECTIONS_TABLE).select(SECTION_COLS), (d) => (Array.isArray(d) ? d.length : 0)),
     // The board TOLERATES a failed catalog read (the preview card says so), so its line stays done,
     // but it is told, and never claims the formula was read.
     readBonusCandidates().then((v) => {
@@ -541,13 +555,9 @@ export async function readBoard(
       lastWeekStart,
       today,
       viewer: { email: viewer.email, isManager: viewer.isManager },
-      settings: ((settings.data ?? []) as { section_key: string; enabled: boolean; goal: number | string | null }[])
-        .filter((s) => isSectionKey(s.section_key))
-        .map((s) => ({
-          sectionKey: s.section_key as SectionKey,
-          enabled: s.enabled,
-          goal: s.goal === null ? null : Number(s.goal),
-        })),
+      settings: ((settings.data ?? []) as SectionSettingRecord[])
+        .filter((s): s is SectionSettingRecord & { section_key: SectionKey } => isSectionKey(s.section_key))
+        .map(mapSetting),
       customSections: customs.rows.map(mapCustomSection).filter((c): c is CustomSection => c !== null),
       rows: [...rows.values()].sort(
         (a, b) => Number(a.archived) - Number(b.archived) || a.sortOrder - b.sortOrder || a.label.localeCompare(b.label),
@@ -916,26 +926,28 @@ export async function patchSection(viewer: Viewer, p: SectionPatch): Promise<Res
   const sb = client();
   const { data: current, error: readErr } = await sb
     .from(SECTIONS_TABLE)
-    .select('section_key, enabled, goal')
+    .select(SECTION_COLS)
     .eq('section_key', p.sectionKey)
     .maybeSingle();
   if (readErr) return dbFailure(readErr, 'Could not read the section');
-  const cur = current as { enabled: boolean; goal: number | string | null } | null;
+  const cur = current as SectionSettingRecord | null;
+  // The whole row is written, so a change to one switch carries the others as stored (a missing row is
+  // the code default: on, shown, default goal).
   const row = {
     section_key: p.sectionKey,
     enabled: p.enabled ?? cur?.enabled ?? true,
     goal: p.goal !== undefined ? p.goal : cur?.goal ?? null,
+    show_on_overview: p.showOnOverview ?? cur?.show_on_overview ?? true,
     updated_by: viewer.email,
     updated_at: new Date().toISOString(),
   };
   const { data, error } = await sb
     .from(SECTIONS_TABLE)
     .upsert(row, { onConflict: 'section_key' })
-    .select('section_key, enabled, goal')
+    .select(SECTION_COLS)
     .single();
   if (error) return dbFailure(error, 'Could not save the section');
-  const s = data as { section_key: SectionKey; enabled: boolean; goal: number | string | null };
-  return { ok: true, value: { sectionKey: s.section_key, enabled: s.enabled, goal: s.goal === null ? null : Number(s.goal) } };
+  return { ok: true, value: mapSetting(data as SectionSettingRecord & { section_key: SectionKey }) };
 }
 
 /** The people picker: name, department and work email of the active roster. Nothing else. */
@@ -1080,8 +1092,8 @@ export async function createCustomSection(viewer: Viewer, c: CustomSectionCreate
 }
 
 /**
- * Rename, switch on/off, set or clear the goal, show it inside a built-in tab or back in its own, or
- * archive (never deleted: its rows and numbers stay).
+ * Rename, switch on/off, show or hide its Overview card, set or clear the goal, show it inside a built-in
+ * tab or back in its own, or archive (never deleted: its rows and numbers stay).
  */
 export async function patchCustomSection(viewer: Viewer, p: CustomSectionPatch): Promise<Result<CustomSection>> {
   const current = await readLiveCustomSection(p.id);
@@ -1089,6 +1101,7 @@ export async function patchCustomSection(viewer: Viewer, p: CustomSectionPatch):
   const update: Record<string, unknown> = { updated_by: viewer.email, updated_at: new Date().toISOString() };
   if (p.title !== undefined) update.title = p.title;
   if (p.enabled !== undefined) update.enabled = p.enabled;
+  if (p.showOnOverview !== undefined) update.show_on_overview = p.showOnOverview;
   if ('goal' in p) {
     const goal = customGoal(current.value.kind, p.goal, p.goalDirection);
     if (!goal.ok) return fail(400, 'bad_request', goal.error);

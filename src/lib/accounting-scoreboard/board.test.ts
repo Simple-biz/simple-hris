@@ -86,7 +86,7 @@ test("buckets: the headline is Carla's overall score; a switched goal is judged 
     ],
   });
   assert.equal(sectionHeadline(sec('buckets'), rows('x'), c, WEEK), 10);
-  const strict = resolveSections([{ sectionKey: 'buckets', enabled: true, goal: 11 }]).find((s) => s.key === 'buckets')!;
+  const strict = resolveSections([{ sectionKey: 'buckets', enabled: true, goal: 11, showOnOverview: true }]).find((s) => s.key === 'buckets')!;
   assert.equal(summarizeSection(strict, rows('x'), c, WEEK, LAST).light, 'amber', '10 is within 80% of 11');
 });
 
@@ -106,7 +106,7 @@ test('Open Disputes (2026-10-07): the headline is the Buckets score; it is judge
   const c = ctx({ entries });
   assert.equal(summarizeSection(sec('chargebacks'), r, c, WEEK, LAST).headline, 4.5);
   assert.equal(summarizeSection(sec('chargebacks'), r, c, WEEK, LAST).light, 'none', 'no goal set: no call');
-  const withGoal = resolveSections([{ sectionKey: 'chargebacks', enabled: true, goal: 5 }]).find((s) => s.key === 'chargebacks')!;
+  const withGoal = resolveSections([{ sectionKey: 'chargebacks', enabled: true, goal: 5, showOnOverview: true }]).find((s) => s.key === 'chargebacks')!;
   assert.equal(summarizeSection(withGoal, r, c, WEEK, LAST).light, 'amber', '4.5 of a 5 goal is within 80%');
 });
 

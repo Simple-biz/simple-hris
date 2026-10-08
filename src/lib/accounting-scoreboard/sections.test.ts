@@ -21,6 +21,7 @@ import {
   WEEKDAYS,
   boardSections,
   customBoardSection,
+  hiddenFromOverview,
   hostedSections,
   isRowSectionKey,
   goalMax,
@@ -48,6 +49,8 @@ const ROUND3_SQL = read('2026-10-06_accounting_scoreboard_round3.sql');
 const HOST_SQL = read('2026-10-07_accounting_scoreboard_custom_section_host.sql');
 /** 2026-10-07: rows.outcome (the win ratio) and the Payroll Problems count, 0–1000. */
 const OUTCOMES_SQL = read('2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql');
+/** 2026-10-07: show_on_overview on both section tables (Carla: "I don't want this one on the overview"). */
+const VISIBILITY_SQL = read('2026-10-07_accounting_scoreboard_overview_visibility.sql');
 
 /** The quoted values of the CHECK declared as `<declared> <name> check (… in (…))`. */
 function checkList(sql: string, constraint: string, declared = 'add constraint'): string[] {
@@ -155,10 +158,10 @@ test('resolveSections: missing switch = on with the sheet goal; a switch turns o
   assert.equal(plain.find((s) => s.key === 'collections')?.goal?.value, 85);
 
   const set = resolveSections([
-    { sectionKey: 'inbox', enabled: false, goal: null },
-    { sectionKey: 'collections', enabled: true, goal: 90 },
-    { sectionKey: 'chargebacks', enabled: true, goal: 5 },
-    { sectionKey: 'onboarding', enabled: true, goal: null },
+    { sectionKey: 'inbox', enabled: false, goal: null, showOnOverview: true },
+    { sectionKey: 'collections', enabled: true, goal: 90, showOnOverview: true },
+    { sectionKey: 'chargebacks', enabled: true, goal: 5, showOnOverview: true },
+    { sectionKey: 'onboarding', enabled: true, goal: null, showOnOverview: true },
   ]);
   assert.equal(set.find((s) => s.key === 'inbox')?.enabled, false);
   assert.equal(set.find((s) => s.key === 'inbox')?.goal?.value, 9, 'a null goal keeps the sheet goal');
@@ -188,6 +191,7 @@ const CUSTOM: CustomSection = {
   goal: 7,
   goalDirection: 'at_least',
   enabled: true,
+  showOnOverview: true,
   sortOrder: 0,
   hostSectionKey: null,
 };
@@ -217,12 +221,12 @@ test('tabs: Outcomes sits inside Chargebacks while it is on, and takes its own t
   const host = all.find((s) => s.id === 'chargebacks')!;
   assert.deepEqual(hostedSections(all, host).map((s) => s.id), ['chargeback_outcomes']);
 
-  const hostOff = boardSections([{ sectionKey: 'chargebacks', enabled: false, goal: null }], []);
+  const hostOff = boardSections([{ sectionKey: 'chargebacks', enabled: false, goal: null, showOnOverview: true }], []);
   assert.ok(tabSections(hostOff).some((s) => s.id === 'chargeback_outcomes'), 'never hidden silently');
   const bothOff = boardSections(
     [
-      { sectionKey: 'chargebacks', enabled: true, goal: null },
-      { sectionKey: 'chargeback_outcomes', enabled: false, goal: null },
+      { sectionKey: 'chargebacks', enabled: true, goal: null, showOnOverview: true },
+      { sectionKey: 'chargeback_outcomes', enabled: false, goal: null, showOnOverview: true },
     ],
     [],
   );
@@ -281,7 +285,7 @@ test('Sales Onboarding (Carla, 2026-10-07): the built-in is Sales — Payments; 
   assert.ok(cards.includes(`custom:${CUSTOM.id}`), 'a custom section with its own tab keeps its card');
 
   // Never disappears silently: with Sales Onboarding off, it takes a tab of its own.
-  const hostOff = boardSections([{ sectionKey: 'onboarding', enabled: false, goal: null }], [projects]);
+  const hostOff = boardSections([{ sectionKey: 'onboarding', enabled: false, goal: null, showOnOverview: true }], [projects]);
   const alone = hostOff.find((s) => s.customId === projects.id)!;
   assert.ok(tabSections(hostOff).some((s) => s.id === alone.id));
   assert.equal(tabIdFor(hostOff, alone), alone.id);
@@ -309,4 +313,94 @@ test('the outcome CHECK lists exactly OUTCOMES; the problem-count CHECK is MIN�
   const m = /between (\d+) and (\d+)/.exec(OUTCOMES_SQL.slice(at));
   assert.deepEqual([Number(m?.[1]), Number(m?.[2])], [MIN_PROBLEMS_PER_LINE, MAX_PROBLEMS_PER_LINE]);
   assert.equal(MIN_PROBLEMS_PER_LINE, 0, 'Kane, 2026-10-07: "0 can count as 0 problems"');
+});
+
+// ---------------------------------------------------------------------------
+// Hidden from the Overview (Carla, 2026-10-07: "I don't want this one on the overview, but I don't have a
+// hide option"; Kane: "setup will have an option to hide it from the overview"; Carla: "Under sections")
+// ---------------------------------------------------------------------------
+
+const PROJECTS: CustomSection = {
+  ...CUSTOM,
+  id: '88888888-8888-4888-8888-888888888888',
+  title: 'Sales - Projects Onboarded',
+  kind: 'daily',
+  goal: null,
+  goalDirection: null,
+  hostSectionKey: 'onboarding',
+};
+
+test('a built-in section hidden from the Overview loses its card and keeps its tab', () => {
+  const all = boardSections([{ sectionKey: 'compliance', enabled: true, goal: null, showOnOverview: false }], []);
+  const compliance = all.find((s) => s.id === 'compliance')!;
+  assert.equal(compliance.showOnOverview, false);
+  assert.ok(!overviewSections(all).some((s) => s.id === 'compliance'), 'no card');
+  assert.ok(tabSections(all).some((s) => s.id === 'compliance'), 'its tab stays');
+  assert.equal(tabIdFor(all, compliance), 'compliance');
+  assert.deepEqual(hiddenFromOverview(all).map((s) => s.id), ['compliance'], 'the Overview names it');
+  assert.deepEqual(hiddenFromOverview(boardSections([], [])), [], 'nothing hidden by default');
+  // Every other card is untouched, in order.
+  assert.deepEqual(
+    overviewSections(all).map((s) => s.id),
+    overviewSections(boardSections([], [])).map((s) => s.id).filter((id) => id !== 'compliance'),
+  );
+});
+
+test('a hosted custom section hidden from the Overview loses its card; its grid stays inside the host tab', () => {
+  const all = boardSections([], [{ ...PROJECTS, showOnOverview: false }]);
+  const p = all.find((s) => s.customId === PROJECTS.id)!;
+  const host = all.find((s) => s.id === 'onboarding')!;
+  assert.ok(!overviewSections(all).some((s) => s.id === p.id), 'no card');
+  assert.ok(overviewSections(all).some((s) => s.id === 'onboarding'), "its host's card stays");
+  assert.deepEqual(hostedSections(all, host).map((s) => s.id), [p.id], 'its grid still sits under Sales — Payments');
+  assert.equal(tabIdFor(all, p), 'onboarding');
+  // With its host switched off it takes a tab of its own (never disappears silently), and still no card.
+  const hostOff = boardSections([{ sectionKey: 'onboarding', enabled: false, goal: null, showOnOverview: true }], [{ ...PROJECTS, showOnOverview: false }]);
+  assert.ok(tabSections(hostOff).some((s) => s.customId === PROJECTS.id));
+  assert.ok(!overviewSections(hostOff).some((s) => s.customId === PROJECTS.id));
+});
+
+test("a host hidden from the Overview never takes its hosted sections' cards with it", () => {
+  // Chargebacks: Open Disputes hidden, Outcomes (its own switch) keeps its card.
+  const all = boardSections([{ sectionKey: 'chargebacks', enabled: true, goal: null, showOnOverview: false }], []);
+  const cards = overviewSections(all).map((s) => s.id);
+  assert.ok(!cards.includes('chargebacks'));
+  assert.ok(cards.includes('chargeback_outcomes'));
+  // Outcomes' grid is still inside the Chargebacks tab, so its Team Score group is still Chargebacks.
+  assert.equal(tabIdFor(all, all.find((s) => s.id === 'chargeback_outcomes')!), 'chargebacks');
+});
+
+test('a section switched OFF stays off the Overview whatever its Overview switch says', () => {
+  const all = boardSections([{ sectionKey: 'inbox', enabled: false, goal: null, showOnOverview: true }], [{ ...PROJECTS, enabled: false }]);
+  assert.ok(!overviewSections(all).some((s) => s.id === 'inbox'));
+  assert.ok(!overviewSections(all).some((s) => s.customId === PROJECTS.id));
+  // Off AND hidden: it shows nowhere, so the Overview's "Not on the Overview" line does not name it.
+  const offHidden = boardSections([{ sectionKey: 'inbox', enabled: false, goal: null, showOnOverview: false }], []);
+  assert.deepEqual(hiddenFromOverview(offHidden), []);
+});
+
+test('Review Focus 1: a board cached before the deploy (no showOnOverview at all) paints every card as shown', () => {
+  // Exactly what an old sessionStorage blob holds: settings and custom sections without the key.
+  const oldSettings = [{ sectionKey: 'inbox', enabled: true, goal: 9.5, showOnOverview: true }] as unknown as Parameters<typeof boardSections>[0];
+  const { showOnOverview: _drop, ...oldCustom } = PROJECTS;
+  void _drop;
+  const all = boardSections(oldSettings, [oldCustom as CustomSection]);
+  assert.ok(all.every((s) => s.showOnOverview === true), 'resolved to shown, never undefined');
+  assert.deepEqual(
+    overviewSections(all).map((s) => s.id),
+    overviewSections(boardSections([], [PROJECTS])).map((s) => s.id),
+    'the same cards as a board that says shown everywhere',
+  );
+  // And a BoardSection built without the key (any other path) is shown too.
+  const bare = { ...all.find((s) => s.id === 'inbox')! } as Partial<(typeof all)[number]>;
+  delete bare.showOnOverview;
+  assert.ok(overviewSections([bare as (typeof all)[number]]).some((s) => s.id === 'inbox'));
+});
+
+test('the visibility SQL: both tables get show_on_overview NOT NULL DEFAULT true (absent = shown)', () => {
+  for (const table of ['accounting_scoreboard_sections', 'accounting_scoreboard_custom_sections']) {
+    const re = new RegExp(`alter table public\\.${table}\\s+add column if not exists show_on_overview boolean not null default true`);
+    assert.ok(re.test(VISIBILITY_SQL), table);
+  }
+  assert.ok(!/\bupdate\b/i.test(VISIBILITY_SQL.replace(/--.*$/gm, '')), 'no data step: every existing row reads the default');
 });

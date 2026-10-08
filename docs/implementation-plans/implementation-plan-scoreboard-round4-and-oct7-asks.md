@@ -6,7 +6,8 @@
 > `blueprint` runs through the `blueprint` skill. This plan does not replace either of them. It gives them their scope,
 > their tests, and their order.
 
-> **Status: AWAITING KANE'S REVIEW (2026-10-07). Nothing is written to `src/`, `app/`, `references/` or `scripts/`.**
+> **Status: AWAITING KANE'S REVIEW (2026-10-07). Task 1 is BUILT (2026-10-07; its migration's `--apply` is PENDING
+> Kane, see Task 1). No other task has written to `src/`, `app/`, `references/` or `scripts/`.**
 > Source record: [the Oct 7 meeting](../meetings/2026-10-07-carla-alivia-scoreboard-tasks-roles-and-interns.md).
 > Tracked as Open items **391–397**, with this plan as **398**, in the
 > [Sep 29 log](../audits/audit-2026-09-29-session-log.md).
@@ -148,11 +149,30 @@ W0.3 (h). They are probably emoji typed into section names, which is not code.
 `hardening`. Carla: *"I don't want this one on the overview, but I don't have a hide option."* Kane: *"setup will have
 an option to hide it from the overview."* Carla: *"Under sections."*
 
+> **BUILT 2026-10-07** (code committed; migration dry run 37/37, `--apply` PENDING Kane, then the push). **Corrected
+> against the code in the same commit (Step 0; the code wins):**
+> - **The Team Score is not gathered in `team-score.ts`.** The `Overview` component builds the cards, the on-track
+>   tally and the Team Score from one list, `summarizeAll(board, cardSections, …)` (`ScoreboardApp.tsx:384`, `:749`,
+>   `:987-991`), grouping each card by `tabIdFor` (`:855`). `cardSections = overviewSections(sections)`. So filtering
+>   `overviewSections` removes a hidden card from all three, and `team-score.ts` is unchanged. Its test composes
+>   `overviewSections` + `tabIdFor` the same way.
+> - **`types.ts` is unchanged**: `SectionSetting` and `CustomSection` live in `sections.ts`.
+> - **The SQL date is 2026-10-07** (today), not the placeholder 2026-10-08.
+> - **The script copies `apply-accounting-scoreboard-custom-host-migration.mts`, not the outcomes-zero one**: there is
+>   no data step, so there is nothing to back up. The anon `42501` is proven in-transaction with `SET LOCAL ROLE anon`.
+>   Its "every row reads true" check runs on dry/apply only; `--verify` counts the hidden rows instead.
+> - **Built-in switches are one row per overridden section** (PK `section_key`, "Missing row = code default",
+>   `2026-10-01_accounting_scoreboard.sql:216-231`); `patchSection` (`server.ts:925`) upserts the whole row and now
+>   carries the stored `show_on_overview`.
+> - **Added beyond the plan:** the Overview names the hidden sections (`hiddenFromOverview`), so a card never
+>   disappears silently (the doc's Outcomes rule); the existing test literals of `SectionSetting` gained the required
+>   field (`sections.test.ts`, `board.test.ts`); the two PATCH routes' docblocks and `api-reference.md` § 24.
+
 **Files:**
-- Create: `references/sql/create/2026-10-08_accounting_scoreboard_overview_visibility.sql`
-- Create: `scripts/apply-accounting-scoreboard-overview-visibility-migration.mts` (copy the shape of
-  `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts`: dry by default, `--apply`, `--verify`, batched,
-  `lock_timeout = 10s`)
+- Create: `references/sql/create/2026-10-07_accounting_scoreboard_overview_visibility.sql`
+- Create: `scripts/apply-accounting-scoreboard-overview-visibility-migration.mts` (as built: the shape of
+  `scripts/apply-accounting-scoreboard-custom-host-migration.mts`, which has no data step either: dry by default, `--apply`,
+  `--verify`, batched, `lock_timeout = 10s`)
 - Modify: `src/lib/accounting-scoreboard/sections.ts` (`overviewSections`), `team-score.ts`, `types.ts`, `validate.ts`
   (`parseSectionPatch` and the custom-section PATCH), `server.ts` (select the column),
   `src/components/accounting-scoreboard/SetupPanel.tsx` (the switch), the `Overview` component
@@ -163,12 +183,12 @@ an option to hide it from the overview."* Carla: *"Under sections."*
 - Produces: `showOnOverview: boolean` on each section in the board payload (built-in and custom). Absent means `true`.
 - Consumes: the existing `overviewSections`, `tabIdFor`, Team Score grouping.
 
-- [ ] **Step 0: Read and cite.** `sections.ts` (`overviewSections`, `tabSections`, `boardSections`), `team-score.ts`
+- [x] **Step 0: Read and cite.** `sections.ts` (`overviewSections`, `tabSections`, `boardSections`), `team-score.ts`
   (where cards are gathered), `validate.ts` (`parseSectionPatch`), the Setup → Sections UI, and how
   `accounting_scoreboard_sections` stores a built-in's switch and goal: one row per overridden section, or one per
   section. Write the `file:line`s into the commit message.
 
-- [ ] **Step 1: Write the failing tests.** Use the existing fixtures in each file. Cases:
+- [x] **Step 1: Write the failing tests.** Use the existing fixtures in each file. Cases:
   1. `overviewSections` leaves out a built-in section whose `showOnOverview` is `false`. `tabSections` still includes
      its tab.
   2. A hosted custom section with `showOnOverview: false` has no card, and its grid still renders inside the host's tab
@@ -179,14 +199,14 @@ an option to hide it from the overview."* Carla: *"Under sections."*
   5. `parseSectionPatch({ showOnOverview: 'no' })` is refused with a message naming the field;
      `{ showOnOverview: false }` is accepted. The same for the custom-section PATCH.
 
-- [ ] **Step 2: Run, and see them fail.**
+- [x] **Step 2: Run, and see them fail.**
   Run: `node --import tsx --test src/lib/accounting-scoreboard/sections.test.ts src/lib/accounting-scoreboard/team-score.test.ts src/lib/accounting-scoreboard/validate.test.ts`
   Expected: the new cases FAIL (an unknown field, or the card is still present).
 
-- [ ] **Step 3: Write the migration.**
+- [x] **Step 3: Write the migration.**
 
 ```sql
--- 2026-10-08: a section can be left off the Overview (Carla, 2026-10-07 meeting, Open item 391).
+-- 2026-10-07: a section can be left off the Overview (Carla, 2026-10-07 meeting, Open item 391).
 -- Absent row / NULL is never read: the column is NOT NULL DEFAULT true, so every existing section stays shown.
 alter table public.accounting_scoreboard_sections
   add column if not exists show_on_overview boolean not null default true;
@@ -197,21 +217,23 @@ alter table public.accounting_scoreboard_custom_sections
   The apply script's `--verify`: both columns exist, are NOT NULL, and default to true; every existing row reads
   `true`; the anon key is still refused (`42501`) on both tables.
 
-- [ ] **Step 4: Implement.** Add `showOnOverview` to the section types and the board payload (`server.ts` selects
+- [x] **Step 4: Implement.** Add `showOnOverview` to the section types and the board payload (`server.ts` selects
   `show_on_overview`). Filter it in `overviewSections` with `s.showOnOverview !== false` (so a missing key is shown).
   Team Score gathers its cards from `overviewSections`, so a hidden card leaves the score. If Step 0 found it gathers
   from somewhere else, apply the same filter there. Setup → Sections: a "Show on Overview" switch on every built-in and
   custom section, next to the existing on/off switch, PATCHing `{ showOnOverview }`.
 
-- [ ] **Step 5: Run the tests and see them pass.** Same command as Step 2, then `npm test` and `npm run lint`.
+- [x] **Step 5: Run the tests and see them pass.** Same command as Step 2, then `npm test` and `npm run lint`.
 
 - [ ] **Step 6: Dry-run the migration** (`node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts`).
-  **Stop for Kane's go**, then `--apply` and `--verify`.
+  **Stop for Kane's go**, then `--apply` and `--verify`. Dry run DONE 2026-10-07: 37/37, rolled back. **`--apply` and
+  `--verify`: PENDING Kane's go.** Step 5 as run: 51/51 in the three files, `npm test` 6,269/6,269, `tsc --noEmit` clean
+  apart from two stale `.next/types/validator.ts` errors (a deleted `bank-preferred-requests` route).
 
-- [ ] **Step 7: Commit** (doc + INDEX + memory in the same commit).
+- [x] **Step 7: Commit** (doc + INDEX + memory in the same commit).
 
 ```bash
-git add references/sql/create/2026-10-08_accounting_scoreboard_overview_visibility.sql scripts/apply-accounting-scoreboard-overview-visibility-migration.mts src/lib/accounting-scoreboard/sections.ts src/lib/accounting-scoreboard/team-score.ts src/lib/accounting-scoreboard/types.ts src/lib/accounting-scoreboard/validate.ts src/lib/accounting-scoreboard/server.ts src/lib/accounting-scoreboard/sections.test.ts src/lib/accounting-scoreboard/team-score.test.ts src/lib/accounting-scoreboard/validate.test.ts src/components/accounting-scoreboard/SetupPanel.tsx docs/features/accounting-scoreboard.md docs/features/INDEX.md
+# as built: the paths are listed in the commit; team-score.ts and types.ts were not changed
 git commit -m "feat(accounting-scoreboard): a section can be hidden from the Overview and the Team Score (item 391)"
 ```
 

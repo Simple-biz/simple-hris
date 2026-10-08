@@ -13,11 +13,12 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * PATCH /api/accounting-scoreboard/sections  { sectionKey, enabled?, goal? }   (managers)
+ * PATCH /api/accounting-scoreboard/sections  { sectionKey, enabled?, goal?, showOnOverview? }   (managers)
  *
  * Carla's switch: turn a section off (it disappears from the board, and its rows and numbers are
- * kept), or override its goal (`goal: null` goes back to the sheet's number). A section with no
- * goal on the sheet cannot be given one here.
+ * kept), or override its goal (`goal: null` goes back to the default, or clears a goal set on a section
+ * with none). Since 2026-10-07 every built-in section can take a goal. `showOnOverview: false` (Carla,
+ * 2026-10-07) takes its card off the Overview and out of the Team Score; its tab stays.
  */
 export async function PATCH(req: Request) {
   try {

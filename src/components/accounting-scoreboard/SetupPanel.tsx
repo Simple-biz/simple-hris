@@ -119,7 +119,7 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
   const builtIn = sections.filter((s) => s.key !== 'custom');
   const custom = sections.filter((s) => s.key === 'custom');
 
-  async function patchBuiltIn(sectionKey: SectionKey, body: { enabled?: boolean; goal?: number | null }) {
+  async function patchBuiltIn(sectionKey: SectionKey, body: { enabled?: boolean; goal?: number | null; showOnOverview?: boolean }) {
     setBusy(sectionKey);
     const res = await api('/api/accounting-scoreboard/sections', {
       method: 'PATCH',
@@ -153,6 +153,10 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
             Each one gets an Overview card, and a tab of its own or a place under one of the scoreboard&rsquo;s tabs
             (&ldquo;Shown in&rdquo;). Add its rows under Rows, like any section. Removing one hides it; its numbers are kept.
           </p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">On Overview</span> off takes a section&rsquo;s card
+            off the Overview and out of the Team Score. Its tab and its numbers stay.
+          </p>
         </div>
         <NewSectionForm onCreated={onChanged} />
         {custom.length ? (
@@ -185,6 +189,12 @@ function SectionsArea({ sections, onChanged }: { sections: BoardSection[]; onCha
                   </div>
                   <div className="text-xs text-zinc-500">{s.help}</div>
                 </div>
+                <OverviewSwitch
+                  title={s.title}
+                  checked={s.showOnOverview}
+                  disabled={busy === s.id}
+                  onChange={(showOnOverview) => void patchBuiltIn(key, { showOnOverview })}
+                />
                 {s.goal && sheetGoal ? (
                   <GoalEditor
                     key={`${s.id}:${s.goal.value}`}
@@ -271,6 +281,12 @@ function CustomSectionLine({
           triggerClassName="h-8 text-xs"
         />
       </div>
+      <OverviewSwitch
+        title={section.title}
+        checked={section.showOnOverview}
+        disabled={busy}
+        onChange={(showOnOverview) => void onPatch({ showOnOverview })}
+      />
       <CustomGoalEditor
         key={`${section.id}:${section.goal?.value ?? ''}:${section.goal?.direction ?? ''}`}
         kind={kind}
@@ -303,8 +319,40 @@ const DIRECTION_OPTIONS = [
   { value: 'below', label: 'below' },
 ];
 
+/**
+ * "Show on Overview" (Carla, 2026-10-07: "I don't want this one on the overview, but I don't have a hide
+ * option"; Kane: "setup will have an option to hide it from the overview"; Carla: "Under sections"). Off =
+ * no Overview card and out of the Team Score. The section's tab, grid and numbers are untouched, so it is
+ * a separate switch from on/off, with its own words beside it.
+ */
+function OverviewSwitch({
+  title,
+  checked,
+  disabled,
+  onChange,
+}: {
+  title: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-xs text-zinc-600 has-[[data-disabled]]:cursor-not-allowed dark:text-zinc-400">
+      <Switch
+        size="sm"
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(next: boolean) => onChange(next)}
+        aria-label={`Show ${title} on the Overview`}
+      />
+      On Overview
+    </label>
+  );
+}
+
 type CustomPatchBody = {
   enabled?: boolean;
+  showOnOverview?: boolean;
   title?: string;
   goal?: number | null;
   goalDirection?: GoalDirection | null;

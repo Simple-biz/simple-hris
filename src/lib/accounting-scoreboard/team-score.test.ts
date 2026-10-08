@@ -7,9 +7,19 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardScore, cycleCardScore, teamLight, teamScore, type TeamCard } from './team-score';
+import { cardScore, cycleCardScore, teamLight, teamScore, type CardScore, type TeamCard } from './team-score';
 import { goalLight } from './stoplight';
-import { resolveSections, sectionDef, type GoalRule, type SectionKey } from './sections';
+import {
+  boardSections,
+  overviewSections,
+  resolveSections,
+  sectionDef,
+  tabIdFor,
+  type BoardSection,
+  type GoalRule,
+  type SectionKey,
+  type SectionSetting,
+} from './sections';
 
 const goal = (k: SectionKey): GoalRule => sectionDef(k).goal!;
 const disputes8: GoalRule = { value: 8, direction: 'at_least', measure: 'score', unit: 'score' }; // Carla set 8 on 10-07
@@ -124,8 +134,58 @@ test("the Team Score's bands: 90–100 On track, 75–89.9 Close, below 75 Behin
   assert.equal(teamLight(null), 'none');
 });
 
+/**
+ * The 10-07 worked example keyed by section, so a board's Overview picks its cards the way the app does:
+ * the cards are overviewSections(all) and each one's group is tabIdFor(all, card) (summarizeAll in
+ * ScoreboardApp.tsx, whose list feeds both the cards and the Team Score).
+ */
+const OCT7: Partial<Record<string, CardScore>> = {
+  buckets: cardScore(goal('buckets'), 7.4, WED),
+  collections: cardScore(goal('collections'), 90, WED),
+  pm_buckets: cardScore(goal('pm_buckets'), 29.33, WED),
+  onboarding: cardScore(undefined, 42, WED),
+  inbox: cardScore(goal('inbox'), 9.796, WED),
+  chargebacks: cardScore(disputes8, 2.5, WED),
+  chargeback_outcomes: cardScore(goal('chargeback_outcomes'), 0, WED),
+  compliance: cardScore(goal('compliance'), 13, WED),
+  payroll_timing: cycleCardScore({ start: 'on_time', close: 'pending' }),
+  payroll_problems: cardScore(goal('payroll_problems'), 9, WED),
+};
+const OCT7_SETTINGS: SectionSetting[] = [{ sectionKey: 'chargebacks', enabled: true, goal: 8, showOnOverview: true }];
+const teamCards = (all: readonly BoardSection[], cards: readonly BoardSection[]): TeamCard[] =>
+  cards.map((s) => {
+    const groupId = tabIdFor(all, s);
+    return { groupId, groupLabel: all.find((x) => x.id === groupId)!.tab, card: OCT7[s.id] ?? { score: null, reason: 'waiting' } };
+  });
+const overviewTeam = (all: readonly BoardSection[]) => teamScore(teamCards(all, overviewSections(all)));
+/** The expected score with `id`'s card removed from the full 10-07 board, never worked out by hand. */
+const without = (id: string) => {
+  const all = boardSections(OCT7_SETTINGS, []);
+  return teamScore(teamCards(all, overviewSections(all).filter((s) => s.id !== id)));
+};
+const hiding = (key: SectionKey) =>
+  boardSections([...OCT7_SETTINGS.filter((s) => s.sectionKey !== key), { sectionKey: key, enabled: true, goal: key === 'chargebacks' ? 8 : null, showOnOverview: false }], []);
+
+test('hidden from the Overview = left out of the Team Score (CHOSEN 2026-10-07): the 10-07 board without that card', () => {
+  assert.equal(overviewTeam(boardSections(OCT7_SETTINGS, [])).score, 87.1, 'every card shown: the worked example');
+
+  const noBuckets = overviewTeam(hiding('buckets'));
+  assert.equal(noBuckets.score, without('buckets').score);
+  assert.notEqual(noBuckets.score, 87.1);
+  assert.ok(!noBuckets.groups.some((g) => g.groupId === 'buckets'), 'its tab no longer counts');
+
+  // Open Disputes hidden: Chargebacks still counts once, on Outcomes alone (0 won · 1 lost).
+  const noDisputes = overviewTeam(hiding('chargebacks'));
+  assert.equal(noDisputes.score, without('chargebacks').score);
+  const cb = noDisputes.groups.find((g) => g.groupId === 'chargebacks')!;
+  assert.deepEqual([cb.score, cb.cards], [0, 1]);
+
+  // A card that was never scored (Sales — Payments has no goal) changes nothing when hidden.
+  assert.equal(overviewTeam(hiding('onboarding')).score, 87.1);
+});
+
 test('a goal set later joins on its own: Sales — Payments with a goal is a scored group', () => {
-  const payments = resolveSections([{ sectionKey: 'onboarding', enabled: true, goal: 40 }]).find((s) => s.key === 'onboarding')!;
+  const payments = resolveSections([{ sectionKey: 'onboarding', enabled: true, goal: 40, showOnOverview: true }]).find((s) => s.key === 'onboarding')!;
   const t = teamScore([{ groupId: 'onboarding', groupLabel: 'Sales Onboarding', card: cardScore(payments.goal, 42, 1) }]);
   assert.equal(t.score, 100);
   assert.equal(t.groups[0].label, 'Sales Onboarding');

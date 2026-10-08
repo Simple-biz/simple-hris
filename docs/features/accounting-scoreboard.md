@@ -21,7 +21,8 @@ every payroll problem, and custom sections.
 | Round 3: custom sections, row flags, Outcomes slots, Payment Verified, the problem log and types | `references/sql/create/2026-10-06_accounting_scoreboard_round3.sql` |
 | A custom section shown inside a built-in tab (`host_section_key`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_custom_section_host.sql` |
 | Win/loss flags on Outcomes lines (`rows.outcome`) + 0–1000 payroll problems (2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql` |
-| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` · `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts` |
+| Hidden from the Overview (`show_on_overview` on both section tables, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_overview_visibility.sql` |
+| Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` · `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts` · `scripts/apply-accounting-scoreboard-overview-visibility-migration.mts` |
 | The 11 built-in sections (kind, days, slots, goals), custom sections, tabs | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
@@ -89,8 +90,9 @@ every payroll problem, and custom sections.
 The built-in sections, their days and their goals are code (`sections.ts`), pinned to the SQL CHECKs by
 `sections.test.ts`, which reads the CHECKs in force from the round-3 SQL and also pins that round 3 only
 added to the 2026-10-01 lists. A manager can switch any section off, and its rows and numbers are kept, or
-set its goal (§ Goals in Setup). Carla asked to track less than the sheet does, so the switch exists instead of a
-hard-coded subset. Managers can also add sections of their own (§ Custom sections).
+set its goal (§ Goals in Setup), or take its card off the Overview while it keeps its tab (§ Hidden from the
+Overview). Carla asked to track less than the sheet does, so the switch exists instead of a hard-coded subset.
+Managers can also add sections of their own (§ Custom sections).
 
 | Section | Kind | Days | Score / headline | Goal |
 |---|---|---|---|---|
@@ -288,11 +290,47 @@ start with a tab's label.
 - **It keeps its Overview card**, placed right after its host's card, and the card opens the host's tab
   (`overviewSections`, `tabIdFor`). It has its own number and goal, so moving its grid never hides its stop light.
   Since 2026-10-07 every section shown inside another tab keeps a card, Outcomes included (its win ratio). It has
-  **no tab and no phone-menu entry** of its own.
+  **no tab and no phone-menu entry** of its own. Only a manager's **On Overview** switch takes the card away
+  (§ Hidden from the Overview), and that switch is its own: hiding the host's card never hides it.
 - **It never disappears silently** (the Outcomes rule): if its host is switched off, it takes a tab of its own. If it is
   switched off itself, it shows nowhere, like any section.
 - Setup names a hosted section with its tab: "Sales Onboarding — Sales - Projects Onboarded", as for "Chargebacks —
   Outcomes" (`sectionLabel`).
+
+## Hidden from the Overview (2026-10-07)
+
+Carla, 2026-10-07 meeting (Open item 391), on "Sales Projects Onboarded": *"I don't want this on here because this is
+kind of just again telling me how many products we added, but it doesn't really do anything for my team"*; on a second
+section, *"I don't want this one on the overview, but I don't have a hide option."* Kane: *"setup will have an option to
+hide it from the overview."* Carla: *"Under sections."*
+
+- **Setup → Sections has an "On Overview" switch on every section**, built-in and custom, hosted ones included, beside
+  its goal. It is a separate switch from on/off, with its own words beside it, because it does something else: off
+  takes the section's **card off the Overview**, and nothing more. Its tab, its grid (inside its host's tab, for a hosted
+  section), its phone-menu entry and stop light, its rows and its numbers are all unchanged.
+- **A hidden card is left out of the Team Score** (CHOSEN, implementation plan Task 1 / W0.3 (a), for Carla to confirm),
+  and out of the on track / close / behind count beside it. The Overview builds the cards, that count and the Team Score
+  from **one list** (`overviewSections`; `Overview` in `ScoreboardApp.tsx`), so none of them can disagree with the cards
+  on screen. A tab whose only scored card is hidden drops out of the Team Score, the same as a tab with no goal. Hiding
+  Open Disputes leaves Chargebacks counted once, on Outcomes alone. `team-score.test.ts` replays the 10-07 board
+  (87.1) with a card hidden and checks the score against the same board with that card removed.
+- **Each section has its own switch.** Hiding a host never hides the cards of the sections shown inside its tab
+  (`sections.test.ts`).
+- **It never disappears silently** (the Outcomes rule): under the cards the Overview says *"Not on the Overview: …"*,
+  naming every section that is on but hidden, that it keeps its tab and is left out of the Team Score, and that a
+  manager can show it again in Setup → Sections (`hiddenFromOverview`). A section that is switched off shows nowhere,
+  whatever this switch says, and is not named there.
+- **Stored** as `show_on_overview boolean NOT NULL DEFAULT true` on `accounting_scoreboard_sections` (the built-in
+  switch row; a missing row is still the code default: on, shown, default goal) and on
+  `accounting_scoreboard_custom_sections`. A new custom section is shown. NULL is refused, so absence is never stored.
+  `patchSection` writes the whole switch row, carrying the stored `show_on_overview` when only `enabled` or `goal`
+  changes.
+- **A board cached in the browser before this deploy has no `showOnOverview` key** (§ Browser cache). Only an explicit
+  `false` hides a card (`shownOnOverview`), so an old cache paints every card as shown, never a blank, until the fetch
+  replaces it (plan Review Focus 1; `sections.test.ts`).
+- **The PATCH takes a real `true` or `false`.** `"no"`, `"false"`, `0`, `1` and `null` are refused with
+  *"showOnOverview is true or false"* (`validate.ts`, both section PATCHes).
+- Not built: which second section Carla meant is not in the transcript (meeting, question 6). She hides it herself.
 
 ## Payroll Timing fills itself, from the Payroll Wizard
 
@@ -392,7 +430,8 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
 
 Carla's "Accounting Scoreboard — Team Score & Overview Edits Spec" (Oct 7, 2026, forwarded by Kane): one **Team
 Score (0–100)** at the top of the Overview, beside the on track / close / behind count, with last week's. It
-rolls up every tab with a goal (`team-score.ts`). It is **display only**: it pays no one.
+rolls up every tab with a goal, **from the cards on the Overview**: a section a manager hid from the Overview is left
+out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **display only**: it pays no one.
 
 - **Card score** (0–100, "% of goal", **capped at 100** so one strong card can't hide a weak one), on the
   **same pace as the card's light**, so the score and the light always agree (her rule):
@@ -408,7 +447,7 @@ rolls up every tab with a goal (`team-score.ts`). It is **display only**: it pay
     example); both judged = the cycle score itself (last week: 25); nothing judged or `no_record` = left out.
 - **Left out, never 0:** a card with nothing typed ("Waiting on data"), no goal ("Not scored"; an "at least 0"
   goal counts as none), or nothing to judge yet: a running total under its full goal on Monday, when its pace
-  goal is 0 and its light says "No call yet".
+  goal is 0 and its light says "No call yet". A card hidden from the Overview is left out the same way.
 - **Group** = the tab the card's grid sits on (`tabIdFor`). Its score is the mean of its scored cards, so
   Chargebacks (Open Disputes + Outcomes) counts once. A tab with no scored card drops out. A goal set later
   (Sales — Payments, a custom section) joins on its own.
@@ -744,6 +783,17 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   exist before this code is deployed: the board selects `host_section_key`, and a missing column makes every board read
   answer "not set up yet" (`isMissingTable`). **The push: PENDING** (Kane). After it, Carla adds "Sales - Projects
   Onboarded" herself: Setup → Sections, Shown in = Sales Onboarding tab, then its lines under Rows.
+- **Hidden-from-Overview migration: PENDING `--apply` (Kane's go), then the push.**
+  `2026-10-07_accounting_scoreboard_overview_visibility.sql` adds `show_on_overview boolean NOT NULL DEFAULT true` to
+  `accounting_scoreboard_sections` and `accounting_scoreboard_custom_sections`. It has no data step, so there is nothing
+  to back up. **Dry run 2026-10-07: 37/37 PASS, rolled back** (columns, every existing row true, RLS and zero policies,
+  no anon/authenticated privilege, not in realtime, the board's exact selects answer, `SET ROLE anon` refused with
+  `42501` on both tables, three positive controls, NULL refused with `23502` on both). Production then held 2 built-in
+  switch rows and 1 custom section, none hidden. Run
+  `node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts --apply`, then `--verify`,
+  **then push**: the board selects `show_on_overview` on both tables, and pushed first every board read answers "not
+  set up yet" (the 2026-10-07 outage). After the push Carla turns **On Overview** off for "Sales - Projects Onboarded"
+  and her second section under Setup → Sections.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.

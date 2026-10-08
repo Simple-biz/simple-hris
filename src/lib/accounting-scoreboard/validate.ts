@@ -314,6 +314,15 @@ export interface SectionPatch {
   enabled?: boolean;
   /** null resets to the default goal, or clears a goal a manager set on a section with no default. */
   goal?: number | null;
+  /** False takes its card off the Overview and out of the Team Score (Carla, 2026-10-07). */
+  showOnOverview?: boolean;
+}
+
+/** Setup → Sections' "Show on Overview": a real true or false, never a truthy string or a number. */
+function parseShowOnOverview(value: unknown): Parsed<boolean | undefined> {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (typeof value !== 'boolean') return { ok: false, error: 'showOnOverview is true or false' };
+  return { ok: true, value };
 }
 
 export function parseSectionPatch(body: unknown): Parsed<SectionPatch> {
@@ -325,6 +334,9 @@ export function parseSectionPatch(body: unknown): Parsed<SectionPatch> {
     if (typeof b.enabled !== 'boolean') return { ok: false, error: 'enabled is true or false' };
     out.enabled = b.enabled;
   }
+  const shown = parseShowOnOverview(b.showOnOverview);
+  if (!shown.ok) return shown;
+  if (shown.value !== undefined) out.showOnOverview = shown.value;
   if (b.goal !== undefined) {
     if (b.goal === null) out.goal = null;
     else {
@@ -340,7 +352,9 @@ export function parseSectionPatch(body: unknown): Parsed<SectionPatch> {
       out.goal = goal;
     }
   }
-  if (out.enabled === undefined && out.goal === undefined) return { ok: false, error: 'Nothing to change' };
+  if (out.enabled === undefined && out.goal === undefined && out.showOnOverview === undefined) {
+    return { ok: false, error: 'Nothing to change' };
+  }
   return { ok: true, value: out };
 }
 
@@ -486,6 +500,8 @@ export interface CustomSectionPatch {
   id: string;
   title?: string;
   enabled?: boolean;
+  /** False takes its card off the Overview and out of the Team Score; its grid stays where it is. */
+  showOnOverview?: boolean;
   /** Raw: checked against the section's kind on the server (customGoal). null clears the goal. */
   goal?: unknown;
   goalDirection?: unknown;
@@ -508,6 +524,9 @@ export function parseCustomSectionPatch(body: unknown): Parsed<CustomSectionPatc
     if (typeof b.enabled !== 'boolean') return { ok: false, error: 'enabled is true or false' };
     out.enabled = b.enabled;
   }
+  const shown = parseShowOnOverview(b.showOnOverview);
+  if (!shown.ok) return shown;
+  if (shown.value !== undefined) out.showOnOverview = shown.value;
   if (b.goal !== undefined) {
     out.goal = b.goal;
     out.goalDirection = b.goalDirection;
@@ -524,6 +543,7 @@ export function parseCustomSectionPatch(body: unknown): Parsed<CustomSectionPatc
   if (
     out.title === undefined &&
     out.enabled === undefined &&
+    out.showOnOverview === undefined &&
     !('goal' in out) &&
     out.hostSectionKey === undefined &&
     out.archived === undefined

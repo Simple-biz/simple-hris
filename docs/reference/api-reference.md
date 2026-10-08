@@ -3367,7 +3367,8 @@ moment each group of reads answers, then `board` `{ board }`, or `error` `{ erro
 settled before the stream starts (401 / 403 / 400 stay plain JSON). Without it, plain JSON as below.
 The board for one week (default: this week, US Eastern): rows (live, plus archived rows that have numbers in the
 two weeks shown), this and last week's entries and collections, all-time points per rep and the record week, section
-switches, `customSections`, `problems` (this and last week's live Payroll Problems lines) and `problemTypes` (archived ones too, so an old line keeps its type), `lastMeetingDate` (the latest day any PM meeting was ticked, ever), each collection's `verified` (`{ by, name, at }` or null), each row's `customSectionId`, `bucketDay` and `dueSoon`, the Dancing Queen preview candidate, and `payrollEvents` (the Payroll Wizard's Start Processing stamps, `dispatch.lock_acquired` with
+switches (`enabled`, `goal`, `showOnOverview`), `customSections` (each with `showOnOverview`; a board cached before 2026-10-07 has no
+such key, and the page reads that as shown), `problems` (this and last week's live Payroll Problems lines) and `problemTypes` (archived ones too, so an old line keeps its type), `lastMeetingDate` (the latest day any PM meeting was ticked, ever), each collection's `verified` (`{ by, name, at }` or null), each row's `customSectionId`, `bucketDay` and `dueSoon`, the Dancing Queen preview candidate, and `payrollEvents` (the Payroll Wizard's Start Processing stamps, `dispatch.lock_acquired` with
 the cycle it was on, plus pay-cycle closes/reopens, from `audit_log` starting three weeks before the week with no upper bound;
 action, time, cycle file and period only, each with its `cycleStart` Sunday) and `firstClosedPeriodEnd` (the period end of
 the first cycle ever closed, or null). Members list for managers only. All lists paged.
@@ -3413,17 +3414,19 @@ Managers. Extra members (removal is a stamp).
 
 ### `PATCH /api/accounting-scoreboard/sections`
 
-Managers. `{ sectionKey, enabled?, goal? }` (`goal: null` = the default goal, or no goal on a section that has none by default). Since
-2026-10-07 every built-in section takes a goal, within its measure's range (`goalMax`: a score 0–10, a percentage 0–100, else 0–100,000);
-400 outside it.
+Managers. `{ sectionKey, enabled?, goal?, showOnOverview? }` (`goal: null` = the default goal, or no goal on a section that has none by
+default). Since 2026-10-07 every built-in section takes a goal, within its measure's range (`goalMax`: a score 0–10, a percentage 0–100,
+else 0–100,000); 400 outside it. `showOnOverview` (2026-10-07) is a real `true`/`false` (400 naming the field otherwise): `false` takes
+the section's card off the Overview and out of the Team Score; its tab stays. Stored as `accounting_scoreboard_sections.show_on_overview`.
 
 ### `POST /api/accounting-scoreboard/custom-sections` · `PATCH`
 
 Managers. POST `{ title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below', hostSectionKey? }` → 201; PATCH `{ id,
-title?, enabled?, goal? (null clears), goalDirection?, hostSectionKey? (null = a tab of its own), archived?: true }`. An `am_pm` section
-is scored like Buckets, so its goal is a 0–10 score "at least"; a `daily` one totals its week. Titles are unique among live custom
-sections. Archived, never deleted. `hostSectionKey` (2026-10-07) shows the section inside a built-in section's tab: any built-in key
-with a tab of its own (not `chargeback_outcomes`; 400 otherwise; CHECK `acct_sb_custom_host_valid`). The title never decides it.
+title?, enabled?, showOnOverview?, goal? (null clears), goalDirection?, hostSectionKey? (null = a tab of its own), archived?: true }`. An
+`am_pm` section is scored like Buckets, so its goal is a 0–10 score "at least"; a `daily` one totals its week. Titles are unique among
+live custom sections. Archived, never deleted. `hostSectionKey` (2026-10-07) shows the section inside a built-in section's tab: any
+built-in key with a tab of its own (not `chargeback_outcomes`; 400 otherwise; CHECK `acct_sb_custom_host_valid`). The title never
+decides it. `showOnOverview: false` (2026-10-07) takes its card off the Overview and out of the Team Score; a new section is shown.
 
 ### `GET /api/accounting-scoreboard/roster`
 

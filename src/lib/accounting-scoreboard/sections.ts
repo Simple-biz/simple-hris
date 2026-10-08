@@ -346,6 +346,19 @@ export interface SectionSetting {
   sectionKey: SectionKey;
   enabled: boolean;
   goal: number | null;
+  /**
+   * False = no Overview card, and left out of the Team Score; the tab stays (Carla, 2026-10-07). A board
+   * cached in the browser before 2026-10-07 has no such key: read with `shownOnOverview`, never directly.
+   */
+  showOnOverview: boolean;
+}
+
+/**
+ * Whether a stored section is on the Overview. Only an explicit `false` hides it: a board cached before
+ * the switch existed carries no key at all, and paints every card as shown until the fetch replaces it.
+ */
+export function shownOnOverview(s: { showOnOverview?: unknown } | undefined): boolean {
+  return s?.showOnOverview !== false;
 }
 
 export interface ResolvedSection extends SectionDef {
@@ -355,9 +368,11 @@ export interface ResolvedSection extends SectionDef {
    * has a goal only once a manager sets one. Absent = no goal.
    */
   goal?: GoalRule;
+  /** Has an Overview card and counts toward the Team Score. A section that is off shows nowhere either way. */
+  showOnOverview: boolean;
 }
 
-/** Every section in tab order, with the stored switches applied. A missing setting = on, default goal. */
+/** Every section in tab order, with the stored switches applied. A missing setting = on, shown, default goal. */
 export function resolveSections(settings: readonly SectionSetting[]): ResolvedSection[] {
   const byKey = new Map(settings.map((s) => [s.sectionKey, s]));
   return SECTIONS.map((def) => {
@@ -365,7 +380,7 @@ export function resolveSections(settings: readonly SectionSetting[]): ResolvedSe
     const shape = goalShapeOf(def);
     const set = s && s.goal !== null && Number.isFinite(s.goal) ? s.goal : null;
     const goal: GoalRule | undefined = shape && set !== null ? { ...shape, value: set } : def.goal;
-    return { ...def, enabled: s ? s.enabled : true, goal };
+    return { ...def, enabled: s ? s.enabled : true, goal, showOnOverview: shownOnOverview(s) };
   });
 }
 
@@ -403,6 +418,8 @@ export interface CustomSection {
   goal: number | null;
   goalDirection: GoalDirection | null;
   enabled: boolean;
+  /** False = no Overview card and out of the Team Score; its grid stays. Read with `shownOnOverview`. */
+  showOnOverview: boolean;
   sortOrder: number;
   /** The built-in tab it is shown inside; null = a tab of its own. */
   hostSectionKey: SectionKey | null;
@@ -455,6 +472,7 @@ export function customBoardSection(c: CustomSection): BoardSection {
         ? 'A reading at the start (AM) and end (PM) of each day. Score = 10 × completed ÷ (completed + open).'
         : 'One number a day for each line.',
     enabled: c.enabled,
+    showOnOverview: shownOnOverview(c),
     hostTab: c.hostSectionKey ?? undefined,
   };
 }
@@ -497,9 +515,20 @@ export function hostedSections(sections: readonly BoardSection[], host: BoardSec
  * The Overview's cards: one per tab, each followed by the sections shown inside it. A section shown
  * inside another tab has its own number and goal (a custom section's total or score; Outcomes' win
  * ratio since 2026-10-07), so where its grid sits never takes its card away.
+ *
+ * A section a manager hid from the Overview (Setup → Sections, Carla 2026-10-07) has no card, and so is
+ * left out of the Team Score, which is built from these cards. Each section has its own switch: hiding
+ * a host never hides the cards of the sections shown inside its tab. Its tab and grid are unchanged.
  */
 export function overviewSections(sections: readonly BoardSection[]): BoardSection[] {
-  return tabSections(sections).flatMap((t) => [t, ...hostedSections(sections, t)]);
+  return tabSections(sections)
+    .flatMap((t) => [t, ...hostedSections(sections, t)])
+    .filter(shownOnOverview);
+}
+
+/** The sections that are on but hidden from the Overview, in board order: the Overview names them. */
+export function hiddenFromOverview(sections: readonly BoardSection[]): BoardSection[] {
+  return sections.filter((s) => s.enabled && !shownOnOverview(s));
 }
 
 /** The tab a section's grid is on: its own, or its host's while it sits inside the host's tab. */

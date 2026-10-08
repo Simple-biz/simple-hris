@@ -149,6 +149,31 @@ test('members and section switches', () => {
   assert.equal(parseSectionPatch({ sectionKey: 'inbox' }).ok, false);
 });
 
+test('Show on Overview (Carla, 2026-10-07): a true/false on every built-in and custom section, anything else refused by name', () => {
+  assert.deepEqual(parseSectionPatch({ sectionKey: 'onboarding', showOnOverview: false }), {
+    ok: true,
+    value: { sectionKey: 'onboarding', showOnOverview: false },
+  });
+  assert.deepEqual(parseSectionPatch({ sectionKey: 'chargeback_outcomes', showOnOverview: true }), {
+    ok: true,
+    value: { sectionKey: 'chargeback_outcomes', showOnOverview: true },
+  });
+  assert.deepEqual(parseCustomSectionPatch({ id: ROW, showOnOverview: false }), { ok: true, value: { id: ROW, showOnOverview: false } });
+  for (const bad of ['no', 'false', 0, 1, null, [], {}]) {
+    const builtIn = parseSectionPatch({ sectionKey: 'onboarding', showOnOverview: bad });
+    assert.equal(builtIn.ok, false, JSON.stringify(bad));
+    assert.match(builtIn.ok ? '' : builtIn.error, /showOnOverview/, 'the refusal names the field');
+    const custom = parseCustomSectionPatch({ id: ROW, showOnOverview: bad });
+    assert.equal(custom.ok, false, JSON.stringify(bad));
+    assert.match(custom.ok ? '' : custom.error, /showOnOverview/);
+  }
+  // It is a change on its own, and it rides along with the other fields.
+  assert.deepEqual(parseSectionPatch({ sectionKey: 'inbox', enabled: true, showOnOverview: false }), {
+    ok: true,
+    value: { sectionKey: 'inbox', enabled: true, showOnOverview: false },
+  });
+});
+
 test('Chargeback Outcomes cells: dollars and cents in usd, a whole number in count, only on that section', () => {
   assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'usd', value: 99.5 }, TODAY).ok, true);
   assert.equal(parseEntryWrite({ rowId: ROW, date: TODAY, slot: 'count', value: 1 }, TODAY).ok, true);

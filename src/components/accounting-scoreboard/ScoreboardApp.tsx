@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
   boardSections,
+  hiddenFromOverview,
   hostedSections,
   overviewSections,
   resolveSections,
@@ -378,7 +379,8 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   // Every section that is on gets a tab, except one shown inside its host's tab (Outcomes inside
   // Chargebacks, a custom section a manager put inside a built-in tab).
   const tabs = useMemo(() => tabSections(sections), [sections]);
-  // A custom section shown inside another tab keeps its Overview card, right after its host's.
+  // A custom section shown inside another tab keeps its Overview card, right after its host's. A section
+  // hidden from the Overview in Setup has none, and so is out of the Team Score (built from these cards).
   const cardSections = useMemo(() => overviewSections(sections), [sections]);
   const lookup = useMemo(() => buildLookup(board?.entries ?? []), [board?.entries]);
 
@@ -980,12 +982,16 @@ export function Overview({
   onOpen: (tab: Tab) => void;
 }) {
   const nowIso = new Date().toISOString();
+  // The cards, the tally and the Team Score are all this ONE list, so a section hidden from the Overview
+  // (Setup → Sections) is left out of all three, and none of them can disagree with the cards on screen.
   const cards = summarizeAll(board, sections, lookup, nowIso, all);
   const tally = { green: 0, amber: 0, red: 0 };
   for (const c of cards) if (c.summary.light !== 'none') tally[c.summary.light]++;
   const cycle = cycleWeek(board.payrollEvents, board.weekStart, nowIso, board.firstClosedPeriodEnd);
   const team = teamScore(cards.map((c) => ({ groupId: c.groupId, groupLabel: c.groupLabel, card: c.card })));
   const lastTeam = teamScore(cards.map((c) => ({ groupId: c.groupId, groupLabel: c.groupLabel, card: c.lastCard })));
+  // Never hidden silently: the Overview says which sections a manager took off it.
+  const hidden = hiddenFromOverview(all);
 
   return (
     <div className="space-y-5">
@@ -1011,6 +1017,13 @@ export function Overview({
           />
         ))}
       </div>
+      {hidden.length ? (
+        <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          <span className="font-medium text-zinc-600 dark:text-zinc-300">Not on the Overview:</span>{' '}
+          {hidden.map((s) => s.title).join(', ')}. {hidden.length === 1 ? 'It keeps its tab and is' : 'They keep their tabs and are'} left
+          out of the Team Score. A manager can show {hidden.length === 1 ? 'it' : 'them'} again in Setup → Sections.
+        </p>
+      ) : null}
     </div>
   );
 }
