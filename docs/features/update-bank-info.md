@@ -489,11 +489,13 @@ the new notice is about typing the wrong number.
 
 ## Deploy notes
 
-- **PENDING (Open item 401): the `bank_update_history.safety` column.** Kane runs
-  `node --import tsx scripts/apply-bank-update-history-safety-migration.mts --apply` (dry run
-  verified 2026-10-07: all five checks pass, rolled back). Order is free: until it runs, the
-  history row is written without the attestation and the attestation is on the audit row only.
-  **The non-clearable copy is not kept until this runs.**
+- **APPLIED 2026-10-08 ~01:53Z (2026-10-07 ~21:53 EDT) (Kane: *"run it"*): the `bank_update_history.safety` column**
+  (`scripts/apply-bank-update-history-safety-migration.mts --apply`, Open item 401). The script's
+  own read-back passed 5/5 (jsonb, nullable, tagged comment, a row with an attestation inserts and
+  a staff row without one inserts, both rolled back). A separate service-role PostgREST read of
+  `safety` returned 200 over all 1,739 rows, which proves the schema cache reloaded; 0 rows carried
+  an attestation, as expected before the code deploys. The missing-column retry in
+  `insertBankUpdateHistory` stays as a guard for any environment without the column.
 - **Migrations.** `2026-06-29_bank_update_external_link.sql` adds `bank_update_otps`, the
   `bank_last_self_updated_at` column and the `people.banking.self_updated` notification type.
   `2026-07-01_bank_update_history.sql` adds the history table. Neither is re-measured here. A
@@ -523,10 +525,10 @@ the new notice is about typing the wrong number.
 
 ## Open items
 
-- **401 — OPEN** (Sep 29 log): payout change safety shipped in code 2026-10-07. Owed: the
-  `safety` column `--apply` (Kane), a push, and a signed-in browser pass of both forms. Kane's
-  call: whether a save should REFUSE when its trail cannot be written (item 266 #3), now that the
-  trail is the employee's attestation.
+- **401 — OPEN** (Sep 29 log): payout change safety committed 2026-10-07 (`eb9a0005`); the
+  `safety` column is APPLIED. Owed: a push (Kane), and a signed-in browser pass of both forms.
+  Kane's call: whether a save should REFUSE when its trail cannot be written (item 266 #3), now
+  that the trail is the employee's attestation.
 - **216** (Sep 25 log): this surface had no feature doc. It is closed by this file, its INDEX row
   and its README row (Sep 29 log item 265).
 - **266 — OPEN SECURITY, Kane's call** (Sep 29 log): four findings made while writing this doc:
@@ -583,7 +585,7 @@ the Notify flow:
 | `debac13d` · `b8b1f3fc` | 2026-08-31 | Receiving-side wallet gate added, then removed by the 1:1 rule |
 | `6cabcff3` | 2026-09-24 | Sending-bank mismatch alert; the employee send-from pick retired |
 | `d21a0a3b` · `87c407ff` | 2026-09-25 | Card-safety warning: page, OTP email, n8n node |
-| (this commit) | 2026-10-07 | Payout change safety: track record, versioned notice + confirmations, server gate on both self-service routes, attestation trail, `safety` column (PENDING apply) |
+| `eb9a0005` | 2026-10-07 | Payout change safety: track record, versioned notice + confirmations, server gate on both self-service routes, attestation trail, `safety` column (applied the same night) |
 
 Commit subjects before 2026-08 are uninformative ("push", "Push", "asdasdas"). The "What" for
 those rows is inferred from the files each touched, not from the messages.
