@@ -21,6 +21,7 @@ import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 // counting archived declarations as live ones.
 import { CYCLE_CLOSEOUT_PREFIX } from '@/lib/payroll/cycle-closeout';
 import { judgeRosterDrift } from '@/lib/roster/roster-drift';
+import { judgeDbHealth, parseDbHostMetrics, type DbHostMetrics, type TimedCheck } from '@/lib/admin/db-health';
 
 export type ProbeStatus = 'healthy' | 'warning' | 'critical' | 'unknown';
 
@@ -134,6 +135,83 @@ export async function probeSupabase(): Promise<ProbeResult> {
       ],
     };
   }
+}
+
+/** Each of the three readings below gets this long. They run side by side, so
+ *  the probe answers inside `TIMEOUT_MS` with its verdict instead of losing it
+ *  to the generic "Probe timed out." fallback. */
+const DB_READING_BUDGET_MS = 3000;
+
+async function timedFetch(url: string, init: RequestInit): Promise<{ check: TimedCheck; res: Response | null }> {
+  const t0 = Date.now();
+  try {
+    // Raw fetch on purpose: the Supabase clients retry and wait up to 7 s per
+    // attempt, which would hide exactly the stall this probe exists to time.
+    const res = await fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(DB_READING_BUDGET_MS) });
+    return { check: { ok: res.ok, ms: Date.now() - t0, timedOut: false, httpStatus: res.status }, res };
+  } catch (e) {
+    const timedOut = (e as { name?: string } | null)?.name === 'TimeoutError';
+    return { check: { ok: false, ms: Date.now() - t0, timedOut }, res: null };
+  }
+}
+
+/**
+ * `supabase-postgres`: is the database keeping up, and if not, is it Supabase
+ * or us? Three readings, side by side (decided by `judgeDbHealth`):
+ *  - the gateway's `/auth/v1/health`, which answers without our database;
+ *  - one tiny PostgREST read, what every HRIS screen waits on;
+ *  - the database server's load and memory from Supabase's Prometheus
+ *    endpoint (`/customer/v1/privileged/metrics`, HTTP Basic with the
+ *    service-role key, server-side only). Only numbers leave this function.
+ * Built after 2026-10-08, when the gateway answered in 0.5 s, reads took 1–20 s,
+ * and the server ran at load 43. The old card could only say "timed out".
+ */
+export async function probeSupabaseDatabase(): Promise<ProbeResult> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/+$/, '');
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !anon) {
+    return {
+      status: 'critical',
+      summary: 'Supabase is not configured in this deployment.',
+      details: ['NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY missing.'],
+      suggestedChecks: ['Verify Supabase env vars in deployment.'],
+    };
+  }
+  const restKey = service ?? anon;
+  const [gateway, rest, metrics] = await Promise.all([
+    timedFetch(`${url}/auth/v1/health`, { headers: { apikey: anon } }),
+    timedFetch(`${url}/rest/v1/app_settings?select=key&limit=1`, {
+      headers: { apikey: restKey, Authorization: `Bearer ${restKey}` },
+    }),
+    service
+      ? timedFetch(`${url}/customer/v1/privileged/metrics`, {
+          headers: { Authorization: `Basic ${Buffer.from(`service_role:${service}`).toString('base64')}` },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  let host: DbHostMetrics | null = null;
+  let hostError: string | null = null;
+  if (!metrics) {
+    hostError = 'SUPABASE_SERVICE_ROLE_KEY not set';
+  } else if (!metrics.res || !metrics.check.ok) {
+    hostError = metrics.check.timedOut
+      ? `no answer within ${metrics.check.ms}ms`
+      : `HTTP ${metrics.check.httpStatus ?? 'error'}`;
+  } else {
+    try {
+      host = parseDbHostMetrics(await metrics.res.text());
+      if (!host) hostError = 'the metrics did not include a load reading';
+    } catch (e) {
+      hostError = trimError(e);
+    }
+  }
+  // Drain the bodies we never read so the sockets are released.
+  void gateway.res?.body?.cancel().catch(() => undefined);
+  void rest.res?.body?.cancel().catch(() => undefined);
+
+  return judgeDbHealth({ gateway: gateway.check, rest: rest.check, host, hostError });
 }
 
 /** Direct pg pool — only meaningful when DATABASE_URL is set. */

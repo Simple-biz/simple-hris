@@ -114,7 +114,7 @@ either returns fresh probe data or fails loudly and drops the map to `Unknown`.
 | `hubstaff-csv` | latest row from `hubstaff_uploads`, age | Supabase service-role | `healthy` < 7d, `warning` 7–14d, `warning` > 14d, `unknown` if empty |
 | `master-list` | `select count` on `active_employees` view | Supabase service-role | `critical` if 0, `warning` if < 50, else `healthy` |
 | `supabase-client` | `select head` on `app_settings`, latency | Supabase anon | `healthy` < 500ms, `warning` 500–2000ms, `critical` on error / timeout |
-| `supabase-postgres` | shares the same probe as `supabase-client` | same | same |
+| `supabase-postgres` | **its own probe since 2026-10-08** (`probeSupabaseDatabase`, judged by `judgeDbHealth` in `src/lib/admin/db-health.ts`): the gateway's `/auth/v1/health`, one PostgREST read, and the database server's load + memory from Supabase's metrics endpoint, side by side, 3 s each | Supabase gateway + PostgREST + `/customer/v1/privileged/metrics` | `critical` if the gateway is down (**Supabase outage**); `critical` if reads fail or exceed 2 s while load is ≥ 1× the vCPUs or unreadable (**our database overloaded, Supabase up**); `critical` at ≥ 4× the vCPUs even while reads answer; `warning` at ≥ 1× the vCPUs, under 10% free memory, or slow reads on an idle server; `unknown` when the load cannot be read and reads are fine; else `healthy` |
 | `pg-pool` | `SELECT 1` over a pg `Pool` (only when `DATABASE_URL` is set) | direct pg | `unknown` if env missing, `healthy` < 1500ms, `warning` slower, `critical` on connection error |
 | `daily-report` | most recent `audit_log` entry where action LIKE `daily_reports.%` | Supabase service-role | `healthy` < 48h, `warning` 48h–N/A, `warning` if never |
 | `auth-login` | recent login events from `audit_log` (24h window) | Supabase service-role | always `warning` until admin gate is enforced server-side; probe adds context |
@@ -148,6 +148,35 @@ either returns fresh probe data or fails loudly and drops the map to `Unknown`.
 > also carries the reasoning behind each one's threshold (and why the close-out node deliberately
 > has none). **`hr-onboarding` does not cover the New Hire Checklist**: it reads the staging
 > tables a listed hire still has to reach, which is a different population by ~430 people.
+
+### `supabase-postgres`: a Supabase outage, or our database?
+
+Until 2026-10-08 this card **shared `supabase-client`'s probe**, a single REST round-trip. On
+that day five clerks paying through Payment Dispatch drove the database to load average 43. Reads
+took 1–20 s, but Supabase's gateway answered in 0.5 s and status.supabase.com was green. The most
+the old card could say was "Probe timed out", with advice to check the status page. **That advice
+was the wrong lead: Supabase was up, and our database was saturated** (Open items 415/416).
+
+The card now takes three readings and decides between them (`judgeDbHealth`, 16 tests, including
+that day's numbers):
+- **The gateway answers without touching our database.** If it is down, it is Supabase's
+  outage, and the card says so first.
+- **A stalled read with the gateway up is ours.** That holds even when the server is too starved
+  to report its load. An unreadable load is not evidence of an idle server, so this branch never
+  sends the reader to the status page.
+- **Load is judged per vCPU**, counted from the distinct `cpu` labels the server reports. So the
+  same thresholds hold at any compute size. At 1× every core is busy and work starts to queue;
+  at 4× the server is saturated even if reads still answer this second.
+- **Unreadable load with healthy reads is `unknown`, never `healthy`.** An `unknown` card is a
+  config question (the service-role key), not a green light.
+
+**Each reading has its own 3-second budget, with raw `fetch` + `AbortSignal.timeout`.** The
+Supabase clients retry and wait up to 7 s an attempt (`src/lib/supabase/server.ts`), which would
+lose the verdict to the outer 4-second `withProbeTimeout` and print "Probe timed out" instead.
+`supabase-client` keeps its own REST probe and thresholds, unchanged.
+
+**What it still cannot do: alert anyone.** The map polls only while an admin has Diagnostics
+open. Nothing watches the database when nobody is looking (Open item 420).
 
 Each probe runs with a **4-second timeout** via `withProbeTimeout()`. If a probe doesn't complete, it returns `critical` with `"Probe timed out."` so a hung Supabase doesn't stall the entire response.
 
@@ -242,6 +271,11 @@ Probes do return:
 - Latency timings (`"Round-trip 187ms"`)
 - Ages of latest rows (`"Last upload 3d ago"`)
 - PostgREST error codes (e.g. `42703`) — these are useful for admin diagnosis and aren't sensitive
+
+**The metrics endpoint.** `supabase-postgres` reads Supabase's Prometheus endpoint
+(`/customer/v1/privileged/metrics`) with HTTP Basic `service_role:<SUPABASE_SERVICE_ROLE_KEY>`,
+server-side only. `parseDbHostMetrics` keeps five numbers (load 1/5/15, vCPU count, free and
+total memory), and **no label, line or project ref leaves the probe**. A test asserts it.
 
 The route handler enforces admin role server-side via `requireElevatedSession() && roles.includes('admin')`, so probe data is unreachable from non-admin sessions even if the client-side gate is bypassed.
 

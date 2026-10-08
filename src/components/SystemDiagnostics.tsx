@@ -464,13 +464,13 @@ function buildMockDiagnostics(now = new Date()): DiagnosticsHealthResponse {
     },
     {
       id: 'supabase-postgres',
-      label: 'Supabase Postgres / RLS',
+      label: 'Supabase Postgres (load)',
       category: 'database',
       status: 'warning',
-      summary: 'Service-role fallback paths require careful monitoring.',
+      summary: 'Is the database keeping up, and if not, is it Supabase or us?',
       details: [
-        'Several admin actions use the service-role client to bypass RLS.',
-        'View definitions must be refreshed after table-level ADD COLUMN.',
+        'Gateway health, one HRIS read, and the database server’s load per vCPU.',
+        'A stalled read with the gateway up is OUR database, not a Supabase outage.',
       ],
       suggestedChecks: [
         'Review service-role usage list quarterly.',

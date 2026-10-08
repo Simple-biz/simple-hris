@@ -42,6 +42,7 @@ import {
   probeRateHistory,
   probeRates,
   probeSupabase,
+  probeSupabaseDatabase,
   probeTickets,
   probeTimeAdjustments,
   withProbeTimeout,
@@ -154,6 +155,7 @@ export async function GET() {
 
   const [
     supabaseProbe,
+    supabaseDatabaseProbe,
     pgPoolProbe,
     hubstaffProbe,
     masterListProbe,
@@ -178,6 +180,7 @@ export async function GET() {
     cycleCloseoutProbe,
   ] = await Promise.all([
     withProbeTimeout(probeSupabase(), fallback),
+    withProbeTimeout(probeSupabaseDatabase(), fallback),
     withProbeTimeout(probePgPool(), fallback),
     withProbeTimeout(probeHubstaffCsv(), fallback),
     withProbeTimeout(probeMasterList(), fallback),
@@ -271,7 +274,9 @@ export async function GET() {
 
     node('roster-drift', 'Roster Definition Drift', 'employee-data', rosterDriftProbe),
     node('supabase-client', 'Supabase Client', 'infra', supabaseProbe),
-    node('supabase-postgres', 'Supabase Postgres / RLS', 'database', supabaseProbe),
+    // Its own probe since 2026-10-08: gateway vs read vs server load, so the card
+    // says whether a stall is a Supabase outage or OUR database overloaded.
+    node('supabase-postgres', 'Supabase Postgres (load)', 'database', supabaseDatabaseProbe),
     node('pg-pool', 'pg Pool / Direct Postgres', 'database', pgPoolProbe),
     node('daily-report', 'Daily Report Import', 'reports', dailyReportProbe),
     node('auth-login', 'Employee / Accounting Login', 'auth', authProbe),
