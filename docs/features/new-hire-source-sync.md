@@ -169,7 +169,10 @@ hires never pass through the recruitment portal, so the sync cannot bring them i
 their only way onto the checklist, and the checklist is what **Lock-in** (orientation email) and
 **Bulk Invite** (account creation) read.
 
-- Both the floating **New Hire** button and the empty week's **Add a new hire** call the same
+- The **New Hire** button sits **at the top of the tab, first in the header toolbar** (before
+  Refresh / Export / Lock in; Kane, 2026-10-08: *"the new hire button lets put it at the top
+  please"*. Until then it floated over the table's lower-right corner). There is exactly one; the
+  floating one is gone. It and the empty week's **Add a new hire** call the same
   `openAdd` → `handleQuickAdd` → `POST /api/hr/new-hire-checklist`, which saves `origin='manual'`.
   The only thing that disables them is a **locked week**, as before. Never the sync's status, and
   never "the portal has this week covered".

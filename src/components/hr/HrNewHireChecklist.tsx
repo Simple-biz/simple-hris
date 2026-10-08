@@ -1304,10 +1304,51 @@ export default function HrNewHireChecklist({
               )}
             </div>
 
-            {/* Refresh / Export / Lock act on the GRID, so they follow the grid.
+            {/* New Hire / Refresh / Export / Lock act on the GRID, so they follow the grid.
                 The week selector above stays: it governs both inner tabs. */}
             {innerTab === 'checklist' && (
               <>
+            {/* "New Hire" CTA — at the TOP of the tab, first in the toolbar (Kane,
+                2026-10-08: "the new hire button lets put it at the top"; it used to
+                float over the table's lower-right corner). PERMANENT, never gated on
+                the hiring-database sync (new-hire-source-sync.md § The manual New Hire
+                stays). Greyed out + inert once the week is locked. */}
+            {locked ? (
+              <button
+                type="button"
+                disabled
+                title="This week is locked — reopen it to add a hire"
+                aria-label="Add a new hire (disabled — this week is locked)"
+                className="flex h-8 cursor-not-allowed items-center gap-1.5 rounded-lg border border-zinc-300 bg-zinc-100 px-3 text-[13px] font-semibold text-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-500"
+              >
+                <Lock className="h-3.5 w-3.5" />
+                New Hire
+              </button>
+            ) : (
+              <motion.button
+                type="button"
+                onClick={openAdd}
+                disabled={busy}
+                aria-label="Add a new hire"
+                initial={false}
+                animate={
+                  reduceMotion || busy
+                    ? undefined
+                    : {
+                        boxShadow: [
+                          '0 0 0 1px rgba(16,185,129,0.45), 0 0 6px 1px rgba(16,185,129,0.35)',
+                          '0 0 0 1px rgba(16,185,129,0.8), 0 0 14px 3px rgba(16,185,129,0.6)',
+                        ],
+                      }
+                }
+                transition={{ duration: 1.8, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
+                whileTap={reduceMotion ? undefined : { scale: 0.97 }}
+                className="flex h-8 items-center gap-1.5 rounded-lg bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 px-3 text-[13px] font-bold tracking-wide text-white ring-1 ring-emerald-300/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 dark:ring-emerald-400/40"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                New Hire
+              </motion.button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -1912,53 +1953,6 @@ export default function HrNewHireChecklist({
                     )}
                   </tbody>
                 </table>
-              </div>
-
-              {/* "New Hire" CTA — a neon-green glowing button pinned to the
-                  lower-right corner of the table (stays put while the grid
-                  scrolls). Greyed out + inert once the week is locked. */}
-              <div className="pointer-events-none absolute bottom-4 right-4 z-30">
-                {locked ? (
-                  <button
-                    type="button"
-                    disabled
-                    title="This week is locked — reopen it to add a hire"
-                    aria-label="Add a new hire (disabled — this week is locked)"
-                    className="pointer-events-auto flex h-11 cursor-not-allowed items-center gap-2 rounded-full border border-zinc-300 bg-zinc-200/90 px-5 text-sm font-semibold text-zinc-400 shadow-md backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-800/90 dark:text-zinc-500"
-                  >
-                    <Lock className="h-4 w-4" />
-                    New Hire
-                  </button>
-                ) : (
-                  <motion.button
-                    type="button"
-                    onClick={openAdd}
-                    disabled={busy}
-                    aria-label="Add a new hire"
-                    initial={false}
-                    animate={
-                      reduceMotion || busy
-                        ? undefined
-                        : {
-                            boxShadow: [
-                              '0 0 0 1px rgba(16,185,129,0.55), 0 0 12px 2px rgba(16,185,129,0.5), 0 0 26px 6px rgba(16,185,129,0.28)',
-                              '0 0 0 1px rgba(16,185,129,0.9), 0 0 22px 5px rgba(16,185,129,0.85), 0 0 46px 13px rgba(16,185,129,0.5)',
-                            ],
-                          }
-                    }
-                    transition={{ duration: 1.8, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
-                    whileHover={reduceMotion ? undefined : { scale: 1.05 }}
-                    whileTap={reduceMotion ? undefined : { scale: 0.96 }}
-                    className={cn(
-                      'pointer-events-auto flex h-11 items-center gap-2 rounded-full bg-gradient-to-br from-emerald-400 via-emerald-500 to-teal-600 px-5 text-sm font-bold tracking-wide text-white ring-1 ring-emerald-300/70 shadow-[0_0_18px_4px_rgba(16,185,129,0.55)] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50 dark:ring-emerald-400/40',
-                    )}
-                  >
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/25 backdrop-blur-sm">
-                      <UserPlus className="h-4 w-4" />
-                    </span>
-                    New Hire
-                  </motion.button>
-                )}
               </div>
             </div>
           )}

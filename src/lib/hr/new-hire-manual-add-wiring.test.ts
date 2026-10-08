@@ -48,8 +48,19 @@ describe('the manual New Hire button is always there', () => {
     assert.match(add, /fetch\('\/api\/hr\/new-hire-checklist', \{\s*method: 'POST'/);
   });
 
+  test('the New Hire button is at the TOP: first in the header toolbar, above the tabs and the grid', () => {
+    // Kane, 2026-10-08: "the new hire button lets put it at the top please".
+    const button = grid.indexOf('aria-label="Add a new hire"');
+    const refresh = grid.indexOf('onClick={refresh}');
+    const tabs = grid.indexOf('role="tablist"');
+    const table = grid.indexOf('<table ');
+    assert.ok(button > 0 && button < refresh, 'New Hire comes before Refresh in the toolbar');
+    assert.ok(button < tabs && button < table, 'New Hire sits in the header, above the inner tabs and the grid');
+    assert.equal(grid.match(/aria-label="Add a new hire"/g)?.length, 1, 'one New Hire button, not a second floating one');
+  });
+
   test('neither button is gated on the sync — only a locked week disables adding', () => {
-    const cta = slice(grid, '{/* "New Hire" CTA', '{/* Per-cell edit-history popover');
+    const cta = slice(grid, '{/* "New Hire" CTA', 'onClick={refresh}');
     assert.doesNotMatch(cta, /hiresSync|HiresSync|syncing/);
     const empty = slice(grid, ') : rows.length === 0 ? (', ') : (');
     assert.doesNotMatch(empty, /hiresSync|HiresSync|syncing/);
