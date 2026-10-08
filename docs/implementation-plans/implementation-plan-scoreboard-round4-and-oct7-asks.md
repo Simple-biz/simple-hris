@@ -1366,83 +1366,52 @@ up."* **Doc gap found while planning:** `docs/features/offboarding-automation.md
 action. Its pipeline goes queue → HR offboard. The action exists (memory item 384: the row was returned on 10-06), so the
 doc gets a section in this commit.
 
-**Files:**
-- Create: `src/lib/hr/offboarding-return-notify.ts`, `offboarding-return-notify.test.ts`
-- Modify: the route that sets a queue row to returned (Step 0 finds it: the HR side of `/api/offboarding-queue` or
-  `HrOffboardQueueProcessor.tsx`'s endpoint), `docs/features/offboarding-automation.md` (new § "Returned to the
-  manager"), `docs/features/notification-alerts.md` (the new type)
+> **BUILT 2026-10-07 (session `63e0ef1e`). Step 0 found that the code disagreed with this task. The code won, and the
+> task below is corrected to what shipped.**
+> - **A return notification already existed.** `PATCH /api/offboarding-queue/[id]` with `decision: 'returned'` (a
+>   reason is required and stored as `processed_note`) wrote `offboarding.request_returned` to `row.requested_by` **only**
+>   and never read the insert's error. The type has been in `employee_notifications_type_check` since 2026-07-02 (read
+>   live 2026-10-07) and is mapped to the Manager view. So the fix **widens the recipients of the existing type**. The
+>   plan's new `offboarding.returned` would have needed a CHECK ALTER, which this task's "no migration" ruled out.
+> - The columns are `recipient_email · type · tone · title · message · details`. There is no `body`.
+> - "The inverse of `listDepartmentsForManager`": `listManagersByDepartment` exists, but it is exact-match only, it
+>   answers "nobody" on a read error, and it does not page. The shipped code reads the grants paged
+>   (`listActiveManagerAssignments`) and matches with `departmentMatchesManagedAssignments`, the predicate the queue POST
+>   uses to let a manager raise the request.
+> - Two classes the plan did not list: the person being offboarded is never told (a manager can be offboarded out of
+>   a department they manage), and a failed manager read still notifies the requester and says so.
+> - The plan's "an old row with no requester" cannot happen (`requested_by` is `NOT NULL`). It is tested as a blank
+>   requester instead.
 
-**Interfaces:**
-- Produces: `buildReturnedNotifications(i: { personName: string; requestedBy: string | null; departmentManagers: readonly string[]; returnedBy: string; note: string | null }): Array<{ recipient: string; type: 'offboarding.returned'; title: string; body: string }>`
-- Consumes: the existing `employee_notifications` insert (the `offboarding.requested` precedent) and the inverse of
-  `listDepartmentsForManager` (the managers of the person's department; Step 0 finds or writes it).
+**Files (as shipped):**
+- Create: `src/lib/hr/offboarding-return-notify.ts`, `offboarding-return-notify.test.ts` (16 tests, including three
+  source pins on the route)
+- Modify: `app/api/offboarding-queue/[id]/route.ts`, `src/lib/supabase/department-managers.ts`
+  (`listActiveManagerAssignments`), the two HR return toasts (`HrOffboarding.tsx`, `HrOffboardQueueProcessor.tsx`),
+  `docs/features/offboarding-automation.md` (new § "Returned to the manager"), `docs/features/notification-alerts.md`
+  (§ Offboarding outcomes: who is told)
 
-- [ ] **Step 0: Read and cite** the return action (route, status value, whether a note is stored), the
-  `offboarding.requested` notification insert (columns), and how a department's managers are listed.
+**Interfaces (as shipped):**
+- Produces: `buildReturnedNotifications(i: ReturnedNotificationInput): ReturnedNotificationRow[]`, where each row is
+  an insertable `employee_notifications` row of type `offboarding.request_returned` with `details.audience` set to
+  `requester` or `department_manager`. Also `departmentManagersFor(department, assignments): string[]`.
+- Consumes: `listActiveManagerAssignments()` (paged, error-reporting) and `recordNotifyFailure` (`notification.insert_failed`).
 
-- [ ] **Step 1: Write the failing test.**
-
-```ts
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { buildReturnedNotifications } from './offboarding-return-notify';
-
-test("Review Focus 5: the requester AND the department's managers, deduped, never the returner", () => {
-  const out = buildReturnedNotifications({
-    personName: 'Sample Person',
-    requestedBy: 'Requester@simple.biz',
-    departmentManagers: ['manager@simple.biz', 'requester@simple.biz', 'returner@simple.biz'],
-    returnedBy: 'returner@simple.biz',
-    note: 'No work email on file',
-  });
-  assert.deepEqual(out.map((n) => n.recipient).sort(), ['manager@simple.biz', 'requester@simple.biz']);
-  assert.ok(out.every((n) => n.type === 'offboarding.returned'));
-  assert.match(out[0].body, /Sample Person/);
-  assert.match(out[0].body, /No work email on file/);
-});
-test('an old row with no requester still reaches the managers', () => {
-  const out = buildReturnedNotifications({
-    personName: 'Sample Person', requestedBy: null, departmentManagers: ['manager@simple.biz'],
-    returnedBy: 'returner@simple.biz', note: null,
-  });
-  assert.deepEqual(out.map((n) => n.recipient), ['manager@simple.biz']);
-});
-```
-
-- [ ] **Step 2: Run** `node --import tsx --test src/lib/hr/offboarding-return-notify.test.ts`. Expected: FAIL.
-
-- [ ] **Step 3: Implement.**
-
-```ts
-export function buildReturnedNotifications(i: {
-  personName: string;
-  requestedBy: string | null;
-  departmentManagers: readonly string[];
-  returnedBy: string;
-  note: string | null;
-}) {
-  const returner = i.returnedBy.trim().toLowerCase();
-  const recipients = [...new Set(
-    [i.requestedBy, ...i.departmentManagers]
-      .filter((e): e is string => !!e)
-      .map((e) => e.trim().toLowerCase()),
-  )].filter((e) => e !== returner);
-  const body = `${i.personName}'s offboarding request was sent back to the manager.` +
-    (i.note ? ` Note: ${i.note}` : '');
-  return recipients.map((recipient) => ({
-    recipient,
-    type: 'offboarding.returned' as const,
-    title: 'Offboarding request returned',
-    body,
-  }));
-}
-```
-
-- [ ] **Step 4: Run, and see it pass. Wire it** into the return route **after** the status write succeeds, best-effort
-  (a failed notification is logged and reported in the response, and never undoes the return). Map `recipient` to the
-  `employee_notifications` columns from Step 0. Add the type to the notification docs and to whatever type registry
-  Step 0 found.
-- [ ] **Step 5: `npm test`, `npm run lint`. Commit** by explicit path:
+- [x] **Step 0: Read and cite.** See the BUILT block above. Citations: the return is `[id]/route.ts` (the `'returned'`
+  decision with a required note → `processed_note`); the old requester-only insert was `[id]/route.ts:135-173`; the
+  type map is `notification-views.ts:28`; the managers come from `department-managers.ts` and `managed-department-scope.ts`.
+- [x] **Step 1: Write the failing test.** `src/lib/hr/offboarding-return-notify.test.ts`. The plan's two cases are kept
+  (type corrected, blank requester instead of null), plus: the Arriola case, wording per audience, the requester also a
+  manager, the subject who manages their own department, the returner who raised it, no managers, no note, the details
+  shape, the matcher's label variants, and three route source pins (insert after the 409 guard, error read and
+  audited, response carries `notification`).
+- [x] **Step 2: Run.** It FAILED (module missing).
+- [x] **Step 3: Implement.** `src/lib/hr/offboarding-return-notify.ts`.
+- [x] **Step 4: Run, and see it pass (16/16). Wire it** into the return route after the status write and its 409
+  guard, best-effort. Mutation-checked: dropping the subject exclusion fails 1 test, and dropping the returner
+  exclusion fails 2. No new type, so there is no registry change. The map already sends it to the Manager view.
+- [x] **Step 5: `npm test` 6291/6291, `npm run lint` clean in source** (its only 2 errors are in the stale, gitignored
+  `.next/types/validator.ts`, which names the deleted `bank-preferred-requests` route). Committed by explicit path:
   `feat(offboarding): notify the requester and the department's managers when a queue row is returned (item 397)`.
 
 ---

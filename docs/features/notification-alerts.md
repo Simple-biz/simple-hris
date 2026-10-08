@@ -28,6 +28,7 @@ change so money never rings there.
 | The panel (every dashboard) — Unread / Need Action tiles, card stamps | `src/components/notifications/NotificationsPanel.tsx` |
 | Need Action rule + `needsAction` per button | `src/lib/notifications/notification-actions.ts` (+ `.test.ts`) |
 | The one notification timestamp format | `src/lib/notifications/notification-timestamp.ts` (+ `.test.ts`) |
+| Who hears about a returned offboarding request | `src/lib/hr/offboarding-return-notify.ts` (+ `.test.ts`) |
 
 ## Every mount passes a `view`. Never add an unscoped one.
 
@@ -184,6 +185,29 @@ people who do receive it.
 
 It is not money, so it does not trip the rule above — and a test pins that it
 reaches the HR dashboard and **no other**.
+
+## Offboarding outcomes: who is told (2026-10-07)
+
+When HR decides a manager's offboarding request, `PATCH /api/offboarding-queue/[id]` writes one of
+three Manager-dashboard types. All three are ungated, so the people they reach always see them:
+
+| Type | Recipients |
+| --- | --- |
+| `offboarding.request_completed` | the requester |
+| `offboarding.request_dismissed` | the requester |
+| `offboarding.request_returned` | the requester **and** every active manager of the departing person's department, de-duplicated. **Never** the HR person who returned it, and **never** the person being offboarded |
+
+The return fan-out is item 397. Carla raised the Arriola request, and Jackie, who manages Lead Gen,
+never heard it came back. The rule, the matcher and the measured head counts (Lead Gen 9, HSL 11)
+are in [offboarding-automation.md § Returned to the manager](./offboarding-automation.md#returned-to-the-manager-2026-10-07).
+**No new type.** `offboarding.request_returned` has been admitted by the CHECK since 2026-07-02, so the
+change needed no ALTER. That avoids the outage class described under Deploy notes.
+
+All three inserts read their error. A failure goes to `audit_log` as `notification.insert_failed`
+and back to HR in the response, and it never undoes the decision. Deleting a card is a **hard
+delete**, so an absent row does not prove an absent notification. Recipients who clear their Manager
+panel leave no trace, which was measured on 2026-10-07 (jackie@ holds 15 of 79 completed-request cards
+since 10-01, cjm@ 7 of 7).
 
 ## What looks like a bug but isn't
 

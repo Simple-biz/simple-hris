@@ -1,4 +1,5 @@
 import { createSupabaseServiceRoleClient } from './server';
+import { selectAllPaged } from './select-all-paged';
 
 export type DepartmentManagerRow = {
   id: string;
@@ -24,6 +25,27 @@ export async function listAllDepartmentManagers(): Promise<{
     .is('revoked_at', null)
     .order('assigned_at', { ascending: false });
   return { rows: (data ?? []) as DepartmentManagerRow[], error: error?.message ?? null };
+}
+
+/**
+ * Every active manager → department grant, paged past PostgREST's 1000-row cap.
+ * Unlike {@link listManagersByDepartment} it reports a failed read instead of
+ * answering "nobody", so a caller can tell the two apart.
+ */
+export async function listActiveManagerAssignments(): Promise<{
+  rows: Array<Pick<DepartmentManagerRow, 'manager_email' | 'department'>>;
+  error: string | null;
+}> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Supabase not configured' };
+  return selectAllPaged<Pick<DepartmentManagerRow, 'manager_email' | 'department'>>((from, to) =>
+    supabase
+      .from(TABLE)
+      .select('manager_email,department')
+      .is('revoked_at', null)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
 }
 
 /** Active department assignments for a single manager email. */

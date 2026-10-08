@@ -1077,11 +1077,23 @@ function OffboardReturnDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision: 'returned', note: reason.trim() }),
       });
-      const json = (await res.json()) as { success?: boolean; error?: string };
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        notification?: { notified: number; error: string | null };
+      };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Failed to return request');
-      toast.success(`Sent ${target.employee_name ?? target.employee_email} back to ${target.requested_by_name ?? target.requested_by}`, {
-        description: 'The manager is notified and can revise & re-queue.',
-      });
+      const sent = `Sent ${target.employee_name ?? target.employee_email} back to ${target.requested_by_name ?? target.requested_by}`;
+      // The return is saved either way. The requester and the department's
+      // managers are notified (item 397); a failed notification is said, never hidden.
+      if (json.notification?.error) {
+        toast.warning(sent, { description: json.notification.error });
+      } else {
+        const n = json.notification?.notified ?? 0;
+        toast.success(sent, {
+          description: `Notified ${n} ${n === 1 ? 'person' : 'people'}: the requester and the department's managers. They can revise & re-queue.`,
+        });
+      }
       onSuccess();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to return request');

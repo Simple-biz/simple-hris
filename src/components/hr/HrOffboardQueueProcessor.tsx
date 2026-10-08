@@ -329,16 +329,21 @@ export default function HrOffboardQueueProcessor({ open, items, onOpenChange, on
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision, note }),
       });
-      const json = (await res.json()) as { success?: boolean; error?: string };
+      const json = (await res.json()) as {
+        success?: boolean;
+        error?: string;
+        notification?: { notified: number; error: string | null };
+      };
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Request failed');
       const who = current.employee_name ?? current.employee_email;
-      if (mode === 'dismiss') {
-        toast.success(`Request for ${who} dismissed`);
-        markOutcome(current.id, 'dismissed');
-      } else {
-        toast.success(`Sent ${who} back to ${current.requested_by_name ?? current.requested_by}`);
-        markOutcome(current.id, 'returned');
-      }
+      const title =
+        mode === 'dismiss'
+          ? `Request for ${who} dismissed`
+          : `Sent ${who} back to ${current.requested_by_name ?? current.requested_by}`;
+      // The decision is saved either way; a failed notification is said, never hidden.
+      if (json.notification?.error) toast.warning(title, { description: json.notification.error });
+      else toast.success(title);
+      markOutcome(current.id, mode === 'dismiss' ? 'dismissed' : 'returned');
       advance();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : `Failed to ${mode}`);

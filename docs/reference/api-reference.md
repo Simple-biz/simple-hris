@@ -3705,7 +3705,7 @@ of cells — the matches were not re-run).
 | `/api/mesa-requests/[id]/dispatch` | POST | `requireFeatureEdit` | [mesa](../features/mesa.md) · [urgent-payments](../features/urgent-payments.md) |
 | `/api/mesa-requests/[id]/receipts` | GET, POST, DELETE | `authorizeEmail` | [mesa](../features/mesa.md) |
 | `/api/offboarding-queue` | GET, POST, PATCH | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) |
-| `/api/offboarding-queue/[id]` | PATCH, DELETE | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) |
+| `/api/offboarding-queue/[id]` | PATCH, DELETE | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) (§ Returned to the manager: PATCH answers `notification: { type, notified, error }`) · [notification-alerts](../features/notification-alerts.md) |
 | `/api/onboarding/[token]` | GET, POST | — **none found** | [onboarding-calltools-username](../features/onboarding-calltools-username.md) · [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) · *this file* |
 | `/api/onboarding/[token]/calltools-username` | POST | `requireElevatedSession` | [onboarding-calltools-username](../features/onboarding-calltools-username.md) |
 | `/api/onboarding/[token]/gmail-surname` | POST | `requireElevatedSession` | [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) |

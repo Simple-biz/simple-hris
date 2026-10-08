@@ -13,6 +13,13 @@ import {
   cancelOffboardingQueueIfOwned,
   deleteOffboardingQueueEntry,
 } from '@/lib/supabase/offboarding-queue';
+import { listActiveManagerAssignments } from '@/lib/supabase/department-managers';
+import {
+  buildReturnedNotifications,
+  departmentManagersFor,
+  RETURNED_NOTIFICATION_TYPE,
+} from '@/lib/hr/offboarding-return-notify';
+import { recordNotifyFailure } from '@/lib/notifications/notify-failure-audit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -23,6 +30,9 @@ function clientIp(request: Request): string | null {
 }
 
 type SessionLike = { user?: { email?: string | null; roles?: string[] } | null } | null;
+
+/** What the outcome notification did. `error` set = some or all recipients were not told. */
+type NotifyOutcome = { type: string; notified: number; error: string | null };
 
 /**
  * PATCH — advance a single queue row.
@@ -132,44 +142,97 @@ export async function PATCH(
       return NextResponse.json({ error: 'Request was already processed by someone else' }, { status: 409 });
     }
 
-    // Notify the requesting manager of the outcome.
-    const supabase = createSupabaseServiceRoleClient();
-    if (supabase && row.requested_by) {
-      const who = row.employee_name ?? row.employee_email;
-      const notif =
-        decision === 'completed'
-          ? {
-              type: 'offboarding.request_completed',
-              title: 'Offboarding Completed',
-              message: `${who} has been offboarded by HR${
-                body.offboard_reason ? ` (${offboardReasonLabel(body.offboard_reason)})` : ''
-              }.`,
-            }
-          : decision === 'returned'
+    // Notify the outcome. Best-effort: the decision above is committed and a
+    // notification failure never undoes it. The failure is read, recorded as
+    // `notification.insert_failed` and reported in the response instead.
+    //   completed / dismissed → the requesting manager.
+    //   returned              → the requester AND the managers of the person's
+    //                           department, never the person who returned it.
+    //                           (Item 397: Carla raised the Arriola row, so
+    //                           Jackie, who manages Lead Gen, never heard.)
+    const who = row.employee_name ?? row.employee_email;
+    const actor = { user_name: sessionEmail, user_role: roles.includes('admin') ? 'Admin' : 'HR' };
+    const notifyType =
+      decision === 'completed'
+        ? 'offboarding.request_completed'
+        : decision === 'returned'
+          ? RETURNED_NOTIFICATION_TYPE
+          : 'offboarding.request_dismissed';
+    const notifyResult: NotifyOutcome = { type: notifyType, notified: 0, error: null };
+    let notifications: Array<Record<string, unknown>> = [];
+    if (decision === 'returned') {
+      const grants = await listActiveManagerAssignments();
+      if (grants.error) {
+        // The requester is still told. The managers are not, and that is reported.
+        notifyResult.error = `Couldn't read the department's managers (${grants.error}), so only the requester was notified.`;
+        console.error('[offboarding-queue] return: manager read failed', id, grants.error);
+        await recordNotifyFailure({
+          notificationType: notifyType,
+          origin: 'offboarding-queue/[id] return: department managers read',
+          error: grants.error,
+          actor,
+          details: { request_id: id, department: row.department },
+        });
+      }
+      notifications = buildReturnedNotifications({
+        requestId: id,
+        employeeName: who,
+        employeeEmail: row.employee_email,
+        subjectEmails: [row.employee_email, row.employee_work_email, row.employee_personal_email],
+        requestedBy: row.requested_by,
+        requestedByName: row.requested_by_name,
+        departmentManagers: grants.error ? [] : departmentManagersFor(row.department, grants.rows),
+        returnedBy: sessionEmail,
+        note,
+      });
+    } else if (row.requested_by) {
+      notifications = [
+        {
+          recipient_email: row.requested_by,
+          type: notifyType,
+          tone: 'neutral',
+          ...(decision === 'completed'
             ? {
-                type: 'offboarding.request_returned',
-                title: 'Offboarding Request Returned',
-                message: `HR sent your request to offboard ${who} back for another look${note ? `: "${note}"` : '.'}`,
+                title: 'Offboarding Completed',
+                message: `${who} has been offboarded by HR${
+                  body.offboard_reason ? ` (${offboardReasonLabel(body.offboard_reason)})` : ''
+                }.`,
               }
             : {
-                type: 'offboarding.request_dismissed',
                 title: 'Offboarding Request Dismissed',
                 message: `Your request to offboard ${who} was dismissed by HR${note ? `: "${note}"` : '.'}`,
-              };
-      await supabase.from('employee_notifications').insert({
-        recipient_email: row.requested_by,
-        type: notif.type,
-        tone: 'neutral',
-        title: notif.title,
-        message: notif.message,
-        details: {
-          request_id: id,
-          employee_email: row.employee_email,
-          employee_name: row.employee_name,
-          processed_by: sessionEmail,
-          note,
+              }),
+          details: {
+            request_id: id,
+            employee_email: row.employee_email,
+            employee_name: row.employee_name,
+            processed_by: sessionEmail,
+            note,
+          },
         },
-      });
+      ];
+    }
+    if (notifications.length > 0) {
+      const supabase = createSupabaseServiceRoleClient();
+      const { error: insertErr } = supabase
+        ? await supabase.from('employee_notifications').insert(notifications)
+        : { error: { message: 'Supabase not configured' } };
+      if (insertErr) {
+        notifyResult.error = `The ${decision} was saved, but the notification failed: ${insertErr.message}`;
+        console.error('[offboarding-queue] notification insert failed', id, insertErr.message);
+        await recordNotifyFailure({
+          notificationType: notifyType,
+          origin: `offboarding-queue/[id] ${decision}`,
+          error: insertErr.message,
+          actor,
+          details: {
+            request_id: id,
+            recipients: notifications.map((n) => n.recipient_email),
+          },
+        });
+      } else {
+        notifyResult.notified = notifications.length;
+      }
     }
 
     void insertAuditLog({
@@ -188,11 +251,13 @@ export async function PATCH(
         requested_by: row.requested_by,
         offboard_reason: decision === 'completed' ? (body.offboard_reason?.trim() || row.reason) : null,
         note,
+        notified: notifyResult.notified,
+        notify_error: notifyResult.error,
       },
       ip_address: clientIp(request),
     });
 
-    return NextResponse.json({ success: true, error: null });
+    return NextResponse.json({ success: true, error: null, notification: notifyResult });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg }, { status: 500 });

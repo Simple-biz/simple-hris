@@ -12,6 +12,9 @@ RBAC grant** (snapshotted so re-onboarding restores it).
 Key files:
 
 - `app/api/offboarding-queue/route.ts` — manager submits selections → queue; HR lists/processes.
+- `app/api/offboarding-queue/[id]/route.ts` — one row's decision: completed / dismissed / **returned** /
+  cancelled, and who is notified (see [*Returned to the manager*](#returned-to-the-manager-2026-10-07)).
+- `src/lib/hr/offboarding-return-notify.ts` — who hears about a return (pure, `.test.ts` beside it).
 - `src/lib/supabase/offboarding-queue.ts` — queue table read/write helpers.
 - `app/api/hr/offboard/route.ts` — the actual offboard (single **or** batch), fires teardown webhooks.
 - `src/lib/hr/offboard-webhooks.ts` — slugs, URL resolution, `fireOffboardWebhook`.
@@ -74,7 +77,81 @@ via `listDepartmentsForManager` + `departmentMatchesManagedAssignments`):
 
 HR later reads the whole queue (GET on the same route returns every row for HR/admin; a manager
 sees only their own raised requests) and works it **one entry at a time** through the offboard
-endpoint.
+endpoint. A row does not have to end in an offboard: HR can **dismiss** it, or **return** it to the
+manager (next section).
+
+---
+
+## Returned to the manager (2026-10-07)
+
+The pipeline above is the happy path. HR has two other ways to close a queue row, both through
+`PATCH /api/offboarding-queue/[id]` (`requireFeatureEdit("hr", "offboarding")`): **dismiss** (the
+request is rejected) and **return** (it goes back to the manager to fix and re-queue). The manager
+can also withdraw their own still-pending row (`cancelled`).
+
+**What a return is.**
+
+- Started from HR → Offboarding → Queue (the row's Return action, `ReturnDialog` in
+  `HrOffboarding.tsx`) or from the queue processor's Return button (`HrOffboardQueueProcessor.tsx`).
+- **A reason is required.** No reason is a 400. It is stored as `processed_note`, and the row then
+  reads *Returned to manager* with the reason under it.
+- Only an in-flight row (`pending` / `processing`) can be returned. The update is guarded on that
+  status, so a second click or a concurrent decision gets a 409 and never overwrites the first
+  decision's `processed_by` / `decided_at`.
+- **Nothing is torn down.** A return fires no webhook, writes no stamp and changes no RBAC grant.
+- `returned` is terminal and is **not** an active status. The manager revises and **re-queues**,
+  which inserts a fresh `pending` row, and the returned row stays as history (`ACTIVE_STATUSES` in
+  `offboarding-queue.ts`). The in-flight de-dupe on POST ignores it for the same reason.
+
+**Who is told: the requester AND the department's managers** (item 397). One
+`offboarding.request_returned` notification goes to each of:
+
+- the person who raised the request (`requested_by`), and
+- every active manager of the departing person's department (`department_managers`, `revoked_at`
+  null, read past the 1,000-row cap). They are matched with `departmentMatchesManagedAssignments`,
+  **the same predicate that lets a manager raise the request in the first place**. Whoever could have
+  raised it is told it came back, so "Callbacks" and "Callback Team" are one department.
+
+De-duplicated case-insensitively. **Never** the HR person who returned it, and **never** the person
+being offboarded under any of their three queue addresses, because a manager can be offboarded out
+of a department they manage. The requester's card keeps the wording it has had since 2026-07-02
+(*"HR sent your request to offboard X back for another look: "<reason>""*). A manager's card names
+whose request it was. `details.audience` says which one the recipient got.
+
+**Why.** Until 2026-10-07 only `requested_by` was told. On 2026-10-06 HR (jakec@) returned Carla's
+request for Mark Arriola (Lead Gen, queue `cf57ab93`), and Jackie, who manages Lead Gen, was not a
+recipient at all. Carla, 2026-10-07: *"he returned it to manager. Jackie didn't get a notification on
+that and that's she wants one set up."* Carla raises requests for every department, so "the
+requester" and "the person's manager" are often different people.
+
+**How many people that is** (measured 2026-10-07, 305 active manager grants): Lead Gen **9**; every
+`hsl:*` label and `HSL` **11** (the department key folds all HSL sub-teams into one, exactly as the
+raise check does); every other department in the queue's history **5–9**. Returns are rare: **14
+ever**, 13 of them July tests.
+
+**Where it shows.** The type is mapped to the **Manager** dashboard and is ungated
+(`notification-views.ts`), so it lands in the Manager Notifications panel and its sidebar badge. The
+Manager dashboard has no chime ([notification-alerts.md](./notification-alerts.md)).
+
+**Best-effort, never silent.** The notification is written only after the status write and its 409
+guard succeed, and nothing after that point can undo the return.
+
+- A failed manager read still notifies the requester. The response says the managers were not told.
+- A failed insert is logged, written to `audit_log` as `notification.insert_failed`
+  (`recordNotifyFailure`) and reported in the response. HR's toast turns amber and says so.
+- The same insert-error read now covers **completed** and **dismissed**, which still go to the
+  requester alone.
+- The response is `{ success, error, notification: { type, notified, error } }`, and the
+  `offboarding.request_*` audit row carries `notified` and `notify_error`.
+
+**What the table cannot tell you.** Deleting a notification card is a hard delete. So "it never
+arrived" and "the recipient cleared it" look the same in `employee_notifications`. Measured
+2026-10-07: none of the 14 returns' notifications survive, but the insert demonstrably works.
+Since 10-01, cjm@ still holds 7 of 7 completed-request cards and ainsleyw@ 2 of 2, while jackie@ holds
+15 of 79 and carla@ 0 of 2. Use the audit row's `notified` count as the trail.
+
+**Deploy notes.** No migration: the type has been in `employee_notifications_type_check` since
+2026-07-02 (read from the live constraint 2026-10-07). No env var and no n8n change. Push only.
 
 ---
 
