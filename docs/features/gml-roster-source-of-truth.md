@@ -224,8 +224,9 @@ replaced exactly the queue's 10-07 `ncns` stamp with 07-16 `duplicate_cleanup` (
 `system:arriola-ghost-redate-2026-10-07`). Verified read-only: the row differs from its pre-edit
 backup only in the four `off_boarded_*` columns, it is off `active_employees` and out of the 10-04
 re-deal window, and `marka@` is on 5dba371f alone. The stamp script was never applied and is not to be
-loosened. Its plan run stops at *"Already stamped by someone else"*. Still open: `offboarded_sheet`
-46418 (the queue's second departure row) and HR's Dismiss of `cf57ab93`. Undo, newest first:
+loosened. Its plan run stops at *"Already stamped by someone else"*. `offboarded_sheet` 46418, the
+queue's second departure row (10-07 `ncns`), **stays (Kane, 2026-10-08)**, so the ledger holds
+both the 07-16 and the 10-07 rows for him. Still open: HR's Dismiss of `cf57ab93`. Undo, newest first:
 `redate-arriola-ghost-stamp.mts --revert` (restores jakec@'s exact stamp), then
 `revert-arriola-ghost-fields.mts --revert <its --apply backup>`.
 
