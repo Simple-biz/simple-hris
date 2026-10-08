@@ -833,9 +833,11 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   Re-check any time with `node --import tsx scripts/apply-accounting-scoreboard-overview-visibility-migration.mts --verify`.
   **The push: PENDING** (Kane). The migration is in, so the push is safe. After it, Carla turns **On Overview** off for
   "Sales - Projects Onboarded" and her second section under Setup → Sections.
-- **The round-3 `--verify` now fails one check, by design use (Open item 399):** *"Carla's three starting problem types
-  are live"*. Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV", which is what the types list is for. The
-  check is a seed-time check that `--verify` still runs. Its other checks pass.
+- **The round-3 script's data checks run on a dry run and `--apply` only** (Open item 399, 2026-10-07). They assert
+  what its one-off data step did (the weekday buckets' days, the "due in 7 days" flag, the Outcomes lines, Carla's
+  three types live), and managers change all of that on purpose in Setup afterwards. Under `--verify` one of them
+  failed on normal use (Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV"). `--verify` now checks what
+  stays true for good: the three seeded types still exist, live or archived (a type is never deleted). It re-passed.
 - **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **The push:
   PENDING** (Kane).
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`

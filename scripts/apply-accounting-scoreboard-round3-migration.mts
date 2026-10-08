@@ -113,6 +113,52 @@ if (!connectionString) {
 const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
 const list = (xs: readonly string[]) => xs.map(q).join(', ');
 
+/** What the seed left, true right after it runs: dry run and --apply only (the note at the end of CHECKS says why). */
+const SEED_DATA_CHECKS: Array<[string, string]> = [
+  [
+    'every live weekday Collections bucket carries its day',
+    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE section_key = 'buckets'
+       AND archived_at IS NULL AND label IN (${list(BUCKET_LABELS)}) AND bucket_day IS NULL) AS ok`,
+  ],
+  [
+    'no other bucket was given a day',
+    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE bucket_day IS NOT NULL
+       AND label NOT IN (${list(BUCKET_LABELS)})) AS ok`,
+  ],
+  [
+    `the live "${DUE_SOON_LABEL}" line is flagged, and nothing else is`,
+    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE archived_at IS NULL AND section_key = 'chargebacks'
+         AND ((label = ${q(DUE_SOON_LABEL)}) <> due_soon)) AS ok`,
+  ],
+  [
+    'Chargeback Outcomes holds live Pre-arb, Wins and Losses rows',
+    `SELECT (SELECT count(*) FROM public.accounting_scoreboard_rows WHERE section_key = 'chargeback_outcomes'
+       AND archived_at IS NULL AND label IN (${list(MOVED_LABELS)})) = 3 AS ok`,
+  ],
+  [
+    "Open Disputes no longer has live Pre-arb / Wins / Losses AM/PM rows (archived, not deleted)",
+    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE section_key = 'chargebacks'
+       AND archived_at IS NULL AND label IN (${list(MOVED_LABELS)})) AS ok`,
+  ],
+  [
+    "Carla's three starting problem types are live",
+    `SELECT (SELECT count(*) FROM public.accounting_scoreboard_problem_types WHERE archived_at IS NULL
+       AND label IN ('Account Error', 'Scoreboard Error', 'Other')) = 3 AS ok`,
+  ],
+];
+
+/**
+ * What stays true for good, checked by --verify: a type is archived, never deleted (accounting-scoreboard.md
+ * § Payroll Problems), so the three seeded types still exist, live or archived.
+ */
+const VERIFY_DATA_CHECKS: Array<[string, string]> = [
+  [
+    "Carla's three starting problem types still exist, live or archived (a type is never deleted)",
+    `SELECT (SELECT count(DISTINCT label) FROM public.accounting_scoreboard_problem_types
+       WHERE label IN ('Account Error', 'Scoreboard Error', 'Other')) = 3 AS ok`,
+  ],
+];
+
 const CHECKS: Array<[string, string]> = [
   ...NEW_TABLES.map((t): [string, string] => [`${t} exists`, `SELECT to_regclass('public.${t}') IS NOT NULL AS ok`]),
   ...(['custom_section_id', 'bucket_day', 'due_soon'] as const).map((c): [string, string] => [
@@ -168,37 +214,11 @@ const CHECKS: Array<[string, string]> = [
     `SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '${name}') AS ok`,
   ]),
   ...INDEXES.map((name): [string, string] => [`index ${name}`, `SELECT to_regclass('public.${name}') IS NOT NULL AS ok`]),
-  // Data: Carla's layout on the rows the board already had.
-  [
-    'every live weekday Collections bucket carries its day',
-    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE section_key = 'buckets'
-       AND archived_at IS NULL AND label IN (${list(BUCKET_LABELS)}) AND bucket_day IS NULL) AS ok`,
-  ],
-  [
-    'no other bucket was given a day',
-    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE bucket_day IS NOT NULL
-       AND label NOT IN (${list(BUCKET_LABELS)})) AS ok`,
-  ],
-  [
-    `the live "${DUE_SOON_LABEL}" line is flagged, and nothing else is`,
-    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE archived_at IS NULL AND section_key = 'chargebacks'
-         AND ((label = ${q(DUE_SOON_LABEL)}) <> due_soon)) AS ok`,
-  ],
-  [
-    'Chargeback Outcomes holds live Pre-arb, Wins and Losses rows',
-    `SELECT (SELECT count(*) FROM public.accounting_scoreboard_rows WHERE section_key = 'chargeback_outcomes'
-       AND archived_at IS NULL AND label IN (${list(MOVED_LABELS)})) = 3 AS ok`,
-  ],
-  [
-    "Open Disputes no longer has live Pre-arb / Wins / Losses AM/PM rows (archived, not deleted)",
-    `SELECT NOT EXISTS (SELECT 1 FROM public.accounting_scoreboard_rows WHERE section_key = 'chargebacks'
-       AND archived_at IS NULL AND label IN (${list(MOVED_LABELS)})) AS ok`,
-  ],
-  [
-    "Carla's three starting problem types are live",
-    `SELECT (SELECT count(*) FROM public.accounting_scoreboard_problem_types WHERE archived_at IS NULL
-       AND label IN ('Account Error', 'Scoreboard Error', 'Other')) = 3 AS ok`,
-  ],
+  // Data: what the migration's data step did. These hold when the seed runs (dry run and --apply), and only then:
+  // managers change all of it on purpose afterwards (Setup → Rows sets a bucket's day and the "due in 7 days" flag,
+  // renames and archives lines; Setup → Problem types archives types). Run under --verify, they failed on normal use
+  // (Open item 399: Carla archived "Other" on 2026-10-07). --verify checks what stays true instead (VERIFY_DATA_CHECKS).
+  ...(verifyOnly ? VERIFY_DATA_CHECKS : SEED_DATA_CHECKS),
 ];
 
 const BY = "'acct-sb-control@simple.biz'";
