@@ -56,7 +56,27 @@ export interface SyncReport {
   tasksGroupPinned: string[];
   projectTotalSp: number;
   projectCompletedSp: number;
+  /**
+   * The ids the project's Sprint Tasks relation is (or, on a dry run, would be) set to: every plan
+   * task found on the board, plus every task created this run. A dry run creates nothing, so it is
+   * the live set — which is what the portfolio-only refresh writes without re-patching every row.
+   */
+  projectTaskIds: number[];
   warnings: string[];
+}
+
+/**
+ * The Projects Portfolio row's four reconciler-owned values. One builder, so the full reconcile and
+ * the portfolio-only refresh (monday-board-sync's tmp-portfolio-rollup.mts) cannot write different
+ * shapes. Status is always Live, and the Sprint Tasks relation is a full-set overwrite.
+ */
+export function projectRollupColumns(totalSp: number, completedSp: number, taskIds: number[]): string {
+  return JSON.stringify({
+    [PROJECT_COLS.status]: { index: 4 }, // Live
+    [PROJECT_COLS.totalSp]: String(totalSp),
+    [PROJECT_COLS.spCompleted]: String(completedSp),
+    ...(taskIds.length ? { [PROJECT_COLS.sprintTasks]: { item_ids: taskIds } } : {}),
+  });
 }
 
 interface BoardItem {
@@ -194,6 +214,7 @@ export async function syncHrisBoard(opts: { dryRun?: boolean; ownerId?: number }
     tasksGroupPinned: [],
     projectTotalSp: 0,
     projectCompletedSp: 0,
+    projectTaskIds: [],
     warnings: [],
   };
 
@@ -365,17 +386,13 @@ export async function syncHrisBoard(opts: { dryRun?: boolean; ownerId?: number }
     const status = live ? live.statusText : e.status;
     return status === 'Shipped' ? a + e.sp : a;
   }, 0);
+  report.projectTaskIds = allTaskIds;
 
   if (!dryRun) {
     await gql(M_UPDATE, {
       board: MONDAY_BOARDS.projects,
       item: HRIS_PROJECT_ITEM_ID,
-      cols: JSON.stringify({
-        [PROJECT_COLS.status]: { index: 4 }, // Live
-        [PROJECT_COLS.totalSp]: String(report.projectTotalSp),
-        [PROJECT_COLS.spCompleted]: String(report.projectCompletedSp),
-        ...(allTaskIds.length ? { [PROJECT_COLS.sprintTasks]: { item_ids: allTaskIds } } : {}),
-      }),
+      cols: projectRollupColumns(report.projectTotalSp, report.projectCompletedSp, allTaskIds),
     });
   }
 

@@ -2773,3 +2773,17 @@ board-sync commits.
 --approve <hash>` (16 creates), and a 1-call `getItemsByIds` read-back. His close covers that shape and
 nothing else, so a proposal of any other shape needs his approval of its hash. If more commits land
 first, re-derive before reviewing.
+
+**Projects Portfolio (Kane: *"in the Projects Portfolio dont forget to udpate it"*).** Only the full
+reconcile writes the HRIS row there (Status Live, Total SP, SP Completed, the Sprint Tasks relation), and
+`--only-new` returns before it runs. The full path no longer fits a UTC day (measured at 282 tasks; the
+plan is ~550). A run that dies in the re-patch never reaches the rollup, which is its last step. So the
+portfolio's Sprint Tasks relation has missed every `--only-new` row since 09-12. `tmp-portfolio-rollup.mts`
+refreshes that one row. It runs the REAL `syncHrisBoard` as a dry run, which writes nothing, and takes its
+rollup (`projectTotalSp`, `projectCompletedSp` and the new `projectTaskIds`). Then it writes the row with
+`projectRollupColumns`, the builder the full reconcile now calls too. It refuses if any epic or plan task is
+missing from the board, and refuses any UNLINK unless `--allow-removals <n>` names the exact count. It
+re-reads the row after writing. Total SP and SP Completed come from EPIC SP and epic status, so closing tasks
+does not move them: the visible change is the Sprint Tasks relation. Epic Linked Tasks stay a full-reconcile
+debt. Cost: about 12 reads + 1 write + 1 re-read. Order after the reset: the pass's `--only-new` apply first,
+then this script, both on the same day.
