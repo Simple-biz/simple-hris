@@ -298,3 +298,21 @@ export function parseAccountReportsView(raw: unknown): AccountReportsView | null
 export function accountDisplayName(a: { label: string | null; hint: string }): string {
   return [a.label, a.hint].filter(Boolean).join(' ');
 }
+
+/**
+ * Whether Accounting's People → Banking shows the paid account's track record,
+ * and what it calls the account (people-bank-card.md §10). Never while the PAID
+ * account carries an open report: a reported account is not "no problems on
+ * record". The name comes from the view because no card is on screen before the
+ * reveal; with no paid account resolved it falls back to "the account on file".
+ */
+export function staffTrackDisplay(
+  view: AccountReportsView | null,
+  showTrack: boolean,
+): { show: boolean; accountName: string } {
+  const paid = view?.status === 'ok' ? (view.accounts.find((a) => a.paysHere) ?? null) : null;
+  return {
+    show: showTrack && !paid?.report,
+    accountName: paid ? accountDisplayName(paid) : 'the account on file',
+  };
+}

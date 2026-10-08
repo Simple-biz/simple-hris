@@ -39,7 +39,7 @@ import { isMissingBankInfo, searchPeopleByNameOrEmail } from '@/lib/people/bank-
 import { cn } from '@/lib/utils';
 import { isHslFamilyLabel } from '@/lib/departments/hsl-subdept';
 import { PayoutRecordBody, PayoutRevealSkeletonContent, type Banking } from './payout-record';
-import { PayoutAccountReportsBanner } from '@/components/banking/payout-account-report';
+import { StaffPayoutAccountStatus } from '@/components/banking/payout-account-report';
 import {
   PERSON_TABS,
   PayrollHistoryList,
@@ -674,8 +674,10 @@ function PersonPage({
                       )}
                     </div>
 
-                    {/* Employee-reported closed / frozen accounts (masked hints only). */}
-                    <PayoutAccountReportsBanner email={email} className="mb-2" />
+                    {/* The paid account's track record and any account the employee
+                        reported closed / frozen: counts and masked hints only, so it
+                        shows before the reveal (people-bank-card.md §10). */}
+                    <StaffPayoutAccountStatus email={email} showTrack className="mb-2" />
 
                     {record.status === 'loading' ? (
                       <div className="rounded-lg border border-zinc-200 bg-zinc-50/60 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">

@@ -88,7 +88,9 @@ Kane chose the inline page (Q2), like the catalog's person card. The page shows:
 - the popup's four tabs in the popup's order, opening on **Profile** as the popup does:
   - **Profile**: the snapshot cards (hours this week · on track for · pay rate) and Identity &
     contact, read-only (§4.5);
-  - **Banking**: Banking & payout, hidden until **Reveal** (§4.1–4.4);
+  - **Banking**: Banking & payout, hidden until **Reveal** (§4.1–4.4). Above it, shown without a
+    reveal, the paid account's track record and any account the employee reported closed /
+    frozen (`StaffPayoutAccountStatus`, the popup's own component; people-bank-card.md §10);
   - **Payroll**: every week headlined by what it paid, with the bonuses (§4.5,
     `people-payroll-history.md`);
   - **PAB Calendar**: the popup's calendar (§4.5);

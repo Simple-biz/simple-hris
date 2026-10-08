@@ -32,7 +32,17 @@ const day = (iso: string | null) => (iso ? formatDateOnly(iso) : null);
  * account). `unavailable` says so in words — never "0 payments", because a read
  * that failed is not a fact about the account.
  */
-export function PayoutTrackLine({ track, className }: { track: PayoutTrackRecord | null; className?: string }) {
+export function PayoutTrackLine({
+  track,
+  className,
+  accountName,
+}: {
+  track: PayoutTrackRecord | null;
+  className?: string;
+  /** Names the account ("BPI ••••7890") where no card is on screen to say which
+   *  one "this account" is — Accounting's People → Banking before a reveal. */
+  accountName?: string | null;
+}) {
   if (!track) return null;
   if (track.status === 'unavailable') {
     return (
@@ -44,12 +54,13 @@ export function PayoutTrackLine({ track, className }: { track: PayoutTrackRecord
   }
   if (track.destination === 'none') return null;
   const noun = track.destination === 'wallet' ? 'wallet' : 'account';
+  const target = accountName ? accountName : `this ${noun}`;
 
   if (track.paidCount === 0) {
     return (
       <p className={cn('flex items-center gap-1.5 text-[12px] text-zinc-500 dark:text-zinc-400', className)}>
         <History className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        No payments to this {noun} on record yet.
+        No payments to {target} on record yet.
       </p>
     );
   }
@@ -72,7 +83,7 @@ export function PayoutTrackLine({ track, className }: { track: PayoutTrackRecord
       />
       <p>
         <span className="font-semibold">
-          Paid successfully {plural(track.paidCount, 'time', 'times')} to this {noun}
+          Paid successfully {plural(track.paidCount, 'time', 'times')} to {target}
         </span>
         {clean ? (
           <> &mdash; no problems on record.</>

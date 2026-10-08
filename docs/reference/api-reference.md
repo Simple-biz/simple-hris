@@ -3762,7 +3762,7 @@ of cells — the matches were not re-run).
 | `/api/payment-dispatches/cycle-closeout` | GET, POST, DELETE | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches/recent-paid` | GET | `requireFeatureAccess` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
 | `/api/payment-dispatches/undo` | POST | `requireFeatureEdit` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [payment-dispatch](../features/payment-dispatch.md) |
-| `/api/payout-account-reports` | GET | `requireRateVisibilityOrFeatureEdit` (accounting / payment_dispatch) | [payout-account-reports](../features/payout-account-reports.md) |
+| `/api/payout-account-reports` | GET | `requireRateVisibilityOrFeatureEdit` (accounting / payment_dispatch); returns `{ accountReports, payoutTrack }` (the track since 2026-10-08, for People → Banking) | [payout-account-reports](../features/payout-account-reports.md) |
 | `/api/payment-dispatches/undo-history` | GET | `requireElevatedSession` | [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payroll-current-pay` | GET | `requireRateVisibilityOrFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/payroll-dispatch-lock` | GET, POST | `getServerSession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payment-dispatch](../features/payment-dispatch.md) · *this file* |

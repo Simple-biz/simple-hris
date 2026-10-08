@@ -13,12 +13,15 @@ import {
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { formatDateOnly } from '@/lib/date-only';
+import { PayoutTrackLine } from '@/components/banking/payout-change-notice';
+import { parsePayoutTrack, type PayoutTrackRecord } from '@/lib/banking/payout-change-safety';
 import {
   PAYOUT_ACCOUNT_STATUSES,
   PAYOUT_ACCOUNT_STATUS_META,
   REPORT_NOTE_MAX,
   accountDisplayName,
   parseAccountReportsView,
+  staffTrackDisplay,
   type AccountKind,
   type AccountReportView,
   type AccountReportsView,
@@ -32,8 +35,9 @@ import {
  * - `AccountReportsPanel` — the employee's list of their own accounts with
  *   "Report a problem" / "It works again". Shared by Profile → Payout and the
  *   public /update-bank-info page.
- * - `PayoutAccountReportsBanner` — what Accounting sees on Mark Paid and People →
- *   Banking. Self-fetching, so each host mounts one line.
+ * - `StaffPayoutAccountStatus` — what Accounting sees on Mark Paid and People →
+ *   Banking: reported accounts, and on People the paid account's track record.
+ *   Self-fetching, so each host mounts one line.
  *
  * A report INFORMS. Nothing on this file changes where anyone is paid.
  */
@@ -339,45 +343,78 @@ function ReportAccountDialog({
 // ── Accounting ──────────────────────────────────────────────────────────────
 
 /**
- * Accounting's view of a person's open reports, for Mark Paid and People →
- * Banking. Renders nothing while loading and when nothing is reported; a failed
- * read SAYS so, because "we could not check" must not look like "nothing reported".
- * Reports on accounts no longer on the record are left out: they describe nothing
- * a clerk could pay into.
+ * Accounting's view of a person's payout account status, one read
+ * (`GET /api/payout-account-reports`) for both hosts:
+ *
+ * - **Reported accounts** (always): the rose banner. Reports on accounts no longer
+ *   on the record are left out; they describe nothing a clerk could pay into.
+ * - **The track record** (`showTrack`, People → Banking and the Search Bar,
+ *   people-bank-card.md §10): "Paid successfully N times to BPI ••••7890 — no
+ *   problems on record". Named, because no card is on screen before the reveal.
+ *   Hidden while the PAID account carries an open report: a reported account is
+ *   never called problem-free. Mark Paid does not pass it.
+ *
+ * Renders nothing while loading. A failed read SAYS so, because "we could not
+ * check" must not look like "nothing reported" or "never paid". Counts, dates and
+ * masked hints only, and no audit row: this reveals nothing.
  */
-export function PayoutAccountReportsBanner({ email, className }: { email: string | null | undefined; className?: string }) {
+export function StaffPayoutAccountStatus({
+  email,
+  className,
+  showTrack = false,
+}: {
+  email: string | null | undefined;
+  className?: string;
+  showTrack?: boolean;
+}) {
   const [view, setView] = useState<AccountReportsView | null>(null);
+  const [track, setTrack] = useState<PayoutTrackRecord | null>(null);
 
   useEffect(() => {
     const target = (email ?? '').trim();
     setView(null);
+    setTrack(null);
     if (!target) return;
     let alive = true;
+    const fail = () => {
+      if (!alive) return;
+      setView({ status: 'unavailable' });
+      setTrack({ status: 'unavailable' });
+    };
     fetch(`/api/payout-account-reports?email=${encodeURIComponent(target)}`, { cache: 'no-store' })
       .then(async (res) => {
-        const json = (await res.json().catch(() => ({}))) as { accountReports?: unknown };
+        const json = (await res.json().catch(() => ({}))) as { accountReports?: unknown; payoutTrack?: unknown };
         if (!alive) return;
-        setView(res.ok ? (parseAccountReportsView(json.accountReports) ?? { status: 'unavailable' }) : { status: 'unavailable' });
+        if (!res.ok) return fail();
+        setView(parseAccountReportsView(json.accountReports) ?? { status: 'unavailable' });
+        setTrack(parsePayoutTrack(json.payoutTrack) ?? { status: 'unavailable' });
       })
-      .catch(() => alive && setView({ status: 'unavailable' }));
+      .catch(fail);
     return () => {
       alive = false;
     };
   }, [email]);
 
   if (!view) return null;
+  const display = staffTrackDisplay(view, showTrack);
+  const trackLine = display.show ? <PayoutTrackLine track={track} accountName={display.accountName} /> : null;
+
   if (view.status === 'unavailable') {
     return (
-      <p className={cn('flex items-center gap-1.5 text-[11.5px] text-zinc-500 dark:text-zinc-400', className)}>
-        <AlertOctagon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        Couldn&rsquo;t check whether the employee reported an account closed or frozen.
-      </p>
+      <div className={cn('space-y-1.5', className)}>
+        {trackLine}
+        <p className="flex items-center gap-1.5 text-[11.5px] text-zinc-500 dark:text-zinc-400">
+          <AlertOctagon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Couldn&rsquo;t check whether the employee reported an account closed or frozen.
+        </p>
+      </div>
     );
   }
   const reported = view.accounts.filter((a) => a.report);
-  if (reported.length === 0) return null;
+  if (reported.length === 0 && !trackLine) return null;
   return (
     <div className={cn('space-y-1.5', className)}>
+      {trackLine}
       {reported.map((a) => {
         const r = a.report as AccountReportView;
         const Icon = STATUS_ICON[r.status];

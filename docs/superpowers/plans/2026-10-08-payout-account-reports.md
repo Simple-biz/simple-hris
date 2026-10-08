@@ -31,7 +31,7 @@ and one shared component file.
       verify-otp and `/api/employee-ids?…&track=1` carry the view. Audit actions
       `bank_update.account_reported` / `bank_update.account_report_withdrawn`.
 - [x] **5. UI.** `src/components/banking/payout-account-report.tsx`: `AccountReportsPanel`
-      (employee), `ReportAccountDialog`, `PayoutAccountReportsBanner` (staff, self-fetching). Mount in
+      (employee), `ReportAccountDialog`, `PayoutAccountReportsBanner` (staff, self-fetching; renamed `StaffPayoutAccountStatus` the same day when it took the People track line). Mount in
       EmployeeProfile (read view), the public page (edit step), MarkPaidDialog, PeopleTab Banking,
       PeopleBankSearch. `PayoutTrackLine` never claims "no problems" on a reported account.
 - [x] **6. Verify.** tsc, the full suite, a server-render smoke test.

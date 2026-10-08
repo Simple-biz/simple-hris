@@ -22,9 +22,9 @@ died.
 | Data layer: HMAC fingerprint, paged reads, file / withdraw, Accounting alert | `src/lib/supabase/payout-account-reports.ts` |
 | Public route (session token) | `app/api/bank-update/report-account/route.ts` |
 | Dashboard route (self only) | `app/api/employee/payout-account-reports/route.ts` |
-| Staff read | `app/api/payout-account-reports/route.ts` |
+| Staff read (also returns the paid account's `payoutTrack`, for People → Banking) | `app/api/payout-account-reports/route.ts` |
 | The view on the existing reads | `app/api/bank-update/verify-otp/route.ts` (`account_reports`) · `app/api/employee-ids/route.ts` (`&track=1` → `accountReports`) |
-| UI: employee panel + dialog, staff banner | `src/components/banking/payout-account-report.tsx` |
+| UI: employee panel + dialog, staff status (`StaffPayoutAccountStatus`) | `src/components/banking/payout-account-report.tsx` |
 | Hosts | `EmployeeProfile.tsx` (Payout read view) · `app/update-bank-info/page.tsx` (edit step) · `MarkPaidDialog.tsx` · `PeopleTab.tsx` (Banking) · `PeopleBankSearch.tsx` |
 
 ## A report INFORMS. It never moves money
@@ -111,7 +111,9 @@ problems on record"*) and the change notice's *"your current account has been pa
 - **Mark Paid**: a rose banner above *Recipient*, naming the account, the date, whether payroll pays
   it, and the note. It pre-fills and changes nothing.
 - **People → View → Banking** and **People → Search Bar**: the same banner, shown whether or not the
-  record is revealed (it carries masked hints only).
+  record is revealed (it carries masked hints only), under the paid account's track record
+  (`showTrack`, people-bank-card.md §10). The track line is hidden while the PAID account is
+  reported. Mark Paid shows the banner only.
 - **Audit**: `bank_update.account_reported` / `bank_update.account_report_withdrawn` (the registered
   `bank_update.` family).
 

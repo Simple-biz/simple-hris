@@ -7,6 +7,7 @@ import {
   normalizeReportNote,
   parseAccountReportsView,
   reportableAccounts,
+  staffTrackDisplay,
   validateReportInput,
   type StoredAccountReport,
 } from './payout-account-reports';
@@ -160,4 +161,29 @@ test('no report route or the report data layer writes employee_ids', () => {
     assert.doesNotMatch(src, write, `${f} writes employee_ids`);
     assert.doesNotMatch(src, /bank_preferred\s*:/, `${f} names the sending bank in a payload`);
   }
+});
+
+// ── Accounting's People → Banking track line (people-bank-card.md §10) ──────
+
+test('staff track line: shown and NAMED on People, never on a reported paid account, never without showTrack', () => {
+  const clean = buildReportsView(reportableAccounts(row, 'wires'), [], fp);
+  assert.deepEqual(staffTrackDisplay(clean, true), { show: true, accountName: 'BPI ••••••7890' });
+  assert.equal(staffTrackDisplay(clean, false).show, false, 'Mark Paid does not pass showTrack');
+  const reportedPaid = buildReportsView(reportableAccounts(row, 'wires'), [report({})], fp);
+  assert.equal(staffTrackDisplay(reportedPaid, true).show, false, 'a reported paid account is never "no problems on record"');
+  const reportedBackup = buildReportsView(
+    reportableAccounts(row, 'wires'),
+    [report({ account_fingerprint: fp('account:09171234567'), account_kind: 'bank_alternative' })],
+    fp,
+  );
+  assert.equal(staffTrackDisplay(reportedBackup, true).show, true, 'a reported BACKUP does not hide the paid record');
+  assert.deepEqual(staffTrackDisplay({ status: 'unavailable' }, true), { show: true, accountName: 'the account on file' });
+});
+
+test('both People hosts mount the staff status WITH the track; Mark Paid without', () => {
+  const read = (f: string) => readFileSync(path.join(process.cwd(), f), 'utf8');
+  for (const f of ['src/components/people/PeopleTab.tsx', 'src/components/people/PeopleBankSearch.tsx']) {
+    assert.match(read(f), /<StaffPayoutAccountStatus[^>]*\bshowTrack\b/, `${f} must show the track record`);
+  }
+  assert.doesNotMatch(read('src/components/payroll-clerk/MarkPaidDialog.tsx'), /<StaffPayoutAccountStatus[^>]*\bshowTrack\b/);
 });

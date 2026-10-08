@@ -36,7 +36,10 @@ The card is drawn entirely from data the browser **already holds**. `bank_name` 
 masked by `maskBanking` (`people-banking.ts:90`) — only account numbers, routing, SWIFT
 and wallet emails are — so resolving a logo adds no field to any payload, no endpoint
 and no new read. `payment-catalog-current-banks.md` §5 is unchanged: *"the audited
-reveal-banking endpoint stays the only path to a full number"*, and it still is.
+reveal-banking endpoint stays the only path to a full number"*, and it still is. **Since
+2026-10-08 the Banking tab makes one more read** (§10): the paid account's track record and
+any account the employee reported, which carry counts, dates and masked hints only. That read
+reveals nothing and writes no audit row, so the invariant above still holds.
 
 `bank-preferred-routing.md` §10.1's ban is also untouched. That ban is on a **bank-name
 breakdown on the People KPI band** — an aggregate leaderboard over a free-text column.
@@ -255,9 +258,38 @@ IS stored and it is not ours — `preferred_processor` also carries `'ach'`, the
 rail, and an `'ach'` payee must never be handed a bank card). Collapsing the last two into one
 is the bug the third state exists to prevent.
 
+## 10. The paid account's record, before the reveal (2026-10-08)
+
+Kane, 2026-10-08: *"make sure that the People - Roster - Banking should have the counts on the
+successful bank payments on this one"*. Above the reveal, the Banking tab (popup and Search Bar
+alike) shows **"Paid successfully N times to BPI ••••7890 — no problems on record. Last paid
+Sep 26, 2026."** It is the same count the employee sees on their own Payout
+(update-bank-info.md rule 27): `paid` dispatch rows whose recorded destination is the account
+Payment Dispatch pays today, so it is a floor ("on record"). It is amber with the problem count
+when there were any, and reads *"No payments to … on record yet"* for an unproven account.
+
+- **One component, both hosts.** `StaffPayoutAccountStatus` (`payout-account-report.tsx`) with
+  `showTrack`, mounted by `PeopleTab.tsx` and `PeopleBankSearch.tsx` OUTSIDE `PayoutRecordBody`.
+  The body is drawn only after the reveal (people-bank-search.md §4.2); this line needs no reveal
+  because it holds no number. Never fork it into the body or into either host. A source-scan test
+  pins that both hosts pass `showTrack` and Mark Paid does not.
+- **Named, because no card is on screen yet.** The account is named by bank + masked last-4 from
+  the reports view; with no paid account resolved it says *"the account on file"*.
+- **A failed read says so** (*"Payment history for this account isn't available right now"*),
+  never "0 payments" (people-bank-search.md §4.3).
+- **Never on a reported PAID account.** While the employee has reported the paid account closed /
+  deactivated / frozen (payout-account-reports.md), the line is hidden and the rose report banner
+  stands alone. A reported BACKUP account does not hide it. `staffTrackDisplay`, tested.
+- **One read:** `GET /api/payout-account-reports?email=` returns `{ accountReports, payoutTrack }`,
+  gated `requireRateVisibilityOrFeatureEdit('accounting','payment_dispatch')`, which admits every
+  People viewer (people-bank-search.md §6).
+
 ## Deploy notes
 
-No migration, no env vars, no new endpoint, no new dependency. The brand logos and the
+No migration, no env vars, no new dependency. **No new endpoint of its own**: §10 reads the
+Payment Dispatch-gated `GET /api/payout-account-reports`. Its track record needs nothing new;
+its report half reads `payout_account_reports`, whose table is PENDING (Open item 406). Until that
+table exists the track line still shows and the report half says it couldn't check. The brand logos and the
 `public/banks/*.png` assets already shipped with the Current Banks tab.
 
 To add or change a bank's card colour: ship its logo (`scripts/fetch-bank-logos.mts`,
