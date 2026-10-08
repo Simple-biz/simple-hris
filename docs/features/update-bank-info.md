@@ -396,14 +396,15 @@ the new notice is about typing the wrong number.
   *"the real block"* (`page.tsx:55-56`).
 - **The attestation rides the same best-effort writes as the rest of the trail** (rule 30), so a
   failed audit insert AND a failed history insert would leave a saved change with no record of
-  what was attested. Making the save refuse when the trail cannot be written is item 266 #3,
-  still Kane's call (Open item 401).
+  what was attested. **RULED: the save still lands** (Kane, 2026-10-08 ~02:00Z, answering *"if both log writes fail, should the bank change still save without a record (item 266 #3)?"*: *"yes"*). A logging outage must never
+  stop someone changing where they are paid. Item 266 #3 is closed by that ruling, not by code.
 - **A lost audit row does not fail the save.** `insertAuditLog` returns `{ error }` and never
   throws. Its only failure signal is a `console.error` (`audit-log.ts:147-178`). The route awaits
   it and ignores the result (`save/route.ts:263-279`), despite its comment *"a payout change must
   not be reported successful without leaving a trail"*. The history row, the stamp, the alert,
   the pulse and the payroll email are all best-effort too (`save/route.ts:235-245, 282-304`,
-  `:104-106`; `app-settings.ts:274-281`).
+  `:104-106`; `app-settings.ts:274-281`). **By design since Kane's 2026-10-08 ruling** (bullet
+  above); the route's comment, which used to say the opposite, now says so.
 - **Two rows with one work email are both overwritten.** The update matches every row
   (`save/route.ts:198-202`). The before-snapshot reads one (`:179-186`), and the prefill shows
   one (`employee-ids.ts:94-96`, `.limit(1)`).
@@ -527,14 +528,14 @@ the new notice is about typing the wrong number.
 
 - **401 — OPEN** (Sep 29 log): payout change safety committed 2026-10-07 (`eb9a0005`); the
   `safety` column is APPLIED. Owed: a push (Kane), and a signed-in browser pass of both forms.
-  Kane's call: whether a save should REFUSE when its trail cannot be written (item 266 #3), now
-  that the trail is the employee's attestation.
+  Ruled 2026-10-08: a save still lands when its trail cannot be written (§ *Failure modes*).
 - **216** (Sep 25 log): this surface had no feature doc. It is closed by this file, its INDEX row
   and its README row (Sep 29 log item 265).
 - **266 — OPEN SECURITY, Kane's call** (Sep 29 log): four findings made while writing this doc:
   the `verify-otp` `reason` enumeration, the save's lock gate failing open on a read error, the
   audit row not enforced, and a save landing after the person left mid-session. Plus the prefill
-  hazard for item 221's fix order. None is fixed.
+  hazard for item 221's fix order. None is fixed. **#3 (audit row not enforced) RULED 2026-10-08:
+  stays best-effort, by design** (§ *Failure modes*); the other three are still open.
 - **207** (Sep 23 log): n8n re-paste DONE 2026-10-02 on Kane's word. Page and OTP email code pushed
   (item 215), deploy unverified.
 - **221** (Sep 25 log): OPEN CRITICAL, anon key reads `employee_ids`. This page adds one hazard

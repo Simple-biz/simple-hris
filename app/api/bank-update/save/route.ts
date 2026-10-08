@@ -335,8 +335,11 @@ export async function POST(req: Request) {
       };
     });
 
-    // Await the audit write — a payout change must not be reported successful
-    // without leaving a trail.
+    // Awaited, but best-effort BY RULING (Kane, 2026-10-08, item 266 #3): a
+    // payout change still lands when its trail cannot be written, because a
+    // logging outage must never stop someone changing where they are paid. The
+    // attestation is on this row AND the history row below, so it is lost only
+    // when both writes fail. See update-bank-info.md § Failure modes.
     await insertAuditLog({
       user_name: match?.name || workEmail,
       user_role: "employee (external link)",
