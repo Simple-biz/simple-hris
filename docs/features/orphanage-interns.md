@@ -67,6 +67,15 @@ it is derived from `orphanage_dispatches` rows referencing `intern_pay_id`.
 
 ### Pricing — `src/lib/interns/intern-week-pay.ts` (pure, 15 tests)
 - `paid_day = min(round2(raw_day), dailyCap)`; the weekly cap is consumed chronologically.
+- **The caps are not constants in the pricer.** `priceInternWeek` takes them as inputs
+  (`dailyCapHours`, `weeklyCapHours`); the server pricer passes each intern's own
+  `orphanage_interns.daily_cap_hours` / `weekly_cap_hours` (`intern-week-server.ts`). They
+  default to **5 h a day and 5 h a week** (`INTERN_DEFAULTS` in `intern-types.ts`, and the column
+  defaults in the migration) and are editable per intern in the profile dialog.
+  **Measured 2026-10-07 (production, read-only):** all 9 profiles hold **5 h/day · 5 h/week · 50%
+  to the orphanage**, so in practice the weekly 5 h cap is the one that bites. Capped hours are
+  shown, never paid. Whether hours over 5 are payable is **Open item 396 (OPEN MONEY, Ralph then
+  Kane)**: no cap value changes until that ruling.
 - Rate = newest `effective_from <= day`; a mid-week change prices per day. Never edit a rate row —
   append (`orphanage_intern_rates`, unique per intern+date).
 - A paid day with no rate in force **refuses the week** (`no_rate_for_week`). Never ₱0.
@@ -97,6 +106,35 @@ it is derived from `orphanage_dispatches` rows referencing `intern_pay_id`.
 - Accounting **accepts or rejects (note required)**. It never edits an intern's hours, rate, bank or
   personal data — that is the Orphanage dashboard's.
 
+### The Review & lock in figure is ONE week, per intern — `intern-lock-summary.ts` (pure, 6 tests)
+- On the 2026-10-07 call Alivia read Step 4's bare **"To the interns ₱4,164.00"** as every week so
+  far. It is one week's total for every intern (measured: the 2026-09-27 → 10-03 preview, 9 interns).
+  So the figure now carries its scope wherever it appears:
+  - Step 4's card reads **"To the interns, this week"**, with *"across N interns · one week, not a
+    running total"* under it.
+  - Step 4's table has a **Capped h** column per intern (hours the caps removed, amber when > 0),
+    its last column is **To the intern**, and the footer reads **"Total this week · N interns"**.
+  - The confirm dialog's headline reads **"To the interns, this week: ₱… across N interns"**, with one
+    line per intern under it: hours paid, hours capped, amount.
+- `internLockSummary(rows)` is the one source for those figures: the card, the table footer's
+  interns' total and the dialog all read it, so they cannot disagree. It **sums figures the pricer
+  already produced and prices nothing**. A refused row is left out, because Lock in writes priced
+  rows only (`internPayRowsFromPreview`).
+- The dialog is height-capped (`max-h-[calc(100dvh-1.5rem)] sm:max-h-[92dvh]`). Its header,
+  totals and footer are pinned, and only the per-intern lines scroll, so **Lock in values** stays
+  reachable at any number of interns (`responsive-design.md` § Dialogs). Step 4's table stacks into
+  per-intern cards below 640 px; its `min-w-[720px]` applies from `sm:` up only, because a fixed
+  minimum width pushed every stacked value off-screen at phone width.
+- **The dialog has never opened in production.** It opens only from **Lock in values**, which is
+  disabled while any blocker stands, and `shareMode` has never been set (below). So until Q2 is
+  answered, Step 4's card is the only place this figure is seen.
+- Verified 2026-10-07 in headless Chromium on the real `InternsWizard` and dialog, fed fixture
+  weeks (synthetic names, the measured week's totals): 66 scripted checks at 1360 px (light and dark)
+  and 390 px (light and dark), plus a 40-intern dialog at 1360×768 and 390×667. They covered the
+  card, the table, the headline, every line, the long-name truncation, the dialog inside the
+  viewport, Lock in reachable, the lines scrolling, no page-wide horizontal scroll, and no console
+  errors. **Not clicked through signed in.**
+
 ### Dispatch
 - Accepted rows → `listPendingOrphanageItems` yields `intern_pay` (intern share, or gross under
   `intern_remits`) and, under `system_split`, `intern_orphanage_share` (bank from the orphanage
@@ -117,6 +155,8 @@ say why Lock in is refused.
 | Intern CSV parse (pure) | `src/lib/interns/intern-hours-csv.ts` (+test) |
 | Pricing + split + reconcile (pure) | `src/lib/interns/intern-week-pay.ts` (+test) |
 | PAB (pure) | `src/lib/interns/intern-pab.ts` (+test) |
+| One week's figure per intern (pure, display) | `src/lib/interns/intern-lock-summary.ts` (+test) |
+| Capped-hours measurement (read-only) | `scripts/measure-intern-capped-hours.mts` |
 | Config (pure) | `src/lib/interns/intern-config.ts` (+test) |
 | Types (client-safe) | `src/lib/interns/intern-types.ts` |
 | Server pricer | `src/lib/interns/intern-week-server.ts` |
@@ -135,15 +175,38 @@ say why Lock in is refused.
 transaction (default); `--apply` commits; `--verify` re-checks. 5 tables, 16 named CHECK/UNIQUE
 constraints, 6 indexes, RLS enabled with no policies, `orphanage_dispatches` gains two types +
 `intern_pay_id`, `orphanages` gains four receiving-bank columns. Needs `DATABASE_URL` = the session
-pooler (`@` in the password as `%40`). **Until it runs**, the Interns tab, the mini wizard and the
-Interns queue section have nothing to read and say so; nothing else touches these tables.
+pooler (`@` in the password as `%40`). **Applied**: measured present 2026-09-17 (memory
+`orphanage-interns`), and the 2026-10-07 measurement script read all six tables. Before it ran, the
+Interns tab, the mini wizard and the Interns queue section had nothing to read and said so; nothing
+else touches these tables.
 
 ## Open
 
+- **Open item 396 — OPEN MONEY, HOLD for Ralph, then Kane (2026-10-07 call).** Are hours over 5
+  payable, what does the program's new **monthly** payout change (this system is weekly by design),
+  and what is owed or recovered for past weeks? Nothing changes a cap, rate, amount or accepted week
+  until then. **Measured 2026-10-07** (`node --import tsx scripts/measure-intern-capped-hours.mts`,
+  read-only; totals only on screen, per-intern detail in a gitignored file under
+  `docs/audits/backups/`):
+  - **No intern week has ever been locked in.** `orphanage_intern_pay` holds 0 rows, and
+    `orphanage_dispatches` holds 0 intern rows. The audit trail has no `config_changed` and no
+    `week_submitted`. **`shareMode` has never been set.** So the HRIS has paid no intern: whatever
+    the interns were paid went outside this rail.
+  - 5 reports were uploaded and never locked in. Priced as the preview prices them (PAB ₱0, because no
+    week is locked): 34 intern-weeks, 9 interns, **486.03 h raw, 148.29 h paid, 337.74 h removed by
+    the caps** (21 intern-weeks over), pay = gross **₱29,658.00**, ₱14,829.00 to the interns and
+    ₱14,829.00 to the orphanage, all at ₱200/h. The two August weeks carry most of the capped hours
+    (143.59 h and 184.21 h for 4–5 interns, about 40 h each a week). The three September weeks carry
+    0.00 h, 0.14 h and 9.80 h. One August row is refused (`no_rate_for_week`).
+  - These are hours, not an amount owed. The script prices nothing that is capped.
 - **Q2 — the 50% mechanics (Ellie/Ralph).** `shareMode` is unset until they answer; no intern week can
   be locked before then. Both modes are built.
+- Steps 2 and 3 of the mini wizard keep a fixed `min-w-[860px]` / `min-w-[640px]` on tables that
+  stack below 640 px, so their stacked values sit off-screen at phone width (Step 4's was fixed
+  2026-10-07). Step 2 is a per-day grid, so the fix may be `table-keep` rather than stacking. Not done.
 - **Daily cap boundary** is the Manila calendar day of the report's weekday columns (assumed).
 - The `orphanages` receiving-bank fields are editable in the directory dialog; the directory list
   card does not yet show them.
 - Pre-existing, unrelated: `dept-label-render.test.ts` and `manager-time-adjustments-live.test.ts`
-  fail on `ManagerApp.tsx` at HEAD (not touched by this work).
+  fail on `ManagerApp.tsx` at HEAD (not touched by this work). **2026-10-07: no longer failing**:
+  `npm test` passed 6,291 of 6,291.

@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import InternLockConfirmDialog from './InternLockConfirmDialog';
 import { formatInternPHP, type InternHoursByDayEntry, type OrphanageInternHoursUploadRow, type OrphanageInternPayRow } from '@/lib/interns/intern-types';
+import { internLockSummary } from '@/lib/interns/intern-lock-summary';
 import type { InternWeekPreview, InternWeekPricedRow } from '@/lib/interns/intern-week-server';
 import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
 import { countOf } from '@/lib/refresh-progress/refresh-progress';
@@ -305,6 +306,9 @@ export default function InternsWizard({
       internPhp: sum((r) => r.internPhp),
     };
   }, [pricedRows]);
+  // ONE week's figure for every intern, per intern — Step 4's card and the
+  // confirm dialog both read it, so they cannot disagree (Open item 396).
+  const lockSummary = useMemo(() => internLockSummary(rows), [rows]);
 
   const days = preview ? weekDays(preview.weekStart) : [];
   const payoutWeek = preview?.pab.payoutWeek ?? false;
@@ -730,7 +734,12 @@ export default function InternsWizard({
                   <KpiCard label="PAB" value={formatInternPHP(totals.pabPhp)} tone={totals.pabPhp > 0 ? 'emerald' : 'zinc'} hint={payoutWeek ? 'payout week' : 'not the payout week'} />
                   <KpiCard label="Gross" value={formatInternPHP(totals.grossPhp)} tone="blue" hint="pay + PAB" />
                   <KpiCard label="To the orphanage" value={formatInternPHP(totals.orphanagePhp)} tone="pink" hint={preview.config.shareMode === 'intern_remits' ? 'remitted by the interns' : preview.config.shareMode === 'system_split' ? 'paid to the orphanage by Accounting' : 'share mode not set'} />
-                  <KpiCard label="To the interns" value={formatInternPHP(totals.internPhp)} tone="emerald" hint="the remainder — shares always sum to gross" />
+                  <KpiCard
+                    label="To the interns, this week"
+                    value={formatInternPHP(lockSummary.totalPhp)}
+                    tone="emerald"
+                    hint={`across ${lockSummary.internCount} intern${lockSummary.internCount === 1 ? '' : 's'} · one week, not a running total · each intern's share is in the table`}
+                  />
                 </div>
 
                 {!replay && preview.blockers.length > 0 && (
@@ -743,43 +752,46 @@ export default function InternsWizard({
                 )}
 
                 <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-                  <table className="w-full min-w-[720px] text-xs">
+                  <table className="w-full text-xs sm:min-w-[720px]">
                     <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900/60">
                       <tr>
                         <th className="px-3 py-2 text-left">Intern</th>
                         <th className="px-2 py-2 text-right">Paid h</th>
+                        <th className="px-2 py-2 text-right" title="Logged hours the daily and weekly caps removed: shown, never paid">Capped h</th>
                         <th className="px-2 py-2 text-right">Pay</th>
                         <th className="px-2 py-2 text-right">PAB</th>
                         <th className="px-2 py-2 text-right">Gross</th>
                         <th className="px-2 py-2 text-right">Orphanage</th>
-                        <th className="px-3 py-2 text-right">Intern</th>
+                        <th className="px-3 py-2 text-right">To the intern</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
                       {pricedRows.map((r) => (
                         <tr key={r.key}>
-                          <td className="px-3 py-2">
+                          <td data-label="Intern" className="px-3 py-2">
                             <div className="font-semibold text-zinc-900 dark:text-zinc-100">{r.name}</div>
                             <div className="font-mono text-[10px] text-zinc-400">{r.email}</div>
                           </td>
-                          <td className="px-2 py-2 text-right font-mono tabular-nums">{fmtHours(r.hoursPaid)}</td>
-                          <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.payPhp)}</td>
-                          <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.pabPhp)}</td>
-                          <td className="px-2 py-2 text-right font-mono font-semibold tabular-nums">{formatInternPHP(r.grossPhp)}</td>
-                          <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.orphanagePhp)}</td>
-                          <td className="px-3 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.internPhp)}</td>
+                          <td data-label="Paid h" className="px-2 py-2 text-right font-mono tabular-nums">{fmtHours(r.hoursPaid)}</td>
+                          <td data-label="Capped h" className={cn('px-2 py-2 text-right font-mono tabular-nums', r.cappedOff > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-400')}>{fmtHours(r.cappedOff)}</td>
+                          <td data-label="Pay" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.payPhp)}</td>
+                          <td data-label="PAB" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.pabPhp)}</td>
+                          <td data-label="Gross" className="px-2 py-2 text-right font-mono font-semibold tabular-nums">{formatInternPHP(r.grossPhp)}</td>
+                          <td data-label="Orphanage" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.orphanagePhp)}</td>
+                          <td data-label="To the intern" className="px-3 py-2 text-right font-mono tabular-nums">{formatInternPHP(r.internPhp)}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot className="bg-zinc-50 font-semibold dark:bg-zinc-900/60">
                       <tr>
-                        <td className="px-3 py-2">Total · {totals.interns} intern{totals.interns === 1 ? '' : 's'}</td>
-                        <td className="px-2 py-2 text-right font-mono tabular-nums">{fmtHours(totals.hoursPaid)}</td>
-                        <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.payPhp)}</td>
-                        <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.pabPhp)}</td>
-                        <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.grossPhp)}</td>
-                        <td className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.orphanagePhp)}</td>
-                        <td className="px-3 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.internPhp)}</td>
+                        <td className="px-3 py-2">Total this week · {totals.interns} intern{totals.interns === 1 ? '' : 's'}</td>
+                        <td data-label="Paid h" className="px-2 py-2 text-right font-mono tabular-nums">{fmtHours(totals.hoursPaid)}</td>
+                        <td data-label="Capped h" className="px-2 py-2 text-right font-mono tabular-nums">{fmtHours(totals.cappedOff)}</td>
+                        <td data-label="Pay" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.payPhp)}</td>
+                        <td data-label="PAB" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.pabPhp)}</td>
+                        <td data-label="Gross" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.grossPhp)}</td>
+                        <td data-label="Orphanage" className="px-2 py-2 text-right font-mono tabular-nums">{formatInternPHP(totals.orphanagePhp)}</td>
+                        <td data-label="To the interns" className="px-3 py-2 text-right font-mono tabular-nums">{formatInternPHP(lockSummary.totalPhp)}</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -828,7 +840,7 @@ export default function InternsWizard({
             open={confirmOpen}
             busy={submitting}
             weekLabel={weekLabel(preview.weekStart, preview.weekEnd)}
-            internCount={totals.interns}
+            summary={lockSummary}
             totals={totals}
             relock={status === 'rejected'}
             onCancel={() => setConfirmOpen(false)}

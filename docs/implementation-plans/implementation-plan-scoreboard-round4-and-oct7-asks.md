@@ -1338,19 +1338,38 @@ a denied call writes a production `external_api_requests` row (memory `external-
 
 **Steps 1–5 need no ruling. Everything after waits on W0.8, and it is money.**
 
-- [ ] **Step 1: Read and cite** `src/lib/interns/intern-week-pay.ts` (the **daily and weekly cap values** and where they
-  come from), `intern-pab.ts`, and `InternLockConfirmDialog.tsx` (the *"to the interns"* figure).
-- [ ] **Step 2: A read-only measurement script** (`scripts/measure-intern-capped-hours.mts`). Per locked or accepted
-  week, it prints: interns, raw hours, paid hours, **hours removed by the cap**, and gross paid. It prints totals only;
-  per-intern detail goes to a gitignored file under `docs/audits/backups/`. Kane runs it. Its output is what Ralph and
-  Kane rule on, instead of the call's "we owe them / we overpaid".
-- [ ] **Step 3: The popup label (`hardening`, display only).** Write a pure `internLockSummary(rows)` that returns
-  `{ internCount, totalPhp, lines: [{ name, hoursPaid, hoursCapped, amountPhp }] }`. Test it: three interns sum to the
-  total, and an intern with capped hours shows them. The dialog's headline becomes *"To the interns, this week:
-  ₱4,164.00 across 7 interns"*, with the per-intern lines under it. Alivia read the lump sum as all weeks.
-- [ ] **Step 4: `npm test`, `npm run lint`**, then render the dialog in the harness at 1360 and 390 px.
-- [ ] **Step 5: Commit** the script, the summary, its test, the dialog and the `orphanage-interns.md` update by explicit
-  path: `feat(interns): the lock-in popup says it is one week, split per intern (item 396)`.
+> **Steps 1–5 done 2026-10-07 (session `28856f9b`). The code and the data disagreed with this task in three places,
+> and the code won (Step 0):**
+> 1. **The cap values are not in `intern-week-pay.ts`.** The pricer takes `dailyCapHours` / `weeklyCapHours` as
+>    inputs. `intern-week-server.ts` passes each intern's `orphanage_interns.daily_cap_hours` / `weekly_cap_hours`,
+>    which default to 5 / 5 (`INTERN_DEFAULTS`, migration column defaults). All 9 profiles hold 5 / 5.
+> 2. **There is no locked or accepted week to measure.** Production has 0 `orphanage_intern_pay` rows, 0 intern dispatch
+>    rows, and `shareMode` has never been set (no `config_changed` in `audit_log`). So the script also prices the 5
+>    uploaded, never-locked weeks exactly as the wizard's preview does: 337.74 h removed by the caps out of 486.03 h raw.
+> 3. **The figure Alivia read was Step 4's "To the interns" card, not the dialog.** The dialog opens only from Lock in,
+>    which is refused while `shareMode` is unset. ₱4,164.00 is the 2026-09-27 → 10-03 preview, which covers **9**
+>    interns, not 7. The label was applied to Step 4's card and table **and** to the dialog. All three read one
+>    `internLockSummary`.
+
+- [x] **Step 1: Read and cite** `src/lib/interns/intern-week-pay.ts` (the cap **inputs**; the values come from the
+  intern's profile columns, see correction 1), `intern-pab.ts`, and `InternLockConfirmDialog.tsx` (the *"to the
+  interns"* figure).
+- [x] **Step 2: A read-only measurement script** (`scripts/measure-intern-capped-hours.mts`). Per locked or accepted
+  week, **and per uploaded week never locked in, priced as the preview prices it**, it prints: interns, raw hours, paid
+  hours, **hours removed by the cap**, and gross. It also prints the share mode, the cap values on the profiles, and the
+  intern audit trail. It prints totals only; per-intern detail goes to a gitignored file under `docs/audits/backups/`.
+  Run once 2026-10-07; Kane can re-run it. Its output is what Ralph and Kane rule on, instead of the call's "we owe
+  them / we overpaid".
+- [x] **Step 3: The popup label (`hardening`, display only).** A pure `internLockSummary(rows)` returns
+  `{ internCount, totalPhp, hoursPaid, hoursCapped, internsCapped, lines: [{ key, name, hoursPaid, hoursCapped,
+  amountPhp }] }` (6 tests: three interns sum to the total, capped hours show on their line, a refused row is left
+  out). **Step 4's card** reads *"To the interns, this week"*, with *"across 9 interns · one week, not a running
+  total"* under it. Its table gains a Capped h column. The dialog's headline is *"To the interns, this week:
+  ₱4,164.00 across 9 interns"*, with the per-intern lines under it.
+- [x] **Step 4: `npm test`, `npm run lint`**, then render Step 4 and the dialog in the harness at 1360 and 390 px
+  (66 scripted checks, light and dark, plus a 40-intern dialog).
+- [x] **Step 5: Commit** the script, the summary, its test, the dialog, the wizard and the `orphanage-interns.md`
+  update by explicit path: `feat(interns): the lock-in popup says it is one week, split per intern (item 396)`.
 - [ ] **After W0.8:** (i) if hours over 5 are payable, the cap change is a `hardening` money change on
   `intern-week-pay.ts` and its 15 tests, with Kane's go; (ii) a **monthly payout** is a `blueprint` (a pay month grouping
   accepted weeks, with dispatch per month), because the hand-off is weekly by design today; (iii) any catch-up or
