@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
+import { INTERN_DEFAULTS } from './intern-types';
 import { priceInternWeek, reconcileInternPayRow, splitInternGross, type InternWeekPriceInput } from './intern-week-pay';
 
 const H = 3600;
@@ -26,6 +27,27 @@ test('daily cap first, then the weekly cap on the capped sum', () => {
   // The weekly cap is consumed chronologically: Monday takes the whole allowance.
   assert.equal(r.hoursByDay['2026-08-31'].paid, 5);
   assert.equal(r.hoursByDay['2026-09-01'].paid, 0);
+});
+
+test("Ralph's 6 h cap (2026-10-08): 6.12 h logged pays 6.00; the 0.12 is shown as capped, never paid", () => {
+  const caps = { dailyCapHours: INTERN_DEFAULTS.dailyCapHours, weeklyCapHours: INTERN_DEFAULTS.weeklyCapHours };
+  assert.deepEqual(caps, { dailyCapHours: 6, weeklyCapHours: 6 });
+
+  // One long day: the daily cap must not undercut the weekly one (at 5 h/day this paid 5).
+  const oneDay = priceInternWeek({ ...week([0, 6.12, 0, 0, 0, 0, 0]), ...caps });
+  assert.ok(oneDay.ok);
+  assert.equal(oneDay.hoursPaid, 6);
+  assert.equal(oneDay.cappedOffHours, 0.12);
+  assert.equal(oneDay.payPhp, 1200);
+
+  // Spread over the week (the screenshot's shape): the cap bites on the day it runs out.
+  const spread = priceInternWeek({ ...week([1.67, 2.17, 2.67, 0, 0, 0, 0]), ...caps });
+  assert.ok(spread.ok);
+  assert.equal(spread.hoursPaid, 6);
+  assert.equal(spread.cappedOffHours, 0.51);
+  assert.equal(spread.hoursByDay['2026-09-01'].paid, 2.16);
+  assert.equal(spread.hoursByDay['2026-09-01'].raw, 2.67);
+  assert.equal(spread.payPhp, 1200);
 });
 
 test('never overtime, never a premium: 20 raw hours pay exactly cap × rate', () => {

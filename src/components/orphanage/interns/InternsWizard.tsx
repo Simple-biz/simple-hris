@@ -628,7 +628,15 @@ export default function InternsWizard({
                               </td>
                             );
                           })}
-                          <td className="px-2 py-2 text-right font-mono font-semibold tabular-nums">{r.refusal ? '—' : fmtHours(r.hoursPaid)}</td>
+                          <td className="px-2 py-2 text-right font-mono tabular-nums">
+                            {r.refusal ? '—' : (
+                              <>
+                                <span className="font-semibold">{fmtHours(r.hoursPaid)}</span>
+                                {/* Logged = paid + capped, the sum of the day cells' "of" figures. Shown, never paid. */}
+                                {r.cappedOff > 0 && <span className="block text-[10px] text-amber-600 dark:text-amber-400">of {fmtHours(round2(r.hoursPaid + r.cappedOff))}</span>}
+                              </>
+                            )}
+                          </td>
                           <td className="px-2 py-2 text-right font-mono tabular-nums">
                             {r.ratePhp == null ? '—' : formatInternPHP(r.ratePhp)}
                             {r.mixedRates && <span className="block text-[10px] text-zinc-400">changed mid-week</span>}

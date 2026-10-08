@@ -69,13 +69,35 @@ it is derived from `orphanage_dispatches` rows referencing `intern_pay_id`.
 - `paid_day = min(round2(raw_day), dailyCap)`; the weekly cap is consumed chronologically.
 - **The caps are not constants in the pricer.** `priceInternWeek` takes them as inputs
   (`dailyCapHours`, `weeklyCapHours`); the server pricer passes each intern's own
-  `orphanage_interns.daily_cap_hours` / `weekly_cap_hours` (`intern-week-server.ts`). They
-  default to **5 h a day and 5 h a week** (`INTERN_DEFAULTS` in `intern-types.ts`, and the column
-  defaults in the migration) and are editable per intern in the profile dialog.
-  **Measured 2026-10-07 (production, read-only):** all 9 profiles hold **5 h/day · 5 h/week · 50%
-  to the orphanage**, so in practice the weekly 5 h cap is the one that bites. Capped hours are
-  shown, never paid. Whether hours over 5 are payable is **Open item 396 (OPEN MONEY, Ralph then
-  Kane)**: no cap value changes until that ruling.
+  `orphanage_interns.daily_cap_hours` / `weekly_cap_hours` (`intern-week-server.ts`). They are
+  editable per intern in the profile dialog.
+- **The cap is 6 h a day and 6 h a week (Ralph via Kane, 2026-10-08, Open item 417).** Kane: *"instead
+  of it being 5 hours capped, can you make it 6 … if any of it goes over its not paid … worked 6.12
+  hrs have it show the full total hours … but make it only pay out the correct amount, 6"*. So
+  6.12 h logged pays 6.00 h, and the 0.12 h is **shown, never paid** (test: *"Ralph's 6 h cap"*).
+  Both caps moved together: at 5 h/day a single 6.12 h day would still have paid 5.
+  - The 9 live profiles were moved 5/5 → 6/6 by `scripts/set-intern-caps-6h.mts` (**APPLIED
+    2026-10-08, 9/9**, G3 re-read ok; backup of the old rows in gitignored `docs/audits/backups/`;
+    one `orphanage_intern.saved` audit row each). It changes only profiles still at exactly 5/5, so
+    a cap someone set on purpose is never overwritten.
+  - New profiles take `INTERN_DEFAULTS` (`intern-types.ts`), now **6 / 6**, which the profile dialog
+    always sends. **The migration's column defaults still say 5**, so an API create that omits the
+    caps gets 5/5. Nothing in the app does that today.
+  - A **locked** week is never repriced by a cap change: it stores its own `hours_by_day` and money,
+    and `reconcileInternPayRow` re-derives from those. Every **unlocked** week's preview reprices on
+    its next read. Measured at apply time: the 2026-09-27 → 10-03 preview went from 41.64 h paid,
+    9.80 h capped, ₱4,164.00 to the interns (at 5 h) to **48.38 h paid, 3.06 h capped, ₱4,838.00**
+    (at 6 h), PAB left out.
+  - Superseded: the 5 h/day · 5 h/week default from the 2026-09-02 meeting, which all 9 profiles held
+    when measured 2026-10-07. Until this ruling, item 396 held every cap value.
+  - **Not ruled: "next time".** Kane relayed Ralph: *"this time we are going to pay the overage but
+    next time we are not"*. Whether the cap goes back to 5 for a later week, and from which week, is
+    unsaid. A cap is per profile, not per week, so setting it back would also reprice every week not
+    yet locked. Item 417 holds the question.
+- The PAB threshold is **not** the cap: PAB still needs ≥ 5 paid hours every week (below).
+- Step 2's table shows what the cap removed in two places: a capped day cell reads *"paid / of
+  logged"*, and the **Paid h** column does the same for the week (*"6.00 / of 6.12"*), where logged =
+  paid + capped, so it is the sum of the day cells' figures.
 - Rate = newest `effective_from <= day`; a mid-week change prices per day. Never edit a rate row —
   append (`orphanage_intern_rates`, unique per intern+date).
 - A paid day with no rate in force **refuses the week** (`no_rate_for_week`). Never ₱0.
@@ -157,6 +179,7 @@ say why Lock in is refused.
 | PAB (pure) | `src/lib/interns/intern-pab.ts` (+test) |
 | One week's figure per intern (pure, display) | `src/lib/interns/intern-lock-summary.ts` (+test) |
 | Capped-hours measurement (read-only) | `scripts/measure-intern-capped-hours.mts` |
+| Caps 5 → 6 on the live profiles (`--apply`, APPLIED 2026-10-08) | `scripts/set-intern-caps-6h.mts` |
 | Config (pure) | `src/lib/interns/intern-config.ts` (+test) |
 | Types (client-safe) | `src/lib/interns/intern-types.ts` |
 | Server pricer | `src/lib/interns/intern-week-server.ts` |
@@ -182,10 +205,11 @@ else touches these tables.
 
 ## Open
 
-- **Open item 396 — OPEN MONEY, HOLD for Ralph, then Kane (2026-10-07 call).** Are hours over 5
-  payable, what does the program's new **monthly** payout change (this system is weekly by design),
-  and what is owed or recovered for past weeks? Nothing changes a cap, rate, amount or accepted week
-  until then. **Measured 2026-10-07** (`node --import tsx scripts/measure-intern-capped-hours.mts`,
+- **Open item 396 — OPEN MONEY, Ralph then Kane (2026-10-07 call).** **The cap is ruled (2026-10-08,
+  item 417): 6 h, hours over it shown and never paid**, applied to all 9 profiles (§ Pricing). Still
+  open: what the program's new **monthly** payout changes (this system is weekly by design), what is
+  owed or recovered for past weeks, and whether the cap returns to 5 "next time" (item 417). Nothing
+  changes a rate, an amount or an accepted week until then. **Measured 2026-10-07, at the old 5 h caps** (`node --import tsx scripts/measure-intern-capped-hours.mts`,
   read-only; totals only on screen, per-intern detail in a gitignored file under
   `docs/audits/backups/`):
   - **No intern week has ever been locked in.** `orphanage_intern_pay` holds 0 rows, and

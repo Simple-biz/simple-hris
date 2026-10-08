@@ -9,11 +9,13 @@ export type InternShareMode = 'system_split' | 'intern_remits';
 /** How a locked week's PAB figure was produced. Ralph fixed the rule (weekly hours). */
 export type InternPabMode = 'weekly_hours' | 'not_payout_week';
 
-/** The meeting's numbers. Per-intern columns carry these as DB defaults too. */
+/** The meeting's numbers. The caps are Ralph's 6 h (via Kane, 2026-10-08; was 5 h): hours over
+ *  them are shown, never paid. The migration's column defaults still say 5, so a create MUST send
+ *  the caps (InternDialog always does); the live profiles were moved by scripts/set-intern-caps-6h.mts. */
 export const INTERN_DEFAULTS = {
   ratePhp: 200,
-  weeklyCapHours: 5,
-  dailyCapHours: 5,
+  weeklyCapHours: 6,
+  dailyCapHours: 6,
   pabBonusPhp: 1000,
   orphanageSharePct: 50,
 } as const;
