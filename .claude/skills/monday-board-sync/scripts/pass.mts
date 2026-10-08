@@ -826,15 +826,47 @@
  *     inputs, 22 minutes after the push (14:45Z), and the week went Ready at 15:08Z. Its total moved
  *     from the 10-06 morning's PHP 103,449.96 (code) to PHP 87,704.49. The deploy gate said Ready
  *     first. That is a money finding for Kane, not a board blocker.
+ *
+ * ── PASS 42 · 2026-10-08 — every Sprint 30 commit accounted for, pass 41 folded in ──────────────────
+ * Kane: "Summon the monday skill and check our commits make sure we log every single one into Monday
+ * sprint 30". Pass 41 was never applied (hash a5329d0f1366 waited on Kane), so its 16 rows ride here,
+ * re-derived, with this pass's 19 new rows and one advance of a row already on the board.
+ *
+ * COVERAGE, measured not assumed: 200 commits are authored inside S30 (Sep 29 onward). Each sha was
+ * grepped against every version of pass.mts and hris-plan.ts since 09-20 plus the two 10-02 paste TSVs.
+ * 73 were uncited: 59 in 05b48730..6745bafd (its other 3 are Kane's KANE_EXCLUDED sign-in song
+ * commits) and 14 dated 10-02 that fell between pass 38 (ended 89b4347f) and pass 40 (started
+ * 4aa73d38). 27e69bca then landed from a concurrent session mid-pass, making 74, and the range closes
+ * on it: 05b48730..27e69bca is 63 commits. Of the fourteen, three are code: 9d6225b6 (its own row),
+ * 9129b1d0 (pass 41's NPD "leaves out" row, the version 089357f9 reversed) and f082ba96 (the OMS row).
+ * e88315ac is a security doc (its own row). The other ten are board-sync bookkeeping. Every uncited
+ * sha is now on a row or named in the hris-plan.ts pass 42 note as bookkeeping.
+ *
+ * MEASURED read-only 2026-10-08 (every migration by its own --verify, every data step by its plan run):
+ *   • Seven migrations APPLIED, all checks passed: address letter (item 375, CLEARS pass 41's blocker),
+ *     scoreboard custom-host (385), outcomes + zero problems (387), overview visibility (391), Pre-arb
+ *     flag (392), external API offboarded scope (389), bank_update_history.safety (401).
+ *   • Arriola (item 384) APPLIED, which CLEARS pass 41's blocker by another route: the revert script's
+ *     guards read the reverted values, the stamp reads 07-16 duplicate_cleanup by
+ *     system:arriola-ghost-redate-2026-10-07, and both Lead Gen bonus rows read MISSING. The stamp
+ *     script it was blocked on was never applied; Kane's ruling (b) replaced it.
+ *   • COP rates (item 373) APPLIED: the dry run finds every pay structure, the Lead Gen (COP) bonus
+ *     and the one applied row already in COP.
+ *   • PAB forgive backfill (item 363) STILL NOT RUN: the dry run plans the same 19 rows. BLOCKER stays.
+ *   • OMS production env: UNVERIFIED. No Vercel CLI on this machine, so it is named as a blocker.
+ * Push state after a fetch: origin/main is 63500994, local main 11 ahead. c88c554c, 42388492 and
+ * 27e69bca are local only, so their rows are In Progress. Kane has given no word on any row, so every
+ * pushed row is Pending Deploy. One row goes Done on USE (the pass 17 precedent): the KANE_EXCLUDED
+ * evidence tooling, which this very pass ran.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
-export const PASS_DATE = '2026-10-07';
-export const AUDIT_RANGE = 'a1a9860d..05b48730';
-export const AUDIT_COMMITS = 28;
+export const PASS_DATE = '2026-10-08';
+export const AUDIT_RANGE = '05b48730..27e69bca';
+export const AUDIT_COMMITS = 63;
 
 /** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
 const ON_MAIN =
@@ -871,6 +903,16 @@ const ON_MAIN_1007 =
   'Vercel deploys main, but Kane has not confirmed it live. It goes Done on his word, with the last ' +
   'sha\'s commit date (2026-10-06) as the Completed Date.';
 const pd41 = (what: string) => `PENDING DEPLOY. ${what} ${ON_MAIN_1007}`;
+/** Pass 42's standing proof states, measured after a fetch on 2026-10-08 (origin/main 63500994). */
+const ON_MAIN_1008 =
+  'Every sha is an ancestor of origin/main (re-checked after a fetch on 2026-10-08), and Vercel ' +
+  'deploys main, but Kane has not confirmed it live. It goes Done on his word, with the last sha\'s ' +
+  'commit date as the Completed Date.';
+const pd42 = (what: string) => `PENDING DEPLOY. ${what} ${ON_MAIN_1008}`;
+const LOCAL_1008 =
+  'IN PROGRESS: the last sha is committed on local main and NOT on origin/main (11 ahead after a ' +
+  'fetch on 2026-10-08). Kane pushes; once it is on origin/main it is Pending Deploy.';
+const ip42 = (what: string) => `${LOCAL_1008} ${what}`;
 /** Dev tooling has no prod surface, so it goes Done on USE (the pass 17 precedent). */
 const used = (what: string) =>
   `DONE ON USE. Dev tooling with no prod surface (the pass 17 precedent): selfcheck() runs it over the ` +
@@ -925,15 +967,14 @@ export const ROWS: PassRow[] = [
     name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date',
     status: 'Pending Deploy',
     shas: ['33fccfbc', 'ca4e5514'],
-    basis: pd41("Item 363, Kane's ruling (b): the 4h floor is retired. 33fccfbc shows every forgiven date with its own hours and makes it revocable; ca4e5514 stores no hours on a forgive. The backfill that clears the 19 legacy stored-hours rows has NOT run (dry run measured 2026-10-07)."),
-    blockers: ['scripts/backfill-pab-forgive-no-hours.mts --apply (19 rows, measured 2026-10-07; the doc calls it verdict-neutral)'],
+    basis: pd41("Item 363, Kane's ruling (b): the 4h floor is retired. 33fccfbc shows every forgiven date with its own hours and makes it revocable; ca4e5514 stores no hours on a forgive. The backfill that clears the 19 legacy stored-hours rows has NOT run (dry run measured 2026-10-07, and again 2026-10-08: still 19 rows)."),
+    blockers: ['scripts/backfill-pab-forgive-no-hours.mts --apply (19 rows, re-measured 2026-10-08; the doc calls it verdict-neutral)'],
   },
   {
-    name: "A guarded script retires Mark Arriola's name-in-email ghost master row",
+    name: "Mark Arriola's name-in-email ghost master row is retired - three People edits reverted, its stamp re-dated to 07-16, and its two Lead Gen bonus rows deleted",
     status: 'Pending Deploy',
-    shas: ['976c58d9', 'e0f6773e'],
-    basis: pd41('Item 364. 976c58d9 is the finding: the HR banner on the ghost row was correct. e0f6773e is the guarded stamp script; its 2026-10-06 plan run passed every guard. It has NOT been applied, and on 2026-10-07 the plan run REFUSES on 2 guards: jakec@ wrote marka@simple.biz and a real personal email onto the ghost row at 2026-10-06 16:27Z.'),
-    blockers: ["stamp-arriola-ghost-row.mts --apply, which now refuses: the ghost row was edited 2026-10-06 16:27Z and needs Kane's ruling first"],
+    shas: ['976c58d9', 'e0f6773e', '6ed59243', '59d7908a', '2077e215'],
+    basis: pd42("Items 364 and 384. 976c58d9 is the finding. e0f6773e, the guarded stamp script, was never applied: on 2026-10-07 it refused because jakec@ had edited the ghost row. Kane's ruling (b) retired it with three other guarded scripts: 6ed59243 reverts the three People-edited fields, 59d7908a re-dates the queue's 10-07 stamp to 07-16 duplicate_cleanup, and 2077e215 deletes the ghost key's two Lead Gen applied rows (09-20 PHP 750, 09-27 PHP 0). The doc records them APPLIED 2026-10-08 01:28Z, and that is MEASURED read-only 2026-10-08: the revert script's guards read the reverted values, the stamp reads 07-16 duplicate_cleanup by system:arriola-ghost-redate-2026-10-07, and both bonus rows read missing. No external step is open."),
   },
   {
     name: 'SSD Medical Records is scored from its Payment Catalog formula - the colour-team workspace is gone',
@@ -950,8 +991,8 @@ export const ROWS: PassRow[] = [
   {
     name: 'HRIS vs NPD leaves out anyone configured not to be paid this week - excluded or paused are not rows, and one line counts them',
     status: 'Pending Deploy',
-    shas: ['7dbd82a3', '089357f9'],
-    basis: pd41("Item 367. 7dbd82a3 is the hard stop (it reverses Kane's 10-02 rows-with-reason ruling); 089357f9 is the fix after his answer."),
+    shas: ['9129b1d0', '7dbd82a3', '089357f9'],
+    basis: pd41("Items 339 and 367. 9129b1d0 (10-02, found uncited by pass 42) was the first version: such people stayed rows, with the reason stated in Match. 7dbd82a3 is the hard stop that reverses that ruling; 089357f9 is the fix after Kane's answer, and the row describes the current rule only."),
   },
   {
     name: 'HRIS vs NPD says why under every Mismatch, Not in HRIS and Not in NPD row, and Export CSV gains a Why column',
@@ -969,8 +1010,7 @@ export const ROWS: PassRow[] = [
     name: 'Proof of Residential Address letter - Accounting-only, issued signed from the Signing Queue',
     status: 'Pending Deploy',
     shas: ['897b5237', '5935c119'],
-    basis: pd41("Item 375, from Aliviah's 10-06 email (897b5237). Its migration is MEASURED NOT applied 2026-10-07: document_requests_document_type_check admits only paystub / coe / award / other, and an 'address' control row is refused, so issuing a letter fails until it runs."),
-    blockers: ['scripts/apply-address-letter-migration.mts --apply (measured not applied 2026-10-07)'],
+    basis: pd41("Item 375, from Aliviah's 10-06 email (897b5237). Its migration was measured NOT applied on 2026-10-07 and is MEASURED APPLIED 2026-10-08: --verify passes every check, an 'address' row is accepted, an unknown type is still refused, and no row was added (64 to 64). No external step is open."),
   },
   {
     name: 'An opened paystub in Dispatch Preview Emails has a Refresh - a background re-read of every outside source, with a strip naming the lines that moved',
@@ -1001,6 +1041,130 @@ export const ROWS: PassRow[] = [
     status: 'Pending Deploy',
     shas: ['05b48730'],
     basis: pd41('Item 381.'),
+  },
+  // —── PASS 42 · 2026-10-08 · Oct 7-8 plus three Oct 2 strays, 19 new rows / 67 SP + 1 advance ─────
+  // Pushed rows are Pending Deploy (no word from Kane). Rows whose last sha is local are In Progress.
+  {
+    name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS',
+    status: 'Pending Deploy',
+    shas: ['0fa0b89d', 'f082ba96', 'fc7c9d99', 'fde162ed'],
+    basis: pd42("Item 334. Advances from In Progress: the one thing that held it in code, the button that opens the modal, is wired (f082ba96, 10-02, found uncited by pass 42), and fc7c9d99 stops the modal clipping the Amount. fde162ed is the return-table SQL sent to OMS's developer, and OMS has created hris_orphanage_returns in its own project (6a292705). What is left is outside the repo."),
+    blockers: ["The OMS env in Vercel production: OMS_SUPABASE_URL and OMS_SUPABASE_KEY pointed at OMS's live project, and OMS_RETURN_TABLE set. UNVERIFIED: there is no Vercel CLI on this machine. .env.local carries all three names."],
+  },
+  {
+    name: "HRIS vs NPD reads NPD's locked sheets itself once both All Departments and HSL are locked, and Save output proves the feed against them",
+    status: 'Pending Deploy',
+    shas: ['9d6225b6'],
+    basis: pd42("Item 337, 2026-10-02, found uncited by pass 42 (it fell between pass 38 and pass 40). A new read-only npd-feed route sends rows only when both tabs are locked for the wizard week; the sheets become a paste parsed by the unchanged rules, and Save output refuses a feed whose sheets changed (409). The commit says no week had both tabs locked yet."),
+  },
+  {
+    name: 'An Accounting Scoreboard custom section can sit inside a built-in tab, and the onboarding section becomes Sales - Payments',
+    status: 'Pending Deploy',
+    shas: ['72f96e70'],
+    basis: pd42('Item 385. Its migration is MEASURED applied 2026-10-08 (--verify, all checks passed).'),
+  },
+  {
+    name: 'Every Accounting Scoreboard section can take a goal - Open Disputes is scored like Buckets, Outcomes on a win ratio, and a payroll problem line may be 0',
+    status: 'Pending Deploy',
+    shas: ['0b8748f6', '34b937a2'],
+    basis: pd42('Item 387. Its migration is MEASURED applied 2026-10-08 (--verify, all checks passed). 34b937a2 (item 399) is folded in by file overlap: it fixes the round 3 --verify script that 0b8748f6 also edits, so it checks invariants rather than the seed.'),
+  },
+  {
+    name: "Carla's Team Score on the Accounting Scoreboard Overview, on the same pace as the lights",
+    status: 'Pending Deploy',
+    shas: ['fb080059'],
+    basis: pd42("Item 388, the Team Score only. It also fixes a paced \"below\" light that read better with more problems. The spec's nine card edits are NOT in this row: they wait on Carla."),
+  },
+  {
+    name: 'An Accounting Scoreboard section can be hidden from the Overview and the Team Score',
+    status: 'Pending Deploy',
+    shas: ['476b6b9f'],
+    basis: pd42('Item 391 (2). Its migration is MEASURED applied 2026-10-08 (--verify, all checks passed).'),
+  },
+  {
+    name: "The Accounting Scoreboard No Meeting Streak shows as this week's date pills",
+    status: 'Pending Deploy',
+    shas: ['f770d29b'],
+    basis: pd42('Item 391 (3).'),
+  },
+  {
+    name: 'Accounting Scoreboard Losses and Pre-arb show negative with a Net, set by a flag and never a typed sign, and Pre-arb counts as a loss in the win ratio',
+    status: 'In Progress',
+    shas: ['63500994', 'c88c554c'],
+    basis: ip42("Item 392, Kane's ruling that Pre-arb is a loss. 63500994 is pushed; c88c554c (Pre-arb in the win ratio) is not. The Pre-arb flag migration is MEASURED applied 2026-10-08 (--verify, all checks passed)."),
+  },
+  {
+    name: "A guarded script clears one week's untyped Payroll Problems grid counts on the Accounting Scoreboard",
+    status: 'In Progress',
+    shas: ['42388492'],
+    basis: ip42("Item 391 (4), Kane's ruling (a). Kane cleared the 2026-10-05 grid with it, measured afterwards (6745bafd)."),
+  },
+  {
+    name: 'Payout change safety on both self-service bank saves - a notice to acknowledge, and card and holder checks that ask to confirm and never block',
+    status: 'Pending Deploy',
+    shas: ['eb9a0005'],
+    basis: pd42('Item 401. Its migration (bank_update_history.safety) is MEASURED applied 2026-10-08 (--verify, all checks passed). The docs record it pushed and deployed on 2026-10-08, with a signed-in pass still owed.'),
+  },
+  {
+    name: 'Self-service bank saves fail closed on an unreadable payroll lock, and the code check answers the same for every email',
+    status: 'In Progress',
+    shas: ['27e69bca'],
+    basis: ip42('Item 402, which closes two of the four gaps item 266 found on the public bank-update flow. Committed 2026-10-08 by a concurrent session while this pass ran.'),
+  },
+  {
+    name: 'The Offboarded list is a second dataset an external API key can read - REST and MCP, behind its own scope',
+    status: 'Pending Deploy',
+    shas: ['4cf42388', 'cb0b94d4'],
+    basis: pd42("Items 389 and 395. Its scope migration is MEASURED applied 2026-10-08 (--verify, all checks passed). cb0b94d4 is the read-only probe that measured the job portal's key reading it in production on 2026-10-07, and Kane closed item 395 on that."),
+  },
+  {
+    name: 'Time adjustment requests filed under an alternate work email resolve to their owner',
+    status: 'Pending Deploy',
+    shas: ['c073e076'],
+    basis: pd42('Item 390. The pay overlay for such requests is NOT bridged, an open money item beside this row, not inside it.'),
+  },
+  {
+    name: "A returned offboarding queue row notifies the requester and the department's managers",
+    status: 'Pending Deploy',
+    shas: ['3e5f960e'],
+    basis: pd42('Item 397. Never the returner or the subject.'),
+  },
+  {
+    name: 'The interns lock-in popup says it locks one week, split per intern',
+    status: 'Pending Deploy',
+    shas: ['134ce6b9'],
+    basis: pd42('Item 396, the label and the capped-hours measurement. The money question beside it (no intern week has ever been locked in prod) is on HOLD with Kane and is not this row.'),
+  },
+  {
+    name: "COP rates are stored as COP - the Colombians' hourly rates convert at each cycle's FX and still pay on their processor rails",
+    status: 'Pending Deploy',
+    shas: ['14ea111a'],
+    basis: pd42("Item 373, Kane's reading (a). Its data step is MEASURED applied 2026-10-08: the dry run finds every pay structure, the Lead Gen (COP) bonus and the one applied row already in COP. Open beside it, as a money note for Kane (not a board blocker): the 09-27 week was paid through NPD, so confirm it before paying."),
+  },
+  {
+    name: 'The Oct 7 Carla and Alivia call becomes a 13-task round 4 plan in four waves, with one paste-ready session prompt per task',
+    status: 'Pending Deploy',
+    shas: ['cf2b5ff5', '9118312f', '7ae4536c', '9e4eee8e'],
+    basis: pd42("Docs only. cf2b5ff5's meeting doc (its skill half is the meeting-notes row), the round 4 implementation plan (9118312f), a session prompt per task (7ae4536c), and Kane's rulings on the Oct 7 asks (9e4eee8e)."),
+  },
+  {
+    name: 'The meeting-notes skill is ported from Gridline - a call writes its notes, its INDEX links and an Open items row for every ask',
+    status: 'Pending Deploy',
+    shas: ['cf2b5ff5'],
+    basis: pd42("The skill and CLAUDE.md half of cf2b5ff5; the meeting doc in the same commit is the round 4 plan row's."),
+  },
+  {
+    name: 'Security review - API keys on phones, certificate pinning and deep links, answered from the code and a production probe',
+    status: 'Pending Deploy',
+    shas: ['e88315ac'],
+    basis: pd42('Item 336, 2026-10-02, found uncited by pass 42. Docs only, no code changed. Findings are in the repo report, not on this board.'),
+  },
+  {
+    name: 'The Monday evidence run lists the work Kane rules off the board and keeps it out of every row',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['53c53342'],
+    basis: "DONE ON USE. Dev tooling with no prod surface (the pass 17 precedent): pass 42's own sprint-evidence run on 2026-10-08 printed the three sign-in song commits under \"excluded by Kane\" and left them out of the per-commit list and the unpushed count. The sha is on origin/main. Completed Date is its commit date.",
   },
 ];
 

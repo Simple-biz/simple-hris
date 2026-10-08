@@ -2248,6 +2248,9 @@ export const PLAN_TASKS: PlanTask[] = [
   // ROLLS TO S30, and it is In Progress, NOT Pending Deploy. The panel button that opens the dialog was
   // never added (a permission classifier refused that one edit). OMS_RETURN_TABLE is unset even in
   // .env.local, and the OMS team has not created the table. See [[orphanage-oms-pull]].
+  // PASS 42 (2026-10-08) moves it to Pending Deploy: f082ba96 (10-02) wired the button and fc7c9d99
+  // (10-07) stopped the modal clipping, both pushed; OMS created hris_orphanage_returns in its own
+  // project (6a292705). Still open outside the repo: the production env (URL, key, OMS_RETURN_TABLE).
   { epic: 'HRIS-03c', name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
 
   // —── PASS 36, continued 2026-09-30 · Sep 29, 11 rows, 33 SP — the commits after the staging ────────
@@ -2363,7 +2366,10 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-07', name: 'MESA saving but not deducted no longer counts opted-out members - saving needs an open account', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-23', name: 'The whole People tab paints from the cache - roster and summary as one entry, the week list, Statistics and Bank changes', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-02a', name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
-  { epic: 'HRIS-12', name: "A guarded script retires Mark Arriola's name-in-email ghost master row", type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Low' },
+  // Renamed and re-scored 3 → 5 by pass 42 (2026-10-08) before it ever reached the board, so no row is
+  // orphaned: the stamp script (e0f6773e) was never applied. Kane's ruling (b) retired the ghost with
+  // three other guarded scripts instead (6ed59243 revert, 59d7908a re-date, 2077e215 bonus rows).
+  { epic: 'HRIS-12', name: "Mark Arriola's name-in-email ghost master row is retired - three People edits reverted, its stamp re-dated to 07-16, and its two Lead Gen bonus rows deleted", type: 'Chore', sp: 5, done: false, sprint: 'S30', priority: 'Low' },
   { epic: 'HRIS-30', name: 'SSD Medical Records is scored from its Payment Catalog formula - the colour-team workspace is gone', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-02a', name: "HRIS vs NPD Export CSV - every row whatever the search or chip, with the person's paystub as Notes on a Mismatch or Not in NPD row", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-02a', name: 'HRIS vs NPD leaves out anyone configured not to be paid this week - excluded or paused are not rows, and one line counts them', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
@@ -2375,4 +2381,36 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-06', name: 'Accounting Scoreboard typed Payroll Problems log, and custom sections on top of Setup', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-06', name: 'The Accounting Scoreboard paints from the browser cache - no loader on reload, no wait on a cached week, silent refreshes', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-06', name: 'The Accounting Scoreboard loading modal is accurate - the GET streams each group of reads, and the bar is green only once the board is painted', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  // —── PASS 42 · 2026-10-08 · Oct 7-8 plus three Oct 2 strays, 19 rows, 67 SP, all Sprint 30 ─────────
+  // Kane: "check our commits make sure we log every single one into Monday sprint 30". Every commit
+  // authored Sep 29 onward was checked against every sha any pass.mts or plan version has cited: 73 were
+  // uncited. Range 05b48730..27e69bca (63 commits) plus three Oct 2 commits that fell between pass 38
+  // (ended 89b4347f) and pass 40 (started 4aa73d38): 9d6225b6 (its own row), 9129b1d0 (the superseded
+  // first half of pass 41's "leaves out anyone configured not to be paid" row, reversed by 089357f9) and
+  // f082ba96 (the OMS row above). Clustered by FILE OVERLAP; the scoreboard commits share shell files
+  // but each carries its own lib and test, so each is its own row. Folded in by overlap: 34b937a2 (the
+  // round 3 --verify script 0b8748f6 also edits), cb0b94d4 (the offboarded-read probe). cf2b5ff5 is
+  // split, as 26292c44 was: the meeting doc goes to the round 4 plan row, the skill and CLAUDE.md to the
+  // meeting-notes row. No row (bookkeeping or status notes on rows that exist): 86f12843, 66cba381,
+  // 0023dcec, a7c85130, the "row names its commit" audit edits, the "migration APPLIED" doc notes and
+  // the OMS status docs. Ruled off the board by Kane: f6871f96 / 67630238 / ce1d5cd4. Names are ASCII.
+  { epic: 'HRIS-02a', name: "HRIS vs NPD reads NPD's locked sheets itself once both All Departments and HSL are locked, and Save output proves the feed against them", type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: 'An Accounting Scoreboard custom section can sit inside a built-in tab, and the onboarding section becomes Sales - Payments', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Every Accounting Scoreboard section can take a goal - Open Disputes is scored like Buckets, Outcomes on a win ratio, and a payroll problem line may be 0', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "Carla's Team Score on the Accounting Scoreboard Overview, on the same pace as the lights", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'An Accounting Scoreboard section can be hidden from the Overview and the Team Score', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "The Accounting Scoreboard No Meeting Streak shows as this week's date pills", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Accounting Scoreboard Losses and Pre-arb show negative with a Net, set by a flag and never a typed sign, and Pre-arb counts as a loss in the win ratio', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: "A guarded script clears one week's untyped Payroll Problems grid counts on the Accounting Scoreboard", type: 'Chore', sp: 3, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-25', name: 'Payout change safety on both self-service bank saves - a notice to acknowledge, and card and holder checks that ask to confirm and never block', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-25', name: 'Self-service bank saves fail closed on an unreadable payroll lock, and the code check answers the same for every email', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-14', name: 'The Offboarded list is a second dataset an external API key can read - REST and MCP, behind its own scope', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-04', name: 'Time adjustment requests filed under an alternate work email resolve to their owner', type: 'Bug', sp: 3, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-01a', name: "A returned offboarding queue row notifies the requester and the department's managers", type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-03c', name: 'The interns lock-in popup says it locks one week, split per intern', type: 'Feature', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-02a', name: "COP rates are stored as COP - the Colombians' hourly rates convert at each cycle's FX and still pay on their processor rails", type: 'Bug', sp: 5, done: false, sprint: 'S30', priority: 'Critical' },
+  { epic: 'HRIS-06', name: 'The Oct 7 Carla and Alivia call becomes a 13-task round 4 plan in four waves, with one paste-ready session prompt per task', type: 'Spike', sp: 3, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'The meeting-notes skill is ported from Gridline - a call writes its notes, its INDEX links and an Open items row for every ask', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-05', name: 'Security review - API keys on phones, certificate pinning and deep links, answered from the code and a production probe', type: 'Spike', sp: 2, done: false, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-15', name: 'The Monday evidence run lists the work Kane rules off the board and keeps it out of every row', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
 ];

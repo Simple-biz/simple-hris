@@ -2687,3 +2687,37 @@ a different shape, so it needs a re-review. Kane approves either shape by its ha
 
 The SSD row is not held for the money question: the code is live and in use. The money question has
 its own item.
+
+### Pass 42 — 2026-10-08 — every Sprint 30 commit accounted for (hash `0166fd80774f`, STAGED)
+
+Kane: *"check our commits make sure we log every single one into Monday sprint 30"*. Pass 41 was never
+applied, so its 16 rows ride here and its hash `a5329d0f1366` is dead.
+
+**Coverage is measured by citation, not by range.** Ranges let commits fall through: pass 38 ended at
+`89b4347f` and pass 40 started at `4aa73d38`, and the 14 commits between them were never on any pass. So
+every commit authored since S30 opened (200) was grepped against every sha that any version of `pass.mts`
+or `hris-plan.ts` since 09-20 has cited. **73 were uncited.** 59 are in `05b48730..6745bafd`. 14 are the
+10-02 gap, and three of those are real code that no pass logged: `9d6225b6`, `9129b1d0` and `f082ba96`.
+`27e69bca` then landed from a concurrent session mid-pass. Each uncited sha now sits on a row, or is
+named in the `hris-plan.ts` pass 42 note as bookkeeping (pass staging, "row names its commit" audit
+edits, "migration APPLIED" notes).
+
+**36 rows / 151 SP:** pass 41's 16 (79 SP), 19 new rows (67 SP), and Send to OMS advancing from In
+Progress to Pending Deploy (5 SP, already on the board). 32 are Pending Deploy, 3 are In Progress
+(local-only shas), and 1 is Done on USE: the `KANE_EXCLUDED` tooling, which this pass ran. `selfcheck()`
+passed. The plan diff is 39 insertions with 1 deletion, which is the Arriola rename. It is safe because
+that row never reached the board.
+
+| Step (measured read-only 2026-10-08) | State | Row |
+|---|---|---|
+| Address letter migration (375) | APPLIED by `--verify` | pass 41 blocker **cleared** |
+| Arriola ghost (364 / 384) | APPLIED: revert, re-date and bonus-row delete all read as done | pass 41 blocker **cleared** |
+| PAB forgive backfill (363) | **NOT run**, 19 rows | blocker |
+| Six more migrations (385, 387, 391, 392, 389, 401) | APPLIED by their own `--verify` | clear |
+| COP rates (373) | APPLIED: every row reads as already in COP | clear |
+| OMS production env (334) | **UNVERIFIED**: no Vercel CLI here | blocker |
+
+**If Kane closes on his word,** the 30 pushed rows with no open step go Done at their last sha's date. That
+needs `done: true` and a re-review. **Finding (item 405):** `e88315ac`'s security report is on
+`origin/main` while the repo is public, against its own commit message. The board row is worded so the
+board does not repeat its findings.
