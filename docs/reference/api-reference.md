@@ -1411,6 +1411,12 @@ Lists every persisted dispatch (i.e. each row in `payment_dispatches`), newest f
 }
 ```
 
+**Response** `500` *(since 2026-10-08)*: `{ "rows": [], "error": "<message>" }` when the read fails (a
+database timeout surfaces as `AbortError: This operation was aborted`). Before 2026-10-08 this was a
+`200`, and the Payment Dispatch queue took the empty `rows` as "nobody is paid yet". A failed read is
+**never** an empty list: the queue throws on it and keeps its last good state
+(`src/lib/payroll/paid-dispatch-read.ts`).
+
 **Tables**: `payment_dispatches`
 **Service Role**: Read uses `createSupabaseServiceRoleClient() ?? createSupabaseServerClient()`.
 
@@ -3599,7 +3605,7 @@ of cells — the matches were not re-run).
 | `/api/cron/sync-offboarded-from-sheet` | GET, POST | — **none found** | — **no doc** |
 | `/api/cron/sync-rates-from-sheet` | GET, POST | cron secret | [csv-imports](../features/csv-imports.md) · *this file* |
 | `/api/cron/sync-screening-from-sheet` | GET, POST | `requireElevatedSession` | — **no doc** |
-| `/api/current-cycle` | GET | `requireRateVisibilityOrFeatureEdit` | — **no doc** |
+| `/api/current-cycle` | GET | `requireRateVisibilityOrFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) §4.3. A failed read is a `500`, never `cycleId: null` (2026-10-08) |
 | `/api/delete-employee` | DELETE | `requireFeatureEdit` | *this file* |
 | `/api/department-managers` | GET, POST, DELETE | `requireElevatedSession` | — **no doc** |
 | `/api/department-managers/by-department` | GET | `getServerSession` | — **no doc** |

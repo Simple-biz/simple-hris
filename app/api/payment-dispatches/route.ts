@@ -84,8 +84,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(sig, { status: sig.error ? 500 : 200 });
   }
 
+  // A failed read is a 500, never a 200 with `rows: []`: the queue reads this as
+  // "who is already paid", and an empty answer paints them back into Pending.
   const { rows, error } = await listPaymentDispatches({ cycleId, recipientEmail });
-  return NextResponse.json({ rows, error });
+  return NextResponse.json({ rows, error }, { status: error ? 500 : 200 });
 }
 
 export async function POST(req: NextRequest) {

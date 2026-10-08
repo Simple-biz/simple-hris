@@ -6,6 +6,7 @@ import type { EmployeeIdRow } from '@/lib/supabase/employee-ids';
 import type { CurrentPayResult, PayrollPeriod } from '@/lib/payroll/current-pay';
 import type { PaymentDispatchRow } from '@/lib/supabase/payment-dispatches';
 import { createLoadFence } from '@/lib/payroll/load-fence';
+import { fetchCyclePaidDispatches } from '@/lib/payroll/paid-dispatch-read';
 import type { PaystubQueueListItem, ArrearsEntry } from '@/lib/supabase/paystub-dispatch-queue';
 import {
   applyBankOwnerHold,
@@ -282,21 +283,9 @@ async function loadAll(
   // dispatches request runs in parallel with the pay computation instead of
   // behind it. The dispatches fetch is chained off the cycle lookup only —
   // not off pay — so it overlaps the slowest endpoint instead of adding to it.
-  const dispatchesPromise = (async (): Promise<PaymentDispatchRow[]> => {
-    const cycleRes = await fetch(`/api/current-cycle${q}`, { cache: 'no-store', signal });
-    const cycleJson = (await cycleRes.json()) as { cycleId?: string | null };
-    const cycleId = cycleJson.cycleId ?? null;
-    if (!cycleId) return [];
-    const dispatchRes = await fetch(
-      `/api/payment-dispatches?cycle_id=${encodeURIComponent(cycleId)}`,
-      { cache: 'no-store', signal },
-    );
-    const dispatchJson = (await dispatchRes.json()) as {
-      rows?: PaymentDispatchRow[];
-      error?: string;
-    };
-    return dispatchJson.rows ?? [];
-  })();
+  // A failed read THROWS (never `[]`): an empty paid list would paint every paid
+  // person back into Pending. load() then keeps the last good queue.
+  const dispatchesPromise = fetchCyclePaidDispatches(fetch, q, signal);
 
   const [ratesRes, payRes, idsRes, paid] = await Promise.all([
     fetch('/api/employee-hourly-rates', { cache: 'no-store', signal }),

@@ -36,13 +36,14 @@ export async function GET(req: NextRequest) {
   const sourceFileRaw = req.nextUrl.searchParams.get("source_file");
   const sourceFile = sourceFileRaw?.trim() ? sourceFileRaw.trim() : null;
   try {
+    // A failed read is a 500, never `cycleId: null`: Payment Dispatch reads a
+    // null id as "nobody is paid yet" and would paint paid people into Pending.
     const supabase =
       createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
-    const cycleId = supabase
-      ? sourceFile
-        ? await getHubstaffUploadIdBySourceFile(supabase, sourceFile)
-        : await getCurrentHubstaffUploadId(supabase)
-      : null;
+    if (!supabase) throw new Error("Supabase client unavailable");
+    const cycleId = sourceFile
+      ? await getHubstaffUploadIdBySourceFile(supabase, sourceFile, { throwOnError: true })
+      : await getCurrentHubstaffUploadId(supabase, { throwOnError: true });
     return NextResponse.json({ cycleId, error: null });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

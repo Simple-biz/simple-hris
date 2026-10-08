@@ -927,7 +927,8 @@ column of its own (§12.3.1).
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/payroll-current-pay` | GET | Returns the `CurrentPayResult` from `computeCurrentPay()` |
-| `/api/payment-dispatches` | GET | Lists dispatches, optionally filtered by `?cycle_id=` |
+| `/api/payment-dispatches` | GET | Lists dispatches, optionally filtered by `?cycle_id=`. **A failed read is a `500`, never a `200` with `rows: []`** (2026-10-08): the queue reads this list as "who is already paid" |
+| `/api/current-cycle` | GET | The cycle id the queue fetches the paid list by (`?source_file=` for a past week). `cycleId: null` means only "no cycle yet". **A failed read is a `500`** (2026-10-08; the lookups take `{ throwOnError: true }` here, and every other caller keeps the old null-on-error) |
 | `/api/payment-dispatches` | POST | Inserts a new dispatch row + writes audit-log entry `payment.dispatched`. When `status='paid'` and the Payroll Wizard staged a paystub for this `(cycle_source_file, recipient_email)`, also fires that **one** person's paystub email via `forwardPaystubDispatch` (best-effort — never fails the payment) and returns `{ paystub: { staged, sent, error } }` so the client can toast sent / failed / not-staged. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. **Double-pay guard (2026-09-03):** before the claim/insert, a `paid` **employee** body is checked against existing `paid` rows for the same person in the same cycle — `cycle_source_file` first, `cycle_id` as the fallback (arrears legs carry `cycle_id: null`) — and refused with **409 `{ code: 'already_paid', error, existing: { id, created_by, created_at, transaction_id } }`**. `not_paid` / `threshold` / `problem` bodies and contractor settlements are never refused (the invoice claim owns those). If the prior-payments read itself fails the route returns 500 and logs nothing — it fails closed. Both Mark Paid clients treat the 409 as *settled*: an info toast naming the first payer, the row is NOT restored to Pending, and `refresh()` reconciles. Pure decision + tests: `src/lib/payroll/dispatch-duplicate-guard.ts`. See [paystub-dispatch.md](./paystub-dispatch.md). |
 | `/api/payment-dispatches/auto-threshold` | POST | Holds every pending payee under US$15.00 at Threshold — one INSERT, live + locked week only, once per person per week. Gated by `requireFeatureEdit('accounting', 'payment_dispatch')`. See §3.5.1 and api-reference.md. |
 | `/api/payroll-dispatch-lock` | GET | Returns `{ locked, lockedAt, lockedBy }` |
@@ -1068,7 +1069,7 @@ Located at `src/components/payroll-clerk/useDispatchQueue.ts`. Joins three sourc
 2. `/api/payroll-current-pay` — per-person USD/PHP pay + cycle period
 3. `/api/payment-dispatches?cycle_id=<id>` — already-paid for the current cycle
 
-Builds a `QueueRow[]` via `buildQueueFromRates()` from `mock-queue.ts` (filename historical — it's no longer mocks). Filters out anyone whose email already has a dispatch record in the current cycle, so the same person can't be paid twice. **This filter is a convenience, not the guard:** since 2026-09-03 `POST /api/payment-dispatches` refuses a second `paid` employee row for the same `(cycle_source_file, email)` with **409 `already_paid`** (see §4.3 and §12.10), and `load()` drops any result that isn't from the newest load so a stale reload can't paint a paid person back into Pending.
+Builds a `QueueRow[]` via `buildQueueFromRates()` from `mock-queue.ts` (filename historical — it's no longer mocks). Filters out anyone whose email already has a dispatch record in the current cycle, so the same person can't be paid twice. **This filter is a convenience, not the guard:** since 2026-09-03 `POST /api/payment-dispatches` refuses a second `paid` employee row for the same `(cycle_source_file, email)` with **409 `already_paid`** (see §4.3 and §12.10), and `load()` drops any result that isn't from the newest load so a stale reload can't paint a paid person back into Pending. **A failed paid-list read is never "nobody is paid"** (2026-10-08): `fetchCyclePaidDispatches` (`src/lib/payroll/paid-dispatch-read.ts`, tests beside it) throws when `/api/current-cycle` or `GET /api/payment-dispatches` fails, answers an error in its body, or answers no `rows` array, and `load()` keeps the last good queue (or shows the error). Until then it read `json.rows ?? []` and ignored the error. On 2026-10-08 the database slowed to 1–20 s per read and the read timed out. Paid people went back into Pending, and a clerk marking one of them drew *"Could not verify prior payments — nothing was logged: AbortError"* from the POST guard, which failed closed as designed. Only a successful `cycleId: null` means `[]`.
 
 It then reads the two wizard carriers (the staged stage + the published snapshot) and
 prices every row through them — see [§4.2.2](#422-which-figures-the-queue-actually-shows).
@@ -1900,3 +1901,13 @@ lives in the memory entry `dispatch-duplicate-paid-rows`.
 `.env.local` so DDL can't be applied from here, and the alonzos@ pair would violate it until
 resolved. The route guard is the enforcement; the index is the follow-up once alonzos@ is
 settled.
+
+**2026-10-08: the guard was beaten once, under load.** The guard reads and then inserts, so two
+POSTs that overlap can both find no prior row. That race was always open. It went unseen while a
+read took milliseconds. On 2026-10-08 the database ran at load average 43, with 1–20 s per trivial
+read. cheskac@ (09-27 → 10-03 cycle) got two `paid` rows from aliviah@ 7 s apart: 17:07:50Z and
+17:07:57Z, same Wise txn `2420515639`, ₱20,547.23 / $327.81 each. That is an echo: the money
+moved once and the log doubled. A paged read of all 901 paid employee rows in that cycle found
+no other pair. **Only the partial unique index closes this race.** The guard cannot, however
+tight it is. The echo row is still in the table; removing it is a production delete and needs
+Kane's approval (Open item 415).

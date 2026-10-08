@@ -439,15 +439,31 @@ async function batchInsertRows(
 
 const HUBSTAFF_UPLOADS_TABLE = "hubstaff_uploads";
 
+/**
+ * Strict mode for the two cycle-id lookups below. By default a failed read comes
+ * back as null, the same answer as "no cycle yet". `/api/current-cycle` passes
+ * `throwOnError` because Payment Dispatch reads null as "nobody is paid yet", and
+ * a timed-out read must not mean that (2026-10-08).
+ */
+export interface UploadIdLookupOptions {
+  throwOnError?: boolean;
+}
+
 /** Returns the `id` of the upload currently flagged `is_current`, or null when none is flagged yet. */
-export async function getCurrentHubstaffUploadId(supabase: SupabaseClient): Promise<string | null> {
+export async function getCurrentHubstaffUploadId(
+  supabase: SupabaseClient,
+  opts: UploadIdLookupOptions = {},
+): Promise<string | null> {
   const { data, error } = await supabase
     .from(HUBSTAFF_UPLOADS_TABLE)
     .select("id")
     .eq("is_current", true)
     .limit(1)
     .maybeSingle();
-  if (error) return null;
+  if (error) {
+    if (opts.throwOnError) throw new Error(`Could not read the current cycle: ${error.message}`);
+    return null;
+  }
   const id = (data as { id?: string } | null)?.id;
   return id ?? null;
 }
@@ -466,6 +482,7 @@ export async function getCurrentHubstaffUploadId(supabase: SupabaseClient): Prom
 export async function getHubstaffUploadIdBySourceFile(
   supabase: SupabaseClient,
   sourceFile: string,
+  opts: UploadIdLookupOptions = {},
 ): Promise<string | null> {
   const file = sourceFile.trim();
   if (!file) return null;
@@ -477,7 +494,10 @@ export async function getHubstaffUploadIdBySourceFile(
     .order("uploaded_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error) return null;
+  if (error) {
+    if (opts.throwOnError) throw new Error(`Could not read the cycle for ${file}: ${error.message}`);
+    return null;
+  }
   const id = (data as { id?: string } | null)?.id;
   return id ?? null;
 }
