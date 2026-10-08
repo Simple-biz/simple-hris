@@ -11,6 +11,17 @@
  * --apply REFUSES without exactly two distinct Admin emails (Carla, and the second Admin she names: plan W0.6,
  * "in case I get kicked off the team"). A dry run seeds whatever it is given and says what is missing.
  *
+ * --keep-accounting-access (Kane, 2026-10-08: "Add them as Team members"): in the same transaction, every HRIS
+ * `accounting` holder who would otherwise LOSE ACCESS is added to accounting_scoreboard_members, so they stay on
+ * the board as Team members (no Setup). Under --apply their existing member rows (if any, removed ones) are backed
+ * up to docs/audits/backups/ first. It prints a count, never names.
+ *
+ * --keep-access-only: the same member step on its own, once the migration is live (it was applied 2026-10-08,
+ * a2a95911). No DDL and no seed, so the live table's trigger is never rebuilt under the board; --dry rolls it back,
+ * --apply commits it. Refuses if the roles table is missing.
+ *   node --import tsx scripts/apply-accounting-scoreboard-roles-migration.mts --keep-access-only            # dry
+ *   node --import tsx scripts/apply-accounting-scoreboard-roles-migration.mts --keep-access-only --apply
+ *
  * It prints, READ-ONLY and as COUNTS, never names, what the change does to the HRIS `accounting` holders
  * (Kane, 2026-10-07, item 393: "HRIS accounting alone no longer makes a scoreboard manager"): how many stay
  * Admin, how many lose Setup and keep access as a Team member or Assistant, and how many lose access entirely
@@ -26,7 +37,7 @@
  * Do not double-click this file: Windows opens .mts as video.
  * Governing doc: docs/features/accounting-scoreboard.md § Who may open it.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
@@ -56,6 +67,12 @@ if ([wantVerify, wantApply, wantDry].filter(Boolean).length > 1) {
   console.error('Pass exactly one of --dry / --apply / --verify (the default is --dry).');
   process.exit(1);
 }
+const keepOnly = argv.includes('--keep-access-only');
+const keepAccess = keepOnly || argv.includes('--keep-accounting-access');
+if (keepAccess && wantVerify) {
+  console.error('--keep-accounting-access writes; it does not go with --verify.');
+  process.exit(1);
+}
 const verifyOnly = wantVerify;
 const dryRun = wantDry || (!wantVerify && !wantApply);
 
@@ -69,7 +86,11 @@ for (let i = 0; i < argv.length; i++) {
   }
   if (!admins.includes(v)) admins.push(v);
 }
-if (wantApply && admins.length !== 2) {
+if (keepOnly && admins.length) {
+  console.error('--keep-access-only seeds no Admin: drop --admin.');
+  process.exit(1);
+}
+if (wantApply && !keepOnly && admins.length !== 2) {
   console.error(
     `--apply needs exactly two distinct Admin emails (--admin carla@simple.biz --admin <second Admin>); got ${admins.length}.\n` +
       'The second Admin is Carla\'s to name (plan W0.6). Nothing was written.',
@@ -117,7 +138,7 @@ const CHECKS: Array<[string, string]> = [
  * What the change does to the HRIS `accounting` holders, COUNTS ONLY. An address's aliases are its live master
  * row's three work emails (the identity bridge `expandWorkEmailAliases` uses).
  */
-const IMPACT_SQL = `
+const PER_SQL = `
 WITH acct AS (
   SELECT DISTINCT lower(btrim(work_email)) AS e FROM public.employee_roles
    WHERE role = 'accounting' AND revoked_at IS NULL AND btrim(coalesce(work_email, '')) <> ''
@@ -136,6 +157,8 @@ WITH acct AS (
          OR EXISTS (SELECT 1 FROM public.accounting_scoreboard_members m WHERE m.removed_at IS NULL AND lower(btrim(m.work_email)) = al.alias)) AS on_member_list
     FROM al GROUP BY al.e
 )
+`;
+const IMPACT_SQL = `${PER_SQL}
 SELECT count(*)::int AS total,
        count(*) FILTER (WHERE hris_admin)::int AS hris_admin,
        count(*) FILTER (WHERE NOT hris_admin AND grant_admin)::int AS granted_admin,
@@ -144,6 +167,10 @@ SELECT count(*)::int AS total,
        count(*) FILTER (WHERE NOT (hris_admin OR grant_admin OR grant_assistant) AND on_member_list)::int AS become_member,
        count(*) FILTER (WHERE NOT (hris_admin OR grant_admin OR grant_assistant OR on_member_list))::int AS lose_access
   FROM per`;
+/** Who would lose access: their primary (HRIS role) address. Read inside the transaction, never printed. */
+const LOSE_ACCESS_SQL = `${PER_SQL}
+SELECT e FROM per WHERE NOT (hris_admin OR grant_admin OR grant_assistant OR on_member_list) ORDER BY e`;
+const KEEP_BY = 'migration 2026-10-08 (item 393, Kane: keep access)';
 
 const BY = "'acct-sb-control@simple.biz'";
 const client = new Client({ connectionString });
@@ -175,7 +202,11 @@ async function main(): Promise<void> {
       `${verifyOnly ? 'VERIFY ONLY' : dryRun ? 'DRY RUN' : 'APPLY'} — Accounting Scoreboard: board-local roles (Admin / Assistant / Team member)`,
       '',
       `  SQL    : ${SQL_PATH}`,
-      verifyOnly ? '' : `  Admins : ${admins.length ? admins.join(', ') : '(none given)'}${admins.length < 2 ? '   ← the second Admin is MISSING (plan W0.6); --apply will refuse' : ''}`,
+      verifyOnly
+        ? ''
+        : keepOnly
+          ? '  Mode   : members only (--keep-access-only): no DDL, no Admin seed'
+          : `  Admins : ${admins.length ? admins.join(', ') : '(none given)'}${admins.length < 2 ? '   ← the second Admin is MISSING (plan W0.6); --apply will refuse' : ''}`,
       '',
       verifyOnly
         ? '  Nothing is written; the objects are only re-checked.'
@@ -189,7 +220,12 @@ async function main(): Promise<void> {
   await client.connect();
   await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout = '10s'");
-  if (!verifyOnly) {
+  if (keepOnly) {
+    const exists = await client.query<{ ok: boolean }>(`SELECT to_regclass('public.${T}') IS NOT NULL AS ok`);
+    if (!exists.rows[0]?.ok) throw new Error(`${T} does not exist: apply the migration first (without --keep-access-only).`);
+    console.log('Members only: no DDL, no seed. The roles table is live.\n');
+  }
+  if (!verifyOnly && !keepOnly) {
     await client.query(readFileSync(SQL_PATH, 'utf8'));
     console.log('Seed (INSERT only; an address that already holds a live grant keeps it):');
     for (const email of admins) {
@@ -205,6 +241,31 @@ async function main(): Promise<void> {
       const row = r.rows[0];
       report(row?.role === 'admin', `${email} holds a live Admin grant`, row?.seeded ? 'seeded now' : `already held: ${row?.role ?? 'nothing'}`);
     }
+    console.log('');
+  }
+
+  if (keepAccess) {
+    console.log('Keep access (Kane, 2026-10-08): the accounting holders who would lose access become Team members:');
+    const lose = (await client.query<{ e: string }>(LOSE_ACCESS_SQL)).rows.map((x) => x.e);
+    if (!dryRun) {
+      const existing = await client.query('SELECT * FROM public.accounting_scoreboard_members WHERE work_email = ANY($1)', [lose]);
+      const dir = path.join(REPO_ROOT, 'docs', 'audits', 'backups');
+      mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `accounting-scoreboard-roles-keep-access-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+      writeFileSync(file, JSON.stringify({ written: new Date().toISOString(), adding: lose, existingMemberRows: existing.rows }, null, 2));
+      console.log(`  ....  backup: ${path.relative(REPO_ROOT, file)}`);
+    }
+    let added = 0;
+    for (const email of lose) {
+      const res = await client.query(
+        `INSERT INTO public.accounting_scoreboard_members (work_email, added_by) VALUES ($1, $2)
+           ON CONFLICT (work_email) DO UPDATE SET added_at = now(), added_by = EXCLUDED.added_by, removed_at = NULL, removed_by = NULL
+           WHERE public.accounting_scoreboard_members.removed_at IS NOT NULL`,
+        [email, KEEP_BY],
+      );
+      added += res.rowCount ?? 0;
+    }
+    report(added === lose.length, `${added} of ${lose.length} added to the member list (Team members, no Setup)`);
     console.log('');
   }
 
@@ -267,7 +328,7 @@ async function main(): Promise<void> {
   console.log('\nWhat it does to the HRIS `accounting` holders (READ-ONLY, counts, never names):');
   const imp = (await client.query(IMPACT_SQL)).rows[0] as Record<string, number> | undefined;
   if (imp) {
-    console.log(`  ${imp.total} hold HRIS accounting today, and every one of them manages the board today.`);
+    console.log(`  ${imp.total} hold HRIS accounting today (until 2026-10-08 every one of them managed the board).`);
     console.log(`  ${imp.hris_admin} also hold HRIS admin            → stay board Admin (break glass)`);
     console.log(`  ${imp.granted_admin} hold an Admin grant             → stay board Admin`);
     console.log(`  ${imp.lose_manager} LOSE manager rights (Setup, deleting or unchecking anyone's line):`);
@@ -280,7 +341,13 @@ async function main(): Promise<void> {
     await client.query('COMMIT');
   } else {
     await client.query('ROLLBACK');
-    if (dryRun) console.log('\nRolled back — production is unchanged. Re-run with --apply and both --admin emails to commit.');
+    if (dryRun) {
+      console.log(
+        keepOnly
+          ? '\nRolled back — production is unchanged. Re-run with --keep-access-only --apply to commit.'
+          : '\nRolled back — production is unchanged. Re-run with --apply and both --admin emails to commit.',
+      );
+    }
     if (!dryRun && !verifyOnly && failed) console.log('\nRolled back because a check failed — nothing was committed.');
   }
   await client.end();

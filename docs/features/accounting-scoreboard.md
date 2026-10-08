@@ -68,7 +68,8 @@ Admin; not an edit / view / hidden matrix, *"Nah."*). One table decides it: `can
   without being on the list. **Measured by the migration's dry run, 2026-10-08 (counts, never names):** 11 people
   hold HRIS `accounting`. 4 also hold HRIS `admin` and stay Admin. **7 lose Setup** and the delete-anyone
   rights: **5** are on the member list and stay as Team members, and **2 lose access entirely** unless an Admin
-  adds them under Setup → Members or grants them a role.
+  adds them under Setup → Members or grants them a role. **Measured again after the apply, 2026-10-08: 0 lose access.**
+  One of the two was already covered, and the other was added under Members on Kane's word (`--keep-access-only`).
 - **A grant lives in `accounting_scoreboard_roles`** and is append-only: the one change is the revoke stamp,
   once, and a grant is never deleted (trigger `acct_sb_roles_guard`). One live grant per address. **A role change
   is a revoke and a new grant**: granting someone who holds the other role is refused (409), so nobody is ever
@@ -965,8 +966,11 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
   holds HRIS admin + accounting. Before the apply, the other two newest migrations still verified clean (Pre-arb flag,
   hidden from Overview), so this table was the only one missing. Run: dry 32/32 with both Admins (rolled back), then
   `--apply`, then `--verify` 31 PASS ("live grants: 2 Admin, 0 Assistant"), and PostgREST (service role) read back
-  `carla@` + `claire@`, both `admin`, not revoked. The counts did not change (11 · 4 · 7 · 5 · 2). **Still open:** whether
-  the 2 who lost access should be added under Setup → Members (Carla or Claire, in the UI), and a signed-in pass.
+  `carla@` + `claire@`, both `admin`, not revoked. The counts did not change (11 · 4 · 7 · 5 · 2). **Keeping access, DONE 2026-10-08** (Kane: *"Add them as Team
+  members"*): by then one of the two was already covered (a grant or a member row; production held 4 Admin and 1
+  Assistant grants), and `--keep-access-only --apply` added the other to `accounting_scoreboard_members` (no DDL, no
+  seed; backup `docs/audits/backups/accounting-scoreboard-roles-keep-access-2026-10-08T13-34-29-304Z.json`, gitignored). `--verify` then passed and printed **0 lose access**
+  (all 7 who lost Setup are Team members). **Still open:** a signed-in pass.
   Original state, kept below. `2026-10-08_accounting_scoreboard_roles.sql` creates `accounting_scoreboard_roles`, its
   append-only + last-Admin trigger, RLS with no policies, and revokes anon / authenticated. The script seeds the two
   Admin grants and **refuses `--apply` without exactly two distinct `--admin` emails**. **Dry run 2026-10-08 (rolled
