@@ -971,11 +971,11 @@ const LOCAL_1008_PM =
   'after a fetch on 2026-10-08). Kane pushes; once it is on origin/main it is Pending Deploy.';
 const ip43 = (what: string) => `${LOCAL_1008_PM} ${what}`;
 /**
- * Kane's word on pass 43's Pending Deploy rows, 2026-10-08 19:3xZ (session 723157e6). It closes the 11
- * rows with no open step. It does NOT close the two hires rows: their HRIS_HIRES_* env in Vercel
- * production is unverified, and every hires sync in audit_log (18:24Z, 18:45Z, 18:59Z) ran as Kane, so
- * none of them tells prod from local dev. Those two wait on his yes to that one question (the pass 38b
- * rule: an assertion cannot set an env var).
+ * Kane's word on pass 43's Pending Deploy rows, 2026-10-08 19:3xZ (session 723157e6). It closed the 11
+ * rows with no open step first. The two hires rows waited, because their HRIS_HIRES_* env in Vercel
+ * production was unverified and every hires sync in audit_log (18:24Z, 18:45Z, 18:59Z) ran as Kane (the
+ * pass 38b rule: an assertion cannot set an env var). Kane then SET the env and redeployed (~19:38Z), so
+ * the step was done, not just asserted, and those two close on the same word.
  */
 const KANE_CLOSE_1008 =
   'DONE ON KANE\'S WORD. Kane, 2026-10-08, on pass 43\'s Pending Deploy rows: "All of those 13 pending ' +
@@ -1081,17 +1081,17 @@ export const ROWS: PassRow[] = [
   },
   {
     name: 'The New Hire Checklist polls the hiring database and places each hire as Synced - interview dates read in US Eastern, a dropped connection retried',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-08',
     shas: ['7dc7500d', 'f6a1c2b0', 'fefe84fc'],
-    basis: pd42('Item 411. It polls public.hires every 30 s while the tab is open and broadcasts to the week room, with no cron. f6a1c2b0 reads the interview date in US Eastern, not Manila. fefe84fc retries a dropped connection instead of failing the pass. Its migration is MEASURED applied (--verify 2026-10-08, all checks passed). The HRIS_HIRES_* env in Vercel production is UNVERIFIED: there is no Vercel CLI here, and local dev writes the same database, so a synced row cannot say which build wrote it.'),
-    blockers: ['HRIS_HIRES_* env in Vercel production: UNVERIFIED (Kane)'],
+    basis: closed43('Item 411. It polls public.hires every 30 s while the tab is open and broadcasts to the week room, with no cron. f6a1c2b0 reads the interview date in US Eastern, not Manila. fefe84fc retries a dropped connection instead of failing the pass. Its migration is MEASURED applied (--verify 2026-10-08, all checks passed). The HRIS_HIRES_* env in Vercel production is UNVERIFIED: there is no Vercel CLI here, and local dev writes the same database, so a synced row cannot say which build wrote it. Its one open step was the HRIS_HIRES_* env in Vercel production: Kane set it and redeployed at about 19:38Z ("redeployed"). No production sync is in audit_log yet, because a poll that changes nothing writes no audit row, so this closes on his word and his action, not on a measured sync.'),
   },
   {
     name: 'A hire the sync cannot place joins this week or the next open week, and a manual New Hire add stays permanent beside the sync',
-    status: 'Pending Deploy',
+    status: 'Done',
+    completed: '2026-10-08',
     shas: ['ed616a87', '81040a76'],
-    basis: pd42('Item 411, Kane\'s ruling "A": a hire with no date, a past date or a locked week goes to this week or the next open week. 81040a76 pins, with a test, that a manual add is never touched by the sync. It rides on the sync row above, so it carries the same env blocker.'),
-    blockers: ['HRIS_HIRES_* env in Vercel production: UNVERIFIED (Kane)'],
+    basis: closed43('Item 411, Kane\'s ruling "A": a hire with no date, a past date or a locked week goes to this week or the next open week. 81040a76 pins, with a test, that a manual add is never touched by the sync. It rides on the sync row above, so it carries the same env blocker. Its one open step was the HRIS_HIRES_* env in Vercel production: Kane set it and redeployed at about 19:38Z ("redeployed"). No production sync is in audit_log yet, because a poll that changes nothing writes no audit row, so this closes on his word and his action, not on a measured sync.'),
   },
   {
     name: 'Payment Dispatch never shows a paid person as Pending when the paid-list read fails - a failed read is an error, never nobody is paid',
