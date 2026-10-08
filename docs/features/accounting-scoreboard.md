@@ -889,12 +889,13 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   The deployed (pre-push) code reads the `pre_arb` flag as unmarked (its `isOutcome` knows only win/loss), so the
   live board is unchanged until the push. After it, the 2026-10-07 outcomes
   script is superseded: run only its `--verify` (its SQL would re-add the two-value CHECK).
-- **Clearing Monday 10-05's untyped Payroll Problems: PENDING `--apply` (Kane's go).** No migration and no push
-  dependency: the script deletes 3 entries, and the deployed board reads whatever is there. Dry run 2026-10-08
-  (rolled back): 3 entries, 6 problems, all 10-05; deleting exactly those leaves the week with no grid count; an
-  unruled week (09-27) is refused, and a restore over cells that still exist is refused. Run
-  `node --import tsx scripts/clear-accounting-scoreboard-problem-grid-week.mts --week 2026-10-04 --apply`, keep the
-  backup path it prints, then tell Carla's team to re-log Monday's problems with their types.
+- **Clearing Monday 10-05's untyped Payroll Problems: APPLIED 2026-10-08 11:24Z by Kane** (he ran `--week 2026-10-04
+  --apply` himself). Backup: `docs/audits/backups/accounting-scoreboard-problem-grid-2026-10-04-2026-10-08T11-24-22-350Z.json`
+  (gitignored; 3 entries). **Measured read-only afterwards:** the week holds 0 grid entries, and 19 remain overall (the
+  09-28 week, as ruled). Restore, only if needed: `--revert <that file> --apply`. The dry run before it (rolled back)
+  deleted exactly those 3; an unruled week (09-27) and a restore over live cells were refused. **Owed: Carla's team
+  re-logs Monday 10-05's problems with their types** (none logged for 10-05 when measured); until then Monday reads
+  "—" for those people.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.
