@@ -2688,7 +2688,15 @@ a different shape, so it needs a re-review. Kane approves either shape by its ha
 The SSD row is not held for the money question: the code is live and in use. The money question has
 its own item.
 
-### Pass 42 — 2026-10-08 — every Sprint 30 commit accounted for (hash `0166fd80774f`, STAGED)
+### Pass 42 — 2026-10-08 — every Sprint 30 commit accounted for (hash `0166fd80774f`, APPLIED + VERIFIED)
+
+**Applied the same day.** Kane: *"Now push! I want the board updated"*. `apply.mts --apply --only-new`
+wrote 36/36 with 0 skipped. The read-back used `getItemsByIds` in batches of 25 (2 calls, not 36
+`verify-one` runs) and compared each item to the plan and pass rows. All 36 matched: byte-exact name,
+Sprint 30 group and label, status, type and Estimated SP, with Actual SP and Completed Date only on the
+Done row. The board now holds 32 Pending Deploy, 3 In Progress and 1 Done. No epic relation is written
+until a full reconcile. `74f6d2ee` (scoreboard roles, item 393) landed after the review and belongs to
+the next pass.
 
 Kane: *"check our commits make sure we log every single one into Monday sprint 30"*. Pass 41 was never
 applied, so its 16 rows ride here and its hash `a5329d0f1366` is dead.
