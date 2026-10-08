@@ -395,6 +395,7 @@ test('Open Disputes scored like Buckets (Carla, 2026-10-07): the "due in 7 days"
 });
 
 test('win ratio (Carla, 2026-10-07): wins ÷ (wins + losses) by COUNT, flagged lines only, absence is never 0%', () => {
+  // 'prearb' here is an UNMARKED line (outcome null): an unmarked line never counts, whatever its label.
   const lookup = buildLookup([
     { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 2 },
     { rowId: 'wins', date: MON_FRI[0], slot: 'usd', value: 5000 },
@@ -404,21 +405,21 @@ test('win ratio (Carla, 2026-10-07): wins ÷ (wins + losses) by COUNT, flagged l
     { rowId: 'prearb', date: MON_FRI[1], slot: 'count', value: 9 },
   ]);
   const rows = [row('wins', { outcome: 'win' }), row('losses', { outcome: 'loss' }), row('prearb', { outcome: null })];
-  assert.deepEqual(winRatio(rows, MON_FRI, lookup), { won: 3, lost: 1, ratio: 75 }, 'Pre-arb is not decided; dollars never weigh in');
+  assert.deepEqual(winRatio(rows, MON_FRI, lookup), { won: 3, lost: 1, preArb: null, ratio: 75 }, 'an unmarked line is left out; dollars never weigh in');
   assert.equal(winRatio(rows.map((r) => ({ ...r, outcome: null })), MON_FRI, lookup).ratio, null, 'nothing flagged = nothing decided');
-  assert.deepEqual(winRatio(rows, MON_FRI, new Map()), { won: null, lost: null, ratio: null });
+  assert.deepEqual(winRatio(rows, MON_FRI, new Map()), { won: null, lost: null, preArb: null, ratio: null });
   const zeros = buildLookup([
     { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 0 },
     { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 0 },
   ]);
-  assert.deepEqual(winRatio(rows, MON_FRI, zeros), { won: 0, lost: 0, ratio: null }, '0 of 0 decided is not 0%');
+  assert.deepEqual(winRatio(rows, MON_FRI, zeros), { won: 0, lost: 0, preArb: null, ratio: null }, '0 of 0 decided is not 0%');
   const third = buildLookup([
     { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 1 },
     { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 2 },
   ]);
   assert.equal(winRatio(rows, MON_FRI, third).ratio, 33.3);
   const allLost = buildLookup([{ rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 2 }]);
-  assert.deepEqual(winRatio(rows, MON_FRI, allLost), { won: null, lost: 2, ratio: 0 }, 'all lost is a real 0%');
+  assert.deepEqual(winRatio(rows, MON_FRI, allLost), { won: null, lost: 2, preArb: null, ratio: 0 }, 'all lost is a real 0%');
   const twoWinLines = [...rows, row('wins2', { outcome: 'win' })];
   const more = buildLookup([
     { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 1 },
@@ -490,15 +491,20 @@ test("the week's Net from the grid: production's week of Oct 5 (Losses $244 on T
   assert.equal(outcomesWeekNet(cached, MON_FRI, lookup), null);
 });
 
-test('a Pre-arb line can be FLAGGED (rows.outcome = pre_arb); its count is only ever read through that flag', () => {
+test("Pre-arb counts as a LOSS in the win ratio (Carla: 'it's still considered a loss'; Kane, W0.1, 2026-10-07)", () => {
   const lookup = buildLookup([
     { rowId: 'wins', date: MON_FRI[0], slot: 'count', value: 3 },
     { rowId: 'losses', date: MON_FRI[0], slot: 'count', value: 1 },
     { rowId: 'prearb', date: MON_FRI[0], slot: 'count', value: 1 },
   ]);
   const rows = [row('wins', { outcome: 'win' }), row('losses', { outcome: 'loss' }), row('prearb', { outcome: 'pre_arb' })];
-  // Until Step 6 (W0.1) changes winRatio, the flag alone moves nothing in the ratio.
-  assert.equal(winRatio(rows, MON_FRI, lookup).ratio, 75);
+  // 3 wins, 1 loss, 1 Pre-arb: 3 ÷ (3 + 1 + 1) = 60.0, not the 75.0 of the rule it replaced (Pre-arb left out).
+  assert.deepEqual(winRatio(rows, MON_FRI, lookup), { won: 3, lost: 2, preArb: 1, ratio: 60 });
+  // Pre-arb alone is a decided week: all lost, a real 0%, never "—".
+  const onlyPreArb = buildLookup([{ rowId: 'prearb', date: MON_FRI[0], slot: 'count', value: 2 }]);
+  assert.deepEqual(winRatio(rows, MON_FRI, onlyPreArb), { won: null, lost: 2, preArb: 2, ratio: 0 });
+  // Read through the flag only: the same line unmarked is left out again.
+  assert.equal(winRatio(rows.map((r) => (r.id === 'prearb' ? { ...r, outcome: null } : r)), MON_FRI, lookup).ratio, 75);
 });
 
 test('Payroll Problems: a logged 0 is a real 0 problems (Kane, 2026-10-07); nothing logged is still —', () => {

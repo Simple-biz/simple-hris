@@ -43,7 +43,7 @@ export type HeadlineSection = Pick<BoardSection, 'kind' | 'days' | 'score' | 'go
  * - buckets / inbox / open disputes → the section's 0–10 score (buckets and, since 2026-10-07, Open
  *   Disputes: Carla's overall, 10 × Σ completed ÷ Σ(completed + open) over the scored lines; the
  *   "due in 7 days" line is never scored)
- * - outcomes        → the win ratio, 100 × wins ÷ (wins + losses) by count (Carla, 2026-10-07)
+ * - outcomes        → the win ratio, 100 × wins ÷ (wins + losses + Pre-arb) by count (Carla, 2026-10-07; Pre-arb is a loss)
  * - collections     → team points
  * - PM buckets      → Σ of the PMs' daily averages (the sheet's WTD AVG total)
  * - payroll timing  → the cycle score, once both checks are decided

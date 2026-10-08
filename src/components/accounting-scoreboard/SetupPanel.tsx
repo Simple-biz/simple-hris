@@ -649,7 +649,7 @@ function GoalEditor({
 
 /**
  * Chargeback Outcomes: what a line counts as (rows.outcome). Wins count plus in the Net, Losses and Pre-arb minus
- * (Carla, 2026-10-07); the win ratio is wins ÷ (wins + losses), by count.
+ * (Carla, 2026-10-07); the win ratio is wins ÷ (wins + losses + Pre-arb), by count (Pre-arb is a loss, Kane, 2026-10-07).
  */
 const OUTCOME_OPTIONS = [
   { value: '', label: 'Not counted' },
@@ -896,7 +896,7 @@ function RowLine({
       {onOutcome ? (
         <div
           className="w-52"
-          title="Wins count plus in the Net, Losses and Pre-arb minus. The win ratio is wins ÷ (wins + losses), by count; Pre-arb is not decided, so it is left out of it."
+          title="Wins count plus in the Net, Losses and Pre-arb minus. The win ratio is wins ÷ (wins + losses + Pre-arb), by count: Pre-arb counts as a loss."
         >
           <SmoothSelect
             value={row.outcome ?? ''}

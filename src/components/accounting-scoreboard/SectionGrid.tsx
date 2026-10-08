@@ -117,7 +117,7 @@ function RowLabel({ row }: { row: BoardRow }) {
 const OUTCOME_TAG: Record<Outcome, { text: string; title: string }> = {
   win: { text: 'counts as won', title: 'Its count is a win in the win ratio, and its dollars count plus in the Net' },
   loss: { text: 'counts as lost', title: 'Its count is a loss in the win ratio, and its dollars count minus in the Net' },
-  pre_arb: { text: 'counts as Pre-arb', title: 'Pre-arb: its dollars count minus in the Net. Not decided, so it is left out of the win ratio' },
+  pre_arb: { text: 'counts as Pre-arb', title: 'Pre-arb: its count is a loss in the win ratio, and its dollars count minus in the Net' },
 };
 
 /** The Net's tone: emerald when we are even or ahead, rose when we are in the hole (ui-standards § 8.2). */
@@ -219,9 +219,10 @@ export function SectionGrid({
             </>
           ) : null}
           {wins ? (
-            <span className={CHIP} title="Wins ÷ (wins + losses), by the number of chargebacks. Pre-arb is not decided, so it is left out.">
+            <span className={CHIP} title="Wins ÷ (wins + losses + Pre-arb), by the number of chargebacks. Pre-arb counts as a loss (Kane, 2026-10-07).">
               <span className="font-mono tabular-nums">{fmtNum(wins.won)}</span> won ·{' '}
               <span className="font-mono tabular-nums">{fmtNum(wins.lost)}</span> lost
+              {wins.preArb ? <span className="text-zinc-500 dark:text-zinc-400">(incl. {fmtNum(wins.preArb)} Pre-arb)</span> : null}
             </span>
           ) : null}
           {wins ? (
@@ -907,8 +908,9 @@ function AmountCountTable({ section, rows, dates, lastDates, today, lookup, onSa
           <td colSpan={dates.length * 2} className={cn(TD, 'text-[11px] text-zinc-500 dark:text-zinc-400')}>
             {flagged ? (
               <>
-                Wins ÷ (wins + losses), by count · <span className="font-mono tabular-nums">{fmtNum(ratio.won)}</span> won,{' '}
+                Wins ÷ (wins + losses + Pre-arb), by count · <span className="font-mono tabular-nums">{fmtNum(ratio.won)}</span> won,{' '}
                 <span className="font-mono tabular-nums">{fmtNum(ratio.lost)}</span> lost
+                {ratio.preArb ? <> (incl. <span className="font-mono tabular-nums">{fmtNum(ratio.preArb)}</span> Pre-arb)</> : null}
               </>
             ) : (
               'No line is marked as a win or a loss yet: a manager marks them under Setup → Rows.'

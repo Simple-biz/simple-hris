@@ -104,7 +104,7 @@ Managers can also add sections of their own (§ Custom sections).
 | Sales — Payments (the Sales Onboarding tab; "Customer Sales Onboarding" until 2026-10-07) | daily | Mon–Fri | week total | none by default; "at least N payments", set in Setup |
 | Email Inbox | AM/PM | Mon–Fri | 10 − average PM count (0 → 10, ≥ 9 → 1); headline = score of the team average | ≥ 9 |
 | Chargebacks · Open Disputes | AM/PM | Mon–Fri | **scored like Buckets** since 2026-10-07: the overall 0–10, over the lines not marked "due in 7 days"; open now and the due-in-7-days line are called out beside it | none by default; a 0–10 score, set in Setup |
-| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | **win ratio** = wins ÷ (wins + losses), by count; per outcome: week $ (signed by its flag) and week #; **Net** = wins − losses − Pre-arb, in $ | ≥ 50% (Carla, 2026-10-07) |
+| Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | **win ratio** = wins ÷ (wins + losses + Pre-arb), by count; per outcome: week $ (signed by its flag) and week #; **Net** = wins − losses − Pre-arb, in $ | ≥ 50% (Carla, 2026-10-07) |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | none by default; "at least N reviewed", set in Setup |
 | Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
@@ -182,8 +182,8 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
   - This replaced the rule that there was no total across outcomes (*"a win plus a loss means nothing"*, round 3,
     2026-10-06): Carla asked for the Net on 2026-10-07.
 - **The win ratio** (Carla, via Kane, 2026-10-07: *"I need to get a win ratio of 50% or higher each week"*) is
-  Outcomes' headline: **wins ÷ (wins + losses), by COUNT** (the number of chargebacks, never dollars), one
-  decimal. Pre-arb is left out because it is not decided. Its goal is **≥ 50%**, a ratio, so it is never
+  Outcomes' headline: **wins ÷ (wins + losses + Pre-arb), by COUNT** (the number of chargebacks, never dollars),
+  one decimal. **Pre-arb counts as a loss** (below). Its goal is **≥ 50%**, a ratio, so it is never
   paced. Nothing decided is "—", never 0%; all lost is a real 0%. It shows as the grid's *Win ratio* footer, a
   header chip ("3 won · 1 lost"), and an Overview card.
 - **What a line counts as is marked on the row** (`rows.outcome`: `win`, `loss`, `pre_arb` (since 2026-10-07) or
@@ -193,8 +193,13 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
   the live "Wins" and "Losses"; the Pre-arb flag migration flags the one live "Pre-arb" (its script refuses unless
   exactly one live line matches, and never overwrites a line a manager marked). Several lines may count as wins,
   and they add up. With no line marked, the footer says so instead of showing a ratio or a Net.
-- CHOSEN (session `728157e2`), not Carla's words: the count, not dollars; Pre-arb left out. If she means
-  dollars, change `winRatio` in `scoring.ts` and its test.
+- **Pre-arb counts as a loss** (Carla, 2026-10-07 call: *"We consider prearb as a loss, but prearb just means that the
+  bank can't decide who's going to win or lose this […] it's technically we haven't gotten our money back, so it's
+  still considered a loss"*; **ruled by Kane on 2026-10-07**, W0.1 = (a), Open item 392). It replaced the CHOSEN
+  *"Pre-arb left out"* (session `728157e2`, item 387). The header chip and the Overview card say how much of "lost"
+  is Pre-arb ("2 lost (incl. 1 Pre-arb)"). On the 10-07 data it changed nothing: Pre-arb's count was 0.
+- CHOSEN (session `728157e2`), not Carla's words: the count, not dollars. If she means dollars, change `winRatio` in
+  `scoring.ts` and its test.
 - Outcomes shows inside the Chargebacks tab while Open Disputes is on. If Open Disputes is switched off,
   Outcomes takes a tab of its own, so it never disappears silently (`tabSections`). It has its own switch, and
   since 2026-10-07 **its own Overview card** (the win ratio is its single number), right after Open Disputes'.

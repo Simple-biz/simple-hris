@@ -1125,9 +1125,10 @@ function OverviewCard({
       ) : null}
       {wins ? (
         // Carla's spec: the sample size shows, so one decided chargeback reads as the small sample it is.
-        <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400" title="Wins ÷ (wins + losses), by the number of chargebacks">
+        <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400" title="Wins ÷ (wins + losses + Pre-arb), by the number of chargebacks. Pre-arb counts as a loss (Kane, 2026-10-07).">
           <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.won)}</span> won ·{' '}
           <span className="font-mono font-semibold tabular-nums">{fmtNum(wins.lost)}</span> lost{' '}
+          {wins.preArb ? <span>(incl. {fmtNum(wins.preArb)} Pre-arb){' '}</span> : null}
           <span className="font-mono tabular-nums">(n = {(wins.won ?? 0) + (wins.lost ?? 0)})</span>
         </div>
       ) : null}

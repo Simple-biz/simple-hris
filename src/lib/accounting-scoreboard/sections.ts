@@ -261,11 +261,12 @@ export const SECTIONS: readonly SectionDef[] = [
     // ("one dispute won for $99 → Wins: $99 / 1").
     kind: 'amount_count',
     days: MON_FRI,
-    // Carla, 2026-10-07: "a win ratio of 50% or higher each week". Wins ÷ (wins + losses), by count; a
-    // line counts as a win or a loss by its row flag (rows.outcome), never by its label.
+    // Carla, 2026-10-07: "a win ratio of 50% or higher each week". Wins ÷ (wins + losses + Pre-arb), by count (Pre-arb
+    // counts as a loss: Carla on the call, ruled by Kane the same day). A line counts by its row flag
+    // (rows.outcome), never by its label.
     goal: { value: 50, direction: 'at_least', measure: 'ratio', unit: '%' },
     rowNoun: 'outcome',
-    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks. Type the amount; a loss or Pre-arb shows as negative, and the Net is wins − losses − Pre-arb. Win ratio = wins ÷ (wins + losses), by count.',
+    help: 'Pre-arb, wins and losses each day: the dollar amount and how many chargebacks. Type the amount; a loss or Pre-arb shows as negative, and the Net is wins − losses − Pre-arb. Win ratio = wins ÷ (wins + losses + Pre-arb), by count.',
     hostTab: 'chargebacks',
   },
   {

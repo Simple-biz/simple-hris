@@ -302,7 +302,8 @@ negative."* Carla: *"Yes."* **CHOSEN: the sign comes from the line's flag, never
 "loss" flag would double-negate. People keep typing positive amounts, and the board shows Losses and Pre-arb with a
 minus and adds a **Net** line.
 
-> **Steps 0–5 BUILT 2026-10-07** (migration dry run 23/23; `--apply` PENDING Kane). **Corrected against the code in
+> **Steps 0–6 BUILT 2026-10-07** (`63500994` signs + Net; Step 6 in its own commit; migration dry run 23/23; `--apply`
+> PENDING Kane). **Corrected against the code in
 > the same commit (Step 0; the code wins):**
 > - **There is no `OutcomeFlag` type.** The flag's values are `OUTCOMES` in `sections.ts:48` (type `Outcome`), pinned
 >   to the SQL CHECK by `sections.test.ts`; `'pre_arb'` is added there. `types.ts` is unchanged (`BoardRow.outcome` is
@@ -413,7 +414,8 @@ export function outcomesNet(
   `--verify`; commit** by explicit path (tests, dry run 23/23 and the commit DONE 2026-10-07; `--apply` PENDING):
   `feat(accounting-scoreboard): Losses and Pre-arb show negative, with a Net, by flag never by typed sign (item 392)`.
 
-- [ ] **Step 6 (only after W0.1 = (a)):** change `winRatio` to count `pre_arb` lines as losses. Change the Step 1 test to
+- [x] **Step 6 (only after W0.1 = (a)):** DONE 2026-10-07 (W0.1 = (a)); `WinRatio` also gained `preArb` (the Pre-arb part
+  of `lost`), so the chip and the Overview card say "2 lost (incl. 1 Pre-arb)". Change `winRatio` to count `pre_arb` lines as losses. Change the Step 1 test to
   `3 wins, 1 loss, 1 pre-arb → 60.0`, and rewrite the doc's CHOSEN line as *"Pre-arb counts as a loss (Carla, 2026-10-07;
   ruled by Kane on <date>)"*. If W0.1 = (b), add one line to the doc that Carla's reading was heard and declined, and
   change nothing else. Commit separately.

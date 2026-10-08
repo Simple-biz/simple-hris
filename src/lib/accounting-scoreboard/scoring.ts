@@ -431,8 +431,10 @@ export function outcomesWeekNet(
 export interface WinRatio {
   /** Σ this week's chargeback counts on the lines marked "win"; null when none was typed. */
   won: number | null;
-  /** The same for "loss". */
+  /** The same for "loss" AND "pre_arb": Pre-arb counts as a loss (Kane, W0.1, 2026-10-07). */
   lost: number | null;
+  /** The Pre-arb part of `lost`, so the board can say how much of it is Pre-arb; null when none was typed. */
+  preArb: number | null;
   /**
    * 100 × won ÷ (won + lost), one decimal. Null when nothing was decided (no count typed, or 0 and 0):
    * absence is never a 0% (ui-standards § 12.5).
@@ -442,8 +444,10 @@ export interface WinRatio {
 
 /**
  * Carla, 2026-10-07: "a win ratio of 50% or higher each week". By COUNT (the number of chargebacks, not
- * dollars). Pre-arb and any line marked neither are left out: they are not decided. A line counts by its
- * flag (rows.outcome), never by its label, so a rename keeps it.
+ * dollars): wins ÷ (wins + losses + Pre-arb). **Pre-arb counts as a loss** (Carla on the 2026-10-07 call: "we
+ * haven't gotten our money back, so it's still considered a loss"; ruled by Kane the same day, W0.1 = (a)),
+ * which replaced the CHOSEN "Pre-arb left out" of item 387. A line marked neither is left out. A line counts by
+ * its flag (rows.outcome), never by its label, so a rename keeps it.
  */
 export function winRatio(
   rows: readonly Pick<AmPmRowMeta, 'id' | 'outcome'>[],
@@ -458,9 +462,11 @@ export function winRatio(
     return counts.length ? sum(counts) : null;
   };
   const won = total('win');
-  const lost = total('loss');
+  const losses = total('loss');
+  const preArb = total('pre_arb');
+  const lost = losses === null && preArb === null ? null : (losses ?? 0) + (preArb ?? 0);
   const decided = (won ?? 0) + (lost ?? 0);
-  return { won, lost, ratio: decided > 0 ? Math.round((1000 * (won ?? 0)) / decided) / 10 : null };
+  return { won, lost, preArb, ratio: decided > 0 ? Math.round((1000 * (won ?? 0)) / decided) / 10 : null };
 }
 
 export function amountCountSectionStats(
