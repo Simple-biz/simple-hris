@@ -2698,6 +2698,14 @@ Done row. The board now holds 32 Pending Deploy, 3 In Progress and 1 Done. No ep
 until a full reconcile. `74f6d2ee` (scoreboard roles, item 393) landed after the review and belongs to
 the next pass.
 
+**Pass 42b (hash `72b77167d2b5`, STAGED):** what closes on evidence after Kane's push. Kane asked
+*"Anything in there we can close? I have pushed it already"*. A push proves nothing about live, so a row
+closes here only on measured production use or a measured data state. That is 5 rows / 26 SP: a Proof
+of Address letter signed in prod (10-07 16:42Z), the job portal's 40 production reads of the Offboarded
+API, Carla's 68 SSD re-saves, the Arriola data state, and the grid-clear script Kane ran. The two rows
+whose shas were local move up to Pending Deploy. Payout safety (0 real `safety` rows) and COP (item
+407: its `--apply` ran before the deploy) do not close on evidence. The other 28 close on Kane's word.
+
 Kane: *"check our commits make sure we log every single one into Monday sprint 30"*. Pass 41 was never
 applied, so its 16 rows ride here and its hash `a5329d0f1366` is dead.
 
