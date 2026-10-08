@@ -21,7 +21,7 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 | 6 | `task-06-sales-timing-log.md` | after 5 is **applied**; apply on a weekend | apply (Sat/Sun) → push before Monday |
 | 7 | `task-07-task-boards.md` | after 6 | apply migration → import `--apply` → push |
 | 8 | `task-08-progress-message.md` | after 7; Chat part needs **W0.4** | push |
-| any | `task-09-old-grid-problems.md` | only after **W0.2** (your ruling) | per ruling |
+| any | `task-09-old-grid-problems.md` | **W0.2 ruled (a)**: in the next free lane-A slot, never alongside another lane-A session | run the clear script `--apply`, then the team re-logs |
 | any | `task-10-compliance-portal.md` | only after **W0.7** (Kentshin's endpoint) | push |
 
 **Lane B (not the scoreboard): may run alongside lane A, one session per file.**
@@ -29,20 +29,24 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 | File | Can start |
 |---|---|
 | `task-11-job-portal-probe.md` | now (you run the probe it writes) |
-| `task-12-interns-measure-and-label.md` | now; the money part only after **W0.8** (Ralph) |
+| `task-12-interns-measure-and-label.md` | now (measure + label only); the money part is on **HOLD** (Kane) until Ralph |
+| `task-14-arriola-revert-and-stamp.md` | now (**384 ruled (a)**) |
 | `task-13-queue-return-notification.md` | now |
 
 ## Wave 0: what only you can give (from the plan § 1)
 
-- [ ] W0.1 Pre-arb in the win ratio: (a) counts as a loss, or (b) stays out. Write it on Open item 392.
-- [ ] W0.2 Monday's untyped Payroll Problems: (a) a script clears them and the team re-logs, (b) Admins may edit the old
-  grid, or (c) leave them. Write it on Open item 391.
+- [x] W0.1 Pre-arb in the win ratio: **RULED (a), counts as a loss** (Kane, 2026-10-07; on Open item 392).
+- [x] W0.2 Monday's untyped Payroll Problems: **RULED (a), a script clears them and the team re-logs** (Kane, 2026-10-07;
+  on Open item 391).
 - [ ] W0.4 The Google Chat webhook URL in `.env.local` and Vercel as `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL`.
 - [ ] W0.5 Joana's sales sheet link (Carla).
 - [ ] W0.6 The second Admin's work email (Carla).
 - [ ] W0.7 Kentshin builds the endpoint in plan Task 10.
-- [ ] W0.8 Ralph answers on interns' hours over 5, the monthly payout and the PAB.
+- [ ] W0.8 Ralph answers on interns' hours over 5, the monthly payout and the PAB. **Kane: HOLD** (2026-10-07) until then.
 - [ ] W0.9 Run the probe from session 11.
+
+Also ruled 2026-10-07: the HRIS `accounting` role change in Task 4 is **CONFIRMED**, and the Arriola ghost row (item 384)
+is **(a) revert + stamp** (`task-14`). The 09-20 ₱750 on the ghost key is still yours to rule.
 
 ## Every session follows the same rules
 

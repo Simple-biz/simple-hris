@@ -118,14 +118,14 @@ W0.3 (h). They are probably emoji typed into section names, which is not code.
 
 | # | What | Who | Unblocks |
 |---|---|---|---|
-| W0.1 | **Pre-arb in the win ratio.** (a) counts as a loss, as Carla said; (b) stays out, as item 387 chose | Kane (with Carla) | Task 3 Step 6 |
-| W0.2 | **Monday 10-05's untyped Payroll Problems.** (a) a script removes that week's old-grid counts after a backup, then the team re-logs them typed; (b) Admins may edit the old grid; (c) leave them as "No type" | Kane | Task 9 |
+| W0.1 | **Pre-arb in the win ratio.** **RULED (a) 2026-10-07: counts as a loss.** | Kane | Task 3 Step 6 (unblocked) |
+| W0.2 | **Monday 10-05's untyped Payroll Problems.** **RULED (a) 2026-10-07:** a script removes that week's old-grid counts after a backup, then the team re-logs them typed | Kane | Task 9 branch (a) (unblocked) |
 | W0.3 | Carla confirms the CHOSEN defaults: (a) a card hidden from the Overview is out of the Team Score; (b) she hides the second section herself; (c) a payment run keeps Scheduled/Urgent as an optional field, duration = end − accounting start, times may carry seconds, runs over 60 min are refused; (d) the $25 fee is not added to the Net until she says so; (e) "bimonthly" = every two months; (f) as-needed tasks are listed but never counted; (g) a locked week also refuses Payment Verified ticks; (h) the hearts are emoji typed in names; (i) only an Admin adds or removes tasks | Carla (via Alivia) | Confirms; blocks nothing |
 | W0.4 | The Google Chat **incoming webhook URL** for the accounting space, set as `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL` in `.env.local` and Vercel. Kane started this on the call | Kane / Carla | Task 8 Steps 5–8 |
 | W0.5 | The link to **Joana's sales sheet** (shared with the HRIS service account on the call) | Carla | Task 6 Steps 9–10 |
 | W0.6 | **The second Admin** besides Carla ("Claire" in the transcript) | Carla | Task 4 seed |
 | W0.7 | Ask Kentshin for the endpoint specified in Task 10 | Kane → Kentshin | Task 10 |
-| W0.8 | Ralph: are hours over 5 payable; the monthly payout's rules; the PAB amount. Then Kane: the adjustment | Alivia → Ralph, then Kane | Task 12 Steps 6+ |
+| W0.8 | Ralph: are hours over 5 payable; the monthly payout's rules; the PAB amount. Then Kane: the adjustment. **Kane: HOLD (2026-10-07)** | Alivia → Ralph, then Kane | Task 12 Steps 6+ |
 | W0.9 | Run the Task 11 probe | Kane | Task 11 |
 
 ## 2. Build order, and why

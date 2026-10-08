@@ -10,7 +10,7 @@ in full, plus the plan's **Global Constraints** and **Review Focus 3**. Build on
 **What Carla asked (2026-10-07):** Team member edits everything except Setup; Assistant sees Setup but can't change it and
 sees everyone's tasks; Admin has full write. No edit/view/hidden matrix (*"Nah."*).
 
-**This changes a documented rule, so your brief must say so up front:** today "Managers are the `admin` and `accounting`
+**This changes a documented rule. Kane CONFIRMED the change on 2026-10-07 (Open item 393), and your brief still says so up front:** today "Managers are the `admin` and `accounting`
 roles". After this, an HRIS `admin` is always a board Admin (break glass), and **HRIS `accounting` alone makes a Team
 member**. Report, as counts and never names, how many `accounting` holders lose manager rights and how many lose access
 entirely (memory says 2 are not on the GML). Kane sees those numbers before any `--apply`.
