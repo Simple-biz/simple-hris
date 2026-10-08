@@ -265,7 +265,20 @@ problem, not to a person's day total.
   Scoreboard Error, Other) was seeded by the migration. A type is archived, never deleted: it leaves the
   dropdown and every line already logged keeps it.
 - **The counts typed into the old grid still count**, as **"No type"** (22 entries, 2026-09-28 → 10-05). They
-  are read, never written: the grid takes no writes now (`problem_log` has no slots).
+  are read, never written by the app: the grid takes no writes now (`problem_log` has no slots).
+- **One ruled exception: Monday 10-05's counts are cleared by a script** (Kane, W0.2 = (a), 2026-10-07, Open item 391).
+  Carla, 2026-10-07: *"we had added like the types after Monday and so the Monday ones have no type […] I don't have an
+  option to edit or delete the Monday problems because they're not under the log."* The app still never writes the
+  grid. `scripts/clear-accounting-scoreboard-problem-grid-week.mts --week 2026-10-04` deletes that week's grid counts
+  (a cleared cell is a deleted entry), and her team re-logs them with types. **Measured 2026-10-08 (read-only):** the
+  week holds 3 grid entries, all Monday 10-05, 6 problems, one of them a typed 0 (a real "0 problems", cleared too:
+  re-log it as a 0 line if it should stay). The 09-28 week's 19 entries stay "No type": no ruling covers them.
+  - It clears **only a week Kane ruled** (`RULED_WEEKS` in `problem-grid-clear.ts`), and refuses a week with no grid
+    count, an entry outside the week or in another slot, or one saved at or after the round-3 apply
+    (`GRID_CUTOFF`, 2026-10-06 18:04Z; entries keep `updated_at` only). `problem-grid-clear.test.ts` pins each refusal.
+  - Dry by default (a rolled-back rehearsal). `--apply` writes every entry it deletes, with its saver and save time,
+    to `docs/audits/backups/` first; `--revert <backup> --apply` restores them as they were, and refuses if a cell
+    already holds a value. Output names a row by its id, never its label.
 - **Nothing logged is still "—", not 0 problems**: the board cannot tell "no problems" from "nobody logged". So a
   week with no line has no stop light, the same rule as the collections log. To record a clean day, log a 0.
 
@@ -582,7 +595,8 @@ out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **d
   ceiling, the same as every other box; `count` is a whole number (refused in `validate.ts` and by the CHECK
   `acct_sb_entries_count_whole`).
 - **Payroll Timing and Payroll Problems take no grid writes**: neither has slots, so `entryAllowed()` refuses
-  every one. Problems go to the log (`POST /problems`).
+  every one. Problems go to the log (`POST /problems`). The one ruled clear of old-grid counts is a script, never the
+  app (§ Payroll Problems).
 - `entryAllowed()` refuses a slot the row's section does not have, or a day that section does not keep.
   Archived rows are read-only.
 - A row with a work email **is** that HRIS person, so the address must be on `active_employees`.
@@ -875,6 +889,12 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   The deployed (pre-push) code reads the `pre_arb` flag as unmarked (its `isOutcome` knows only win/loss), so the
   live board is unchanged until the push. After it, the 2026-10-07 outcomes
   script is superseded: run only its `--verify` (its SQL would re-add the two-value CHECK).
+- **Clearing Monday 10-05's untyped Payroll Problems: PENDING `--apply` (Kane's go).** No migration and no push
+  dependency: the script deletes 3 entries, and the deployed board reads whatever is there. Dry run 2026-10-08
+  (rolled back): 3 entries, 6 problems, all 10-05; deleting exactly those leaves the week with no grid count; an
+  unruled week (09-27) is refused, and a restore over cells that still exist is refused. Run
+  `node --import tsx scripts/clear-accounting-scoreboard-problem-grid-week.mts --week 2026-10-04 --apply`, keep the
+  backup path it prints, then tell Carla's team to re-log Monday's problems with their types.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.

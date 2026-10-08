@@ -1274,6 +1274,15 @@ export function buildProgressMessage(progress: readonly FrequencyProgress[]): st
 **Contradiction until ruled:** *"the grid takes no writes"* (feature doc § Payroll Problems) vs Carla's *"I don't have an
 option to edit or delete the Monday problems"*.
 
+> **RULED (a) by Kane 2026-10-07; branch (a) BUILT 2026-10-08** (dry run done, `--apply` PENDING Kane). **Corrected against
+> the code (Step 0; the code wins):** old-grid counts are `accounting_scoreboard_entries` rows, slot `day`, on
+> `payroll_problems` rows, read as `UNTYPED_PROBLEMS` by `problemsWeekStats` (`scoring.ts:505-538`); entries keep
+> `updated_at` only (no `created_at`), so the cutoff is checked on that. **Measured:** the week holds 3 entries, all Monday
+> 10-05 (6 problems, one a typed 0); the meeting note's "inferred" is now measured. **Added beyond the plan:** the refusals
+> live in a pure module, `src/lib/accounting-scoreboard/problem-grid-clear.ts` (+ test), and the script clears **only
+> `RULED_WEEKS`** (2026-10-04), so a mistyped `--week` cannot clear an unruled week. `--revert` is dry by default too
+> (`--revert <backup> --apply` commits) and refuses to restore over a cell that exists.
+
 - **If (a):** `scripts/clear-accounting-scoreboard-problem-grid-week.mts --week 2026-10-04`, dry by default. It lists the
   old-grid Payroll Problems entries in that week (count per day and row, no names in the output), refuses if the week
   holds no grid entries or if any entry is newer than the round-3 apply (2026-10-06 18:04Z), and writes a backup to
