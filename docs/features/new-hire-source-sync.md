@@ -9,8 +9,10 @@ sync will not place on its own (a past week, a locked week, no interview date) w
 (Kane: *"we will now be polling data that is available from that Database now I want this in
 Real Time … a new column for us where we can know the timestamp … saved in our own database as
 well … we will still have the Manual Option but find a way that we can prioritize the Polling of
-data"*). **Not live:** the source table name is not known yet (§ Deploy notes), and the migration
-is PENDING.
+data"*). The source is **`public.hires` in simple-recruitment-portal** (Kane's screenshot, same
+day). The migration was **APPLIED 2026-10-08** and the first real sync ran that evening from a local
+`next dev` (§ Deploy notes). **Production cannot pull yet:** the code is not pushed and the
+`HRIS_HIRES_*` env is not in Vercel.
 
 The checklist's own rules (atomic per-row writes, the lock, the Lead Gen-only orientation
 email) are in [new-hire-checklist.md](./new-hire-checklist.md); this doc adds one way for a row
@@ -166,9 +168,10 @@ either way.
 
 ## Deploy notes
 
-**Migration — PENDING until Kane runs it.** The dry run was not run either: it takes a brief
-exclusive lock on `hr_new_hire_checklist` in production. DATABASE_URL = the SESSION POOLER on 5432
-([[migration-apply-needs-database-url]]):
+**Migration — APPLIED 2026-10-08 (Kane: *"run the migration for me"*).** The dry run passed
+(23 object checks, 21 controls, rolled back), then `--apply`, then `--verify`: all passed. Measured
+after: `hr_new_hire_source_rows` exists, and all 1,847 checklist rows read `origin = 'manual'`.
+DATABASE_URL = the SESSION POOLER on 5432 ([[migration-apply-needs-database-url]]):
 
 ```
 node --import tsx scripts/apply-hr-new-hire-source-sync-migration.mts           # rehearse + roll back
@@ -177,31 +180,36 @@ node --import tsx scripts/apply-hr-new-hire-source-sync-migration.mts --verify  
 ```
 
 It creates `hr_new_hire_source_rows` and adds `origin` (default `'manual'`), `source_key` and
-`received_at` to `hr_new_hire_checklist`. It changes no existing row. Until it is applied, the
-strip says "not applied yet" with that command, and the grid works exactly as before (every row
-reads as Manual).
+`received_at` to `hr_new_hire_checklist`. It changes no existing row. On a database without it,
+the strip says "not applied yet" with that command, and the grid works as before.
 
 **Env, server-only (`.env.example` carries the block).**
 
 | Variable | Required | Default | State 2026-10-08 |
 | --- | --- | --- | --- |
-| `HRIS_HIRES_SUPABASE_URL` | yes | — | set in `.env.local` (project `mkfyjy…`) |
-| `HRIS_HIRES_SUPABASE_KEY` | yes | — | set in `.env.local`; an **anon** key, so the source's RLS must allow SELECT |
-| `HRIS_HIRES_TABLE` | yes | **none** | **NOT KNOWN — NEEDS Kane** (below) |
-| `HRIS_HIRES_COL_ID` | no | `id` | the source's unique id column |
-| `HRIS_HIRES_COL_NAME` … `_COUNTRY` (10) | no | Kane's names: `name`, `personalEmail`, `location`, `phoneNumber`, `dateOfInterview`, `hiringSource`, `referredBy`, `hiredBy`, `department`, `country` | set in `.env.local` |
-| `HRIS_HIRES_COL_CREATED_AT` / `_UPDATED_AT` | no | unset (not read) | |
+| `HRIS_HIRES_SUPABASE_URL` | yes | — | set in `.env.local` (simple-recruitment-portal, `mkfyjy…`) |
+| `HRIS_HIRES_SUPABASE_KEY` | yes | — | set in `.env.local`; an **anon** key. The table's RLS lets it SELECT (measured: 34 rows) |
+| `HRIS_HIRES_TABLE` | yes | **none** | `hires`, set in `.env.local` 2026-10-08 |
+| `HRIS_HIRES_COL_ID` | no | `id` | `id` (uuid); left unset |
+| `HRIS_HIRES_COL_NAME` … `_COUNTRY` (10) | no | Kane's names: `name`, `personalEmail`, `location`, `phoneNumber`, `dateOfInterview`, `hiringSource`, `referredBy`, `hiredBy`, `department`, `country` | set in `.env.local`; all 10 measured present |
+| `HRIS_HIRES_COL_CREATED_AT` / `_UPDATED_AT` | no | unset (not read) | `created_at` / `updated_at`, set in `.env.local` (both measured present) |
 
 Every identifier is regex-checked and refused **by variable name**, never echoed. **PENDING (Kane):
 all of these in Vercel production too.**
 
-**NEEDS Kane (session `1e5dbda7`, Open items 411):** the source **table or view name** in
-`mkfyjy…`. On 2026-10-08 the following were probed read-only with the anon key: `hires`,
-`new_hires`, `hris_hires`, `hire`, `hired`, `applicants`, `candidates`, `applications`,
-`job_applications`, `new_hire_checklist`, `hr_new_hire_checklist`, `hris_new_hires`, `hires_view`,
-`v_hires`, `hired_candidates`, plus 6 Edge Function names and 4 RPC names. All 404, and the schema
-listing (`/rest/v1/`) answers 401 to an anon key. Also needed: whether that table's RLS lets the
-anon key SELECT, and whether its id column is `id`. Until `HRIS_HIRES_TABLE` is set, the sync
-answers *not set up* and writes nothing.
+**The table name (resolved the same day).** Morning probes of `hires` and 14 other names answered
+`PGRST205` (no such table). Kane then sent a screenshot of `public.hires`, and the re-probe read it.
+It was created or exposed in between. If a probe says "no such table" again, re-check before
+concluding it's the wrong name.
 
-**Not verified:** no sync has ever run (no table name). The UI has not been clicked through signed in.
+**PENDING (Kane):** the push, and every `HRIS_HIRES_*` variable above in **Vercel production**. Until
+both are done, production cannot pull. A signed-in click-through of the strip and the Received column
+is also owed.
+
+**The first real sync (measured 2026-10-08 18:23:59Z, actor `kaner@simple.biz`, from a local
+`next dev` on production data, the minute the migration landed):** 34 pulled, all "Lead
+Generation". **23 linked** to hires HR had already typed in (weeks 09-20, 09-27, 10-04, 10-11), with
+0 cells changed. **10 held `no_interview_date`**: `dateOfInterview` is blank at the source.
+**1 held `week_locked`**: its week, 10-04, is locked, and it is on no other week. **0 placed.**
+One `hr.new_hire_checklist.source_synced` audit row. All 24 dated source rows arrive as **timestamps**
+(`interview_at` is set on every one), so the Manila-date conversion is on the live path, not just a test.
