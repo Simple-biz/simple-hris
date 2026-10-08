@@ -76,6 +76,14 @@ export type HrNewHireChecklistRow = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** 'synced' = placed by the hiring-database sync; 'manual' = typed by HR
+   *  (docs/features/new-hire-source-sync.md). Optional: absent until the
+   *  2026-10-08 migration is applied, and absent ⇒ manual. */
+  origin?: "manual" | "synced" | null;
+  /** The source hire a synced row came from (unique when set). */
+  source_key?: string | null;
+  /** When the HRIS first received a synced hire; null on manual rows. */
+  received_at?: string | null;
 };
 
 /** One row as submitted from the grid. `id` present = an existing row to keep
@@ -290,12 +298,20 @@ function pushCellEdit(
  * adds are refused. Seeds each non-blank field's edit history with a `from:null`
  * entry. Returns the freshly-inserted row (with its DB id) so the client can
  * drop it straight into the grid.
+ *
+ * `opts.synced` marks a row the hiring-database sync placed (origin 'synced' +
+ * its source_key + received_at). `conflict: true` = that source hire is already
+ * on the checklist (the unique index on source_key): a parallel sync won the race.
  */
 export async function insertHrNewHireChecklistRow(
   periodStart: string,
   values: Partial<Record<HrNewHireChecklistField, string | null>>,
-  opts: { createdBy?: string | null; editedBy?: string | null } = {},
-): Promise<{ row: HrNewHireChecklistRow | null; error: string | null }> {
+  opts: {
+    createdBy?: string | null;
+    editedBy?: string | null;
+    synced?: { sourceKey: string; receivedAt: string };
+  } = {},
+): Promise<{ row: HrNewHireChecklistRow | null; conflict?: boolean; error: string | null }> {
   const period = clean(periodStart);
   if (!period) return { row: null, error: "A period (week) is required." };
   const sb = client();
@@ -333,9 +349,17 @@ export async function insertHrNewHireChecklistRow(
     }
     if (Object.keys(cellEdits).length > 0) insertPayload.cell_edits = cellEdits;
   }
+  if (opts.synced) {
+    insertPayload.origin = "synced";
+    insertPayload.source_key = opts.synced.sourceKey;
+    insertPayload.received_at = opts.synced.receivedAt;
+  }
 
   const { data, error } = await sb.from(TABLE).insert(insertPayload).select("*").single();
-  if (error) return { row: null, error: error.message };
+  if (error) {
+    if (opts.synced && error.code === "23505") return { row: null, conflict: true, error: null };
+    return { row: null, error: error.message };
+  }
   return { row: data as HrNewHireChecklistRow, error: null };
 }
 

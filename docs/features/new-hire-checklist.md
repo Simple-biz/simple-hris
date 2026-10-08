@@ -25,6 +25,9 @@ Key files:
   + "week changed → peers refetch" broadcast.
 - [new-hire-checklist-webhook.ts](src/lib/hr/new-hire-checklist-webhook.ts) — `fireNewHireChecklistLockWebhook`,
   fired from DB truth on Lock in.
+- [source-sync/route.ts](app/api/hr/new-hire-checklist/source-sync/route.ts) — the hiring-database
+  sync (polls while the tab is open, places hires tagged Synced, the Received column). Its rules
+  live in [new-hire-source-sync.md](./new-hire-source-sync.md).
 
 ---
 
@@ -113,8 +116,11 @@ that vanished are pruned).
 
 ## The New Hire modal
 
-[NewHireQuickAddDialog](src/components/hr/NewHireQuickAddDialog.tsx) is the only way to add or edit a
-hire. Its submit is now **async**: `commit` awaits `onSave(values)` and treats a resolved **`false`**
+[NewHireQuickAddDialog](src/components/hr/NewHireQuickAddDialog.tsx) is the only way for HR to TYPE a
+hire in or edit one. Since 2026-10-08 hires also arrive from the hiring database, tagged **Synced**,
+through the sync's own atomic insert. The sync never overwrites a cell HR typed, never writes a
+locked week, and never fills a past week on its own. See
+[new-hire-source-sync.md](./new-hire-source-sync.md). Its submit is now **async**: `commit` awaits `onSave(values)` and treats a resolved **`false`**
 as "the server write failed / conflicted" — it shows a spinner (`submitting`), disables the footer
 buttons and backdrop-dismiss, and **stays open** so the entry isn't lost. On success it either resets
 for "Save & add another" (add mode) or closes. Only **name** is required (plus **Referred by** when

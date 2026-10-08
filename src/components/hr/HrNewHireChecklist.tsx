@@ -56,6 +56,9 @@ import type { HrChecklistListedRow } from '@/lib/hr/orientation-week-stats';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import { trackRead, useTableRefresh, type RefreshTracker } from '@/components/common/RefreshProgressDialog';
 import { countOf } from '@/lib/refresh-progress/refresh-progress';
+import type { HeldHire } from '@/lib/hr/hires-source-map';
+import { useHiresSourceSync } from './use-hires-source-sync';
+import HiresSyncStrip from './HiresSyncStrip';
 
 /** Grid columns, in display order. Keys match the DB / API field names 1:1. */
 const COLUMNS = [
@@ -95,6 +98,10 @@ type GridRow = {
   id: string;
   _updatedAt: string | null;
   _editedBy?: Partial<Record<FieldKey, CellEditEntry[]>>;
+  /** 'synced' = placed by the hiring-database sync (docs/features/new-hire-source-sync.md). */
+  _origin: 'manual' | 'synced';
+  /** The Received column: when the HRIS first got a synced hire, else when HR added the row. */
+  _receivedAt: string | null;
 } & Record<FieldKey, string>;
 
 /** The edit modal's open state: adding a hire, or editing a specific row with a
@@ -150,10 +157,13 @@ function mergeSourceOptions(used: readonly { source: string }[]): string[] {
 const REMOTE_REFETCH_DEBOUNCE_MS = 400;
 
 function fromServer(row: HrNewHireChecklistRow): GridRow {
+  const synced = row.origin === 'synced';
   const r = {
     id: row.id,
     _updatedAt: row.updated_at ?? null,
     _editedBy: row.cell_edits ?? undefined,
+    _origin: synced ? 'synced' : 'manual',
+    _receivedAt: (synced ? row.received_at : null) ?? row.created_at ?? null,
   } as GridRow;
   for (const c of COLUMNS) r[c.key] = (row[c.key] ?? '') as string;
   return r;
@@ -453,6 +463,20 @@ export default function HrNewHireChecklist({
     enabled: !!selfEmail && !!period,
     onChanged: scheduleRefetch,
   });
+
+  // ── Hiring-database sync (docs/features/new-hire-source-sync.md) ─────────────
+  // Polls while this tab is open (on mount, every 30 s while visible, Sync now).
+  // A pass that placed or updated hires names the weeks it touched; refetch the
+  // one on screen. Every OTHER open grid hears it through the room broadcast the
+  // server sends to each touched week.
+  const handleSyncedWeeks = useCallback(
+    (weeks: string[]) => {
+      if (weeks.includes(periodRef.current)) void fetchPeriod(periodRef.current, { silent: true });
+      void loadPeriods();
+    },
+    [fetchPeriod, loadPeriods],
+  );
+  const hiresSync = useHiresSourceSync({ enabled: !!selfEmail, onWeeksChanged: handleSyncedWeeks });
 
   // Announce which row (if any) this client is editing, so peers see the soft
   // lock. Cleared when the modal closes or drops to 'add'.
@@ -797,6 +821,20 @@ export default function HrNewHireChecklist({
       void deleteIds([id]);
     },
     [period, deleteIds],
+  );
+
+  // "Add to this week" on a held hire from the hiring database — the manual way in
+  // for a hire the sync would not place on its own (a past or locked week, no
+  // interview date). The server refuses a locked week and a hire already listed.
+  const { placeHeld } = hiresSync;
+  const placeHeldHire = useCallback(
+    async (hire: HeldHire) => {
+      if (lockedRef.current) return;
+      const res = await placeHeld(hire.source_key, period);
+      if (res.ok) toast.success(`Added ${hire.name?.trim() || 'the hire'} to ${formatWeekLabel(period)}`);
+      else toast.error(res.error ?? 'Failed to add the hire');
+    },
+    [placeHeld, period],
   );
 
   const deleteSelected = useCallback(() => {
@@ -1415,6 +1453,14 @@ export default function HrNewHireChecklist({
           />
         ) : (
         <div className="flex h-full min-h-0 flex-col gap-3">
+          {/* Hiring-database sync: live status, Sync now, held hires. */}
+          <HiresSyncStrip
+            sync={hiresSync}
+            periodLabel={formatWeekLabel(period)}
+            locked={locked}
+            onPlace={(h) => void placeHeldHire(h)}
+          />
+
           {/* Locked banner */}
           {locked && !loading && !error && (
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
@@ -1444,7 +1490,8 @@ export default function HrNewHireChecklist({
               <span>
                 This checklist is edit-locked so two people can never overwrite each other. Use the{' '}
                 <strong>New Hire</strong> button to add a hire and the <strong>pencil</strong> to edit one — every change
-                saves instantly and shows up live for everyone. Tick rows to bulk-apply a{' '}
+                saves instantly and shows up live for everyone. Hires recorded in the hiring database arrive on
+                their own, tagged <strong>Synced</strong>; a cell you change stays yours. Tick rows to bulk-apply a{' '}
                 <strong>department</strong> / <strong>country</strong> or delete. A green dot in a cell means it&apos;s been
                 edited — click it for the full history. <strong>Lock in</strong> sends this week&apos;s orientation invites
                 and feeds the per-country <strong>Bulk Invite</strong> in Onboarding.
@@ -1678,6 +1725,12 @@ export default function HrNewHireChecklist({
                           {c.label}
                         </th>
                       ))}
+                      <th
+                        title="When the hire reached the HRIS: from the hiring database (Synced) or typed in (Manual)"
+                        className="whitespace-nowrap border-b border-emerald-100/80 px-2.5 py-2 text-left text-[11.5px] font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-950/40 dark:text-emerald-300"
+                      >
+                        Received
+                      </th>
                       {!locked && <th className="w-16 border-b border-emerald-100/80 px-1 py-2 dark:border-emerald-950/40" />}
                     </tr>
                   </thead>
@@ -1685,7 +1738,7 @@ export default function HrNewHireChecklist({
                     {filteredRows.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={COLUMNS.length + (locked ? 1 : 2)}
+                          colSpan={COLUMNS.length + 1 + (locked ? 1 : 2)}
                           className="px-4 py-10 text-center text-[13px] text-zinc-500 dark:text-zinc-400"
                         >
                           No hires match these filters.{' '}
@@ -1804,6 +1857,30 @@ export default function HrNewHireChecklist({
                               </td>
                             );
                           })}
+                          <td className="border-b border-emerald-50/80 px-2.5 dark:border-zinc-800/80">
+                            <div
+                              className="flex h-9 items-center gap-1.5 whitespace-nowrap"
+                              title={
+                                row._origin === 'synced'
+                                  ? `Received from the hiring database ${formatLockStamp(row._receivedAt)}`
+                                  : `Added by hand ${formatLockStamp(row._receivedAt)}`
+                              }
+                            >
+                              <span
+                                className={cn(
+                                  'rounded-full px-1.5 py-px text-[10px] font-semibold',
+                                  row._origin === 'synced'
+                                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200'
+                                    : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+                                )}
+                              >
+                                {row._origin === 'synced' ? 'Synced' : 'Manual'}
+                              </span>
+                              <span className="tabular-nums text-[12px] text-zinc-600 dark:text-zinc-400">
+                                {formatLockStamp(row._receivedAt) || '—'}
+                              </span>
+                            </div>
+                          </td>
                           {!locked && (
                             <td className="border-b border-emerald-50/80 px-1 dark:border-zinc-800/80">
                               <div className="flex items-center justify-center gap-0.5">
