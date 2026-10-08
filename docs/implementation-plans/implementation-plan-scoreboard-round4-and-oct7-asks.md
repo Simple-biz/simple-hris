@@ -244,81 +244,52 @@ git commit -m "feat(accounting-scoreboard): a section can be hidden from the Ove
 `hardening`, display only. Carla: *"Can you make this prettier? Just like we want it to be like, yes, five days, no
 meeting. Keep it going, guys."* Kane: *"date pills"*. Use the `impeccable` skill for the visual pass.
 
-**Files:**
-- Create: `src/lib/accounting-scoreboard/meeting-pills.ts`, `meeting-pills.test.ts`
-- Modify: the PM Buckets header where `noMeetingStreak` renders (Step 0 finds it: `SectionGrid.tsx` or `ScoreboardApp`)
-- Docs: `accounting-scoreboard.md` § PM Buckets
+> **BUILT 2026-10-07 (session `63e0ef1e`). Step 0 found that the code disagreed with this task in four places. The
+> code won, and the task below is corrected to what shipped.**
+> - **Where it lives:** `noMeetingStreak` (`scoring.ts:363`) from the server's all-time `lastMeetingDate`
+>   (`server.ts:474-486`) was ONE chip in `SectionGrid`'s header slot (`SectionGrid.tsx:182, 226-243`). The week's
+>   ticks were already on the client (`lookup` slot `mtg` → `dailySectionStats().meetingsByDay`, `scoring.ts:346`,
+>   the same value-1 rule as the server read), so there is no new read.
+> - **`weekStart` → `dates`:** `week.ts` already has `datesFor(weekStart, section.days)`. The pills follow the
+>   section's own days, with no hand-rolled `addDaysIso` and no hard-coded Mon–Fri. Each pill also carries `isToday`.
+> - **"Amber once the streak passes 7 days":** the existing rule is `>= 7` (`SectionGrid.tsx:227`). It is kept, now
+>   as `streakIsLong`.
+> - **0 and "—" needed their own words:** a meeting ticked today must not read "0 days, no meeting. Keep it going!",
+>   and never-ticked stays "—" (`accounting-scoreboard.md` § PM Buckets).
+> - The screen-reader name is a `sr-only` line inside each pill, rather than `aria-label` on an `<li>`, which
+>   screen readers announce unevenly. The text is as planned (*"Mon Oct 5: no meeting"*).
 
-**Interfaces:**
-- Produces: `weekMeetingPills(weekStart: string, meetingDays: ReadonlySet<string>, todayEastern: string): MeetingPill[]`,
-  `type MeetingPill = { day: string; state: 'clear' | 'meeting' | 'future' }`
-- Consumes: the board's PM meeting ticks (the days with any meeting ticked this week), `todayEastern()`.
+**Files (as shipped):**
+- Create: `src/lib/accounting-scoreboard/meeting-pills.ts`, `meeting-pills.test.ts` (20 tests: 16 on the module, 4
+  source pins on `SectionGrid`)
+- Modify: `src/components/accounting-scoreboard/SectionGrid.tsx` (the `NoMeetingStreak` strip between the header
+  and the grid; the header chip is gone)
+- Docs: `accounting-scoreboard.md` § PM Buckets (+ Key files, the sections table, the verified note, Deploy notes)
 
-- [ ] **Step 0: Read and cite** where the streak is computed and rendered, and how the week's meeting ticks reach the
-  client. If `week.ts` already has an add-days helper, use it instead of `addDaysIso` below.
+**Interfaces (as shipped):**
+- Produces: `weekMeetingPills(dates: readonly string[], meetingDays: ReadonlySet<string>, today: string): MeetingPill[]`,
+  `type MeetingPill = { day: string; state: 'clear' | 'meeting' | 'future'; isToday: boolean }`, plus
+  `meetingDaysOf`, `streakHeadline`, `streakIsLong` (`STREAK_AMBER_DAYS = 7`), `pillText`, `pillAriaLabel`,
+  `pillsCaption`, `dayName`.
+- Consumes: `dailySectionStats(...).meetingsByDay` (the grid's own ticks), `board.today`, `lastMeetingDate`.
 
-- [ ] **Step 1: Write the failing test.**
-
-```ts
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { weekMeetingPills } from './meeting-pills';
-
-test('Mon–Fri pills: clear, meeting, and the days still ahead', () => {
-  const pills = weekMeetingPills('2026-10-04', new Set(['2026-10-06']), '2026-10-07');
-  assert.deepEqual(pills, [
-    { day: '2026-10-05', state: 'clear' },
-    { day: '2026-10-06', state: 'meeting' },
-    { day: '2026-10-07', state: 'clear' },
-    { day: '2026-10-08', state: 'future' },
-    { day: '2026-10-09', state: 'future' },
-  ]);
-});
-
-test('a past week has no future pills', () => {
-  const pills = weekMeetingPills('2026-09-27', new Set(), '2026-10-07');
-  assert.ok(pills.every((p) => p.state === 'clear'));
-});
-```
-
-- [ ] **Step 2: Run** `node --import tsx --test src/lib/accounting-scoreboard/meeting-pills.test.ts`. Expected: FAIL,
-  module not found.
-
-- [ ] **Step 3: Implement.**
-
-```ts
-export type MeetingPill = { day: string; state: 'clear' | 'meeting' | 'future' };
-
-function addDaysIso(iso: string, n: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-/** Mon–Fri of the week keyed by its Sunday. Today counts as clear until a meeting is ticked. */
-export function weekMeetingPills(
-  weekStart: string,
-  meetingDays: ReadonlySet<string>,
-  todayEastern: string,
-): MeetingPill[] {
-  return [1, 2, 3, 4, 5].map((i) => {
-    const day = addDaysIso(weekStart, i);
-    const state = day > todayEastern ? 'future' : meetingDays.has(day) ? 'meeting' : 'clear';
-    return { day, state };
-  });
-}
-```
-
-- [ ] **Step 4: Run, and see it pass.**
-
-- [ ] **Step 5: Render.** The header reads *"5 days, no meeting. Keep it going!"* (the streak number stays the
-  computed `noMeetingStreak`, all-time). Under it are five date pills: `clear` filled emerald with the weekday and date,
-  `meeting` neutral with a small calendar icon, `future` dashed outline. The pill's text says the state too (colour is
-  never the only signal), it gets `aria-label="Mon Oct 5: no meeting"`, and it is amber once the streak passes 7 days
-  (the existing rule). Run `impeccable` on it. Verify in the esbuild + Playwright harness (memory
-  `accounting-scoreboard` § Verifying the UI) at 1360 px and 390 px, light and dark, and under reduced motion.
-
-- [ ] **Step 6: Commit** the module, test, component and doc by explicit path:
+- [x] **Step 0: Read and cite.** See the BUILT block above.
+- [x] **Step 1: Write the failing test.** `meeting-pills.test.ts`. The plan's two cases are kept (on `datesFor` dates,
+  with `isToday`), plus: a meeting ticked today, a weekend, a week not started, the section's own days, `meetingDaysOf`
+  (a 0 tick is not a meeting; misaligned arrays throw), a distinct word per state, the aria text, Carla's sentence, 0
+  and "—" never cheering, `dayName`, the week caption, `>= 7`, and four source pins on `SectionGrid`.
+- [x] **Step 2: Run.** It FAILED (module not found).
+- [x] **Step 3: Implement.** `src/lib/accounting-scoreboard/meeting-pills.ts`.
+- [x] **Step 4: Run, and see it pass (20/20).**
+- [x] **Step 5: Render** (with `impeccable` `polish`). The strip sits between the header and the grid: an icon tile,
+  Carla's sentence (the number from `noMeetingStreak`) and *"Last meeting ticked …"*, then five pills in the
+  ui-standards § 8.2 palettes. Each pill shows its weekday, date and state word, with an icon from `sm`; today has an
+  orange outline and reads *Today*. A long streak is amber and also says *Over a week*. The pills rise in once, gated
+  on `useReducedMotion()`. **Verified in the esbuild + Playwright harness**, on a SYNTHETIC board with the clock
+  pinned: 231/231 checks at 1360 px and 390 px, light and dark, reduced motion, plus a tick and untick and a past week
+  (see `accounting-scoreboard.md` § Motion and controls). The first round caught "No meeting" clipping at 390 px.
+  The fix is the word alone on phones (the icon from `sm`), which may wrap and never clips.
+- [x] **Step 6: Commit** by explicit path:
   `feat(accounting-scoreboard): the No Meeting Streak as this week's date pills (item 391)`.
 
 ---

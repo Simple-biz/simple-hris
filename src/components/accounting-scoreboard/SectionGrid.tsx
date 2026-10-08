@@ -8,8 +8,21 @@
  */
 
 import { useMemo, type ReactNode } from 'react';
-import { CalendarX2 } from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
+import { CalendarDays, CalendarX2, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  dayName,
+  meetingDaysOf,
+  pillAriaLabel,
+  pillText,
+  pillsCaption,
+  streakHeadline,
+  streakIsLong,
+  weekMeetingPills,
+  type MeetingPill,
+  type MeetingPillState,
+} from '@/lib/accounting-scoreboard/meeting-pills';
 import { WEEKDAY_LABEL, isOutcome, type BoardSection, type GoalRule, type Slot } from '@/lib/accounting-scoreboard/sections';
 import { datesFor, dayHeader } from '@/lib/accounting-scoreboard/week';
 import {
@@ -139,6 +152,21 @@ export function SectionGrid({
   const disputes = isOpenDisputes ? amPmSectionStats(rows, dates, lookup, section.score, today) : null;
   const wins = section.kind === 'amount_count' ? winRatio(rows, dates, lookup) : null;
   const streak = section.kind === 'daily_flag' ? noMeetingStreak(lastMeetingDate, today) : null;
+  // This week's pills come from the ticks the grid already holds (the same rows and the same "met" rule
+  // as its Met column), never a read of their own.
+  const pills = useMemo(() => {
+    if (section.kind !== 'daily_flag') return null;
+    const { meetingsByDay } = dailySectionStats(rows.map((r) => r.id), dates, lookup);
+    return weekMeetingPills(dates, meetingDaysOf(dates, meetingsByDay), today);
+  }, [section.kind, rows, dates, lookup, today]);
+  const streakStrip = pills ? (
+    <NoMeetingStreak
+      days={streak}
+      lastMeetingDate={lastMeetingDate}
+      pills={pills}
+      caption={pillsCaption(weekStart, today)}
+    />
+  ) : null;
   const CHIP =
     'inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300';
 
@@ -179,7 +207,6 @@ export function SectionGrid({
               <span className="font-mono tabular-nums">{fmtNum(wins.lost)}</span> lost
             </span>
           ) : null}
-          {section.kind === 'daily_flag' ? <NoMeetingStreak days={streak} /> : null}
           <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
             Last week{' '}
             <span className={cn('font-mono tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>
@@ -195,6 +222,7 @@ export function SectionGrid({
     return (
       <div className="space-y-4">
         {header}
+        {streakStrip}
         <EmptyRows noun={section.rowNoun} isManager={isManager} />
       </div>
     );
@@ -204,6 +232,7 @@ export function SectionGrid({
   return (
     <div className="space-y-4">
       {header}
+      {streakStrip}
       <div className="min-w-0 overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
         {section.kind === 'am_pm' ? (
           <AmPmTable {...tableProps} />
@@ -219,26 +248,120 @@ export function SectionGrid({
   );
 }
 
+/** ui-standards § 8.2 palettes: ok = no meeting, neutral = a meeting, a dashed outline = still ahead. */
+const PILL_TONE: Record<MeetingPillState, string> = {
+  clear:
+    'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
+  meeting: 'border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300',
+  future: 'border-dashed border-zinc-300 bg-transparent text-zinc-600 dark:border-zinc-700 dark:text-zinc-400',
+};
+
 /**
- * PM Buckets' No Meeting Streak (Carla, 2026-10-02): calendar days since any meeting was ticked.
- * All time; it drops to 0 only when a meeting is ticked. Amber once a week has gone by.
+ * PM Buckets' No Meeting Streak (Carla, 2026-10-02; made prettier 2026-10-07, item 391): her sentence,
+ * "5 days, no meeting. Keep it going!", over this week's date pills. The number is all time
+ * (`noMeetingStreak`, calendar days since any meeting was ticked); the pills are the week on screen.
+ * Amber once a week has gone by (`streakIsLong`), and then it also says so in words.
  */
-function NoMeetingStreak({ days }: { days: number | null }) {
-  const long = days !== null && days >= 7;
+function NoMeetingStreak({
+  days,
+  lastMeetingDate,
+  pills,
+  caption,
+}: {
+  days: number | null;
+  lastMeetingDate: string | null;
+  pills: MeetingPill[];
+  caption: string;
+}) {
+  const reduce = useReducedMotion() ?? false;
+  const long = streakIsLong(days);
+  const { lead, sep, rest } = streakHeadline(days);
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium',
-        long ? LIGHT_STYLE.amber.chip : LIGHT_STYLE.none.chip,
-      )}
-      title="Days since any PM meeting was ticked. All time: it only goes back to 0 when a meeting is ticked."
+    <section
+      aria-label="No meeting streak"
+      className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950 sm:px-4 lg:flex-row lg:items-center lg:justify-between lg:gap-6"
     >
-      <CalendarX2 className="size-3.5" />
-      No meeting streak{' '}
-      <span className="font-mono font-semibold tabular-nums">
-        {days === null ? '—' : `${days} ${days === 1 ? 'day' : 'days'}`}
-      </span>
-    </span>
+      <div className="flex min-w-0 items-start gap-3">
+        <span
+          aria-hidden
+          className={cn(
+            'grid size-9 shrink-0 place-items-center rounded-lg',
+            long
+              ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+              : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+          )}
+        >
+          <CalendarX2 className="size-[18px]" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[15px] leading-snug text-zinc-700 dark:text-zinc-300">
+            <span
+              className={cn(
+                'font-semibold tabular-nums',
+                long ? 'text-amber-700 dark:text-amber-300' : 'text-zinc-900 dark:text-zinc-50',
+              )}
+            >
+              {lead}
+            </span>
+            {sep}
+            {rest}
+            {long ? (
+              <span
+                className={cn(
+                  'ml-2 inline-flex translate-y-[-1px] items-center rounded-full border px-2 py-px align-middle text-[10.5px] font-semibold',
+                  LIGHT_STYLE.amber.chip,
+                )}
+              >
+                Over a week
+              </span>
+            ) : null}
+          </p>
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            {lastMeetingDate
+              ? `Last meeting ticked ${dayName(lastMeetingDate)}. Counts every calendar day, all time.`
+              : 'Counts every calendar day from the first meeting ticked.'}
+          </p>
+        </div>
+      </div>
+
+      <div className="min-w-0 lg:shrink-0">
+        <p className={cn(TINY_CAPS, 'mb-1.5 text-zinc-500 dark:text-zinc-400')}>{caption}</p>
+        <ol className="grid grid-cols-5 gap-1 sm:gap-1.5 lg:flex">
+          {pills.map((p, i) => {
+            const head = dayHeader(p.day);
+            return (
+              <motion.li
+                key={p.day}
+                initial={reduce ? false : { opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1], delay: reduce ? 0 : i * 0.03 }}
+                aria-current={p.isToday ? 'date' : undefined}
+                title={pillAriaLabel(p)}
+                className={cn(
+                  'flex min-w-0 flex-col items-center rounded-lg border px-0.5 pb-1.5 pt-1 text-center transition-colors duration-200 lg:w-[5.25rem]',
+                  PILL_TONE[p.state],
+                  p.isToday && 'outline outline-2 outline-offset-2 outline-orange-400 dark:outline-orange-500/70',
+                )}
+              >
+                <span className="sr-only">{pillAriaLabel(p)}</span>
+                <span aria-hidden className="text-[10px] font-semibold uppercase tracking-[0.12em]">
+                  {p.isToday ? 'Today' : head.weekday}
+                </span>
+                <span aria-hidden className="font-mono text-[13px] font-semibold tabular-nums">
+                  {head.short}
+                </span>
+                {/* The word is the signal; the icon joins it from `sm`. On a phone the word may wrap, never clip. */}
+                <span aria-hidden className="mt-0.5 inline-flex items-center justify-center gap-0.5 text-[10.5px] font-medium leading-tight">
+                  {p.state === 'clear' ? <Check className="hidden size-3 shrink-0 sm:block" strokeWidth={2.5} /> : null}
+                  {p.state === 'meeting' ? <CalendarDays className="hidden size-3 shrink-0 sm:block" /> : null}
+                  <span className="text-balance">{pillText(p.state)}</span>
+                </span>
+              </motion.li>
+            );
+          })}
+        </ol>
+      </div>
+    </section>
   );
 }
 

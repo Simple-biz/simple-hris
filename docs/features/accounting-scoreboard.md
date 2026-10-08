@@ -26,6 +26,7 @@ every payroll problem, and custom sections.
 | The 11 built-in sections (kind, days, slots, goals), custom sections, tabs | `src/lib/accounting-scoreboard/sections.ts` |
 | Weeks (Sunday key) and days (US Eastern) | `src/lib/accounting-scoreboard/week.ts` |
 | The sheet's math | `src/lib/accounting-scoreboard/scoring.ts` |
+| The No Meeting Streak's sentence and date pills | `src/lib/accounting-scoreboard/meeting-pills.ts` (+ `.test.ts`) |
 | One headline and one stop light per section | `src/lib/accounting-scoreboard/board.ts` |
 | The stop light (green / amber / red, paced) | `src/lib/accounting-scoreboard/stoplight.ts` |
 | The Team Score (card → group → team, its bands) | `src/lib/accounting-scoreboard/team-score.ts` (+ `.test.ts`, Carla's worked example) |
@@ -98,7 +99,7 @@ Managers can also add sections of their own (§ Custom sections).
 |---|---|---|---|---|
 | Accounting Buckets | AM/PM | Mon–Fri | **Carla's rule** (§ Buckets): Score = 10 × Completed ÷ (Completed + Open); headline = the overall, 10 × Σ Completed ÷ Σ(Completed + Open) over the scored buckets | ≥ 8 |
 | Collections | log (+ Payment Verified) | Mon–Fri | team points | ≥ 85 |
-| PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average (an average: never paced); No Meeting Streak in the header | < 30 avg (Carla, 2026-10-07) |
+| PM Buckets | daily + meeting tick | Mon–Fri | Σ of each PM's daily average (an average: never paced); No Meeting Streak over the grid, with the week's date pills | < 30 avg (Carla, 2026-10-07) |
 | Sales — Payments (the Sales Onboarding tab; "Customer Sales Onboarding" until 2026-10-07) | daily | Mon–Fri | week total | none by default; "at least N payments", set in Setup |
 | Email Inbox | AM/PM | Mon–Fri | 10 − average PM count (0 → 10, ≥ 9 → 1); headline = score of the team average | ≥ 9 |
 | Chargebacks · Open Disputes | AM/PM | Mon–Fri | **scored like Buckets** since 2026-10-07: the overall 0–10, over the lines not marked "due in 7 days"; open now and the due-in-7-days line are called out beside it | none by default; a 0–10 score, set in Setup |
@@ -188,13 +189,41 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
 
 ## PM Buckets: the No Meeting Streak
 
-Carla's email, § 3. The tab's header shows **"No meeting streak N days"**: the calendar days since the last
-day **any** PM meeting was ticked, counted to today (US Eastern). It is all time: it runs across weeks and
-drops to 0 only on a day a meeting is ticked. Unticking the only meeting on a day moves it back to the one
-before. It is **computed from the ticks, never stored** (`noMeetingStreak`; the board reads the latest
-ticked day through the row's section, archived PM rows included, because the meeting happened). A tick
-re-reads it at once instead of waiting for the next refresh. It turns amber once a week has gone by. Before
-any meeting was ever ticked it reads "—".
+Carla's email, § 3. **The number** is the calendar days since the last day **any** PM meeting was ticked,
+counted to today (US Eastern). It is all time: it runs across weeks and drops to 0 only on a day a meeting is
+ticked. Unticking the only meeting on a day moves it back to the one before. It is **computed from the ticks,
+never stored** (`noMeetingStreak`; the board reads the latest ticked day through the row's section, archived
+PM rows included, because the meeting happened). A tick re-reads it at once instead of waiting for the next
+refresh. It turns amber once a week has gone by (7 days or more, `streakIsLong`). Before any meeting was ever
+ticked it reads "—".
+
+**How it is shown (2026-10-07, item 391).** Carla: *"Can you make this prettier? Just like we want it to be
+like, yes, five days, no meeting. Keep it going, guys."* Kane: *"date pills"*. A strip between the tab's
+header and the grid (`NoMeetingStreak` in `SectionGrid.tsx`, words and pills from `meeting-pills.ts`):
+
+- **Her sentence:** *"5 days, no meeting. Keep it going!"*, the number set heavier. **0 has words of its own**
+  (*"Meeting today. The streak starts again tomorrow."*), so the board never cheers "0 days, no meeting".
+  Never ticked: *"— No meeting has been ticked yet."* Under it: *"Last meeting ticked Fri Oct 2. Counts every
+  calendar day, all time."*
+- **Date pills, one per day the section keeps** (`datesFor(weekStart, section.days)`, Mon–Fri), for **the week
+  on screen**, captioned *This week* (Saturday included) or its range (*Sep 28 – Oct 2, 2026*). **The number
+  stays all time**, so on a past week the pills change and the sentence does not. A day is **No meeting**
+  (emerald, a check), **Meeting** (neutral, a calendar) or **Ahead** (dashed, a day after today). Today is
+  *No meeting* until a meeting is ticked on it. It is outlined in the board's orange and reads *Today*
+  (`aria-current="date"`).
+- **The pills read the ticks the grid already holds**: the same rows, and the same "met" rule (value 1) as the
+  Met column and the server's `lastMeetingDate` read (`dailySectionStats` → `meetingsByDay` →
+  `meetingDaysOf`). A tick ticked off (0) is not a meeting. **No new read, nothing stored, no migration.**
+- The pills cover workdays and the number counts calendar days, so a meeting last Friday reads *5 days* on
+  Wednesday over three *No meeting* pills. That is the two rules as written, not a mismatch.
+- **Colour is never the only signal.** Every pill prints its state word, and the icon joins it from `sm`. On a
+  phone the word may wrap and never clips. Each pill carries a screen-reader line (*"Mon Oct 5: no meeting"*,
+  *"Wed Oct 7, today: no meeting so far"*). When the streak is long, the amber also says **Over a week** in words.
+- The pills rise in once (0.2 s, a 30 ms stagger) and **appear at once under reduced motion**. A background
+  refresh never replays them, because the panel is keyed on the tab and the week (§ Motion).
+- **OPEN, Carla to say:** her *"Keep it going"* treats a long streak as good, but the amber (round 3) reads as a
+  caution after a week. The amber was kept as documented. If a long streak should read as a win, change
+  `streakIsLong`'s use and its test.
 
 ## Payroll Problems: a log, every problem with its type
 
@@ -602,6 +631,15 @@ out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **d
   2026-10-01 against the real `ScoreboardApp`, bundled with a mocked board GET, with 26 scripted checks at
   390, 700, 1024 and 1360 px, light and dark, and under reduced motion.
 
+- **The No Meeting Streak's pills were verified 2026-10-07** in headless Chromium on the real `ScoreboardApp`, fed a
+  **synthetic** board (fictional PMs and ticks, no production data) with the clock pinned to Wed 2026-10-07. 231
+  scripted checks passed. They ran five streaks (5 days, a meeting on Tuesday, a meeting today, 12 days, never) at
+  1360 px and 390 px, light and dark, and covered: the sentence, each pill's state and screen-reader line, one *Today*,
+  *Over a week* only when long, no clipped pill text, pill and sub-line contrast ≥ 4.5 (lowest 4.83), no page-wide
+  horizontal scroll, and no console errors. Also covered: ticking today's meeting turns today's pill and re-reads
+  the sentence to *Meeting today*, and unticking goes back. The previous week shows its own pills under the same
+  all-time number. Under reduced motion every pill is fully visible on the first frame. **Not clicked through
+  signed in.**
 - **Shown in was verified 2026-10-07** in headless Chromium on the real `ScoreboardApp`, fed the 2026-10-06 production
   board plus fixtures (Carla's section shown in Sales Onboarding, one under Collections, one with its own tab). 62
   scripted checks passed at 1360 px light and dark and at 390 px. They covered: the renamed card, the hosted card right
@@ -798,6 +836,8 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
 - **The round-3 `--verify` now fails one check, by design use (Open item 399):** *"Carla's three starting problem types
   are live"*. Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV", which is what the types list is for. The
   check is a seed-time check that `--verify` still runs. Its other checks pass.
+- **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **The push:
+  PENDING** (Kane).
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
 - No n8n, no cron, no new notification type.
