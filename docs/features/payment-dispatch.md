@@ -408,6 +408,13 @@ Modal organised into two field groups (`MarkPaidDialog.tsx`):
 
 The confirm button label and color adapt to the chosen status (`Confirm sent` / `Log dispatch` with emerald / amber / rose / zinc background).
 
+**Employee-reported account status (2026-10-08).** Above *Recipient*, `PayoutAccountReportsBanner`
+shows any account the employee reported closed / deactivated / frozen, with the date, the note and
+whether it is the account payroll pays ([payout-account-reports.md](./payout-account-reports.md)).
+It **informs only**: it pre-fills nothing and holds nothing, and the status pill, the pencil override
+and the routing are untouched. A failed check says so in one muted line; nothing reported renders
+nothing.
+
 The pre-fills follow Carla's per-processor spec:
 
 | Processor | Pre-filled values |

@@ -59,6 +59,10 @@ export type AuditAction =
   // acknowledged, or a card-shaped number / non-matching holder was not confirmed.
   // The record that the employee WAS warned (payout-change-safety.ts).
   | 'bank_update.safety_refused'
+  // An employee reported one of their own payout accounts closed / deactivated /
+  // frozen, or withdrew that report (payout-account-reports.ts). Informs only.
+  | 'bank_update.account_reported'
+  | 'bank_update.account_report_withdrawn'
   | 'bank_override.saved'
   // HR Dashboard — pending hires / onboarding pipeline
   | 'hr.pending.created'

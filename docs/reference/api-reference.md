@@ -447,7 +447,7 @@ Fetches all employee IDs and bank information from the `employee_ids` table.
 
 **Query Parameters**:
 - `email` *(optional, added 2026-05-14)* — server-side ilike filter on `work_email` then `personal_email`. Returns a 1-row array (or empty). Used by the employee portal (Profile page) to avoid downloading every employee_ids row.
-- `track=1` *(optional, with `email`, added 2026-10-07)* — adds `payoutTrack`: how many times the account on file has been paid (`{status:'ok', destination, paidCount, problemCount, firstPaidOn, lastPaidOn, lastProblemOn}` or `{status:'unavailable'}`). Counts and dates only. Only Profile → Payout asks for it ([update-bank-info.md](../features/update-bank-info.md) rule 27).
+- `track=1` *(optional, with `email`, added 2026-10-07)* — adds `payoutTrack`: how many times the account on file has been paid (`{status:'ok', destination, paidCount, problemCount, firstPaidOn, lastPaidOn, lastProblemOn}` or `{status:'unavailable'}`). Counts and dates only. Only Profile → Payout asks for it ([update-bank-info.md](../features/update-bank-info.md) rule 27). Since 2026-10-08 it also adds `accountReports`: the accounts the employee reported closed / deactivated / frozen, matched to the current record, masked hints only ([payout-account-reports.md](../features/payout-account-reports.md)).
 
 **Response** `200`:
 ```json
@@ -3542,9 +3542,10 @@ of cells — the matches were not re-run).
 | `/api/auth/session-status` | GET | — **none found** | [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `/api/avatar` | GET | `authorizeEmail` | *this file* |
 | `/api/bank-update/lock-status` | GET | — **none found** | [update-bank-info](../features/update-bank-info.md) |
+| `/api/bank-update/report-account` | POST | session token (public host); not lock-gated by design | [payout-account-reports](../features/payout-account-reports.md) |
 | `/api/bank-update/request-otp` | POST | — **none found** | [update-bank-info](../features/update-bank-info.md) |
 | `/api/bank-update/save` | POST | service-role only; 400 safety gate (2026-10-07: notice ack + card/holder confirmations); 423 locked, **503 when the lock cannot be read** (2026-10-08) | [update-bank-info](../features/update-bank-info.md) · [bank-preferred-routing](../features/bank-preferred-routing.md) · [notification-alerts](../features/notification-alerts.md) |
-| `/api/bank-update/verify-otp` | POST | — **none found** (returns `payout_track` since 2026-10-07; ONE `{error}` body + 401 for every failed code since 2026-10-08, never a `reason`) | [update-bank-info](../features/update-bank-info.md) |
+| `/api/bank-update/verify-otp` | POST | — **none found** (returns `payout_track` since 2026-10-07 and `account_reports` since 2026-10-08; ONE `{error}` body + 401 for every failed code since 2026-10-08, never a `reason`) | [update-bank-info](../features/update-bank-info.md) |
 | `/api/bonus-catalog` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [audit-log](../features/audit-log.md) · [bonus-catalog](../features/bonus-catalog.md) · *this file* |
 | `/api/bonus-catalog-applied` | GET, POST, DELETE | `requireFeatureEdit` · *GET: none in route* | [kpi-scored-notification](../features/kpi-scored-notification.md) · [payment-dispatch](../features/payment-dispatch.md) · [kpi-live-refresh](../features/kpi-live-refresh.md) (POST + DELETE broadcast `kpi-bonus-sync`, 2026-09-29) |
 | `/api/bonus-catalog/history` | GET | — **none found** | [bonus-catalog](../features/bonus-catalog.md) |
@@ -3602,6 +3603,7 @@ of cells — the matches were not re-run).
 | `/api/employee/documents/coe-preview` | GET | `getServerSession` | [documents-tab](../features/documents-tab.md) |
 | `/api/employee/orphanage-hours` | GET | `getServerSession` | [orphanage-pab-coverage](../features/orphanage-pab-coverage.md) |
 | `/api/employee/paystub` | GET | `getServerSession` | [cop-country-payees](../features/cop-country-payees.md) · [documents-tab](../features/documents-tab.md) · *this file* |
+| `/api/employee/payout-account-reports` | POST | `authorizeEmail`, SELF only (403 for staff); not lock-gated by design | [payout-account-reports](../features/payout-account-reports.md) |
 | `/api/employee/penny-chat` | POST | `authorizeEmail` | [employee-penny-ai](../features/employee-penny-ai.md) · *this file* |
 | `/api/employee/penny-chat/quota` | GET | `authorizeEmail` | [employee-penny-ai](../features/employee-penny-ai.md) · *this file* |
 | `/api/employee/support` | GET, POST | `authorizeEmail` | [employee-support-chat](../features/employee-support-chat.md) · [employee-support](../features/employee-support.md) |
@@ -3760,6 +3762,7 @@ of cells — the matches were not re-run).
 | `/api/payment-dispatches/cycle-closeout` | GET, POST, DELETE | `getServerSession` | [cycle-closeout](../features/cycle-closeout.md) · [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payment-dispatches/recent-paid` | GET | `requireFeatureAccess` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) |
 | `/api/payment-dispatches/undo` | POST | `requireFeatureEdit` | [dispatch-paid-toast](../features/dispatch-paid-toast.md) · [payment-dispatch](../features/payment-dispatch.md) |
+| `/api/payout-account-reports` | GET | `requireRateVisibilityOrFeatureEdit` (accounting / payment_dispatch) | [payout-account-reports](../features/payout-account-reports.md) |
 | `/api/payment-dispatches/undo-history` | GET | `requireElevatedSession` | [payment-dispatch](../features/payment-dispatch.md) |
 | `/api/payroll-current-pay` | GET | `requireRateVisibilityOrFeatureEdit` | [payment-dispatch](../features/payment-dispatch.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/payroll-dispatch-lock` | GET, POST | `getServerSession` | [bank-preferred-routing](../features/bank-preferred-routing.md) · [payment-dispatch](../features/payment-dispatch.md) · *this file* |

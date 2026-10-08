@@ -2152,6 +2152,7 @@ not a description. **58 files are named in no feature doc and nowhere above** (2
 | `src/components/auth/SessionInvalidationWatcher.tsx` | component | *this file* · [rbac-feature-permissions](../features/rbac-feature-permissions.md) |
 | `src/components/banking/bank-card-deck.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) |
 | `src/components/banking/bank-card.tsx` | component | *this file* · [employee-profile](../features/employee-profile.md) · [people-bank-card](../features/people-bank-card.md) |
+| `src/components/banking/payout-account-report.tsx` | component | [payout-account-reports](../features/payout-account-reports.md) · [employee-profile](../features/employee-profile.md) |
 | `src/components/banking/payout-change-notice.tsx` | component | *this file* · [update-bank-info](../features/update-bank-info.md) · [employee-profile](../features/employee-profile.md) |
 | `src/components/ceo/BizAiBadge.tsx` | component | — **no doc** |
 | `src/components/ceo/BizAiTab.tsx` | component | [admin-penny-console](../features/admin-penny-console.md) |

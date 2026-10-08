@@ -123,6 +123,13 @@ import { getTitlesForDepartment, hasAnySkillSetContent } from '@/lib/skill-set-t
 // for the payee looking at their own record.
 import { BankCard } from '@/components/banking/bank-card';
 import { PayoutChangeNotice, PayoutTrackLine } from '@/components/banking/payout-change-notice';
+import { AccountReportsPanel } from '@/components/banking/payout-account-report';
+import {
+  parseAccountReportsView,
+  type AccountKind,
+  type AccountReportsView,
+  type PayoutAccountStatus,
+} from '@/lib/banking/payout-account-reports';
 import {
   PAYOUT_CHANGE_NOTICE_VERSION,
   assessPayoutChange,
@@ -1221,6 +1228,10 @@ export default function EmployeeProfile({
   const [payoutHolderConfirmed, setPayoutHolderConfirmed] = useState(false);
   const [forcePayoutCardConfirm, setForcePayoutCardConfirm] = useState(false);
   const [forcePayoutHolderConfirm, setForcePayoutHolderConfirm] = useState(false);
+  // Accounts the employee reported closed / deactivated / frozen
+  // (payout-account-reports.md). Rides the same uncached `&track=1` read; plain
+  // state, never a cache key (§3 condition 2).
+  const [accountReports, setAccountReports] = useState<AccountReportsView | null>(null);
 
   /**
    * The Disbursement pane ELONGATES between reading and editing instead of
@@ -1837,6 +1848,7 @@ export default function EmployeeProfile({
           error?: string | null;
           walletRail?: unknown;
           payoutTrack?: unknown;
+          accountReports?: unknown;
         };
         const fxJson = (await fxRes.json()) as { value: string | null };
 
@@ -1893,6 +1905,7 @@ export default function EmployeeProfile({
         setBankInfoLoaded(true);
         setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
         setPayoutTrack(parsePayoutTrack(idsJson.payoutTrack));
+        setAccountReports(parseAccountReportsView(idsJson.accountReports));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -2048,6 +2061,35 @@ export default function EmployeeProfile({
     (!payoutCardShaped || payoutCardConfirmed) &&
     (!payoutHolderMismatch || payoutHolderConfirmed);
 
+  // An account the employee reported is not one to call "no problems on record",
+  // and not one to count as proven in the change notice: while the PAID account
+  // carries an open report, neither track claim is shown.
+  const paidAccountReported =
+    accountReports?.status === 'ok' && accountReports.accounts.some((a) => a.paysHere && a.report);
+  const displayedPayoutTrack = paidAccountReported ? null : payoutTrack;
+
+  /** File or withdraw a report; resolves to an error message, or null on success. */
+  const postAccountReport = async (body: Record<string, unknown>): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/employee/payout-account-reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: employeeEmail, ...body }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; accountReports?: unknown };
+      if (!res.ok || json.error) return json.error ?? 'Could not send your report.';
+      setAccountReports(parseAccountReportsView(json.accountReports));
+      toast.success(body.action === 'withdraw' ? 'Report withdrawn' : 'Report sent to Accounting');
+      return null;
+    } catch {
+      return 'Could not send your report. Check your connection and try again.';
+    }
+  };
+  const reportPayoutAccount = (kind: AccountKind, status: PayoutAccountStatus, note: string) =>
+    postAccountReport({ action: 'report', account_kind: kind, status, note });
+  const withdrawPayoutAccountReport = (reportId: string) =>
+    postAccountReport({ action: 'withdraw', report_id: reportId });
+
   const savePaymentDetails = async () => {
     if (payrollLocked) {
       toast.error('Payroll processing is in progress', {
@@ -2091,13 +2133,20 @@ export default function EmployeeProfile({
         `/api/employee-ids?email=${encodeURIComponent(employeeEmail)}&track=1`,
         { cache: 'no-store' },
       );
-      const idsJson = (await idsRes.json()) as { rows?: EmployeeIdRow[]; walletRail?: unknown; payoutTrack?: unknown };
+      const idsJson = (await idsRes.json()) as {
+        rows?: EmployeeIdRow[];
+        walletRail?: unknown;
+        payoutTrack?: unknown;
+        accountReports?: unknown;
+      };
       const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
       // Re-read the effective rail too — this save may have moved it — and the
       // record of whatever account is on file NOW.
       setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
       setPayoutTrack(parsePayoutTrack(idsJson.payoutTrack));
+      // A replaced account's report no longer attaches to anything on file.
+      setAccountReports(parseAccountReportsView(idsJson.accountReports));
       setPayoutNoticeAck(false);
       setPayoutCardConfirmed(false);
       setPayoutHolderConfirmed(false);
@@ -3166,7 +3215,7 @@ export default function EmployeeProfile({
                                         acknowledged; the route refuses without. */}
                                     <PayoutChangeNotice
                                       idPrefix="profile-payout-safety"
-                                      track={payoutTrack}
+                                      track={displayedPayoutTrack}
                                       ownName={payoutOwnName}
                                       acknowledged={payoutNoticeAck}
                                       onAcknowledgedChange={setPayoutNoticeAck}
@@ -3180,13 +3229,26 @@ export default function EmployeeProfile({
                                     />
                                   </div>
                                 ) : (
-                                  <PayoutReadView
-                                    rail={walletRailEffective}
-                                    bank={paidSlotBank}
-                                    row={bankInfo}
-                                    reduceMotion={!!prefersReducedMotion}
-                                    track={payoutTrack}
-                                  />
+                                  <div className="space-y-4">
+                                    <PayoutReadView
+                                      rail={walletRailEffective}
+                                      bank={paidSlotBank}
+                                      row={bankInfo}
+                                      reduceMotion={!!prefersReducedMotion}
+                                      track={displayedPayoutTrack}
+                                    />
+                                    {/* Report a closed / deactivated / frozen
+                                        account. Open even while payroll is
+                                        locked: it moves no money, and mid-run
+                                        is when Accounting most needs it. */}
+                                    <AccountReportsPanel
+                                      idPrefix="profile-account-report"
+                                      view={accountReports}
+                                      onReport={reportPayoutAccount}
+                                      onWithdraw={withdrawPayoutAccountReport}
+                                      onAddNewAccount={payrollLocked ? undefined : () => setPayoutEditing(true)}
+                                    />
+                                  </div>
                                 )}
                               </motion.div>
                             </AnimatePresence>

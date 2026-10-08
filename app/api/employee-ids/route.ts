@@ -2,6 +2,7 @@ import { getEmployeeIds, getEmployeeIdRowByEmail } from "@/lib/supabase/employee
 import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email";
 import { resolveWalletRailLock } from "@/lib/employee/wallet-rail-lock";
 import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
+import { readAccountReportsView } from "@/lib/supabase/payout-account-reports";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -34,18 +35,21 @@ export async function GET(req: NextRequest) {
     );
     // `&track=1` (Profile → Payout only — the shell's completeness read does not
     // pay for it): how many times the account on file has been paid, with no
-    // problems or with how many. Counts and dates only. A failed row or rail read
-    // is "unavailable", never "never paid" — a failed read is not a fact.
+    // problems or with how many, and any account the employee reported closed /
+    // deactivated / frozen. Counts, dates and masked hints only. A failed row or
+    // rail read is "unavailable" for both, never "never paid" or "nothing
+    // reported" — a failed read is not a fact.
     if (req.nextUrl.searchParams.get("track") === "1") {
-      const payoutTrack =
+      const emails = [authz.effectiveEmail, row?.work_email, row?.personal_email];
+      const record = (row ?? null) as unknown as Record<string, unknown> | null;
+      const [payoutTrack, accountReports] =
         error || walletRail.error
-          ? { status: "unavailable" as const }
-          : await readPayoutTrackRecord({
-              emails: [authz.effectiveEmail, row?.work_email, row?.personal_email],
-              row: (row ?? null) as unknown as Record<string, unknown> | null,
-              rail: walletRail.effectiveRail,
-            });
-      return NextResponse.json({ rows: row ? [row] : [], error, walletRail, payoutTrack });
+          ? [{ status: "unavailable" as const }, { status: "unavailable" as const }]
+          : await Promise.all([
+              readPayoutTrackRecord({ emails, row: record, rail: walletRail.effectiveRail }),
+              readAccountReportsView({ emails, row: record, rail: walletRail.effectiveRail }),
+            ]);
+      return NextResponse.json({ rows: row ? [row] : [], error, walletRail, payoutTrack, accountReports });
     }
     return NextResponse.json({ rows: row ? [row] : [], error, walletRail });
   }

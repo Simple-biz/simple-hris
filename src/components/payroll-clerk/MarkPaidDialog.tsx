@@ -17,6 +17,7 @@ import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
 import { formatPHP, formatUSD, formatCOP, type QueueRow } from './mock-queue';
 import ContractorChip, { showsContractorBadge } from './ContractorChip';
 import { resolveMarkPaidDefaults } from '@/lib/payroll/mark-paid-defaults';
+import { PayoutAccountReportsBanner } from '@/components/banking/payout-account-report';
 
 export type DispatchStatus = 'paid' | 'not_paid' | 'threshold' | 'problem';
 
@@ -971,6 +972,11 @@ export default function MarkPaidDialog({
               />
             </Field>
           </div>
+
+          {/* An account the employee reported closed / deactivated / frozen
+              (payout-account-reports.md). Informs only: nothing below is
+              pre-filled or changed by it. Renders nothing when there is none. */}
+          <PayoutAccountReportsBanner email={row?.email} />
 
           {/* Recipient divider — pencil arms the profile override */}
           <div className="flex items-center gap-2.5">

@@ -63,6 +63,7 @@ import {
 } from './person-record-panels';
 import { isMissingBankInfo } from '@/lib/people/bank-search';
 import { cn } from '@/lib/utils';
+import { PayoutAccountReportsBanner } from '@/components/banking/payout-account-report';
 
 import {
   fmtHours, fmtMoney, formatDay, formatHireDate, formatPeriodRange, parseIsoLocal, type Currency,
@@ -3447,6 +3448,9 @@ function PersonDetailDialog({
                 </div>
               )}
             </div>
+            {/* Employee-reported closed / frozen accounts — shown whether or not
+                the record is revealed: it carries masked hints only. */}
+            <PayoutAccountReportsBanner email={row.work_email} className="mb-2" />
             {!loading && banking?.bank_last_self_updated_at && (
               <p className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />

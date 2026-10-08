@@ -27,6 +27,13 @@ import {
 import { resolveEffectivePayoutProcessor } from '@/lib/employee/payout-completeness';
 import type { ProcessorId } from '@/lib/employee-payment-processors';
 import { PayoutChangeNotice, PayoutTrackLine } from '@/components/banking/payout-change-notice';
+import { AccountReportsPanel } from '@/components/banking/payout-account-report';
+import {
+  parseAccountReportsView,
+  type AccountKind,
+  type AccountReportsView,
+  type PayoutAccountStatus,
+} from '@/lib/banking/payout-account-reports';
 import {
   PAYOUT_CHANGE_NOTICE_VERSION,
   assessPayoutChange,
@@ -67,6 +74,9 @@ export default function UpdateBankInfoPage() {
   const [holderConfirmed, setHolderConfirmed] = useState(false);
   const [forceCardConfirm, setForceCardConfirm] = useState(false);
   const [forceHolderConfirm, setForceHolderConfirm] = useState(false);
+  // Accounts the employee reported closed / deactivated / frozen
+  // (payout-account-reports.md), from the verify response and every report call.
+  const [accountReports, setAccountReports] = useState<AccountReportsView | null>(null);
 
   // ── Payroll-lock probe ────────────────────────────────────────────────────
   // While Accounting is dispatching payroll the /save endpoint hard-blocks with
@@ -148,6 +158,7 @@ export default function UpdateBankInfoPage() {
         name?: string | null;
         payout?: Record<string, unknown>;
         payout_track?: unknown;
+        account_reports?: unknown;
         error?: string;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'That code is incorrect.');
@@ -159,6 +170,7 @@ export default function UpdateBankInfoPage() {
       const payoutRow = (json.payout ?? {}) as Record<string, unknown>;
       setStoredPayout(payoutRow);
       setPayoutTrack(parsePayoutTrack(json.payout_track));
+      setAccountReports(parseAccountReportsView(json.account_reports));
       resetSafety();
       const draft = payoutDraftFromIdsRow(payoutRow);
       // Seed the picker from the rail the employee is ACTUALLY paid on: their
@@ -214,6 +226,29 @@ export default function UpdateBankInfoPage() {
   const safetyReady =
     noticeAck && (!cardShaped || cardConfirmed) && (!holderMismatch || holderConfirmed);
 
+  // A reported PAID account is not one to call "no problems on record".
+  const paidAccountReported =
+    accountReports?.status === 'ok' && accountReports.accounts.some((a) => a.paysHere && a.report);
+  const displayedTrack = paidAccountReported ? null : payoutTrack;
+
+  /** File or withdraw a report; resolves to an error message, or null on success. */
+  const postAccountReport = async (body: Record<string, unknown>): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/bank-update/report-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_token: sessionToken, ...body }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; account_reports?: unknown };
+      if (!res.ok || json.error) return json.error ?? 'Could not send your report.';
+      setAccountReports(parseAccountReportsView(json.account_reports));
+      toast.success(body.action === 'withdraw' ? 'Report withdrawn' : 'Report sent to Accounting');
+      return null;
+    } catch {
+      return 'Could not send your report. Check your connection and try again.';
+    }
+  };
+
   // ── Step 3: save the new details ──────────────────────────────────────────
   const save = async () => {
     if (payrollLocked) return;
@@ -258,7 +293,12 @@ export default function UpdateBankInfoPage() {
       // just replaced no longer describes the account on file, so it is dropped
       // rather than carried over to the new one.
       setStoredPayout((prev) => ({ ...prev, ...payoutFields }));
-      if (safety.destinationChanged) setPayoutTrack(null);
+      // Both describe the account just replaced, so neither is carried over to the
+      // new one; a fresh code shows them again, matched to the new record.
+      if (safety.destinationChanged) {
+        setPayoutTrack(null);
+        setAccountReports(null);
+      }
       resetSafety();
       setStep('done');
     } catch (err) {
@@ -371,7 +411,16 @@ export default function UpdateBankInfoPage() {
                 changed, then save.
               </Stepline>
 
-              <PayoutTrackLine track={payoutTrack} />
+              <PayoutTrackLine track={displayedTrack} />
+
+              <AccountReportsPanel
+                idPrefix="bu-account-report"
+                view={accountReports}
+                onReport={(kind: AccountKind, status: PayoutAccountStatus, note: string) =>
+                  postAccountReport({ action: 'report', account_kind: kind, status, note })
+                }
+                onWithdraw={(reportId: string) => postAccountReport({ action: 'withdraw', report_id: reportId })}
+              />
 
               <PreferredPaymentMethodRadios
                 value={preferredProcessor}
@@ -394,7 +443,7 @@ export default function UpdateBankInfoPage() {
 
               <PayoutChangeNotice
                 idPrefix="bu-safety"
-                track={payoutTrack}
+                track={displayedTrack}
                 ownName={name}
                 acknowledged={noticeAck}
                 onAcknowledgedChange={setNoticeAck}

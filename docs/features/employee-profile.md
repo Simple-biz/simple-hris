@@ -409,6 +409,17 @@ the component and the gate.
 - The new state sits in the state block above the loading bail-out (§5); the safety consts are
   plain consts, not hooks.
 
+### 6.5 Reporting an account closed / deactivated / frozen (2026-10-08)
+
+Under the read view, `AccountReportsPanel` lists the person's accounts (paid slot, backup slot, paid
+wallet) with **Report a problem** / **It works again**, through
+`POST /api/employee/payout-account-reports` (self only). The view rides the same uncached
+`&track=1` read as the track record (`accountReports`), into plain state: §3 condition 2 holds.
+While the PAID account carries an open report, the track line and the change notice's "paid N
+times" sentence are not shown. The panel stays usable while payroll is locked; only its *Add new
+account* button (which opens the edit form) is hidden then. Rules:
+[payout-account-reports.md](payout-account-reports.md).
+
 ## 7. A neutral card is a CORRECT outcome — do not report it as a bug
 
 This is the most likely false bug report on this surface, and it has two independent causes.

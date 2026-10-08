@@ -323,6 +323,14 @@ emails *"yes add that too"* (Sep 23 session log, item 207).
 | OTP code email | amber box in the HTML, one line in the text body | *"Never share your card number, CVV or expiry date. Simple employees will never ask for them — by email, chat or phone. If anyone does, it's a scam."* | Ships with the deploy (`87c407ff`). `otp-email.ts:44, 76` |
 | Missing Bank Info email | the grey trust note in *Build Recipients*, deliberately not red | *"Simple employees will never ask for your password, a payment, or your card number, CVV or expiry date — if anyone does, it's a scam."* | **Live since 2026-10-02** (Kane, 2026-10-02 ~21:20 EDT: *"it already existed"*, then *"udpated!"*): the live n8n node now runs this code. Kane's word; n8n is not readable from here. `bank-info-missing-notify.workflow.json:23`; [[bank-info-notify-webhook]] |
 
+## Reporting an account closed / deactivated / frozen (2026-10-08)
+
+The edit step also lists the person's accounts with **Report a problem** / **It works again**
+(`AccountReportsPanel`), backed by `POST /api/bank-update/report-account` (session-token identity,
+under `/api/bank-update/*` so the public host serves it) and the `account_reports` field on the
+verify response. It writes only `payout_account_reports`, never a payout field, and is **not**
+lock-gated. The rules live in [payout-account-reports.md](payout-account-reports.md).
+
 ## Payout change safety (2026-10-07, Open item 401)
 
 Kane, 2026-10-07: *"When updating bank information - lets add like an indicator in there that this
