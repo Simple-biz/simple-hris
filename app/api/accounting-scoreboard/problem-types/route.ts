@@ -14,8 +14,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * POST  /api/accounting-scoreboard/problem-types   { label }                 (managers)
- * PATCH /api/accounting-scoreboard/problem-types   { id, archived: true }    (managers)
+ * POST  /api/accounting-scoreboard/problem-types   { label }                 (Admins)
+ * PATCH /api/accounting-scoreboard/problem-types   { id, archived: true }    (Admins)
  *
  * The Payroll Problems type list (Carla, 2026-10-02: "Admins should be able to add new types"; the
  * board's admins are its managers, Accounting and Admin). A type is archived, never deleted, so a
@@ -23,7 +23,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseProblemTypeCreate(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseProblemTypeArchive(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);

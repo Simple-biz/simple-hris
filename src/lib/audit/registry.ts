@@ -148,6 +148,12 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
 
   // ── Accounting ─────────────────────────────────────────────────────────────
   {
+    match: 'accounting_scoreboard.',
+    surfaces: ['accounting', 'admin'],
+    label: 'Accounting Scoreboard roles',
+    note: 'role_granted / role_revoked — a board Admin granted or revoked Admin or Assistant on the Accounting Scoreboard (details: email, role; resource_id = the accounting_scoreboard_roles row). Team members are the member list and write no row here',
+  },
+  {
     match: 'accounting.payroll_wizard_notes.',
     surfaces: ['accounting'],
     label: 'Payroll Notes board',

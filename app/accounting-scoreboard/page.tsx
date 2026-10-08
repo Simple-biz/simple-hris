@@ -21,14 +21,14 @@ export const metadata: Metadata = {
  * for the wrong person" rule as requirePageRoles. The API re-checks on every call.
  */
 export default async function AccountingScoreboardPage() {
-  const access = await resolveAccess('member');
+  const access = await resolveAccess();
   if (!access.ok) {
     if (access.status === 401) redirect(`/login?callbackUrl=${encodeURIComponent(SCOREBOARD_PAGE)}`);
     return <Refusal code={access.code} message={access.message} />;
   }
   // The viewer is resolved here, on every request, and handed down: the board's browser cache binds to
-  // this email before it paints anything, and `isManager` (a permission) is never read from the cache.
-  return <ScoreboardApp viewer={{ email: access.value.email, isManager: access.value.isManager }} />;
+  // this email before it paints anything, and `role` (a permission) is never read from the cache.
+  return <ScoreboardApp viewer={{ email: access.value.email, role: access.value.role }} />;
 }
 
 function Refusal({ code, message }: { code: string; message: string }) {

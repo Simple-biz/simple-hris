@@ -24,7 +24,7 @@ export const runtime = 'nodejs';
  */
 export async function PUT(req: Request) {
   try {
-    const access = await resolveAccess('member');
+    const access = await resolveAccess('edit_cells');
     if (!access.ok) return failureResponse(access);
     const parsed = parseEntryWrite(await readJson(req), todayEastern());
     if (!parsed.ok) return badRequest(parsed.error);

@@ -26,7 +26,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: Request) {
   try {
-    const access = await resolveAccess('member');
+    const access = await resolveAccess('log_lines');
     if (!access.ok) return failureResponse(access);
     const parsed = parseCollectionCreate(await readJson(req), todayEastern());
     if (!parsed.ok) return badRequest(parsed.error);
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const access = await resolveAccess('member');
+    const access = await resolveAccess('log_lines');
     if (!access.ok) return failureResponse(access);
     const id = req.nextUrl.searchParams.get('id');
     if (!isUuid(id)) return badRequest('id must be a collection id');

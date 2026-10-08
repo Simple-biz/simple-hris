@@ -22,6 +22,7 @@ import { authOptions } from '@/lib/auth/auth-options';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import { expandWorkEmailAliases } from '@/lib/email/work-email-aliases';
+import { insertAuditLog } from '@/lib/supabase/audit-log';
 import {
   CUSTOM_KINDS,
   MON_FRI,
@@ -40,6 +41,15 @@ import {
 import { addDays, easternToUtc, todayEastern, weekStartOf } from './week';
 import { shortNameFromRoster } from './names';
 import {
+  can,
+  canRevokeGrant,
+  highestGrant,
+  resolveBoardRole,
+  type BoardAction,
+  type BoardRole,
+  type GrantRole,
+} from './roles';
+import {
   PAYROLL_EVENT_ACTIONS,
   firstClosedPeriodEnd,
   payrollEventFromAudit,
@@ -48,7 +58,7 @@ import {
 } from './payroll-cycle';
 import { collectionsHistory, type CollectionEntry, type ProblemEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
-import type { BoardMember, BoardPayload, BoardRow, ProblemType, RosterPerson } from './types';
+import type { BoardMember, BoardPayload, BoardRow, ProblemType, RoleGrant, RosterPerson } from './types';
 import type { BoardRead, BoardReadProgress } from './load-progress';
 import {
   customGoal,
@@ -75,14 +85,16 @@ const CUSTOM_SECTIONS = 'accounting_scoreboard_custom_sections';
 const VERIFICATIONS = 'accounting_scoreboard_collection_verifications';
 const PROBLEM_TYPES = 'accounting_scoreboard_problem_types';
 const PROBLEMS = 'accounting_scoreboard_problems';
-
-export const MANAGER_ROLES: readonly string[] = ['admin', 'accounting'];
+// Board-local roles (references/sql/create/2026-10-08_accounting_scoreboard_roles.sql).
+const ROLES = 'accounting_scoreboard_roles';
 
 export interface Viewer {
   email: string;
   aliases: string[];
+  /** The session's HRIS roles. Only `admin` decides anything here (the break glass), in resolveBoardRole. */
   roles: string[];
-  isManager: boolean;
+  /** The board-local role (roles.ts): what this person may do on the board. */
+  role: BoardRole;
 }
 
 export type Failure = { ok: false; status: number; code: string; message: string };
@@ -129,7 +141,7 @@ function isMissingTable(message: string | undefined): boolean {
 const NOT_SET_UP = fail(
   503,
   'not_set_up',
-  'The Accounting Scoreboard tables are not set up yet. The migrations have to be applied first (scripts/apply-accounting-scoreboard-migration.mts, scripts/apply-accounting-scoreboard-backfill-migration.mts, then scripts/apply-accounting-scoreboard-round3-migration.mts).',
+  'The Accounting Scoreboard tables are not set up yet. The migrations have to be applied first (scripts/apply-accounting-scoreboard-migration.mts, scripts/apply-accounting-scoreboard-backfill-migration.mts, then scripts/apply-accounting-scoreboard-round3-migration.mts, and every later scripts/apply-accounting-scoreboard-*-migration.mts, the board-local roles one included).',
 );
 
 function dbFailure(error: { message?: string; code?: string } | null | undefined, fallback: string): Failure {
@@ -151,37 +163,69 @@ function client() {
 // Access
 // ---------------------------------------------------------------------------
 
-/** Session → viewer, with the member (or manager) check. */
-export async function resolveAccess(level: 'member' | 'manager'): Promise<Result<Viewer>> {
+/** What a refusal says, per action: the role that may, in the board's own words. */
+const REFUSED: Record<BoardAction, string> = {
+  edit_cells: 'You are not allowed to type on the scoreboard.',
+  log_lines: 'You are not allowed to log on the scoreboard.',
+  delete_any_line: "Only an Admin can delete someone else's line.",
+  unverify_any: "Only an Admin can uncheck someone else's Payment Verified.",
+  view_setup: 'Only an Admin or an Assistant can see Setup.',
+  edit_setup: 'Only an Admin can change Setup.',
+  view_all_tasks: "Only an Admin or an Assistant can see everyone's tasks.",
+  manage_tasks: 'Only an Admin can add or remove tasks.',
+  lock_week: 'Only an Admin can lock a week.',
+  reopen_week: 'Only an Admin can reopen a week.',
+  manage_roles: 'Only an Admin can grant or revoke a role.',
+};
+
+/**
+ * Session → viewer with its board-local role (roles.ts), then the action's check. `action` null = may open
+ * the board at all (any role). The role is resolved here on every request and never cached by the client.
+ *
+ * An HRIS `admin` is a board Admin without a read (the break glass). Everyone else is looked up by every
+ * address they sign in with: a live grant in accounting_scoreboard_roles, else the member list (a live
+ * person row, or accounting_scoreboard_members). HRIS `accounting` alone decides nothing (Kane, 2026-10-07).
+ */
+export async function resolveAccess(action: BoardAction | null = null): Promise<Result<Viewer>> {
   const session = await getServerSession(authOptions);
   const user = session?.user as { email?: string | null; roles?: string[] } | undefined;
   const email = (user?.email ?? '').trim().toLowerCase();
   if (!email) return fail(401, 'auth_required', 'Not signed in');
   const roles = user?.roles ?? [];
-  const isManager = roles.some((r) => MANAGER_ROLES.includes(r));
-  const aliases = await expandWorkEmailAliases(email);
-  const viewer: Viewer = { email, aliases: aliases.length ? aliases : [email], roles, isManager };
+  const expanded = await expandWorkEmailAliases(email);
+  const aliases = expanded.length ? expanded : [email];
 
-  if (level === 'manager') {
-    return isManager
-      ? { ok: true, value: viewer }
-      : fail(403, 'not_manager', 'Only Accounting or Admin can change the scoreboard setup.');
+  let role: BoardRole | null;
+  if (roles.includes('admin')) {
+    role = 'admin';
+  } else {
+    const sb = client();
+    const [grantHit, rowHit, memberHit] = await Promise.all([
+      sb.from(ROLES).select('role').in('email', aliases).is('revoked_at', null),
+      sb.from(ROWS).select('id').in('work_email', aliases).is('archived_at', null).limit(1),
+      sb.from(MEMBERS).select('work_email').in('work_email', aliases).is('removed_at', null).limit(1),
+    ]);
+    if (grantHit.error) return dbFailure(grantHit.error, 'Could not check your role');
+    if (rowHit.error) return dbFailure(rowHit.error, 'Could not check membership');
+    if (memberHit.error) return dbFailure(memberHit.error, 'Could not check membership');
+    const grants = ((grantHit.data ?? []) as { role: string }[])
+      .map((g) => g.role)
+      .filter((r): r is GrantRole => r === 'admin' || r === 'assistant');
+    role = resolveBoardRole({
+      hrisRoles: roles,
+      grant: highestGrant(grants),
+      isMember: (rowHit.data ?? []).length > 0 || (memberHit.data ?? []).length > 0,
+    });
   }
-  if (isManager) return { ok: true, value: viewer };
-
-  const sb = client();
-  const [rowHit, memberHit] = await Promise.all([
-    sb.from(ROWS).select('id').in('work_email', viewer.aliases).is('archived_at', null).limit(1),
-    sb.from(MEMBERS).select('work_email').in('work_email', viewer.aliases).is('removed_at', null).limit(1),
-  ]);
-  if (rowHit.error) return dbFailure(rowHit.error, 'Could not check membership');
-  if (memberHit.error) return dbFailure(memberHit.error, 'Could not check membership');
-  if ((rowHit.data ?? []).length || (memberHit.data ?? []).length) return { ok: true, value: viewer };
-  return fail(
-    403,
-    'not_member',
-    "You're not on the Accounting Scoreboard. Ask Carla or Claire to add you under Setup → Members.",
-  );
+  if (!role) {
+    return fail(
+      403,
+      'not_member',
+      "You're not on the Accounting Scoreboard. Ask Carla or Claire to add you under Setup → Members.",
+    );
+  }
+  if (action && !can(role, action)) return fail(403, 'not_allowed', REFUSED[action]);
+  return { ok: true, value: { email, aliases, roles, role } };
 }
 
 // ---------------------------------------------------------------------------
@@ -375,8 +419,8 @@ export async function readBoard(
       else progress?.done(read, count(r.data));
       return r;
     });
-  // Only a manager's board reads the member list; a member's is decided here, with nothing to read.
-  if (!viewer.isManager) progress?.done('members', 0);
+  // Only a board that shows Setup (Admin, Assistant) reads the member list; a Team member's is decided here.
+  if (!can(viewer.role, 'view_setup')) progress?.done('members', 0);
   const today = todayEastern();
   const lastWeekStart = addDays(weekStart, -7);
   const weekEnd = addDays(weekStart, 6);
@@ -531,7 +575,7 @@ export async function readBoard(
   );
 
   let members: BoardMember[] | null = null;
-  if (viewer.isManager) {
+  if (can(viewer.role, 'view_setup')) {
     const m = await selectAllPaged<{ work_email: string; added_at: string; added_by: string }>((from, to) =>
       sb
         .from(MEMBERS)
@@ -554,7 +598,7 @@ export async function readBoard(
       weekStart,
       lastWeekStart,
       today,
-      viewer: { email: viewer.email, isManager: viewer.isManager },
+      viewer: { email: viewer.email, role: viewer.role },
       settings: ((settings.data ?? []) as SectionSettingRecord[])
         .filter((s): s is SectionSettingRecord & { section_key: SectionKey } => isSectionKey(s.section_key))
         .map(mapSetting),
@@ -689,8 +733,8 @@ export async function deleteCollection(viewer: Viewer, id: string): Promise<Resu
   if (readErr) return dbFailure(readErr, 'Could not read the collection');
   const rec = existing as { id: string; created_by: string; deleted_at: string | null } | null;
   if (!rec || rec.deleted_at) return fail(404, 'not_found', 'That collection is not on the log.');
-  if (!viewer.isManager && !viewer.aliases.includes(rec.created_by.toLowerCase())) {
-    return fail(403, 'not_owner', 'Only the person who logged it, or Accounting, can delete a collection.');
+  if (!can(viewer.role, 'delete_any_line') && !viewer.aliases.includes(rec.created_by.toLowerCase())) {
+    return fail(403, 'not_owner', 'Only the person who logged it, or an Admin, can delete a collection.');
   }
   const { data, error } = await sb
     .from(COLLECTIONS)
@@ -784,8 +828,8 @@ export async function setVerified(
   }
 
   if (!live.value) return { ok: true, value: null };
-  if (!viewer.isManager && !viewer.aliases.includes(live.value.verified_by.toLowerCase())) {
-    return fail(403, 'not_owner', `Only ${live.value.verified_by_name}, who verified it, or Accounting can uncheck it.`);
+  if (!can(viewer.role, 'unverify_any') && !viewer.aliases.includes(live.value.verified_by.toLowerCase())) {
+    return fail(403, 'not_owner', `Only ${live.value.verified_by_name}, who verified it, or an Admin can uncheck it.`);
   }
   const { data, error } = await sb
     .from(VERIFICATIONS)
@@ -922,6 +966,98 @@ export async function removeMember(viewer: Viewer, workEmail: string): Promise<R
   return { ok: true, value: { workEmail } };
 }
 
+// ---------------------------------------------------------------------------
+// Board-local roles (Setup → Access; Admins only). A grant is append-only: a role change is a revoke and a
+// new grant, and the table's trigger refuses revoking the last live Admin grant under a lock.
+// ---------------------------------------------------------------------------
+
+type RoleGrantRecord = { id: string; email: string; role: string; granted_by: string; granted_at: string };
+const ROLE_COLS = 'id, email, role, granted_by, granted_at';
+const ROLE_WORD: Record<GrantRole, string> = { admin: 'an Admin', assistant: 'an Assistant' };
+
+function asGrant(r: RoleGrantRecord): RoleGrant | null {
+  if (r.role !== 'admin' && r.role !== 'assistant') return null;
+  return { email: r.email, role: r.role, grantedBy: r.granted_by, grantedAt: r.granted_at };
+}
+
+async function liveAdminGrantCount(): Promise<Result<number>> {
+  const { rows, error } = await selectAllPaged<{ id: string }>((from, to) =>
+    client().from(ROLES).select('id').eq('role', 'admin').is('revoked_at', null).order('id').range(from, to),
+  );
+  if (error) return dbFailure({ message: error }, 'Could not count the Admins');
+  return { ok: true, value: rows.length };
+}
+
+export async function listRoleGrants(): Promise<Result<RoleGrant[]>> {
+  const { rows, error } = await selectAllPaged<RoleGrantRecord>((from, to) =>
+    client().from(ROLES).select(ROLE_COLS).is('revoked_at', null).order('id').range(from, to),
+  );
+  if (error) return dbFailure({ message: error }, 'Could not read the roles');
+  const grants = rows.map(asGrant).filter((g): g is RoleGrant => g !== null);
+  grants.sort((a, b) => (a.role === b.role ? a.email.localeCompare(b.email) : a.role === 'admin' ? -1 : 1));
+  return { ok: true, value: grants };
+}
+
+export async function grantRole(viewer: Viewer, email: string, role: GrantRole): Promise<Result<RoleGrant>> {
+  const sb = client();
+  const { data: live, error: readErr } = await sb.from(ROLES).select('role').eq('email', email).is('revoked_at', null).maybeSingle();
+  if (readErr) return dbFailure(readErr, 'Could not read the roles');
+  const held = (live as { role: string } | null)?.role;
+  if (held === 'admin' || held === 'assistant') {
+    return fail(
+      409,
+      'already_granted',
+      held === role ? `${email} is already ${ROLE_WORD[role]}.` : `${email} is ${ROLE_WORD[held]}. Revoke that first, then grant the new role.`,
+    );
+  }
+  const { data, error } = await sb.from(ROLES).insert({ email, role, granted_by: viewer.email }).select(ROLE_COLS).single();
+  if (error?.code === '23505') return fail(409, 'already_granted', `${email} already holds a role.`);
+  if (error) return dbFailure(error, 'Could not grant the role');
+  const grant = asGrant(data as RoleGrantRecord);
+  if (!grant) return fail(500, 'db_error', 'The grant came back unreadable.');
+  await insertAuditLog({
+    user_name: viewer.email,
+    user_role: 'Admin',
+    action: 'accounting_scoreboard.role_granted',
+    resource: ROLES,
+    resource_id: (data as RoleGrantRecord).id,
+    details: { email, role },
+  });
+  return { ok: true, value: grant };
+}
+
+export async function revokeRole(viewer: Viewer, email: string): Promise<Result<{ email: string; role: GrantRole }>> {
+  const sb = client();
+  const { data: live, error: readErr } = await sb.from(ROLES).select('id, role').eq('email', email).is('revoked_at', null).maybeSingle();
+  if (readErr) return dbFailure(readErr, 'Could not read the roles');
+  const rec = live as { id: string; role: string } | null;
+  if (!rec || (rec.role !== 'admin' && rec.role !== 'assistant')) return fail(404, 'not_found', `${email} holds no role on the board.`);
+  const role: GrantRole = rec.role;
+  const admins = await liveAdminGrantCount();
+  if (!admins.ok) return admins;
+  // Review Focus 3. The trigger refuses the same revoke under a lock; this is the friendly answer.
+  if (!canRevokeGrant({ role }, admins.value)) {
+    return fail(409, 'last_admin', 'The board keeps at least one Admin. Grant another Admin first, then revoke this one.');
+  }
+  const { data, error } = await sb
+    .from(ROLES)
+    .update({ revoked_at: new Date().toISOString(), revoked_by: viewer.email })
+    .eq('id', rec.id)
+    .is('revoked_at', null)
+    .select('id');
+  if (error) return dbFailure(error, 'Could not revoke the role');
+  if (!(data ?? []).length) return fail(409, 'conflict', 'Someone else changed this role just now. Refresh and try again.');
+  await insertAuditLog({
+    user_name: viewer.email,
+    user_role: 'Admin',
+    action: 'accounting_scoreboard.role_revoked',
+    resource: ROLES,
+    resource_id: rec.id,
+    details: { email, role },
+  });
+  return { ok: true, value: { email, role } };
+}
+
 export async function patchSection(viewer: Viewer, p: SectionPatch): Promise<Result<SectionSetting>> {
   const sb = client();
   const { data: current, error: readErr } = await sb
@@ -997,15 +1133,15 @@ export async function logProblem(viewer: Viewer, p: ProblemCreate): Promise<Resu
   return { ok: true, value: mapProblem(data as ProblemRecord) };
 }
 
-/** Soft-delete a logged problem. Only the person who logged it, or a manager. The table refuses any other edit. */
+/** Soft-delete a logged problem. Only the person who logged it, or an Admin. The table refuses any other edit. */
 export async function deleteProblem(viewer: Viewer, id: string): Promise<Result<{ id: string }>> {
   const sb = client();
   const { data: existing, error: readErr } = await sb.from(PROBLEMS).select('id, created_by, deleted_at').eq('id', id).maybeSingle();
   if (readErr) return dbFailure(readErr, 'Could not read the problem');
   const rec = existing as { id: string; created_by: string; deleted_at: string | null } | null;
   if (!rec || rec.deleted_at) return fail(404, 'not_found', 'That problem is not on the log.');
-  if (!viewer.isManager && !viewer.aliases.includes(rec.created_by.toLowerCase())) {
-    return fail(403, 'not_owner', 'Only the person who logged it, or Accounting, can delete a problem.');
+  if (!can(viewer.role, 'delete_any_line') && !viewer.aliases.includes(rec.created_by.toLowerCase())) {
+    return fail(403, 'not_owner', 'Only the person who logged it, or an Admin, can delete a problem.');
   }
   const { data, error } = await sb
     .from(PROBLEMS)

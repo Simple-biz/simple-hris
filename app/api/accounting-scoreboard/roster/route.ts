@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * GET /api/accounting-scoreboard/roster   (managers)
+ * GET /api/accounting-scoreboard/roster   (Admins)
  *
  * The Setup people picker: name, department and work email of everyone on the active roster
  * (`active_employees`, paged). Nothing else is selected: no contact, address, pay or bank column.
@@ -18,7 +18,7 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const result = await readRoster();
     if (!result.ok) return failureResponse(result);

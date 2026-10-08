@@ -555,12 +555,12 @@ export function RowTag({ children, tone = 'zinc', title }: { children: ReactNode
   );
 }
 
-export function EmptyRows({ noun, isManager }: { noun: string; isManager: boolean }) {
+export function EmptyRows({ noun, canEditSetup }: { noun: string; canEditSetup: boolean }) {
   return (
     <div className="rounded-xl border border-dashed border-zinc-200 px-6 py-10 text-center dark:border-zinc-800">
       <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">No {noun}s on this section yet</p>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        {isManager ? 'Add them under Setup → Rows.' : 'Carla or Claire can add them under Setup.'}
+        {canEditSetup ? 'Add them under Setup → Rows.' : 'Carla or Claire can add them under Setup.'}
       </p>
     </div>
   );

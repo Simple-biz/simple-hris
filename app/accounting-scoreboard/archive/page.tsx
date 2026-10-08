@@ -23,7 +23,7 @@ const ARCHIVE_PAGE = `${SCOREBOARD_PAGE}/archive`;
  * here before anything renders. Read-only, server-rendered, no API route.
  */
 export default async function AccountingScoreboardArchivePage() {
-  const access = await resolveAccess('member');
+  const access = await resolveAccess();
   if (!access.ok) {
     if (access.status === 401) redirect(`/login?callbackUrl=${encodeURIComponent(ARCHIVE_PAGE)}`);
     return <Notice title={access.code === 'not_member' ? "You're not on the Accounting Scoreboard" : 'The archive could not open'} message={access.message} />;

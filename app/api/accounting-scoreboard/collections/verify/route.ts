@@ -22,7 +22,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: Request) {
   try {
-    const access = await resolveAccess('member');
+    const access = await resolveAccess('log_lines');
     if (!access.ok) return failureResponse(access);
     const parsed = parseVerifyWrite(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);

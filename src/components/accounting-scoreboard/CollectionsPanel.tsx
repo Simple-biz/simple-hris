@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import type { ResolvedSection } from '@/lib/accounting-scoreboard/sections';
+import { can } from '@/lib/accounting-scoreboard/roles';
 import { datesFor, dayHeader, weekLabel } from '@/lib/accounting-scoreboard/week';
 import { collectionsWeekStats, type CollectionEntry } from '@/lib/accounting-scoreboard/scoring';
 import { goalLight, weekPace } from '@/lib/accounting-scoreboard/stoplight';
@@ -179,7 +180,7 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete, onVeri
     return (
       <div className="space-y-4">
         {header}
-        <EmptyRows noun={section.rowNoun} isManager={board.viewer.isManager} />
+        <EmptyRows noun={section.rowNoun} canEditSetup={can(board.viewer.role, 'edit_setup')} />
       </div>
     );
   }
@@ -419,8 +420,8 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete, onVeri
                   key={c.id}
                   entry={c}
                   rep={labelOf.get(c.rowId) ?? '—'}
-                  canDelete={board.viewer.isManager || c.createdBy.toLowerCase() === board.viewer.email}
-                  canUnverify={board.viewer.isManager || c.verified?.by.toLowerCase() === board.viewer.email}
+                  canDelete={can(board.viewer.role, 'delete_any_line') || c.createdBy.toLowerCase() === board.viewer.email}
+                  canUnverify={can(board.viewer.role, 'unverify_any') || c.verified?.by.toLowerCase() === board.viewer.email}
                   onDelete={onDelete}
                   onVerify={onVerify}
                   reduce={reduce}

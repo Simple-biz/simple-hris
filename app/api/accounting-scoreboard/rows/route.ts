@@ -14,8 +14,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * POST  /api/accounting-scoreboard/rows  { sectionKey, customSectionId?, label, workEmail? }   (managers)
- * PATCH /api/accounting-scoreboard/rows  { id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon? }   (managers)
+ * POST  /api/accounting-scoreboard/rows  { sectionKey, customSectionId?, label, workEmail? }   (Admins)
+ * PATCH /api/accounting-scoreboard/rows  { id, label?, sortOrder?, archived?: true, bucketDay?, dueSoon? }   (Admins)
  *
  * A row with a work email IS that HRIS person and makes them a member, so the email must be on the
  * active roster. Anyone else (a queue, an inbox, someone not on the roster) is a named row.
@@ -26,7 +26,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseRowCreate(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseRowPatch(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);

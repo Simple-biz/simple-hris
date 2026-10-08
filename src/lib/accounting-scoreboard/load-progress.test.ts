@@ -43,7 +43,7 @@ function board(weekStart = '2026-10-04'): BoardPayload {
     weekStart,
     lastWeekStart: '2026-09-27',
     today: '2026-10-06',
-    viewer: { email: 'carla@simple.biz', isManager: true },
+    viewer: { email: 'carla@simple.biz', role: 'admin' },
     settings: [],
     customSections: [],
     rows: [],
@@ -71,7 +71,7 @@ test('every read readBoard reports is on a line, and every line read is reported
 test('the route checks membership and the week BEFORE the stream starts, and streams NDJSON uncached', () => {
   const route = src('app/api/accounting-scoreboard/route.ts');
   const stream = route.indexOf('new ReadableStream');
-  assert.ok(route.indexOf("resolveAccess('member')") > 0 && route.indexOf("resolveAccess('member')") < stream);
+  assert.ok(route.indexOf("resolveAccess()") > 0 && route.indexOf("resolveAccess()") < stream);
   assert.ok(route.indexOf('isWeekStart(week)') < stream);
   assert.match(route, /'Content-Type': 'application\/x-ndjson; charset=utf-8',\n\s+'Cache-Control': 'no-store',/);
 });

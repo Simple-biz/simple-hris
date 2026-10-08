@@ -41,7 +41,7 @@ function board(weekStart: string, over: Partial<BoardPayload> = {}): BoardPayloa
     weekStart,
     lastWeekStart: weekStart,
     today: '2026-10-06',
-    viewer: { email: 'carla@simple.biz', isManager: true },
+    viewer: { email: 'carla@simple.biz', role: 'admin' },
     settings: [],
     customSections: [],
     rows: [],
@@ -72,7 +72,7 @@ test('a board round-trips under its own week, WITHOUT the viewer (a permission i
   assert.ok(cached);
   assert.equal(cached.weekStart, '2026-10-04');
   assert.deepEqual(cached.entries, [{ rowId: 'r', date: '2026-10-04', slot: 'am', value: 3 }]);
-  assert.equal('viewer' in cached, false, 'isManager decides Setup and deletes: it comes from the page, never the cache');
+  assert.equal('viewer' in cached, false, 'viewer.role decides Setup and deletes: it comes from the page, never the cache');
   assert.equal(readCachedBoard('2026-09-27'), undefined, 'another week is a miss, never this one');
 });
 

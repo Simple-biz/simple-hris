@@ -71,7 +71,8 @@ interface Props {
   lastWeekStart: string;
   today: string;
   lookup: EntryLookup;
-  isManager: boolean;
+  /** An Admin: the empty state points at Setup → Rows instead of at Carla or Claire. */
+  canEditSetup: boolean;
   onSave: SaveEntry;
   onEditing: EditingSignal;
   /** PM Buckets: the latest day any meeting was ticked (the No Meeting Streak counts from it). */
@@ -133,7 +134,7 @@ export function SectionGrid({
   lastWeekStart,
   today,
   lookup,
-  isManager,
+  canEditSetup,
   onSave,
   onEditing,
   lastMeetingDate = null,
@@ -252,7 +253,7 @@ export function SectionGrid({
       <div className="space-y-4">
         {header}
         {streakStrip}
-        <EmptyRows noun={section.rowNoun} isManager={isManager} />
+        <EmptyRows noun={section.rowNoun} canEditSetup={canEditSetup} />
       </div>
     );
   }

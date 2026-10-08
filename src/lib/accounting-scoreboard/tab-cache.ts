@@ -14,7 +14,7 @@
  *
  * What is cached:
  * - `board:<Sunday>`: the board for one week, exactly as GET /api/accounting-scoreboard returned it,
- *   **minus `viewer`**. `viewer.isManager` is a PERMISSION (it shows Setup and the delete buttons),
+ *   **minus `viewer`**. `viewer.role` is a PERMISSION (it shows Setup and the delete buttons),
  *   and a cached permission is a cached value deciding (qc-contractor-tickets-cache.md, the Tickets
  *   `access` rule). The viewer comes from the server-rendered page on every load instead.
  * - `board:weeks`: the weeks held, newest-written first. Only MAX_CACHED_WEEKS boards are kept (one

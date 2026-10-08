@@ -15,8 +15,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * POST   /api/accounting-scoreboard/members           { workEmail }   (managers)
- * DELETE /api/accounting-scoreboard/members?email=…                   (managers)
+ * POST   /api/accounting-scoreboard/members           { workEmail }   (Admins)
+ * DELETE /api/accounting-scoreboard/members?email=…                   (Admins)
  *
  * Extra members: people who enter numbers without being a row (e.g. whoever collects the team's
  * numbers). A person row already makes its person a member. The address is any @simple.biz
@@ -24,7 +24,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseMemberWrite(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: NextRequest) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const email = normalizeEmail(req.nextUrl.searchParams.get('email'));
     if (!email) return badRequest('email must be a work email');

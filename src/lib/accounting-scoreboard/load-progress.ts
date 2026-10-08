@@ -24,6 +24,7 @@
  */
 
 import { countOf, type RefreshPlan } from '@/lib/refresh-progress/refresh-progress';
+import { isBoardRole } from './roles';
 import type { BoardPayload } from './types';
 import { isWeekStart } from './week';
 
@@ -179,7 +180,7 @@ export function isBoardPayload(v: unknown): v is BoardPayload {
     typeof v.today === 'string' &&
     isObj(v.viewer) &&
     typeof (v.viewer as Record<string, unknown>).email === 'string' &&
-    typeof (v.viewer as Record<string, unknown>).isManager === 'boolean' &&
+    isBoardRole((v.viewer as Record<string, unknown>).role) &&
     arrays.every((k) => Array.isArray(v[k])) &&
     isObj(v.history) &&
     isObj(v.bonus)

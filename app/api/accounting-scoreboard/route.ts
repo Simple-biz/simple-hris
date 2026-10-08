@@ -37,7 +37,7 @@ const NDJSON_HEADERS = {
  */
 export async function GET(req: NextRequest) {
   try {
-    const access = await resolveAccess('member');
+    const access = await resolveAccess();
     if (!access.ok) return failureResponse(access);
     const week = req.nextUrl.searchParams.get('week');
     if (week !== null && !isWeekStart(week)) return badRequest('week must be a Sunday written YYYY-MM-DD');

@@ -15,7 +15,7 @@ export const runtime = 'nodejs';
 
 /**
  * POST  /api/accounting-scoreboard/custom-sections
- *       { title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below', hostSectionKey? }   (managers)
+ *       { title, kind: 'daily' | 'am_pm', goal?, goalDirection?: 'at_least' | 'below', hostSectionKey? }   (Admins)
  * PATCH /api/accounting-scoreboard/custom-sections
  *       { id, title?, enabled?, showOnOverview?, goal? (null clears), goalDirection?, hostSectionKey? (null = own tab), archived?: true }
  *
@@ -29,7 +29,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseCustomSectionCreate(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
 
 export async function PATCH(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseCustomSectionPatch(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);

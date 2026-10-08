@@ -435,160 +435,67 @@ That is Carla's ask, but it removes Setup and delete-anyone's-line from about 9 
 the 11 `accounting` holders are not on the GML**, so they would lose access entirely unless added under Setup →
 Members. The blueprint brief lists them by count, and the migration's dry run prints them.
 
-**Files:**
-- Create: `src/lib/accounting-scoreboard/roles.ts`, `roles.test.ts`,
-  `references/sql/create/2026-10-09_accounting_scoreboard_roles.sql`,
-  `scripts/apply-accounting-scoreboard-roles-migration.mts`, `app/api/accounting-scoreboard/roles/route.ts`
-  (GET / POST grant / DELETE revoke, Admin only)
-- Modify: `server.ts` (the member check returns a `BoardRole`; every write route asks `can(role, action)` instead of
-  `isManager`), `app/accounting-scoreboard/page.tsx` (passes `viewer.role`), `types.ts` (`viewer.isManager` →
-  `viewer.role`), `SetupPanel.tsx` (read-only for Assistant; a new **Access** area for Admin), `ScoreboardApp.tsx`
-- Test: `roles.test.ts`; update the route tests that assert manager behaviour
-- Docs: `accounting-scoreboard.md` § Who may open it (rewritten), memory, INDEX
+> **BUILT 2026-10-08 (session `63e0ef1e`, `blueprint`). The migration is NOT applied: it waits on W0.6 (the second
+> Admin's email) and Kane's go.** Step 0 found where the code disagreed with this task. The code won, and the task
+> below is corrected to what shipped.
+> - **The Step 0 map** (every `isManager` reader → a `BoardAction`):
+>   - routes: `rows`, `sections`, `custom-sections`, `problem-types`, `members` and `roster` → `edit_setup`;
+>     `entries` → `edit_cells`; `collections`, `collections/verify` and `problems` → `log_lines`; the board GET and
+>     both pages → any role;
+>   - `server.ts`: deleting anyone's collection or problem → `delete_any_line`; unchecking anyone's Payment Verified →
+>     **`unverify_any` (a new action; the plan had none)**; the members read in `readBoard` → `view_setup`;
+>   - UI: Setup's tab, menu item and panel → `view_setup`; Setup's controls and the empty-state copy → `edit_setup`;
+>     the delete and uncheck buttons → `delete_any_line` / `unverify_any`;
+>   - the wire: `viewer.isManager` → `viewer.role`, in `types.ts`, `page.tsx` and the stream check in
+>     `load-progress.ts`.
+> - **`resolveAccess(level)` → `resolveAccess(action | null)`**: it resolves the role once (an HRIS admin needs no read;
+>   anyone else is one parallel read of their grants, their person row and the member list), then asks `can()`.
+> - **HRIS `accounting` alone confers NOTHING**, not even a Team member. A Team member is the member list. That is the
+>   plan's own test, and Kane's 2026-10-07 ruling asks for "who loses access", which only exists this way.
+> - **The last-Admin guard is also in the database**: the trigger takes an advisory lock and refuses revoking the last
+>   live Admin grant, so two Admins revoking each other at once cannot both pass. `canRevokeGrant` gives the friendly
+>   409 first. The plan's trigger only guarded append-only.
+> - **A role change is a revoke and a new grant.** POST on someone who holds the other role is 409, never a two-write
+>   swap.
+> - **The Assistant sees every Setup area read-only** (a disabled `<fieldset>`), but **not** Access, and never the
+>   roster picker (an Admin-only read of every active employee's name).
+> - **A latent hole closed**: `activeTab` used to accept `'setup'` for anyone. Now it needs `view_setup`.
+> - Files are dated **2026-10-08** (today), not 10-09. **The dry run printed 11 · 4 · 7 · 5 · 2**: 11 `accounting`
+>   holders; 4 stay Admin (HRIS admin); 7 lose Setup, of whom 5 stay as Team members and 2 lose access entirely.
 
-**Interfaces:**
-- Produces: `type BoardRole = 'admin' | 'assistant' | 'member'`; `type BoardAction`;
-  `can(role: BoardRole, action: BoardAction): boolean`;
-  `resolveBoardRole(i: { hrisRoles: readonly string[]; grant: 'admin' | 'assistant' | null; isMember: boolean }): BoardRole | null`;
-  `canRevokeGrant(grant: { role: 'admin' | 'assistant' }, liveAdminGrants: number): boolean`
-- Consumes: the existing member check (`expandWorkEmailAliases`, `accounting_scoreboard_members`).
+**Files (as shipped):**
+- Create: `src/lib/accounting-scoreboard/roles.ts` + `roles.test.ts` (13 tests: the plan's 6, the nesting of the roles,
+  the alias tie-break, the labels, and three source pins); `references/sql/create/2026-10-08_accounting_scoreboard_roles.sql`;
+  `scripts/apply-accounting-scoreboard-roles-migration.mts` (dry / apply / verify, `--admin` twice, the counts);
+  `app/api/accounting-scoreboard/roles/route.ts` (GET / POST / DELETE, `manage_roles`)
+- Modify: `server.ts` (`resolveAccess(action)`, `Viewer.role`, `listRoleGrants` / `grantRole` / `revokeRole` + audit),
+  `types.ts` (`viewer.role`, `RoleGrant`), `validate.ts` (`parseRoleWrite` + tests), `load-progress.ts`, `tab-cache.ts`
+  (comment), all 11 routes, both pages, `ScoreboardApp.tsx`, `SetupPanel.tsx` (read-only fieldset, Access area),
+  `CollectionsPanel.tsx`, `ProblemsPanel.tsx`, `SectionGrid.tsx`, `shared.tsx`, `src/lib/audit/registry.ts` (family
+  `accounting_scoreboard.`), and the two tests that built a viewer
+- Docs: `accounting-scoreboard.md` § Who may open it (rewritten), Key files, Deploy notes, and every "manager" rule
+  → "Admin"; INDEX row; memory `accounting-scoreboard`; Open item 393
 
-- [ ] **Step 0: Read and cite** `server.ts`'s member check and every place that reads `isManager` (routes and
-  components). List them in the brief: each one becomes a named `BoardAction`.
+**Interfaces (as shipped):** `BoardRole = 'admin' | 'assistant' | 'member'`; `GrantRole`; `BOARD_ACTIONS` (the plan's ten +
+`unverify_any`); `can(role, action)`; `resolveBoardRole({ hrisRoles, grant, isMember })`; `highestGrant(grants)`;
+`canRevokeGrant({ role }, liveAdminGrants)`; `isBoardRole`; `ROLE_LABEL`.
 
-- [ ] **Step 1: Write the failing tests.**
-
-```ts
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { can, canRevokeGrant, resolveBoardRole, type BoardAction, type BoardRole } from './roles';
-
-test('an HRIS admin is always a board Admin (break glass)', () => {
-  assert.equal(resolveBoardRole({ hrisRoles: ['admin'], grant: null, isMember: false }), 'admin');
-});
-test('HRIS accounting alone is a Team member, not a manager', () => {
-  assert.equal(resolveBoardRole({ hrisRoles: ['accounting'], grant: null, isMember: true }), 'member');
-  assert.equal(resolveBoardRole({ hrisRoles: ['accounting'], grant: null, isMember: false }), null);
-});
-test('a grant is the role, and it is membership', () => {
-  assert.equal(resolveBoardRole({ hrisRoles: [], grant: 'assistant', isMember: false }), 'assistant');
-  assert.equal(resolveBoardRole({ hrisRoles: [], grant: 'admin', isMember: false }), 'admin');
-});
-test('nobody else gets in', () => {
-  assert.equal(resolveBoardRole({ hrisRoles: [], grant: null, isMember: false }), null);
-});
-test('the permission table', () => {
-  const cases: Array<[BoardRole, BoardAction, boolean]> = [
-    ['member', 'edit_cells', true], ['member', 'log_lines', true], ['member', 'view_setup', false],
-    ['member', 'delete_any_line', false], ['member', 'lock_week', false], ['member', 'view_all_tasks', false],
-    ['assistant', 'view_setup', true], ['assistant', 'edit_setup', false], ['assistant', 'view_all_tasks', true],
-    ['assistant', 'manage_tasks', false], ['assistant', 'reopen_week', false],
-    ['admin', 'edit_setup', true], ['admin', 'delete_any_line', true], ['admin', 'lock_week', true],
-    ['admin', 'reopen_week', true], ['admin', 'manage_tasks', true], ['admin', 'manage_roles', true],
-  ];
-  for (const [role, action, expected] of cases) assert.equal(can(role, action), expected, `${role} ${action}`);
-});
-test('Review Focus 3: the last Admin grant cannot be revoked', () => {
-  assert.equal(canRevokeGrant({ role: 'admin' }, 1), false);
-  assert.equal(canRevokeGrant({ role: 'admin' }, 2), true);
-  assert.equal(canRevokeGrant({ role: 'assistant' }, 1), true);
-});
-```
-
-- [ ] **Step 2: Run** `node --import tsx --test src/lib/accounting-scoreboard/roles.test.ts`. Expected: FAIL, module not found.
-
-- [ ] **Step 3: Implement `roles.ts`.**
-
-```ts
-export type BoardRole = 'admin' | 'assistant' | 'member';
-export type BoardAction =
-  | 'edit_cells' | 'log_lines' | 'delete_any_line'
-  | 'view_setup' | 'edit_setup'
-  | 'view_all_tasks' | 'manage_tasks'
-  | 'lock_week' | 'reopen_week' | 'manage_roles';
-
-const MEMBER: readonly BoardAction[] = ['edit_cells', 'log_lines'];
-const ASSISTANT: readonly BoardAction[] = [...MEMBER, 'view_setup', 'view_all_tasks'];
-const ADMIN: readonly BoardAction[] = [
-  ...ASSISTANT, 'delete_any_line', 'edit_setup', 'manage_tasks', 'lock_week', 'reopen_week', 'manage_roles',
-];
-const TABLE: Record<BoardRole, ReadonlySet<BoardAction>> = {
-  member: new Set(MEMBER),
-  assistant: new Set(ASSISTANT),
-  admin: new Set(ADMIN),
-};
-
-export function can(role: BoardRole, action: BoardAction): boolean {
-  return TABLE[role].has(action);
-}
-
-export function resolveBoardRole(i: {
-  hrisRoles: readonly string[];
-  grant: 'admin' | 'assistant' | null;
-  isMember: boolean;
-}): BoardRole | null {
-  if (i.hrisRoles.includes('admin')) return 'admin';
-  if (i.grant) return i.grant;
-  return i.isMember ? 'member' : null;
-}
-
-/** The board must always keep one granted Admin; an HRIS admin is the break glass on top. */
-export function canRevokeGrant(grant: { role: 'admin' | 'assistant' }, liveAdminGrants: number): boolean {
-  return grant.role !== 'admin' || liveAdminGrants > 1;
-}
-```
-
-- [ ] **Step 4: Run, and see it pass.**
-
-- [ ] **Step 5: The migration.**
-
-```sql
-create table if not exists public.accounting_scoreboard_roles (
-  id uuid primary key default gen_random_uuid(),
-  email text not null check (email = lower(btrim(email)) and email like '%_@_%'),
-  role text not null check (role in ('admin', 'assistant')),
-  granted_by text not null,
-  granted_at timestamptz not null default now(),
-  revoked_by text,
-  revoked_at timestamptz,
-  constraint acct_sb_roles_revoke_pair check ((revoked_at is null) = (revoked_by is null))
-);
-create unique index if not exists acct_sb_roles_one_live
-  on public.accounting_scoreboard_roles (email) where revoked_at is null;
-
--- Append-only: the only UPDATE is the revoke stamp, once. No DELETE.
-create or replace function public.acct_sb_roles_guard() returns trigger language plpgsql as $$
-begin
-  if tg_op = 'DELETE' then raise exception 'acct_sb_roles: grants are revoked, never deleted'; end if;
-  if old.revoked_at is not null
-     or new.email is distinct from old.email or new.role is distinct from old.role
-     or new.granted_by is distinct from old.granted_by or new.granted_at is distinct from old.granted_at then
-    raise exception 'acct_sb_roles: only the revoke stamp may change, once';
-  end if;
-  return new;
-end $$;
-create trigger acct_sb_roles_guard before update or delete on public.accounting_scoreboard_roles
-  for each row execute function public.acct_sb_roles_guard();
-
-alter table public.accounting_scoreboard_roles enable row level security;
-revoke all on public.accounting_scoreboard_roles from anon, authenticated;
-
--- Seed: Carla, and the second Admin from W0.6 (the script takes both as arguments; it refuses to apply without them).
-```
-
-  The apply script prints, read-only, **how many** current `accounting` holders lose manager rights, and how many lose
-  access entirely (not on the GML and not on `accounting_scoreboard_members`). It prints counts, never names.
-
-- [ ] **Step 6: Wire it.** `server.ts` resolves `BoardRole` once per request. Every route that checked `isManager` now
-  checks `can(role, <action>)` (Step 0's list). The roles route refuses with `canRevokeGrant` and writes
-  `accounting_scoreboard.role_granted` / `role_revoked` to the audit log, registered in `src/lib/audit/registry.ts`.
-  Setup is read-only for Assistant (inputs disabled, with *"Only an Admin can change Setup"*). Admin gets an **Access**
-  area: grant Admin or Assistant by email (picked from the board's people, or typed), and revoke.
-
-- [ ] **Step 7: Run everything.** `npm test` and `npm run lint`. Then the harness checks: a member sees no Setup, an
-  Assistant sees it disabled, an Admin edits it. Dry-run, **stop for Kane's go**, apply, verify.
-
-- [ ] **Step 8: Commit** by explicit path:
+- [x] **Step 0: Read and cite.** See the map above.
+- [x] **Step 1: Write the failing tests.** `roles.test.ts`. All six of the plan's cases are kept as written.
+- [x] **Step 2: Run.** It FAILED (module not found).
+- [x] **Step 3: Implement `roles.ts`.** It passes; mutation-checked (re-admitting `accounting` fails 2 tests, a revocable last
+  Admin fails 1).
+- [x] **Step 4: Run, and see it pass.**
+- [x] **Step 5: The migration.** The plan's table, plus: an email regex, `granted_by` not blank, a grant created live, `SET
+  search_path = ''` on the trigger function and EXECUTE revoked (round-3 precedent), and the last-Admin guard. The
+  script **refuses `--apply` without exactly two distinct Admin emails**.
+- [x] **Step 6: Wire it.** The routes, the server, the UI and the audit (`accounting_scoreboard.role_granted` /
+  `role_revoked`), as in the map above.
+- [ ] **Step 7: Run everything.** `npm test` 6369/6369; `npm run lint` is clean in source. **Harness 75/75** on a SYNTHETIC
+  board at 1360 light and dark and 390: a member has no Setup; an Assistant has every Setup area disabled, no Access, no
+  roster or roles read; an Admin edits, cannot revoke the last Admin, grants an Admin (then can), and revokes an
+  Assistant. **Dry run 32/32, rolled back. --apply and --verify: PENDING (W0.6, then Kane's go).**
+- [x] **Step 8: Commit** by explicit path:
   `feat(accounting-scoreboard): board-local roles, Admin / Assistant / Team member, HRIS accounting no longer manages (item 393)`.
 
 ---

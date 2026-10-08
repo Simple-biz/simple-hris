@@ -37,6 +37,7 @@ import {
   type BoardSection,
   type Slot,
 } from '@/lib/accounting-scoreboard/sections';
+import { can } from '@/lib/accounting-scoreboard/roles';
 import { addDays, datesFor, formatEasternDateTime, todayEastern, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
 import { bindScoreboardCache, readCachedBoard, writeCachedBoard } from '@/lib/accounting-scoreboard/tab-cache';
 import {
@@ -385,7 +386,9 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   const lookup = useMemo(() => buildLookup(board?.entries ?? []), [board?.entries]);
 
   // A tab whose section was just switched off falls back to the overview.
-  const activeTab: Tab = tab === 'overview' || tab === 'setup' || tabs.some((s) => s.id === tab) ? tab : 'overview';
+  // Setup is a tab only for a role that sees it: a Team member whose remembered tab is 'setup' lands on the Overview.
+  const activeTab: Tab =
+    tab === 'overview' || (tab === 'setup' && can(viewer.role, 'view_setup')) || tabs.some((s) => s.id === tab) ? tab : 'overview';
 
   // The mobile menu: the same tabs as the tab row, each section with its stop light for the week on
   // screen, from the summaries the Overview cards use.
@@ -395,7 +398,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     summarizeAll(board, tabs, lookup, new Date().toISOString(), sections).forEach(({ section, summary }, i) => {
       items.push({ key: section.id, label: section.tab, icon: sectionIcon(section), light: summary.light, divided: i === 0 });
     });
-    if (board.viewer.isManager) items.push({ key: 'setup', label: 'Setup', icon: Settings2, light: null, divided: true });
+    if (can(board.viewer.role, 'view_setup')) items.push({ key: 'setup', label: 'Setup', icon: Settings2, light: null, divided: true });
     return items;
   }, [board, tabs, lookup]);
 
@@ -571,7 +574,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
       lastWeekStart={board.lastWeekStart}
       today={board.today}
       lookup={lookup}
-      isManager={board.viewer.isManager}
+      canEditSetup={can(board.viewer.role, 'edit_setup')}
       onSave={saveEntry}
       onEditing={onEditing}
       lastMeetingDate={board.lastMeetingDate}
@@ -723,7 +726,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
               {s.tab}
             </SlidingPill>
           ))}
-          {board.viewer.isManager ? (
+          {can(board.viewer.role, 'view_setup') ? (
             <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'setup'} onClick={() => selectTab('setup')}>
               <Settings2 className="size-3.5" /> Setup
             </SlidingPill>
@@ -744,7 +747,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
                 transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
               >
                 {activeTab === 'setup' ? (
-                  <SetupPanel board={board} sections={sections} onChanged={() => void load(week, true)} />
+                  <SetupPanel board={board} sections={sections} role={board.viewer.role} onChanged={() => void load(week, true)} />
                 ) : !activeSection ? (
                   <Overview board={board} sections={cardSections} all={sections} lookup={lookup} onOpen={openCard} />
                 ) : activeSection.kind === 'payroll_cycle' ? (

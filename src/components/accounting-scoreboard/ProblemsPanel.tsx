@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SmoothSelect } from '@/components/ui/smooth-select';
 import type { BoardSection } from '@/lib/accounting-scoreboard/sections';
+import { can } from '@/lib/accounting-scoreboard/roles';
 import { datesFor, dayHeader } from '@/lib/accounting-scoreboard/week';
 import { problemsWeekStats, UNTYPED_PROBLEMS, type EntryLookup, type ProblemEntry } from '@/lib/accounting-scoreboard/scoring';
 import { goalLight, weekPace } from '@/lib/accounting-scoreboard/stoplight';
@@ -116,7 +117,7 @@ export function ProblemsPanel({ section, board, rows, lookup, onLog, onDelete }:
     return (
       <div className="space-y-4">
         {header}
-        <EmptyRows noun={section.rowNoun} isManager={board.viewer.isManager} />
+        <EmptyRows noun={section.rowNoun} canEditSetup={can(board.viewer.role, 'edit_setup')} />
       </div>
     );
   }
@@ -207,7 +208,7 @@ export function ProblemsPanel({ section, board, rows, lookup, onLog, onDelete }:
         </Button>
         {!liveTypes.length ? (
           <p className="col-span-2 text-xs text-zinc-500 lg:col-span-5">
-            {board.viewer.isManager ? 'Add a problem type under Setup → Problem types first.' : 'Carla or Claire add problem types under Setup.'}
+            {can(board.viewer.role, 'edit_setup') ? 'Add a problem type under Setup → Problem types first.' : 'Carla or Claire add problem types under Setup.'}
           </p>
         ) : null}
         {fieldError ? (
@@ -298,7 +299,7 @@ export function ProblemsPanel({ section, board, rows, lookup, onLog, onDelete }:
                   entry={p}
                   person={labelOf.get(p.rowId) ?? '—'}
                   type={typeOf.get(p.typeId) ?? 'Unknown type'}
-                  canDelete={board.viewer.isManager || p.createdBy.toLowerCase() === board.viewer.email}
+                  canDelete={can(board.viewer.role, 'delete_any_line') || p.createdBy.toLowerCase() === board.viewer.email}
                   onDelete={onDelete}
                   reduce={reduce}
                 />

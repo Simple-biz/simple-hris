@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 /**
- * PATCH /api/accounting-scoreboard/sections  { sectionKey, enabled?, goal?, showOnOverview? }   (managers)
+ * PATCH /api/accounting-scoreboard/sections  { sectionKey, enabled?, goal?, showOnOverview? }   (Admins)
  *
  * Carla's switch: turn a section off (it disappears from the board, and its rows and numbers are
  * kept), or override its goal (`goal: null` goes back to the default, or clears a goal set on a section
@@ -22,7 +22,7 @@ export const runtime = 'nodejs';
  */
 export async function PATCH(req: Request) {
   try {
-    const access = await resolveAccess('manager');
+    const access = await resolveAccess('edit_setup');
     if (!access.ok) return failureResponse(access);
     const parsed = parseSectionPatch(await readJson(req));
     if (!parsed.ok) return badRequest(parsed.error);

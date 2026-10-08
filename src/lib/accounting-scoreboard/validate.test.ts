@@ -8,6 +8,7 @@ import {
   parseCustomSectionPatch,
   parseEntryWrite,
   parseMemberWrite,
+  parseRoleWrite,
   parseProblemCreate,
   parseProblemTypeArchive,
   parseProblemTypeCreate,
@@ -126,6 +127,18 @@ test('rows: create a person row or a named row; patch label, order or archive', 
   assert.equal(parseRowPatch({ id: ROW, archived: false }).ok, false, 'rows are never un-archived');
   assert.equal(parseRowPatch({ id: ROW }).ok, false);
   assert.equal(parseRowPatch({ id: ROW, sortOrder: -1 }).ok, false);
+});
+
+test('a role grant: Admin or Assistant only, a real work email, lower-cased', () => {
+  assert.deepEqual(parseRoleWrite({ email: ' Claire@Simple.biz ', role: 'admin' }), { ok: true, value: { email: 'claire@simple.biz', role: 'admin' } });
+  assert.deepEqual(parseRoleWrite({ email: 'x@simple.biz', role: 'assistant' }), { ok: true, value: { email: 'x@simple.biz', role: 'assistant' } });
+  // A Team member is the member list, never a grant; and nothing else is a role.
+  for (const role of ['member', 'manager', 'Admin', '', null, undefined, 1]) {
+    assert.equal(parseRoleWrite({ email: 'x@simple.biz', role }).ok, false, String(role));
+  }
+  assert.equal(parseRoleWrite({ email: 'not an email', role: 'admin' }).ok, false);
+  assert.equal(parseRoleWrite({ role: 'admin' }).ok, false);
+  assert.equal(parseRoleWrite(null).ok, false);
 });
 
 test('members and section switches', () => {

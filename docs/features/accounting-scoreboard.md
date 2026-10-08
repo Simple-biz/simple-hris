@@ -21,6 +21,8 @@ every payroll problem, and custom sections.
 | Round 3: custom sections, row flags, Outcomes slots, Payment Verified, the problem log and types | `references/sql/create/2026-10-06_accounting_scoreboard_round3.sql` |
 | A custom section shown inside a built-in tab (`host_section_key`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_custom_section_host.sql` |
 | Win/loss flags on Outcomes lines (`rows.outcome`) + 0–1000 payroll problems (2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_outcomes_and_zero_problems.sql` |
+| Board-local roles: Admin / Assistant grants (`accounting_scoreboard_roles`, its trigger, 2026-10-08) | `references/sql/create/2026-10-08_accounting_scoreboard_roles.sql` · applied by `scripts/apply-accounting-scoreboard-roles-migration.mts` (also seeds the two Admins, prints the counts) |
+| Who may do what: `BoardRole`, `BoardAction`, `can()`, `resolveBoardRole`, `canRevokeGrant` | `src/lib/accounting-scoreboard/roles.ts` (+ `.test.ts`) |
 | Hidden from the Overview (`show_on_overview` on both section tables, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_overview_visibility.sql` |
 | A Pre-arb flag on Outcomes lines (`rows.outcome = 'pre_arb'`, 2026-10-07) | `references/sql/create/2026-10-07_accounting_scoreboard_pre_arb_flag.sql` |
 | Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-migration.mts` · `scripts/apply-accounting-scoreboard-round3-migration.mts` · `scripts/apply-accounting-scoreboard-custom-host-migration.mts` · `scripts/apply-accounting-scoreboard-outcomes-zero-migration.mts` · `scripts/apply-accounting-scoreboard-overview-visibility-migration.mts` · `scripts/apply-accounting-scoreboard-pre-arb-flag-migration.mts` |
@@ -39,31 +41,71 @@ every payroll problem, and custom sections.
 | Browser cache (board per week, Setup's roster) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
 | Loading modal: lines ↔ reads, the stream, the fail-closed assembler | `src/lib/accounting-scoreboard/load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the dialog `src/components/accounting-scoreboard/ScoreboardLoadDialog.tsx` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
-| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `sections` PATCH · `roster` GET) |
+| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `roles` GET/POST/DELETE (Admins: Setup → Access) · `sections` PATCH · `roster` GET) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
 | UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `ProblemsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
 | Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring with Carla's reference code as the oracle, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
 
-## Who may open it: the board's member list, never an HRIS role
+## Who may open it: the member list, and three board-local roles (2026-10-08)
 
-- **Managers** are the `admin` and `accounting` roles. They see Setup (rows, section switches and
-  goals, their own custom sections, the Payroll Problems types, extra members), may delete anyone's
-  logged collection or problem, and may uncheck anyone's Payment Verified tick. Carla's "Admins should be
-  able to add new types" means these managers: the board has no other admin.
-- **Members** are everyone whose work email, or one of its alternates (`expandWorkEmailAliases`, the
-  same identity bridge RBAC uses), is on a live **person row**, plus anyone on
-  `accounting_scoreboard_members`. A member may edit any cell, as on the sheet, because one person
-  routinely collects numbers for others. Every write is stamped with the session email.
-- **Why not a role:** on 2026-10-01 only 11 people held `accounting`, and most of the PH team who type
-  the numbers hold no HRIS role at all. `accounting` also opens payroll and bank data. Do not "simplify"
-  this into `requirePageRoles(['accounting'])`.
+**Getting in is the board's own list, never an HRIS role.** You are on the board if your work email, or one of
+its alternates (`expandWorkEmailAliases`, the identity bridge RBAC uses), is on a live **person row**, or on
+`accounting_scoreboard_members` (Setup → Members), or holds an Admin or Assistant **grant**. The one HRIS role
+that counts is `admin`, the break glass below. Every write is stamped with the session email.
+
+**What you may do is your board-local role** (Carla, 2026-10-07 meeting, Open item 393: Team member, Assistant,
+Admin; not an edit / view / hidden matrix, *"Nah."*). One table decides it: `can(role, action)` in `roles.ts`.
+
+| Role | Who | May |
+|---|---|---|
+| **Admin** | anyone holding HRIS `admin` (the break glass), and anyone with a live **Admin grant** | everything: Setup (rows, section switches and goals, custom sections, problem types, members), **Access** (grant and revoke roles), deleting anyone's collection or problem, unchecking anyone's Payment Verified. Later: the weekly lock (plan Task 5) and adding or removing tasks (Task 7) |
+| **Assistant** | a live **Assistant grant** | everything a Team member may, and **sees Setup read-only**: every area except Access, and never the roster picker (it reads every active employee's name). Later: everyone's tasks (Task 7) |
+| **Team member** | anyone else on the list above | types every cell and logs lines, as on the sheet (one person routinely collects numbers for others); deletes or unchecks only their own. **No Setup** |
+
+- **HRIS `accounting` alone no longer manages the board, and no longer lets anyone in** (Kane, 2026-10-07,
+  Open item 393). Until this change "Managers are the `admin` and `accounting` roles", and either role got in
+  without being on the list. **Measured by the migration's dry run, 2026-10-08 (counts, never names):** 11 people
+  hold HRIS `accounting`. 4 also hold HRIS `admin` and stay Admin. **7 lose Setup** and the delete-anyone
+  rights: **5** are on the member list and stay as Team members, and **2 lose access entirely** unless an Admin
+  adds them under Setup → Members or grants them a role.
+- **A grant lives in `accounting_scoreboard_roles`** and is append-only: the one change is the revoke stamp,
+  once, and a grant is never deleted (trigger `acct_sb_roles_guard`). One live grant per address. **A role change
+  is a revoke and a new grant**: granting someone who holds the other role is refused (409), so nobody is ever
+  left holding nothing between two writes. A person whose addresses hold two grants gets the higher one.
+- **The board always keeps one Admin** (plan Review Focus 3). The last live Admin grant cannot be revoked. Its
+  button is disabled and says why, the route answers 409 `last_admin` (`canRevokeGrant`), and the table's
+  trigger refuses it under an advisory lock, so two Admins revoking each other at once cannot both pass. An
+  HRIS `admin` is a board Admin on top of that, so Setup can never be locked out.
+- **Checked on every request, by action.** `resolveAccess(action)` resolves the role once. An HRIS admin needs
+  no read; anyone else is one parallel read of their grants, their person row and the member list. Then it asks
+  `can(role, action)`. Every route names its action:
+  - any role: the board GET and both pages;
+  - `edit_cells`: `entries`;
+  - `log_lines`: `collections`, `collections/verify` and `problems` (deleting or unchecking someone else's line
+    asks `delete_any_line` / `unverify_any` in `server.ts`);
+  - `edit_setup`: `rows`, `sections`, `custom-sections`, `problem-types`, `members` and `roster`;
+  - `manage_roles`: `roles`.
+
+  A refusal is 403 `not_allowed` and names the role that may. `roles.test.ts` pins that every Setup route asks for
+  `edit_setup`, and that nothing on the board reads the old `isManager` flag.
+- **The client never decides alone.** `viewer.role` comes from the page's server component on every load and is
+  never cached (§ Browser cache). The UI asks `can()` to show Setup, Access and the delete buttons, and the server
+  refuses anyway. A tab left open from before this deploy still looks for `viewer.isManager`, finds nothing and
+  **hides Setup** (it fails closed) until it is reloaded. A remembered `setup` tab is honoured only for a role
+  that sees Setup.
+- **Why the list and not an HRIS role:** on 2026-10-01 only 11 people held `accounting`, and most of the PH team
+  who type the numbers hold no HRIS role at all. `accounting` also opens payroll and bank data. Do not
+  "simplify" this into `requirePageRoles(['accounting'])`.
 - So the route is **not role-gated at the edge**. `/accounting-scoreboard` is deliberately absent from
   `ROUTE_REQUIRED_ROLES` (`route-access.ts`), and `host.test.ts` pins that the `/accounting` prefix does
   not swallow it. The **page server component** (`app/accounting-scoreboard/page.tsx`) is the gate. It
-  runs the member check before the client shell renders or fetches, and every API route re-checks on
+  runs the access check before the client shell renders or fetches, and every API route re-checks on
   every call.
 - Anyone with a @simple.biz Google sign-in can authenticate (`auth-options.ts:199-207`). A person who is
-  not on the roster gets in only through Setup → Members.
+  not on the roster gets in only through Setup → Members or a grant.
+- **Granting and revoking are audited** (`accounting_scoreboard.role_granted` / `role_revoked`, the board's first
+  audit rows; registry family `accounting_scoreboard.`). Adding or removing a member is still stamped on its own
+  table.
 
 ## Its own domain
 
@@ -91,10 +133,10 @@ every payroll problem, and custom sections.
 
 The built-in sections, their days and their goals are code (`sections.ts`), pinned to the SQL CHECKs by
 `sections.test.ts`, which reads the CHECKs in force from the round-3 SQL and also pins that round 3 only
-added to the 2026-10-01 lists. A manager can switch any section off, and its rows and numbers are kept, or
+added to the 2026-10-01 lists. An Admin can switch any section off, and its rows and numbers are kept, or
 set its goal (§ Goals in Setup), or take its card off the Overview while it keeps its tab (§ Hidden from the
 Overview). Carla asked to track less than the sheet does, so the switch exists instead of a hard-coded subset.
-Managers can also add sections of their own (§ Custom sections).
+Admins can also add sections of their own (§ Custom sections).
 
 | Section | Kind | Days | Score / headline | Goal |
 |---|---|---|---|---|
@@ -109,7 +151,7 @@ Managers can also add sections of their own (§ Custom sections).
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | none by default; "at least N reviewed", set in Setup |
 | Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
 | Payroll Problems | **log**, one line per problem (or batch) with its type (§ Payroll Problems) | Mon–Fri | week total | < 20 |
-| a manager's custom section | one number a day, or AM/PM scored like Buckets; a tab of its own or shown inside a built-in tab | Mon–Fri | week total, or the Buckets overall | optional |
+| an Admin's custom section | one number a day, or AM/PM scored like Buckets; a tab of its own or shown inside a built-in tab | Mon–Fri | week total, or the Buckets overall | optional |
 
 - **A blank is never a 0.** The sheet's `SUM` treated a blank PM as 0, so a day with an AM count and no PM
   was credited as fully cleared (Thursday's bucket showed +68 with nothing typed). That cannot happen here:
@@ -157,7 +199,7 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
   *"Chargebacks Disputes - productivity formula same as the regular buckets"*): Completed, Open and Score per
   line, and the headline is the overall, 10 × Σ Completed ÷ Σ(Completed + Open) over the scored lines (§ Buckets).
   Until then the headline was how many are open now. That number is still shown, as a chip beside the score and
-  a line on the Overview card. There is no default goal; a manager sets one in Setup (§ Goals in Setup).
+  a line on the Overview card. There is no default goal; an Admin sets one in Setup (§ Goals in Setup).
 - The line that counts the disputes due in the next 7 days is marked on the row (`due_soon`, Setup → Rows;
   seeded on "Disputes due in 7 days") and is **called out**: an amber chip in the header, an amber line in the
   grid, and a line on the Overview card. **It is part of "open", so it is never added to it, never scored and
@@ -191,7 +233,7 @@ Carla's email, § 4, split the tab in two. Both sections sit on the one Chargeba
   as `bucket_day` and `due_soon`, so a rename keeps it. CHECK `acct_sb_rows_outcome_valid` allows it only on an
   Outcomes line (and the server refuses it elsewhere, naming the rule). The 2026-10-07 outcomes migration flagged
   the live "Wins" and "Losses"; the Pre-arb flag migration flags the one live "Pre-arb" (its script refuses unless
-  exactly one live line matches, and never overwrites a line a manager marked). Several lines may count as wins,
+  exactly one live line matches, and never overwrites a line an Admin marked). Several lines may count as wins,
   and they add up. With no line marked, the footer says so instead of showing a ratio or a Net.
 - **Pre-arb counts as a loss** (Carla, 2026-10-07 call: *"We consider prearb as a loss, but prearb just means that the
   bank can't decide who's going to win or lose this […] it's technically we haven't gotten our money back, so it's
@@ -260,8 +302,8 @@ problem, not to a person's day total.
   three moved together). A 0 line still needs a type, like any line. A week whose only lines are 0s reads **0**,
   and is green against "< 20". It can still be deleted, like any line.
 - **Append-only**, like the collections log: a trigger refuses every UPDATE except the one soft delete, and
-  only the person who logged a line, or a manager, may delete it.
-- **Types** are a list managers keep under Setup → Problem types. Carla's starting list (Account Error,
+  only the person who logged a line, or an Admin, may delete it.
+- **Types** are a list Admins keep under Setup → Problem types. Carla's starting list (Account Error,
   Scoreboard Error, Other) was seeded by the migration. A type is archived, never deleted: it leaves the
   dropdown and every line already logged keeps it.
 - **The counts typed into the old grid still count**, as **"No type"** (22 entries, 2026-09-28 → 10-05). They
@@ -293,7 +335,7 @@ something its goal is judged on, pinned in `sections.test.ts`:
   than 30 avg in the buckets weekly"*; the headline is the Σ of the PMs' daily averages, which read 24.6 and 28.5 on
   the weeks of 09-27 and 10-04) and **Outcomes ≥ 50%**. Setup shows the number and *Reset to* it. Carla's numbers
   are code defaults, so no database row was written for them.
-- **Or a shape a manager fills in** (`SectionDef.goalShape`): Open Disputes (a 0–10 score to reach), Sales —
+- **Or a shape an Admin fills in** (`SectionDef.goalShape`): Open Disputes (a 0–10 score to reach), Sales —
   Payments ("at least N payments" a week) and Cancellations ("at least N reviewed"). Setup shows a goal box,
   empty = no goal, and *Clear*. The direction is fixed in code (CHOSEN: more payments and more reviews are better).
   The number is stored where an override always was (`accounting_scoreboard_sections.goal`), so no migration was
@@ -306,7 +348,7 @@ something its goal is judged on, pinned in `sections.test.ts`:
 
 ## Custom sections
 
-Carla's email, § 6: "Add a button to create new sections". A manager adds one under **Setup → Sections →
+Carla's email, § 6: "Add a button to create new sections". An Admin adds one under **Setup → Sections →
 Add section** (`accounting_scoreboard_custom_sections`).
 
 - **"Your own sections" sit at the TOP of Setup → Sections**, the Add form first, above the scoreboard's
@@ -354,7 +396,7 @@ start with a tab's label.
 - **It keeps its Overview card**, placed right after its host's card, and the card opens the host's tab
   (`overviewSections`, `tabIdFor`). It has its own number and goal, so moving its grid never hides its stop light.
   Since 2026-10-07 every section shown inside another tab keeps a card, Outcomes included (its win ratio). It has
-  **no tab and no phone-menu entry** of its own. Only a manager's **On Overview** switch takes the card away
+  **no tab and no phone-menu entry** of its own. Only an Admin's **On Overview** switch takes the card away
   (§ Hidden from the Overview), and that switch is its own: hiding the host's card never hides it.
 - **It never disappears silently** (the Outcomes rule): if its host is switched off, it takes a tab of its own. If it is
   switched off itself, it shows nowhere, like any section.
@@ -382,7 +424,7 @@ hide it from the overview."* Carla: *"Under sections."*
   (`sections.test.ts`).
 - **It never disappears silently** (the Outcomes rule): under the cards the Overview says *"Not on the Overview: …"*,
   naming every section that is on but hidden, that it keeps its tab and is left out of the Team Score, and that a
-  manager can show it again in Setup → Sections (`hiddenFromOverview`). A section that is switched off shows nowhere,
+  Admin can show it again in Setup → Sections (`hiddenFromOverview`). A section that is switched off shows nowhere,
   whatever this switch says, and is not named there.
 - **Stored** as `show_on_overview boolean NOT NULL DEFAULT true` on `accounting_scoreboard_sections` (the built-in
   switch row; a missing row is still the code default: on, shown, default goal) and on
@@ -494,7 +536,7 @@ Overview cards, every goal chip and every row score, so a card and its tab can n
 
 Carla's "Accounting Scoreboard — Team Score & Overview Edits Spec" (Oct 7, 2026, forwarded by Kane): one **Team
 Score (0–100)** at the top of the Overview, beside the on track / close / behind count, with last week's. It
-rolls up every tab with a goal, **from the cards on the Overview**: a section a manager hid from the Overview is left
+rolls up every tab with a goal, **from the cards on the Overview**: a section an Admin hid from the Overview is left
 out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **display only**: it pays no one.
 
 - **Card score** (0–100, "% of goal", **capped at 100** so one strong card can't hide a weak one), on the
@@ -550,13 +592,13 @@ out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **d
   the days the sheet and the bonus count.
 - **Append-only.** Its day totals are the numbers the Dancing Queen Bonus is typed from. A trigger
   refuses every UPDATE except the one soft delete (`deleted_at` + `deleted_by` together), and an
-  un-delete is refused. A mistake is deleted and logged again. Only the person who logged a line, or a
-  manager, may delete it.
+  un-delete is refused. A mistake is deleted and logged again. Only the person who logged a line, or an
+  Admin, may delete it.
 - A rep row archived mid-week still shows, read-only, for every week it has numbers in. Removing a rep
   never makes a collection drop out of a team total. Rows are archived, never deleted or un-archived.
 - **Payment Verified** (Carla's email, § 2): every log line has a tick. Any member may tick it, and it saves
   and shows **who** ticked it: the label of their own person row on the board, else their roster nickname,
-  else their email handle, kept with the tick and their session email. Only whoever ticked it, or a manager,
+  else their email handle, kept with the tick and their session email. Only whoever ticked it, or an Admin,
   may uncheck it. The tick lives in its **own table** (`accounting_scoreboard_collection_verifications`, one
   live tick per collection), so the append-only log line is never updated and its trigger is untouched.
   Unchecking stamps the tick (`unverified_at/by`) and never deletes it, and a stamped tick cannot change
@@ -706,7 +748,7 @@ header spinner on every 45 s and focus refresh.
 - **A cached value PAINTS, it never DECIDES.** Nothing can skip a fetch: every page load, week change, 45 s tick
   and focus still reads the board, and the fetched copy replaces the cached one. A number that moved meanwhile
   sweeps orange (§ Motion), which is how a teammate's typing shows up.
-- **The viewer is never cached.** `viewer.isManager` shows Setup and the delete buttons, so it is a permission,
+- **The viewer is never cached.** `viewer.role` shows Setup and the delete buttons, so it is a permission,
   and a cached permission is a cached value deciding (the Tickets `access` rule). The page server component
   resolves the viewer on every request and passes it to `ScoreboardApp`, which binds the cache to that email
   (a different viewer on the same tab purges it first) and lays it over a cached board.
@@ -749,7 +791,7 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   | Collecting the collections log | Collected 165 collections this week and last | the log and the all-time weekly view |
   | Collecting payroll problems | No payroll problems logged this week or last | the problem log and its types |
   | Checking Payroll Wizard starts and closes | Found 9 Payroll Wizard starts and closes | the audit events and the first close-out |
-  | Reading goals, sections and the bonus formula | Read the goals, sections and the bonus formula | switches, custom sections, the catalog, the last PM meeting, the members (a manager's) |
+  | Reading goals, sections and the bonus formula | Read the goals, sections and the bonus formula | switches, custom sections, the catalog, the last PM meeting, the members (an Admin's or an Assistant's board) |
   | Laying out the board | Board ready | the page putting the board on screen, then one painted frame |
 
 - **Accurate means** the NPD card's rules (`npd-dashboard.md:470-476`) and `ui-standards.md` § 10.1, on the shared
@@ -871,9 +913,23 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   "Sales - Projects Onboarded" and her second section under Setup → Sections.
 - **The round-3 script's data checks run on a dry run and `--apply` only** (Open item 399, 2026-10-07). They assert
   what its one-off data step did (the weekday buckets' days, the "due in 7 days" flag, the Outcomes lines, Carla's
-  three types live), and managers change all of that on purpose in Setup afterwards. Under `--verify` one of them
+  three types live), and Admins change all of that on purpose in Setup afterwards. Under `--verify` one of them
   failed on normal use (Carla archived "Other" on 2026-10-07 14:40Z and added "Late TTV"). `--verify` now checks what
   stays true for good: the three seeded types still exist, live or archived (a type is never deleted). It re-passed.
+- **Board-local roles migration (2026-10-08, item 393): NOT applied. PENDING: the second Admin's email (Carla, plan
+  W0.6), then Kane's go.** `2026-10-08_accounting_scoreboard_roles.sql` creates `accounting_scoreboard_roles`, its
+  append-only + last-Admin trigger, RLS with no policies, and revokes anon / authenticated. The script seeds the two
+  Admin grants and **refuses `--apply` without exactly two distinct `--admin` emails**. **Dry run 2026-10-08 (rolled
+  back), with only `carla@simple.biz` seeded: 32/32 checks**: the seed, 17 object and privilege checks, the access
+  check's and the Access area's selects, anon refused `42501`, 2 positive controls (a role change as revoke + grant;
+  revoking one Admin while another remains), and 9 negative controls (revoking every Admin, DELETE, an in-place role
+  change, revoking twice, a grant born revoked, two live grants for one address, an unknown role, an untrimmed address,
+  a revoke without who). Its counts are in § Who may open it (11 · 4 · 7 · 5 · 2).
+  **Order:** (1) Carla names the second Admin; (2) `node --import tsx scripts/apply-accounting-scoreboard-roles-migration.mts
+  --apply --admin carla@simple.biz --admin <second>`; (3) `--verify`; (4) only then the push. The code reads this table
+  on every request from anyone who is not an HRIS admin, so a push before the migration answers every such person
+  "not set up yet" (503). Before the push, an Admin may add the 2 people who would lose access under Setup → Members, if
+  they should keep it.
 - **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here) (`f770d29b`).
 - **Pre-arb flag migration: APPLIED 2026-10-08 ~11:13 UTC** by session `5fae2311` on Kane's *"go"*. **The push: PENDING** (Kane).
   `2026-10-07_accounting_scoreboard_pre_arb_flag.sql` re-declares CHECK `acct_sb_rows_outcome_valid` with `'pre_arb'`

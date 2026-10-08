@@ -7,6 +7,7 @@ import type { PreviewVerdict } from './bonus-preview';
 import type { PayrollEvent } from './payroll-cycle';
 import type { CollectionEntry, ProblemEntry, StoredEntry } from './scoring';
 import type { CustomSection, Outcome, RowSectionKey, SectionSetting, Weekday } from './sections';
+import type { BoardRole, GrantRole } from './roles';
 
 export interface BoardRow {
   id: string;
@@ -47,7 +48,11 @@ export interface BoardPayload {
   lastWeekStart: string;
   /** US Eastern. */
   today: string;
-  viewer: { email: string; isManager: boolean };
+  /**
+   * Who is looking, and their board-local role (roles.ts). A PERMISSION: the client never caches it, and asks
+   * `can(viewer.role, action)` for every Setup and delete control.
+   */
+  viewer: { email: string; role: BoardRole };
   settings: SectionSetting[];
   /** Live custom sections, switched on or off (archived ones are not sent). */
   customSections: CustomSection[];
@@ -68,7 +73,7 @@ export interface BoardPayload {
     /** Date of the first logged collection; null before any. */
     liveSince: string | null;
   };
-  /** Managers only. */
+  /** Admins and Assistants only (they see Setup); null for a Team member. */
   members: BoardMember[] | null;
   bonus: PreviewVerdict;
   /**
@@ -81,6 +86,14 @@ export interface BoardPayload {
   /** The period end of the first cycle ever closed; a cycle that ended before it predates Close Pay Cycle. */
   firstClosedPeriodEnd: string | null;
   generatedAt: string;
+}
+
+/** A live Admin or Assistant grant (accounting_scoreboard_roles). Team members are the member list, not grants. */
+export interface RoleGrant {
+  email: string;
+  role: GrantRole;
+  grantedBy: string;
+  grantedAt: string;
 }
 
 export interface RosterPerson {

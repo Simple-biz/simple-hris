@@ -309,6 +309,16 @@ export function parseMemberWrite(body: unknown): Parsed<{ workEmail: string }> {
   return { ok: true, value: { workEmail } };
 }
 
+/** Setup → Access: grant a role. Only Admin or Assistant: a Team member is the member list, not a grant. */
+export function parseRoleWrite(body: unknown): Parsed<{ email: string; role: 'admin' | 'assistant' }> {
+  const b = obj(body);
+  if (!b) return { ok: false, error: 'Expected a JSON object' };
+  const email = normalizeEmail(b.email);
+  if (!email) return { ok: false, error: 'A work email is required' };
+  if (b.role !== 'admin' && b.role !== 'assistant') return { ok: false, error: 'role is admin or assistant' };
+  return { ok: true, value: { email, role: b.role } };
+}
+
 export interface SectionPatch {
   sectionKey: SectionKey;
   enabled?: boolean;

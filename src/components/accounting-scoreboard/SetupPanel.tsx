@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * Setup (managers = Accounting / Admin): which sections are on and their goals, the managers' own
- * custom sections, who or what each section's rows are, the Payroll Problems types, and the extra
- * members. Carla asked to track less than the sheet does, so every section can be switched off here
+ * Setup (board-local roles, roles.ts): which sections are on and their goals, the Admins' own
+ * custom sections, who or what each section's rows are, the Payroll Problems types, the extra
+ * members, and (Admins only) Access: who is an Admin or an Assistant. An Assistant sees all of it
+ * read-only (a disabled fieldset) and never the Access area or the roster picker. Carla asked to track less than the sheet does, so every section can be switched off here
  * without a code change, and (2026-10-02) to create sections of her own.
  *
  * A row picked from the roster IS that HRIS person and makes them a member. A section's people
@@ -13,7 +14,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { ArrowDown, ArrowUp, Loader2, Plus, UserPlus, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Loader2, Lock, Plus, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -41,13 +42,16 @@ import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import { shortNameFromRoster } from '@/lib/accounting-scoreboard/names';
 import { readCachedRoster, writeCachedRoster } from '@/lib/accounting-scoreboard/tab-cache';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import type { BoardPayload, BoardRow, RosterPerson } from '@/lib/accounting-scoreboard/types';
+import type { BoardPayload, BoardRow, RoleGrant, RosterPerson } from '@/lib/accounting-scoreboard/types';
+import { ROLE_LABEL, can, type BoardRole, type GrantRole } from '@/lib/accounting-scoreboard/roles';
 import { api, EASE_SETTLE, EASE_TAB, handle, SlidingPill, TINY_CAPS } from './shared';
 
 interface Props {
   board: BoardPayload;
   /** Every section, built-in and custom, switched on or off. */
   sections: BoardSection[];
+  /** The viewer's board-local role: an Assistant sees Setup read-only, only an Admin sees Access. */
+  role: BoardRole;
   onChanged: () => void;
 }
 
@@ -56,6 +60,7 @@ const AREAS = [
   ['sections', 'Sections'],
   ['types', 'Problem types'],
   ['members', 'Members'],
+  ['access', 'Access'],
 ] as const;
 type Area = (typeof AREAS)[number][0];
 
@@ -65,13 +70,15 @@ const AREA_VARIANTS = {
   exit: (dir: number) => ({ opacity: 0, x: dir >= 0 ? -24 : 24 }),
 };
 
-export function SetupPanel({ board, sections, onChanged }: Props) {
+export function SetupPanel({ board, sections, role, onChanged }: Props) {
   const reduce = useReducedMotion() ?? false;
+  const canEdit = can(role, 'edit_setup');
+  const areas = AREAS.filter(([k]) => k !== 'access' || can(role, 'manage_roles'));
   const [area, setArea] = useState<Area>('rows');
   const [dir, setDir] = useState(1);
   const go = (next: Area) => {
-    const from = AREAS.findIndex(([k]) => k === area);
-    const to = AREAS.findIndex(([k]) => k === next);
+    const from = areas.findIndex(([k]) => k === area);
+    const to = areas.findIndex(([k]) => k === next);
     setDir(to >= from ? 1 : -1);
     setArea(next);
   };
@@ -80,11 +87,20 @@ export function SetupPanel({ board, sections, onChanged }: Props) {
       <div>
         <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Setup</h2>
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-          Only Accounting and Admin see this. Changes apply to everyone on the next refresh.
+          Admins change Setup and Assistants see it. Changes apply to everyone on the next refresh.
         </p>
       </div>
+      {!canEdit ? (
+        <p
+          role="note"
+          className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300"
+        >
+          <Lock className="size-3.5 shrink-0" aria-hidden />
+          Only an Admin can change Setup. You&rsquo;re an {ROLE_LABEL[role]}, so you can see it but not change it.
+        </p>
+      ) : null}
       <div className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-xl border border-zinc-200 bg-white/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/60">
-        {AREAS.map(([k, label]) => (
+        {areas.map(([k, label]) => (
           <SlidingPill key={k} layoutId="acct-sb-setup-area" active={area === k} onClick={() => go(k)}>
             {label}
           </SlidingPill>
@@ -101,10 +117,15 @@ export function SetupPanel({ board, sections, onChanged }: Props) {
             exit="exit"
             transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
           >
-            {area === 'rows' ? <RowsArea board={board} sections={sections} onChanged={onChanged} /> : null}
-            {area === 'sections' ? <SectionsArea sections={sections} onChanged={onChanged} /> : null}
-            {area === 'types' ? <ProblemTypesArea board={board} onChanged={onChanged} /> : null}
-            {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
+            {/* A disabled fieldset disables every control inside it, the dropdowns' trigger buttons included:
+                an Assistant reads Setup and cannot change it. The server refuses the writes anyway (edit_setup). */}
+            <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
+              {area === 'rows' ? <RowsArea board={board} sections={sections} canEdit={canEdit} onChanged={onChanged} /> : null}
+              {area === 'sections' ? <SectionsArea sections={sections} onChanged={onChanged} /> : null}
+              {area === 'types' ? <ProblemTypesArea board={board} onChanged={onChanged} /> : null}
+              {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
+            </fieldset>
+            {area === 'access' && can(role, 'manage_roles') ? <AccessArea viewerEmail={board.viewer.email} /> : null}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -663,7 +684,12 @@ const BUCKET_DAY_OPTIONS = [
   ...MON_FRI.map((d) => ({ value: d, label: `${WEEKDAY_LABEL[d]} bucket` })),
 ];
 
-function RowsArea({ board, sections, onChanged }: Props) {
+function RowsArea({
+  board,
+  sections,
+  canEdit,
+  onChanged,
+}: Omit<Props, 'role'> & { canEdit: boolean }) {
   const [sectionId, setSectionId] = useState<string>(sections[0]?.id ?? 'buckets');
   const section = sections.find((s) => s.id === sectionId) ?? sections[0];
   const rows = board.rows.filter(
@@ -803,7 +829,8 @@ function RowsArea({ board, sections, onChanged }: Props) {
           </form>
         )}
       </div>
-      {fillsItself ? null : (
+      {/* The roster picker reads every active employee's name: only for an Admin, who can add rows. */}
+      {fillsItself || !canEdit ? null : (
         <RosterPicker
           disabled={busy}
           taken={new Set(rows.map((r) => r.workEmail).filter((e): e is string => !!e))}
@@ -1165,7 +1192,8 @@ function MembersArea({ board, onChanged }: { board: BoardPayload; onChanged: () 
         <p className="text-xs leading-relaxed text-zinc-500">
           Everyone on a person row can already sign in and enter numbers. Add here anyone else who enters numbers
           without being a row, such as whoever collects the team&rsquo;s numbers, or someone not on the roster
-          with a @simple.biz sign-in. Accounting and Admin always have access.
+          with a @simple.biz sign-in. An HRIS admin is always a board Admin; who else is an Admin or an Assistant is
+          under Access.
         </p>
         <form
           className="flex gap-2"
@@ -1218,6 +1246,180 @@ function MembersArea({ board, onChanged }: { board: BoardPayload; onChanged: () 
           ))}
           {!onRows.length ? <li className="py-2 text-center text-xs">Nobody yet.</li> : null}
         </ul>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const ROLE_OPTIONS: { value: GrantRole; label: string }[] = [
+  { value: 'assistant', label: 'Assistant' },
+  { value: 'admin', label: 'Admin' },
+];
+
+/** Carla's three roles, in her words (2026-10-07). */
+const ROLE_SUMMARY: Array<[BoardRole, string]> = [
+  ['admin', 'Everything: Setup, deleting or unchecking anyone’s line, and Access.'],
+  ['assistant', 'Sees Setup without changing it. Types and logs like a Team member.'],
+  ['member', 'Anyone on a person row or the member list. Types and logs; never Setup.'],
+];
+
+/**
+ * Setup → Access (Admins only): grant Admin or Assistant, and revoke. A Team member is the member list, not a
+ * grant. A role change is a revoke and a new grant. The last Admin grant cannot be revoked: the button says so,
+ * the server answers 409, and the table's trigger refuses it under a lock. An HRIS admin is the break glass.
+ */
+function AccessArea({ viewerEmail }: { viewerEmail: string }) {
+  const reduce = useReducedMotion() ?? false;
+  const [grants, setGrants] = useState<RoleGrant[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<GrantRole>('assistant');
+  const [busy, setBusy] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  async function load() {
+    const res = await api<{ grants: RoleGrant[] }>('/api/accounting-scoreboard/roles');
+    if (!res.ok) {
+      setLoadError(res.error);
+      return;
+    }
+    setLoadError(null);
+    setGrants(res.data.grants);
+  }
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const liveAdmins = (grants ?? []).filter((g) => g.role === 'admin').length;
+
+  async function grant() {
+    setBusy(true);
+    const res = await api('/api/accounting-scoreboard/roles', { method: 'POST', body: JSON.stringify({ email, role }) });
+    setBusy(false);
+    if (!res.ok) return toast.error(res.error);
+    toast.success(`${email.trim().toLowerCase()} is now ${role === 'admin' ? 'an Admin' : 'an Assistant'}.`);
+    setEmail('');
+    void load();
+  }
+
+  async function revoke(g: RoleGrant) {
+    setRevoking(g.email);
+    const res = await api(`/api/accounting-scoreboard/roles?email=${encodeURIComponent(g.email)}`, { method: 'DELETE' });
+    setRevoking(null);
+    if (!res.ok) return toast.error(res.error);
+    void load();
+  }
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div className="space-y-3">
+        <p className="text-xs leading-relaxed text-zinc-500">
+          Grant someone Admin or Assistant. Everyone on a person row or under Members is already a Team member. To change
+          someone&rsquo;s role, revoke it, then grant the new one. The board always keeps one Admin.
+        </p>
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (email.trim()) void grant();
+          }}
+        >
+          <Input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="name@simple.biz"
+            aria-label="Work email to grant a role"
+            className="min-w-[12rem] flex-1 font-mono md:text-[13px]"
+          />
+          <SmoothSelect
+            value={role}
+            onChange={(v) => setRole(v as GrantRole)}
+            options={ROLE_OPTIONS}
+            accent="orange"
+            align="start"
+            portal
+            aria-label="Role to grant"
+            triggerClassName="h-9 w-32"
+          />
+          <Button type="submit" size="lg" variant="outline" className="h-9" disabled={busy || !email.trim()}>
+            {busy ? <Loader2 className="animate-spin" /> : <ShieldCheck />} Grant
+          </Button>
+        </form>
+        {loadError ? (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+            <span>Couldn&rsquo;t load the roles: {loadError}</span>
+            <Button size="xs" variant="outline" onClick={() => void load()}>
+              Try again
+            </Button>
+          </div>
+        ) : grants === null ? (
+          <p className="flex items-center gap-2 px-1 text-xs text-zinc-500">
+            <Loader2 className="size-3.5 animate-spin" /> Loading the roles…
+          </p>
+        ) : (
+          <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
+            <AnimatePresence initial={false}>
+              {grants.map((g) => {
+                const lastAdmin = g.role === 'admin' && liveAdmins <= 1;
+                return (
+                  <motion.li
+                    key={g.email}
+                    layout={reduce ? false : 'position'}
+                    initial={{ opacity: 0, y: reduce ? 0 : -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, x: reduce ? 0 : -14, transition: { duration: 0.14 } }}
+                    transition={{ duration: reduce ? 0 : 0.22, ease: EASE_SETTLE }}
+                    className="flex items-center gap-2 bg-white px-3 py-2 dark:bg-zinc-950"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={g.email}>
+                      {g.email}
+                      {g.email === viewerEmail ? <span className="ml-1.5 font-sans text-[11px] text-zinc-500">(you)</span> : null}
+                    </span>
+                    <span
+                      className={cn(
+                        'inline-flex shrink-0 items-center rounded-full border px-2 py-px text-[11px] font-semibold',
+                        g.role === 'admin'
+                          ? 'border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-300'
+                          : 'border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300',
+                      )}
+                    >
+                      {ROLE_LABEL[g.role]}
+                    </span>
+                    <span className="hidden shrink-0 text-[11px] text-zinc-500 sm:inline">by {handle(g.grantedBy)}</span>
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={lastAdmin ? `${g.email} is the last Admin and cannot be revoked` : `Revoke ${g.email}`}
+                      title={lastAdmin ? 'The board keeps at least one Admin. Grant another Admin first.' : `Revoke ${ROLE_LABEL[g.role]}`}
+                      disabled={lastAdmin || revoking === g.email}
+                      onClick={() => void revoke(g)}
+                    >
+                      {revoking === g.email ? <Loader2 className="animate-spin" /> : <X />}
+                    </Button>
+                  </motion.li>
+                );
+              })}
+            </AnimatePresence>
+            {!grants.length ? <li className="px-3 py-4 text-center text-xs text-zinc-500">No roles granted yet.</li> : null}
+          </ul>
+        )}
+      </div>
+      <div className="space-y-2">
+        <h3 className={cn(TINY_CAPS, 'text-zinc-500')}>What each role can do</h3>
+        <dl className="space-y-2 rounded-xl border border-zinc-200 bg-white px-3 py-3 text-xs dark:border-zinc-800 dark:bg-zinc-950">
+          {ROLE_SUMMARY.map(([r, text]) => (
+            <div key={r} className="grid grid-cols-[6.5rem_1fr] gap-2">
+              <dt className="font-semibold text-zinc-800 dark:text-zinc-200">{ROLE_LABEL[r]}</dt>
+              <dd className="text-zinc-600 dark:text-zinc-400">{text}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="px-1 text-[11px] leading-relaxed text-zinc-500">
+          Anyone who holds the HRIS admin role is always an Admin here, so the board can never be locked out of Setup.
+          The HRIS accounting role on its own no longer manages the board.
+        </p>
       </div>
     </div>
   );
