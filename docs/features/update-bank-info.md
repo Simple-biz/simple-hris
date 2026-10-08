@@ -134,10 +134,13 @@ Each is what the code does at HEAD, with where it does it.
    hit** (`request-otp/route.ts:16-21, 36-40, 62-73, 98`). The two exceptions carry nothing
    per-email: an empty body is a 400 (`:32-35`), and a missing email webhook in production is a
    503 **before** any lookup (`:42-57`).
-5. **`verify-otp` shares one error sentence** between "wrong code" and "no live code / unknown
-   email" (`verify-otp/route.ts:43-48`), and a non-employee is reported as `expired`
-   (`otp.ts:162-164`). The response also carries a `reason` field, which does distinguish them.
-   See §Security notes.
+5. **`verify-otp` answers ONE body and ONE status for every failed code**: `{error}` with
+   `VERIFY_FAILURE_MESSAGE` and 401, built only by `verifyFailureResponse`
+   (`src/lib/bank-update/verify-failure.ts`). A non-employee is reported as `expired`
+   (`otp.ts` verifyOtp), and the reason goes to the audit row only. **Closed 2026-10-08 (item 266
+   #1):** the body used to carry `reason`, and `locked` had its own *"Too many incorrect
+   attempts"* message. `invalid` and `locked` occur only for an active employee's inbox, so either
+   one told the public who works here. `verify-failure.test.ts` pins the body and scans the route.
 
 ### Codes and sessions
 
@@ -204,8 +207,11 @@ Each is what the code does at HEAD, with where it does it.
 
 ### Lock
 
-19. **Every save is refused with 423 while `payroll.dispatch_locked` is true**
-    (`save/route.ts:151-162`; `payroll-dispatch-lock.ts:3, 18-29`). The check runs after
+19. **Every save is refused with 423 while `payroll.dispatch_locked` is true, and with 503 when
+    the lock cannot be READ** (`getPayrollDispatchLockGate`, which reads through
+    `getAppSettingStrict` and fails closed; item 266 #2, 2026-10-08). 503, not 423, because the page
+    flips into its locked state only on 423 and a read failure is not a lock. The dashboard's
+    `/api/update-employee-ids` uses the same gate for a payout change. The check runs after
     validation and before any read or write. The lock probe and the greyed controls are advisory
     UX (`lock-status/route.ts:7-20`, `page.tsx:50-56`). A 423 mid-session flips the page into the
     locked state (`page.tsx:198-200`).
@@ -390,10 +396,13 @@ the new notice is about typing the wrong number.
 - **`throttled: true` does not only mean throttled.** It is `!code`, which is also true when the
   OTP insert failed or the service role was missing (`otp.ts:123-124, 146`,
   `request-otp/route.ts:94`).
-- **A failed lock read lets the save through.** `getAppSetting` returns `null` on a read error
-  (`app-settings.ts:26-36`), and `parseLocked(null)` is `false` (`payroll-dispatch-lock.ts:13-16`).
-  So the 423 gate in rule 19 fails OPEN, although the page comment calls the server
-  *"the real block"* (`page.tsx:55-56`).
+- **A failed lock read REFUSES the save (fixed 2026-10-08, item 266 #2).** It used to let it
+  through: `getAppSetting` returns `null` on a read error and `parseLocked(null)` is `false`. The
+  save now reads `getPayrollDispatchLockGate` (rule 19), pinned by `verify-failure.test.ts`. **The
+  lock probe still reads the old fail-open helper**, which is fine for advisory UX: on a read error
+  the page offers Save and the server answers 503. **The same fail-open read is still under three
+  other gates** (People → Banking PATCH, the contractor profile, the shared processing guard):
+  recorded as an Open item, not fixed here.
 - **The attestation rides the same best-effort writes as the rest of the trail** (rule 30), so a
   failed audit insert AND a failed history insert would leave a saved change with no record of
   what was attested. **RULED: the save still lands** (Kane, 2026-10-08 ~02:00Z, answering *"if both log writes fail, should the bank change still save without a record (item 266 #3)?"*: *"yes"*). A logging outage must never
@@ -446,14 +455,14 @@ the new notice is about typing the wrong number.
   ([[security-invoker-view-silent-empty]]). This page would then prefill from onboarding or
   from nothing. Because a save posts every field (rule 14), saving that form would clear any
   stored field the employee did not re-type. Add this page to item 221's load-bearing order.
-- **`verify-otp` returns `reason` in its 401 body** (`verify-otp/route.ts:49`). `invalid` occurs
-  only when a live code exists for an active employee's inbox (`otp.ts:180-193`), while a
-  non-employee reads `expired` (`otp.ts:164`). Anyone who requests a code for an address and
-  then submits a wrong one can read back whether it belongs to an active employee. The comment
-  above it says the response *"can't be used for enumeration"* (`verify-otp/route.ts:43-44`).
-  The page never reads `reason` (`page.tsx:123-131`). The gift link answers 400 for every failure
-  shape ([gift-address-external-link.md:102-104](gift-address-external-link.md)). This was not
-  tested against production.
+- **~~`verify-otp` returns `reason` in its 401 body~~ CLOSED 2026-10-08 (item 266 #1, rule 5).**
+  `invalid` and `locked` occurred only when a live code existed for an active employee's inbox,
+  while a non-employee read `expired`, so request-then-guess-wrong told anyone whether an address
+  belonged to an active employee, through the `reason` field and through the locked-only message.
+  Both are gone; the body is now identical for every failure, like the gift link's
+  ([gift-address-external-link.md:102-104](gift-address-external-link.md)). **Residual, not
+  fixed:** response TIMING still differs (a non-employee returns before the code lookup). Not
+  measured against production.
 - **Neither create script enables RLS**, yet the anon key reads nothing from either table.
   Neither `2026-06-29_bank_update_external_link.sql` nor `2026-07-01_bank_update_history.sql` has
   `ENABLE ROW LEVEL SECURITY`, and a new table in `public` gets anon and authenticated ALL by
@@ -537,8 +546,10 @@ the new notice is about typing the wrong number.
 - **266 — OPEN SECURITY, Kane's call** (Sep 29 log): four findings made while writing this doc:
   the `verify-otp` `reason` enumeration, the save's lock gate failing open on a read error, the
   audit row not enforced, and a save landing after the person left mid-session. Plus the prefill
-  hazard for item 221's fix order. None is fixed. **#3 (audit row not enforced) RULED 2026-10-08:
-  stays best-effort, by design** (§ *Failure modes*); the other three are still open.
+  hazard for item 221's fix order. **#1 (enumeration) and #2 (lock fails open) FIXED 2026-10-08**
+  (rules 5 and 19). **#3 (audit row not enforced) RULED 2026-10-08: stays best-effort, by design**
+  (§ *Failure modes*). **#4 (a leaver mid-session still saves) is still open**, and needs Kane's
+  call on whether a leaver is blocked.
 - **207** (Sep 23 log): n8n re-paste DONE 2026-10-02 on Kane's word. Page and OTP email code pushed
   (item 215), deploy unverified.
 - **221** (Sep 25 log): OPEN CRITICAL, anon key reads `employee_ids`. This page adds one hazard
@@ -590,6 +601,7 @@ the Notify flow:
 | `6cabcff3` | 2026-09-24 | Sending-bank mismatch alert; the employee send-from pick retired |
 | `d21a0a3b` · `87c407ff` | 2026-09-25 | Card-safety warning: page, OTP email, n8n node |
 | `eb9a0005` | 2026-10-07 | Payout change safety: track record, versioned notice + confirmations, server gate on both self-service routes, attestation trail, `safety` column (applied the same night) |
+| (this commit) | 2026-10-08 | Item 266 #1 + #2: one verify-otp failure body for every reason; both bank saves refuse (503) when the payroll lock cannot be read |
 
 Commit subjects before 2026-08 are uninformative ("push", "Push", "asdasdas"). The "What" for
 those rows is inferred from the files each touched, not from the messages.

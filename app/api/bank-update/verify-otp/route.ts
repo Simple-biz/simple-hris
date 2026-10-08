@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyOtp } from "@/lib/bank-update/otp";
 import { getPayoutPrefill } from "@/lib/bank-update/prefill";
+import { verifyFailureResponse } from "@/lib/bank-update/verify-failure";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
 import { resolveWalletRailLock } from "@/lib/employee/wallet-rail-lock";
@@ -43,13 +44,12 @@ export async function POST(req: Request) {
       details: { reason: result.reason },
       ip_address: ip,
     });
-    // Don't distinguish "wrong code" from "no live code / unknown email" —
-    // both map to one message so the response can't be used for enumeration.
-    const error =
-      result.reason === "locked"
-        ? "Too many incorrect attempts. Request a new code."
-        : "That code is invalid or expired. Request a new one.";
-    return NextResponse.json({ error, reason: result.reason }, { status: 401 });
+    // One body and one status for EVERY failure. The reason (and the old
+    // "Too many incorrect attempts" wording) only ever differed for an active
+    // employee's inbox, so either one told the public who works here (266 #1).
+    // The reason stays on the audit row above, which the public never reads.
+    const failure = verifyFailureResponse(result.reason);
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 
   // verifyOtp already resolved the active employee — reuse it (no extra query).

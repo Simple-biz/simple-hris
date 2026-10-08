@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
-import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
+import { getPayrollDispatchLockGate } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { resolveSessionToken, findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
 import { sendBankUpdatePayrollEmail } from "@/lib/bank-update/notify-email";
@@ -177,8 +177,21 @@ export async function POST(req: Request) {
 
     // Every field here is a payroll-relevant field, so any save is blocked while
     // Accounting has the dispatch locked (prevents mid-cycle salary redirects).
-    const lock = await getPayrollDispatchLock();
-    if (lock.locked) {
+    // FAILS CLOSED (266 #2, 2026-10-08): a lock that cannot be READ refuses the
+    // save. It used to read as "unlocked" and let a salary be redirected mid-
+    // dispatch. 503, not 423: the page flips into its locked state only on 423,
+    // and a read failure is not a lock, so it must not say "being processed".
+    const lockGate = await getPayrollDispatchLockGate();
+    if (lockGate === "unknown") {
+      return NextResponse.json(
+        {
+          error:
+            "We couldn't confirm that payroll isn't being processed right now, so nothing was saved. Please try again in a minute.",
+        },
+        { status: 503 },
+      );
+    }
+    if (lockGate === "locked") {
       return NextResponse.json(
         {
           error:

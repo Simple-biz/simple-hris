@@ -1,5 +1,5 @@
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/server";
-import { getPayrollDispatchLock } from "@/lib/supabase/payroll-dispatch-lock";
+import { getPayrollDispatchLockGate } from "@/lib/supabase/payroll-dispatch-lock";
 import { invalidateRateProfilesCache } from "@/lib/supabase/employee-rate-profiles";
 import { insertBankUpdateHistory } from "@/lib/supabase/bank-update-history";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
@@ -451,12 +451,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 });
     }
 
-    const lock = await getPayrollDispatchLock();
-    if (lock.locked) {
-      const touchesBlocked = Object.keys(update).some((k) =>
-        BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
-      );
-      if (touchesBlocked) {
+    // The lock gate on a payout change FAILS CLOSED (266 #2, 2026-10-08): a lock
+    // that cannot be READ refuses with 503, never reads as "unlocked". Same gate
+    // as the external link. A pure personal_email edit never reads it.
+    const touchesBlocked = Object.keys(update).some((k) =>
+      BLOCKED_WHILE_PAYROLL_LOCKED.has(k),
+    );
+    if (touchesBlocked) {
+      const lockGate = await getPayrollDispatchLockGate();
+      if (lockGate === "unknown") {
+        return NextResponse.json(
+          {
+            error:
+              "We couldn't confirm that payroll isn't being processed right now, so nothing was saved. Please try again in a minute.",
+          },
+          { status: 503 },
+        );
+      }
+      if (lockGate === "locked") {
         return NextResponse.json(
           {
             error:
@@ -476,9 +488,8 @@ export async function POST(req: Request) {
     // stored one rides along: the reviewer alert names a mismatch this save
     // leaves. Best-effort: a failed read leaves `{}`, which makes the gate read
     // everything as changed, so it asks rather than skips.
-    const touchesPayout = Object.keys(update).some((k) => BLOCKED_WHILE_PAYROLL_LOCKED.has(k));
     let beforeRow: Record<string, unknown> = {};
-    if (touchesPayout) {
+    if (touchesBlocked) {
       const { data } = await supabase
         .from("employee_ids")
         .select([...SELF_SERVICE_PAYOUT_FIELDS, "bank_preferred", "name", "work_email", "personal_email"].join(", "))
