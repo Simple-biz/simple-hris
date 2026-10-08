@@ -160,6 +160,28 @@ does NOT snap and lands as "AI/API".** HR fixes it with the bulk Dept apply, or 
 checklist's spelling. Neither spelling is Lead Gen, so the orientation email withholds those hires
 either way.
 
+## The manual New Hire stays — permanently
+
+**The manual New Hire modal is never removed, hidden, or gated on the sync.** Kane, 2026-10-08:
+*"we should always retain the manual add new hire in here because — Sometimes the other managers do
+their own hiring process but we still need to add them so their accounts can be created."* Those
+hires never pass through the recruitment portal, so the sync cannot bring them in. The modal is
+their only way onto the checklist, and the checklist is what **Lock-in** (orientation email) and
+**Bulk Invite** (account creation) read.
+
+- Both the floating **New Hire** button and the empty week's **Add a new hire** call the same
+  `openAdd` → `handleQuickAdd` → `POST /api/hr/new-hire-checklist`, which saves `origin='manual'`.
+  The only thing that disables them is a **locked week**, as before. Never the sync's status, and
+  never "the portal has this week covered".
+- A manual hire is a full citizen downstream: Lock-in and Bulk Invite never filter on `origin`. The
+  Synced/Manual tag is information only.
+- If a hand-added hire later shows up in the portal, the sync **links** to the hand-added row
+  (rule 1 above) instead of adding a second one, fills only that row's blank cells, and never
+  overwrites what HR typed. The sync never deletes a checklist row.
+- Pinned by `src/lib/hr/new-hire-manual-add-wiring.test.ts` (source scans, the
+  `oms-panel-wiring.test.ts` pattern). A change that drops the button, gates it on the sync, or
+  teaches Lock-in or Bulk Invite to skip manual rows fails there.
+
 ## The strip, the Received column, and the manual way in
 
 - **Strip** (above the grid, checklist tab): a live dot and "checked 2:14:05 PM · N hires in the

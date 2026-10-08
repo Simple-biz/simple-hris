@@ -120,7 +120,10 @@ that vanished are pruned).
 hire in or edit one. Since 2026-10-08 hires also arrive from the hiring database, tagged **Synced**,
 through the sync's own atomic insert. The sync never overwrites a cell HR typed, never writes a
 locked week, and never fills a past week on its own. See
-[new-hire-source-sync.md](./new-hire-source-sync.md). Its submit is now **async**: `commit` awaits `onSave(values)` and treats a resolved **`false`**
+[new-hire-source-sync.md](./new-hire-source-sync.md). **The modal is permanent** (Kane, 2026-10-08:
+managers who hire outside the portal still need their hires added so accounts get created). It is
+never hidden or gated on the sync, and it is pinned by `src/lib/hr/new-hire-manual-add-wiring.test.ts`.
+Its submit is now **async**: `commit` awaits `onSave(values)` and treats a resolved **`false`**
 as "the server write failed / conflicted" — it shows a spinner (`submitting`), disables the footer
 buttons and backdrop-dismiss, and **stays open** so the entry isn't lost. On success it either resets
 for "Save & add another" (add mode) or closes. Only **name** is required (plus **Referred by** when
