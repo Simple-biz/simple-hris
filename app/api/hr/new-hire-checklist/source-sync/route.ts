@@ -137,6 +137,7 @@ export async function POST(req: Request) {
         new_rows: s.newRows,
         changed_rows: s.changedRows,
         placed: s.placed,
+        placed_into_this_week: s.placedFallback,
         linked: s.linked,
         held: s.held,
         updated_cells: s.updatedCells,

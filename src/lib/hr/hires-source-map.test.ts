@@ -7,6 +7,7 @@ import {
   contentHash,
   currentManilaSunday,
   decidePlacement,
+  FALLBACK_WEEKS_AHEAD,
   interviewCalendarDate,
   INTERVIEW_TIME_ZONE,
   mapSourceRow,
@@ -177,7 +178,7 @@ const open = () => false;
 
 test('PLACE: a fresh hire interviewed this week goes to next week', () => {
   const d = decidePlacement({ values: values(), currentSunday: CURRENT, isWeekLocked: open, checklist: [] });
-  assert.deepEqual(d, { kind: 'place', period: '2026-10-11' });
+  assert.deepEqual(d, { kind: 'place', period: '2026-10-11', fallback: null });
 });
 
 test('PLACE into the CURRENT week is allowed (interviewed last week)', () => {
@@ -187,30 +188,24 @@ test('PLACE into the CURRENT week is allowed (interviewed last week)', () => {
     isWeekLocked: open,
     checklist: [],
   });
-  assert.deepEqual(d, { kind: 'place', period: '2026-10-04' });
+  assert.deepEqual(d, { kind: 'place', period: '2026-10-04', fallback: null });
 });
 
-test('HOLD past_week: the sync never fills a week before this one on its own', () => {
+// Kane, 2026-10-08: "Lets make this automatically added to this week", then "A":
+// the unusable-week cases go to THIS week, else the next open one — never a locked
+// week, never a past week.
+
+test('THIS WEEK: an old interview (target week already past) goes to this week, never the past week', () => {
   const d = decidePlacement({
     values: values({ date_of_interview: '2026-08-14' }),
     currentSunday: CURRENT,
     isWeekLocked: open,
     checklist: [],
   });
-  assert.deepEqual(d, { kind: 'hold', period: '2026-08-16', reason: 'past_week' });
+  assert.deepEqual(d, { kind: 'place', period: CURRENT, fallback: 'past_week' });
 });
 
-test('HOLD week_locked: never write a week whose emails may be out', () => {
-  const d = decidePlacement({
-    values: values(),
-    currentSunday: CURRENT,
-    isWeekLocked: (p) => p === '2026-10-11',
-    checklist: [],
-  });
-  assert.deepEqual(d, { kind: 'hold', period: '2026-10-11', reason: 'week_locked' });
-});
-
-test('HOLD no_interview_date: no usable date means no week', () => {
+test('THIS WEEK: no usable interview date goes to this week', () => {
   for (const date of [null, 'Aug 14-ish']) {
     const d = decidePlacement({
       values: values({ date_of_interview: date }),
@@ -218,8 +213,69 @@ test('HOLD no_interview_date: no usable date means no week', () => {
       isWeekLocked: open,
       checklist: [],
     });
-    assert.deepEqual(d, { kind: 'hold', period: null, reason: 'no_interview_date' });
+    assert.deepEqual(d, { kind: 'place', period: CURRENT, fallback: 'no_interview_date' });
   }
+});
+
+test('NEXT OPEN WEEK: this week locked (the 2026-10-08 case) → the first open week after it', () => {
+  const locked = new Set(['2026-10-04']);
+  for (const date of [null, '2026-08-14']) {
+    const d = decidePlacement({
+      values: values({ date_of_interview: date }),
+      currentSunday: CURRENT,
+      isWeekLocked: (p) => locked.has(p),
+      checklist: [],
+    });
+    assert.equal(d.kind === 'place' && d.period, '2026-10-11');
+  }
+  // Interviewed last week → target = this week, which is locked → next week.
+  const t = decidePlacement({
+    values: values({ date_of_interview: '2026-09-30' }),
+    currentSunday: CURRENT,
+    isWeekLocked: (p) => locked.has(p),
+    checklist: [],
+  });
+  assert.deepEqual(t, { kind: 'place', period: '2026-10-11', fallback: 'week_locked' });
+});
+
+test('a LOCKED FUTURE target walks forward from AFTER the target — never earlier than the interview week', () => {
+  const d = decidePlacement({
+    values: values(), // interview 10-07 → target 10-11
+    currentSunday: CURRENT, // this week (10-04) is OPEN, but it is before the target
+    isWeekLocked: (p) => p === '2026-10-11',
+    checklist: [],
+  });
+  assert.deepEqual(d, { kind: 'place', period: '2026-10-18', fallback: 'week_locked' });
+});
+
+test('HOLD only when every week in the window is locked — a locked week is never written', () => {
+  const d = decidePlacement({
+    values: values({ date_of_interview: null }),
+    currentSunday: CURRENT,
+    isWeekLocked: () => true,
+    checklist: [],
+  });
+  assert.deepEqual(d, { kind: 'hold', period: CURRENT, reason: 'week_locked' });
+  // The walk is bounded: 8 weeks, then hold.
+  const seen: string[] = [];
+  decidePlacement({
+    values: values({ date_of_interview: null }),
+    currentSunday: CURRENT,
+    isWeekLocked: (p) => (seen.push(p), true),
+    checklist: [],
+  });
+  assert.equal(seen.length, FALLBACK_WEEKS_AHEAD);
+});
+
+test('an UNDATED hire already typed in LINKS (measured 2026-10-08: all 10 undated portal hires were)', () => {
+  const d = decidePlacement({
+    values: values({ date_of_interview: null }),
+    currentSunday: CURRENT,
+    isWeekLocked: open,
+    // within 4 weeks of this week
+    checklist: [{ id: 'typed', period_start: '2026-09-27', personal_email: 'ana@example.com', name: 'Ana Cruz' }],
+  });
+  assert.deepEqual(d, { kind: 'link', period: '2026-09-27', rowId: 'typed' });
 });
 
 const row = (over: Partial<ChecklistIndexRow>): ChecklistIndexRow => ({
@@ -254,7 +310,7 @@ test('LINK window: up to 4 weeks before the target week, or any week after', () 
     isWeekLocked: open,
     checklist: [row({ id: 'older', period_start: '2026-09-06' })], // a re-hire, 5 weeks back
   });
-  assert.deepEqual(five, { kind: 'place', period: '2026-10-11' });
+  assert.deepEqual(five, { kind: 'place', period: '2026-10-11', fallback: null });
   const later = decidePlacement({
     values: values(),
     currentSunday: CURRENT,

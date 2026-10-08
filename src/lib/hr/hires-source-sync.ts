@@ -64,6 +64,9 @@ export type HiresSyncSummary = {
   newRows: number;
   changedRows: number;
   placed: number;
+  /** Of `placed`: went to this week (or the next open one) because the interview
+   *  week was unusable — no date, already past, or locked. */
+  placedFallback: number;
   linked: number;
   held: number;
   /** Cells the sync wrote on rows already on the checklist (fills + source changes). */
@@ -131,6 +134,7 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
     newRows: 0,
     changedRows: 0,
     placed: 0,
+    placedFallback: 0,
     linked: 0,
     held: 0,
     updatedCells: 0,
@@ -182,15 +186,12 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
   const copy = writes.length > 0 ? await listSourceRows() : existing;
   if (copy.error) return { status: 'error', reason: `Reading the HRIS copy failed: ${copy.error}` };
 
-  // Re-decide: every pending hire; a hire held on a LOCKED week (it may reopen, or
-  // slide into the past); any held hire whose source row changed (a date filled
-  // in). A `past_week` hold cannot un-past itself, so an idle poll skips it and
-  // costs no checklist read.
-  const toDecide = copy.rows.filter(
-    (r) =>
-      r.placement === 'pending' ||
-      (r.placement === 'held' && (r.hold_reason === 'week_locked' || changedKeys.has(r.source_key))),
-  );
+  // Re-decide every pending AND every held hire. Since 2026-10-08 ("A") a hire is
+  // held only when every week in the fallback window is locked, so held rows are
+  // rare, and each pass must retry them (a week may have reopened, a new one
+  // opened). Rows held under the earlier rules (no date / past week) get placed
+  // into this week by the first pass that runs this code.
+  const toDecide = copy.rows.filter((r) => r.placement === 'pending' || r.placement === 'held');
   const toMerge = copy.rows.filter(
     (r) => changedKeys.has(r.source_key) && (r.placement === 'placed' || r.placement === 'linked') && r.checklist_row_id,
   );
@@ -265,6 +266,7 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
       }
       touched.add(period);
       summary.placed++;
+      if (decision.fallback) summary.placedFallback++;
       continue;
     }
 
