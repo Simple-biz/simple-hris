@@ -26,6 +26,7 @@ import {
   getEnabledHolidayMap,
 } from "@/lib/us-holidays";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
+import { listCopyLinkedRowIds } from "@/lib/supabase/hr-new-hire-source-db";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -112,7 +113,20 @@ export async function GET(req: Request) {
     getHrChecklistPeriod(period),
   ]);
   if (error) return NextResponse.json({ rows: [], error }, { status: 500 });
-  return NextResponse.json({ rows, period: periodState });
+  // Which of this week's rows the hiring-database copy points at (Synced, or a hand-typed
+  // row the sync matched: "In database"). Information only: a failed read (or the
+  // copy table not applied yet) serves the week without tags rather than failing it.
+  // docs/features/new-hire-source-sync.md § What has been synced.
+  const linked = await listCopyLinkedRowIds(rows.map((r) => r.id)).catch((e: unknown) => ({
+    ids: new Set<string>(),
+    error: e instanceof Error ? e.message : String(e),
+  }));
+  return NextResponse.json({
+    rows,
+    period: periodState,
+    inDatabaseIds: [...linked.ids],
+    inDatabaseError: linked.error,
+  });
 }
 
 /**

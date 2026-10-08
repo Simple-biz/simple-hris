@@ -288,6 +288,10 @@ export async function runHiresSourceSync(opts: { now?: number } = {}): Promise<H
         }
       }
     }
+    // A link changes what that week's grid shows (the row gains its "In database" tag),
+    // so the week refreshes like a placement does. (Only pending/held hires get here,
+    // so this is always a FIRST link.)
+    touched.add(decision.period);
     const r = await updateSourcePlacement(src.source_key, {
       placement: 'linked',
       hold_reason: null,

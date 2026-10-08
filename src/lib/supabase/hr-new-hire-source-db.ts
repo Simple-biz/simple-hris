@@ -236,6 +236,24 @@ export async function getChecklistCells(ids: string[]): Promise<{ rows: Map<stri
   return { rows: out, error: null };
 }
 
+/**
+ * Which of these checklist rows the HRIS copy points at (placed OR linked) — the grid's
+ * "In database" / "Synced" tags. Chunked `.in()`. A read failure returns an empty set
+ * WITH the error, so the caller can still serve the week (the tags are information).
+ */
+export async function listCopyLinkedRowIds(rowIds: string[]): Promise<{ ids: Set<string>; error: string | null }> {
+  const ids = new Set<string>();
+  const unique = [...new Set(rowIds.filter(Boolean))];
+  if (unique.length === 0) return { ids, error: null };
+  const sb = client();
+  for (const part of chunks(unique, IN_CHUNK)) {
+    const { data, error } = await sb.from(TABLE).select("checklist_row_id").in("checklist_row_id", part);
+    if (error) return { ids: new Set(), error: error.message };
+    for (const r of (data ?? []) as { checklist_row_id: string | null }[]) if (r.checklist_row_id) ids.add(r.checklist_row_id);
+  }
+  return { ids, error: null };
+}
+
 /** The checklist row a source hire was placed as (after losing an insert race). */
 export async function findChecklistRowBySourceKey(
   sourceKey: string,

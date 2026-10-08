@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, Database, Loader2, Lock, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Database, List, Loader2, Lock, Plus, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
-import type { HeldHire, HoldReason } from '@/lib/hr/hires-source-map';
+import type { HeldHire, HoldReason, SyncedHire } from '@/lib/hr/hires-source-map';
 
 import type { HiresSourceSyncState } from './use-hires-source-sync';
 
@@ -26,6 +26,25 @@ function formatWeek(startIso: string | null): string {
   const [y, m, d] = startIso.split('-').map(Number);
   if (!y || !m || !d) return startIso;
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+/** Where a synced hire went, in words. */
+function syncedWhere(h: SyncedHire): { text: string; tone: 'ok' | 'muted' | 'warn' } {
+  if ((h.placement === 'placed' || h.placement === 'linked') && !h.onChecklist) {
+    return { text: 'Removed from the checklist by HR', tone: 'muted' };
+  }
+  if (h.placement === 'placed') return { text: `Added by the sync · week of ${formatWeek(h.week)}`, tone: 'ok' };
+  if (h.placement === 'linked') return { text: `Matched to a row HR typed · week of ${formatWeek(h.week)}`, tone: 'ok' };
+  if (h.placement === 'held') {
+    return { text: holdLabel({ ...h, target_period_start: h.week, source_created_at: null }), tone: 'warn' };
+  }
+  return { text: 'Waiting for the next sync', tone: 'muted' };
 }
 
 function holdLabel(h: HeldHire): string {
@@ -51,7 +70,13 @@ export default function HiresSyncStrip({
   onPlace: (hire: HeldHire) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { status, syncing, last, held, placing } = sync;
+  const [syncedOpen, setSyncedOpen] = useState(false);
+  const { status, syncing, last, held, placing, synced, loadSynced } = sync;
+  const syncedCount = synced.kind === 'ready' ? synced.rows.length : last?.pulled ?? null;
+  const toggleSynced = () => {
+    if (!syncedOpen && (synced.kind === 'idle' || synced.kind === 'error')) void loadSynced();
+    setSyncedOpen((o) => !o);
+  };
 
   const tone =
     status.kind === 'live' || status.kind === 'view_only'
@@ -133,6 +158,16 @@ export default function HiresSyncStrip({
         )}
 
         <div className="ml-auto flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggleSynced}
+            aria-expanded={syncedOpen}
+            className="flex h-7 items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-50 dark:border-emerald-800 dark:bg-zinc-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+          >
+            <List className="h-3 w-3" />
+            Synced data{syncedCount !== null ? ` (${syncedCount})` : ''}
+            <ChevronDown className={cn('h-3 w-3 transition-transform', syncedOpen && 'rotate-180')} />
+          </button>
           {held.length > 0 && (
             <button
               type="button"
@@ -177,6 +212,83 @@ export default function HiresSyncStrip({
             </li>
           )}
         </ul>
+      )}
+
+      {syncedOpen && (
+        <div className="mt-2 rounded-lg border border-emerald-200 bg-white dark:border-emerald-900/50 dark:bg-zinc-950">
+          <div className="flex flex-wrap items-center gap-2 border-b border-emerald-100 px-2.5 py-1.5 text-[11px] text-zinc-600 dark:border-emerald-900/40 dark:text-zinc-400">
+            <span>
+              Every hire the sync has pulled from the hiring database into the HRIS, newest first, and where each
+              one is on the checklist.
+            </span>
+            <button
+              type="button"
+              onClick={() => void loadSynced()}
+              disabled={synced.kind === 'loading'}
+              aria-label="Reload the synced hires"
+              className="ml-auto flex h-6 items-center gap-1 rounded-md border border-emerald-200 px-1.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300"
+            >
+              <RefreshCw className={cn('h-3 w-3', synced.kind === 'loading' && 'animate-spin')} />
+              Reload
+            </button>
+          </div>
+          {synced.kind === 'loading' || synced.kind === 'idle' ? (
+            <div className="flex items-center gap-2 px-2.5 py-3 text-[12px] text-zinc-500">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the synced hires…
+            </div>
+          ) : synced.kind === 'error' ? (
+            <div className="px-2.5 py-3 text-[12px] text-rose-700 dark:text-rose-300">{synced.reason}</div>
+          ) : synced.rows.length === 0 ? (
+            <div className="px-2.5 py-3 text-[12px] text-zinc-500">Nothing has been synced yet.</div>
+          ) : (
+            <div className="max-h-72 overflow-auto">
+              <table className="w-full border-collapse text-[12px]">
+                <thead className="sticky top-0 bg-white dark:bg-zinc-950">
+                  <tr className="text-left text-[10.5px] uppercase tracking-wide text-zinc-500">
+                    <th className="px-2.5 py-1.5 font-semibold">Name</th>
+                    <th className="px-2.5 py-1.5 font-semibold">Personal email</th>
+                    <th className="px-2.5 py-1.5 font-semibold">Department</th>
+                    <th className="px-2.5 py-1.5 font-semibold">Interview</th>
+                    <th className="px-2.5 py-1.5 font-semibold">Received</th>
+                    <th className="px-2.5 py-1.5 font-semibold">Where it is</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {synced.rows.map((h) => {
+                    const where = syncedWhere(h);
+                    return (
+                      <tr key={h.source_key} className="border-t border-zinc-100 dark:border-zinc-800">
+                        <td className="whitespace-nowrap px-2.5 py-1.5 text-zinc-800 dark:text-zinc-100">{h.name || '—'}</td>
+                        <td className="whitespace-nowrap px-2.5 py-1.5 text-zinc-600 dark:text-zinc-300">
+                          {h.personal_email || '—'}
+                        </td>
+                        <td className="whitespace-nowrap px-2.5 py-1.5 text-zinc-600 dark:text-zinc-300">
+                          {formatDeptLabel(h.department ?? '') || '—'}
+                        </td>
+                        <td className="whitespace-nowrap px-2.5 py-1.5 tabular-nums text-zinc-600 dark:text-zinc-300">
+                          {h.date_of_interview || '—'}
+                        </td>
+                        <td className="whitespace-nowrap px-2.5 py-1.5 tabular-nums text-zinc-600 dark:text-zinc-300">
+                          {formatStamp(h.first_pulled_at)}
+                        </td>
+                        <td
+                          className={cn(
+                            'whitespace-nowrap px-2.5 py-1.5',
+                            where.tone === 'ok' && 'text-emerald-700 dark:text-emerald-300',
+                            where.tone === 'warn' && 'text-amber-800 dark:text-amber-300',
+                            where.tone === 'muted' && 'text-zinc-500 dark:text-zinc-400',
+                          )}
+                        >
+                          {where.text}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {open && held.length > 0 && (

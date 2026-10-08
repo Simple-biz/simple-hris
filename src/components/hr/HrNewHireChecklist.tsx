@@ -128,6 +128,8 @@ type CacheVal = {
   lockedAt: string | null;
   lockedBy: string | null;
   loaded: boolean;
+  /** Rows of this week the hiring-database copy points at (Synced or "In database"). */
+  inDatabaseIds?: string[];
 };
 
 const CACHE_KEY = HR_TAB_CACHE_KEYS.newHireChecklist;
@@ -307,6 +309,10 @@ export default function HrNewHireChecklist({
   const [lockedAt, setLockedAt] = useState<string | null>(() => cached?.lockedAt ?? null);
   const [lockedBy, setLockedBy] = useState<string | null>(() => cached?.lockedBy ?? null);
   const [loaded, setLoaded] = useState<boolean>(() => cached?.loaded ?? false);
+  // Which of the week's rows are also in the hiring database (the Received column's
+  // "In database" tag). From the week GET; information only.
+  const [inDatabaseIds, setInDatabaseIds] = useState<string[]>(() => cached?.inDatabaseIds ?? []);
+  const inDatabase = useMemo(() => new Set(inDatabaseIds), [inDatabaseIds]);
   const [loading, setLoading] = useState<boolean>(() => !cached?.loaded);
   const [busy, setBusy] = useState(false); // any in-flight mutation (add/edit/delete/bulk/lock)
   const [error, setError] = useState<string | null>(null);
@@ -400,6 +406,7 @@ export default function HrNewHireChecklist({
           const body = (await res.json()) as {
             rows?: HrNewHireChecklistRow[];
             period?: { status?: string; locked_at?: string | null; locked_by?: string | null };
+            inDatabaseIds?: string[];
             error?: string;
           };
           if (!res.ok || body.error) throw new Error(body.error || `Request failed (${res.status})`);
@@ -410,6 +417,7 @@ export default function HrNewHireChecklist({
       const isLocked = json.period?.status === 'locked';
       const fresh = (json.rows ?? []).map(fromServer);
       setRows(fresh);
+      setInDatabaseIds(Array.isArray(json.inDatabaseIds) ? json.inDatabaseIds : []);
       setLocked(isLocked);
       setLockedAt(json.period?.locked_at ?? null);
       setLockedBy(json.period?.locked_by ?? null);
@@ -610,12 +618,13 @@ export default function HrNewHireChecklist({
       prev.locked === locked &&
       prev.lockedAt === lockedAt &&
       prev.lockedBy === lockedBy &&
-      prev.loaded === loaded
+      prev.loaded === loaded &&
+      prev.inDatabaseIds === inDatabaseIds
     ) {
       return;
     }
-    setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, locked, lockedAt, lockedBy, loaded });
-  }, [period, rows, locked, lockedAt, lockedBy, loaded]);
+    setHrTabCache<CacheVal>(CACHE_KEY, { period, rows, locked, lockedAt, lockedBy, loaded, inDatabaseIds });
+  }, [period, rows, locked, lockedAt, lockedBy, loaded, inDatabaseIds]);
 
   // A locked week is read-only — never leave the modal or a selection over it.
   useEffect(() => {
@@ -1903,8 +1912,10 @@ export default function HrNewHireChecklist({
                               className="flex h-9 items-center gap-1.5 whitespace-nowrap"
                               title={
                                 row._origin === 'synced'
-                                  ? `Received from the hiring database ${formatLockStamp(row._receivedAt)}`
-                                  : `Added by hand ${formatLockStamp(row._receivedAt)}`
+                                  ? `Added by the sync from the hiring database ${formatLockStamp(row._receivedAt)}`
+                                  : inDatabase.has(row.id)
+                                    ? `Added by hand ${formatLockStamp(row._receivedAt)}; the hiring database has this hire too (matched, never duplicated)`
+                                    : `Added by hand ${formatLockStamp(row._receivedAt)}; not in the hiring database`
                               }
                             >
                               <span
@@ -1912,10 +1923,12 @@ export default function HrNewHireChecklist({
                                   'rounded-full px-1.5 py-px text-[10px] font-semibold',
                                   row._origin === 'synced'
                                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-200'
-                                    : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+                                    : inDatabase.has(row.id)
+                                      ? 'bg-teal-50 text-teal-800 ring-1 ring-inset ring-teal-200 dark:bg-teal-950/40 dark:text-teal-200 dark:ring-teal-800'
+                                      : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
                                 )}
                               >
-                                {row._origin === 'synced' ? 'Synced' : 'Manual'}
+                                {row._origin === 'synced' ? 'Synced' : inDatabase.has(row.id) ? 'In database' : 'Manual'}
                               </span>
                               <span className="tabular-nums text-[12px] text-zinc-600 dark:text-zinc-400">
                                 {formatLockStamp(row._receivedAt) || '—'}

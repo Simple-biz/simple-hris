@@ -6,17 +6,19 @@ import { getHrChecklistPeriod } from "@/lib/supabase/hr-new-hire-checklist";
 import {
   getSourceRow,
   listHeldSourceRows,
+  listSourceRows,
   probeHiresSyncTables,
   type SourceRow,
 } from "@/lib/supabase/hr-new-hire-source-db";
 import { readHiresSourceConfig } from "@/lib/hr/hires-source-config";
-import type { HeldHire } from "@/lib/hr/hires-source-map";
+import type { HeldHire, SyncedHire } from "@/lib/hr/hires-source-map";
 import { placeHeldSourceHire, runHiresSourceSync } from "@/lib/hr/hires-source-sync";
 
 /**
  * The New Hire Checklist's hiring-database sync (docs/features/new-hire-source-sync.md).
  *
  *   GET                                      status + the held hires (elevated session)
+ *   GET ?view=synced                         every hire in the HRIS copy + where it went (elevated)
  *   POST { action: 'sync' }                  one sync pass (feature edit — it writes rows)
  *   POST { action: 'place', source_key, period_start }
  *                                            HR places a held hire in an open week
@@ -50,9 +52,36 @@ async function heldList(): Promise<{ held: HeldHire[]; heldError: string | null 
   return { held: rows.map(toHeld), heldError: error };
 }
 
-export async function GET() {
+function toSynced(r: SourceRow): SyncedHire {
+  return {
+    source_key: r.source_key,
+    name: r.name,
+    personal_email: r.personal_email,
+    department: r.department,
+    date_of_interview: r.date_of_interview,
+    first_pulled_at: r.first_pulled_at,
+    last_changed_at: r.last_changed_at,
+    placement: r.placement,
+    hold_reason: r.hold_reason,
+    week: r.target_period_start,
+    onChecklist: !!r.checklist_row_id,
+  };
+}
+
+export async function GET(req: Request) {
   const authz = await requireElevatedSession();
   if (!authz.ok) return deniedResponse(authz);
+
+  // ?view=synced — every hire the sync has pulled into the HRIS copy, newest first
+  // (the strip's "Synced data" list). Read on demand, never on the 30 s poll.
+  if (new URL(req.url).searchParams.get("view") === "synced") {
+    const { rows, error } = await listSourceRows();
+    if (error) return NextResponse.json({ synced: [], error }, { status: 500 });
+    const synced = rows
+      .map(toSynced)
+      .sort((a, b) => b.first_pulled_at.localeCompare(a.first_pulled_at) || a.source_key.localeCompare(b.source_key));
+    return NextResponse.json({ synced, error: null });
+  }
 
   const cfg = readHiresSourceConfig();
   const probe = await probeHiresSyncTables();

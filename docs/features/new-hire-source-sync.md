@@ -207,10 +207,35 @@ their only way onto the checklist, and the checklist is what **Lock-in** (orient
   onward (409, naming the week). HR may type someone in after the sync held them, and "Add" must
   not list them twice. The row is attributed to the HR person (`created_by`, `placed_by`) and
   audited `hr.new_hire_checklist.source_placed`.
-- **Received column** (after Country): a **Synced** tag + `received_at` (when the HRIS first got
-  the hire), or a **Manual** tag + `created_at`. It is not one of `COLUMNS`, so the edit modal,
-  search, filters and the Excel export are unchanged. **The export does not carry it** (out of scope
-  on 2026-10-08).
+- **Received column** (after Country), three tags:
+  | Tag | Means | Time shown |
+  | --- | --- | --- |
+  | **Synced** | the sync added this row (`origin='synced'`) | `received_at`, when the HRIS first got the hire |
+  | **In database** | HR typed it, and the hiring database has it too; the sync matched it (LINK), never duplicated it | `created_at` |
+  | **Manual** | HR typed it, and it is not in the hiring database (e.g. a manager's own hiring) | `created_at` |
+
+  "In database" comes from the week GET: `GET /api/hr/new-hire-checklist` also returns
+  `inDatabaseIds`, the week's rows the copy points at (`listCopyLinkedRowIds`, chunked). It is
+  **information only**: a failed read, or the copy table missing, serves the week without the tag,
+  never a failed week. A first link counts as a change, so the week refreshes on every open grid.
+  The column is not one of `COLUMNS`, so the edit modal, search, filters and the Excel export are
+  unchanged. **The export does not carry it** (out of scope on 2026-10-08).
+
+## What has been synced — the "Synced data" list
+
+Kane, 2026-10-08: *"I want to know the data that has been synced already"* (after *"why cant I see
+the 35 hires in the database?"*: 34 of 35 had been matched to rows HR typed, so they showed as
+Manual). The strip's **Synced data (N)** button opens every hire in the HRIS copy, newest first:
+name, personal email, department, interview date, **Received** (`first_pulled_at`), and **where it
+is**: *Added by the sync · week of …*, *Matched to a row HR typed · week of …*, *Removed from the
+checklist by HR* (placed or linked, and that checklist row has since been deleted), a hold reason,
+or *Waiting for the next sync*.
+
+- Read **on demand** (`GET /api/hr/new-hire-checklist/source-sync?view=synced`, elevated session,
+  paged through `listSourceRows`), **never on the 30 s poll**: the copy only grows. Once opened, it
+  re-reads after any pass that changed something, and after an "Add to this week".
+- It lists our COPY, so it shows what the HRIS has received. A hire deleted at the source stays
+  listed (the copy never deletes).
 - **Audit:** `hr.new_hire_checklist.source_synced`, one row per pass that placed, linked or updated
   something (counts, weeks, the first 20 errors), with the session that ran the pass as the actor.
   Both actions fall under the existing `hr.` family in `src/lib/audit/registry.ts`.

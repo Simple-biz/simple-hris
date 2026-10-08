@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { HeldHire } from '@/lib/hr/hires-source-map';
+import type { HeldHire, SyncedHire } from '@/lib/hr/hires-source-map';
 
 /** The HR tab cache's freshness window — the same 30 s the rest of HR uses. */
 export const SYNC_INTERVAL_MS = 30_000;
@@ -51,12 +51,22 @@ export type HiresSyncLast = {
   errors: string[];
 };
 
+export type SyncedListState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'error'; reason: string }
+  | { kind: 'ready'; rows: SyncedHire[]; at: number };
+
 export interface HiresSourceSyncState {
   status: HiresSyncStatus;
   syncing: boolean;
   last: HiresSyncLast | null;
   held: HeldHire[];
   placing: string | null;
+  /** Every hire the sync has pulled (the strip's "Synced data" list). Loaded on demand,
+   *  then refreshed after any sync that changed something. */
+  synced: SyncedListState;
+  loadSynced: () => Promise<void>;
   syncNow: () => void;
   placeHeld: (sourceKey: string, period: string) => Promise<{ ok: boolean; error?: string }>;
 }
@@ -67,6 +77,8 @@ type SyncBody = {
   missing?: string[];
   summary?: {
     pulled: number;
+    newRows: number;
+    changedRows: number;
     placed: number;
     linked: number;
     updatedCells: number;
@@ -99,6 +111,8 @@ export function useHiresSourceSync(opts: {
   const [last, setLast] = useState<HiresSyncLast | null>(null);
   const [held, setHeld] = useState<HeldHire[]>([]);
   const [placing, setPlacing] = useState<string | null>(null);
+  const [synced, setSynced] = useState<SyncedListState>({ kind: 'idle' });
+  const syncedLoaded = useRef(false);
 
   const inFlight = useRef(false);
   const lastRunAt = useRef(0);
@@ -132,6 +146,25 @@ export function useHiresSourceSync(opts: {
     }
     setHeld(body.held ?? []);
   }, []);
+
+  const loadSynced = useCallback(async () => {
+    if (!syncedLoaded.current) setSynced({ kind: 'loading' });
+    try {
+      const res = await fetch('/api/hr/new-hire-checklist/source-sync?view=synced', { cache: 'no-store' });
+      const body = (await res.json().catch(() => ({}))) as { synced?: SyncedHire[]; error?: string | null };
+      if (!mounted.current) return;
+      if (!res.ok || !Array.isArray(body.synced)) {
+        setSynced({ kind: 'error', reason: body.error || `Could not load the synced hires (${res.status})` });
+        return;
+      }
+      syncedLoaded.current = true;
+      setSynced({ kind: 'ready', rows: body.synced, at: Date.now() });
+    } catch (e) {
+      if (mounted.current) setSynced({ kind: 'error', reason: e instanceof Error ? e.message : 'Could not load the synced hires' });
+    }
+  }, []);
+  const loadSyncedRef = useRef(loadSynced);
+  loadSyncedRef.current = loadSynced;
 
   const run = useCallback(async () => {
     if (inFlight.current) return;
@@ -178,6 +211,10 @@ export function useHiresSourceSync(opts: {
           errors: s.errors,
         });
         if (s.touchedWeeks.length > 0) onWeeksChangedRef.current(s.touchedWeeks);
+        // Keep an opened "Synced data" list current: re-read it when this pass changed anything.
+        if (syncedLoaded.current && s.newRows + s.changedRows + s.placed + s.linked + s.updatedCells > 0) {
+          void loadSyncedRef.current();
+        }
       } else {
         setStatus({ kind: 'error', reason });
       }
@@ -228,6 +265,7 @@ export function useHiresSourceSync(opts: {
       if (!res.ok) return { ok: false, error: body.error || `Add failed (${res.status})` };
       if (mounted.current && body.held) setHeld(body.held);
       onWeeksChangedRef.current([period]);
+      if (syncedLoaded.current) void loadSyncedRef.current();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : 'Add failed' };
@@ -236,5 +274,5 @@ export function useHiresSourceSync(opts: {
     }
   }, []);
 
-  return { status, syncing, last, held, placing, syncNow, placeHeld };
+  return { status, syncing, last, held, placing, synced, loadSynced, syncNow, placeHeld };
 }

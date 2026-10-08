@@ -202,6 +202,26 @@ export type HeldHire = {
   source_created_at: string | null;
 };
 
+/**
+ * One hire in the HRIS copy, as the strip's "Synced data" list shows it: what came in,
+ * when, and where it went. `onChecklist` false with placement placed/linked = HR has
+ * since deleted that checklist row (placed hires are never re-placed).
+ */
+export type SyncedHire = {
+  source_key: string;
+  name: string | null;
+  personal_email: string | null;
+  department: string | null;
+  date_of_interview: string | null;
+  first_pulled_at: string;
+  last_changed_at: string;
+  placement: 'pending' | 'placed' | 'linked' | 'held';
+  hold_reason: HoldReason | null;
+  /** The checklist week it was added to / matched in (or the week a hold names). */
+  week: string | null;
+  onChecklist: boolean;
+};
+
 /** One checklist row as the placement decision sees it. */
 export interface ChecklistIndexRow {
   id: string;
