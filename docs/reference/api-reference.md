@@ -3363,6 +3363,11 @@ person rows + `accounting_scoreboard_members`; `accounting` / `admin` are manage
 `401 auth_required`, `403 not_member | not_manager`, `503 not_set_up` (tables missing), `400 bad_request`, `409`, `422 refused`.
 Every `*_by` is the session email. Nothing here writes pay.
 
+**Live (2026-10-08):** every write below (each POST / PUT / PATCH / DELETE, except `tasks/*`) announces on Supabase Realtime
+Broadcast after it succeeded: topic `accounting-scoreboard-sync`, event `changed`, payload `{ kind, origin, ts }` only, never
+a value. `origin` echoes the optional `x-acct-sb-tab` request header (a plain 8–64 character id, else null), so the writing
+tab skips its own echo. Open boards re-read the GET below on it. See accounting-scoreboard.md § Live refresh.
+
 ### `GET /api/accounting-scoreboard?week=<Sunday>`
 
 Members. `&stream=1` answers the same board as NDJSON for the loading modal (`load-progress.ts`): a `line` `{ line, detail }` the

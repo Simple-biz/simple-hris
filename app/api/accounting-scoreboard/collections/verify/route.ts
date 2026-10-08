@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import {
   badRequest,
   crashResponse,
@@ -7,6 +8,7 @@ import {
   resolveAccess,
   setVerified,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { parseVerifyWrite } from '@/lib/accounting-scoreboard/validate';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +30,7 @@ export async function POST(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await setVerified(access.value, parsed.value.collectionId, parsed.value.verified);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('verified', req));
     return okResponse({ verified: result.value });
   } catch (e) {
     return crashResponse(e);

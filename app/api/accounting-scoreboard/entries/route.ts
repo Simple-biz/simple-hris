@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import {
   badRequest,
   crashResponse,
@@ -7,6 +8,7 @@ import {
   resolveAccess,
   writeEntry,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { parseEntryWrite } from '@/lib/accounting-scoreboard/validate';
 import { todayEastern } from '@/lib/accounting-scoreboard/week';
 
@@ -30,6 +32,7 @@ export async function PUT(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await writeEntry(access.value, parsed.value);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('cells', req));
     return okResponse({ entry: result.value });
   } catch (e) {
     return crashResponse(e);

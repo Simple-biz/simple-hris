@@ -1,4 +1,4 @@
-import type { NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
 import {
   addMember,
   badRequest,
@@ -9,6 +9,7 @@ import {
   removeMember,
   resolveAccess,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { normalizeEmail, parseMemberWrite } from '@/lib/accounting-scoreboard/validate';
 
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,7 @@ export async function POST(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await addMember(access.value, parsed.value.workEmail);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('members', req));
     return okResponse({ member: result.value }, 201);
   } catch (e) {
     return crashResponse(e);
@@ -44,6 +46,7 @@ export async function DELETE(req: NextRequest) {
     if (!email) return badRequest('email must be a work email');
     const result = await removeMember(access.value, email);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('members', req));
     return okResponse(result.value);
   } catch (e) {
     return crashResponse(e);

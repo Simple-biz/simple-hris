@@ -6,8 +6,10 @@
  * Governing doc: docs/features/accounting-scoreboard.md.
  *
  * Data flow: GET /api/accounting-scoreboard for the week, recomputed in the browser with the pure
- * modules after every edit. A background refresh runs every 45 s while the tab is visible and
- * on focus, but NEVER while a cell is being edited (the editing counter), so someone else's save
+ * modules after every edit. A teammate's write reaches an open board live: the route announces it on
+ * Supabase Realtime Broadcast and the onSnapshot listener re-reads (`live-client.ts`). A background refresh
+ * also runs every 45 s while the tab is visible and on focus. Neither runs while a cell is being edited (the
+ * editing counter), so someone else's save
  * cannot overwrite what you are typing. A failed refresh keeps the last good board on screen and
  * says so. It never blanks to zeros.
  *
@@ -40,6 +42,7 @@ import {
 import { can } from '@/lib/accounting-scoreboard/roles';
 import { addDays, datesFor, formatEasternDateTime, todayEastern, weekLabel, weekStartOf } from '@/lib/accounting-scoreboard/week';
 import { bindScoreboardCache, readCachedBoard, writeCachedBoard } from '@/lib/accounting-scoreboard/tab-cache';
+import { onScoreboardSnapshot } from '@/lib/accounting-scoreboard/live-client';
 import {
   BOARD_LOAD_LINES,
   boardLoadPlan,
@@ -367,6 +370,19 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
       window.removeEventListener('focus', onFocus);
     };
   }, [week, load]);
+
+  // The onSnapshot listener (Kane, 2026-10-08: "Should use realtime feature of supabase", "onsnapshot listener"):
+  // every board write route announces on Supabase Realtime Broadcast, so a teammate's save reaches this board in
+  // a couple of seconds instead of on the next 45 s tick. It is the tick's silent re-read under the tick's rules:
+  // never while a cell is being edited or a foreground load runs, and not in a hidden tab. A change that arrives
+  // meanwhile waits, and is read as soon as they clear.
+  useEffect(
+    () =>
+      onScoreboardSnapshot(() => void load(week, true), {
+        blocked: () => editing.current > 0 || foreground.current !== null || document.visibilityState !== 'visible',
+      }),
+    [week, load],
+  );
 
   const onEditing = useCallback((delta: 1 | -1) => {
     editing.current = Math.max(0, editing.current + delta);

@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import {
   addProblemType,
   archiveProblemType,
@@ -8,6 +9,7 @@ import {
   readJson,
   resolveAccess,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { parseProblemTypeArchive, parseProblemTypeCreate } from '@/lib/accounting-scoreboard/validate';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +31,7 @@ export async function POST(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await addProblemType(access.value, parsed.value.label);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('setup', req));
     return okResponse({ type: result.value }, 201);
   } catch (e) {
     return crashResponse(e);
@@ -43,6 +46,7 @@ export async function PATCH(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await archiveProblemType(access.value, parsed.value.id);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('setup', req));
     return okResponse(result.value);
   } catch (e) {
     return crashResponse(e);

@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import {
   badRequest,
   crashResponse,
@@ -8,6 +9,7 @@ import {
   readJson,
   resolveAccess,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { parseRowCreate, parseRowPatch } from '@/lib/accounting-scoreboard/validate';
 
 export const dynamic = 'force-dynamic';
@@ -32,6 +34,7 @@ export async function POST(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await createRow(access.value, parsed.value);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('setup', req));
     return okResponse({ row: result.value }, 201);
   } catch (e) {
     return crashResponse(e);
@@ -46,6 +49,7 @@ export async function PATCH(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await patchRow(access.value, parsed.value);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('setup', req));
     return okResponse({ row: result.value });
   } catch (e) {
     return crashResponse(e);

@@ -32,6 +32,8 @@ import {
   type RowScoreStatus,
 } from '@/lib/accounting-scoreboard/scoring';
 import { LIGHT_LABEL, type Light } from '@/lib/accounting-scoreboard/stoplight';
+import { SCOREBOARD_TAB_HEADER } from '@/lib/accounting-scoreboard/live';
+import { getScoreboardTabId } from '@/lib/accounting-scoreboard/live-client';
 
 /** One icon per KPI card (Kane: "add like icons that match the kpi card"). */
 export const SECTION_ICON: Record<SectionKey, LucideIcon> = {
@@ -148,13 +150,18 @@ export function StopLight({ light, className }: { light: Light; className?: stri
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string; code: string };
 
-/** JSON fetch that never throws and never hands back an HTML page as data. */
+/** JSON fetch that never throws and never hands back an HTML page as data. Every call names this browser tab
+ *  (`SCOREBOARD_TAB_HEADER`), so the live channel's echo of this tab's own write is skipped (`live-client.ts`). */
 export async function api<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
     const res = await fetch(url, {
       cache: 'no-store',
       ...init,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        [SCOREBOARD_TAB_HEADER]: getScoreboardTabId(),
+        ...(init?.headers ?? {}),
+      },
     });
     const body = (await res.json().catch(() => null)) as (T & { error?: string; code?: string }) | null;
     if (!res.ok || body === null) {

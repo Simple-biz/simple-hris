@@ -39,6 +39,7 @@ every payroll problem, and custom sections.
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
 | Member check, reads and writes | `src/lib/accounting-scoreboard/server.ts` (server-only) |
 | Browser cache (board per week, Setup's roster) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
+| Live refresh: the topic, the re-read signal, the flood-bounded scheduler (§ Live refresh) | `src/lib/accounting-scoreboard/live.ts` (+ `live.test.ts`) · the server's announce `live-server.ts` · the onSnapshot listener `live-client.ts` |
 | Loading modal: lines ↔ reads, the stream, the fail-closed assembler | `src/lib/accounting-scoreboard/load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the dialog `src/components/accounting-scoreboard/ScoreboardLoadDialog.tsx` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
 | Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `roles` GET/POST/DELETE (Admins: Setup → Access) · `sections` PATCH · `roster` GET) |
@@ -745,8 +746,8 @@ header spinner on every 45 s and focus refresh.
   cached week before the first paint**, and then fetches it anyway. Only the **4** most recently written weeks are
   kept (one board measured ~150k characters on 2026-10-06; on the HRIS domain this origin's storage is shared with
   People and NPD). Setup's roster picker is cached too (`acct-sb:roster`).
-- **A cached value PAINTS, it never DECIDES.** Nothing can skip a fetch: every page load, week change, 45 s tick
-  and focus still reads the board, and the fetched copy replaces the cached one. A number that moved meanwhile
+- **A cached value PAINTS, it never DECIDES.** Nothing can skip a fetch: every page load, week change, 45 s tick,
+  focus and live message (§ Live refresh) still reads the board, and the fetched copy replaces the cached one. A number that moved meanwhile
   sweeps orange (§ Motion), which is how a teammate's typing shows up.
 - **The viewer is never cached.** `viewer.role` shows Setup and the delete buttons, so it is a permission,
   and a cached permission is a cached value deciding (the Tickets `access` rule). The page server component
@@ -778,7 +779,7 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
 
 - **When:** a load with **nothing of the week on screen**: the first visit in a browser tab, a week never opened,
   after the 12 h cache ceiling, and *Try again* after a failed load. A board painted from the browser cache, the
-  45 s tick and a focus stay silent (§ Browser cache; background work never reports, `table-refresh-progress.md`).
+  45 s tick, a focus and a live re-read stay silent (§ Browser cache; background work never reports, `table-refresh-progress.md`).
   The tick and a focus wait while a modal load is running; a newer load cancels it, and its modal closes with it.
 - **What it says:** *Loading the scoreboard* (or *Loading Sep 28 – Oct 2, 2026* for another week), one bar, and a
   checklist. Each done line says what came back. Example from production, 2026-10-06:
@@ -830,13 +831,54 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
     mid-load.
   The cache (16) and round-3 (69) suites re-passed. **Not clicked through signed in.**
 
-## Live refresh
+## Live refresh: the onSnapshot listener (2026-10-08)
 
-- A background refresh runs every 45 s while the tab is visible, and on focus, **silently** (the board is on
-  screen; § Browser cache). It **never runs while a cell is being edited** (an editing counter). A focused cell
-  also keeps its own draft, so someone else's save can never overwrite what you are typing.
-- A failed refresh keeps the last good board on screen under a "Couldn't refresh" bar. It never blanks
-  the board or shows zeros. There is no realtime: the tables are service-role only.
+Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supabase"*, then *"use onsnapshot method"*,
+*"onsnapshot listener"*. Before this, a teammate's number reached an open board only on the next 45 s tick or a focus.
+
+- **Every board write announces on Supabase Realtime Broadcast**, topic `accounting-scoreboard-sync`, event `changed`.
+  All 15 write handlers do it: `entries` PUT, `collections` POST/DELETE, `collections/verify` POST, `problems`
+  POST/DELETE, `problem-types` POST/PATCH, `custom-sections` POST/PATCH, `rows` POST/PATCH, `sections` PATCH, `members`
+  POST/DELETE and `roles` POST/DELETE. Each sends only **after its write succeeded**, through `after()` (next/server)
+  and never `void` (`announceScoreboardChange`, `live-server.ts`). A refused or failed write announces nothing.
+  `live.test.ts` pins each handler: one announce, on the success path, with its kind. Any new mutating route under
+  `app/api/accounting-scoreboard/` fails that test until it announces or names why not. The task routes (`tasks/*`)
+  are listed as not the board: they have their own read.
+- **Broadcast, never `postgres_changes`.** Every scoreboard table is service-role only (RLS on, no policies, anon
+  refused `42501`) and is checked to be **not in the realtime publication** (§ Deploy notes). A row event can never reach
+  the browser, whose client is anon (memory `supabase-realtime-anon-rls-dead`). The route that just wrote the row
+  announces it instead. Never "fix" this by adding a table to the publication or giving anon a policy.
+- **The message is a re-read signal, never the values** (the `kpi-live.ts` rule). Its payload is
+  `{ kind, origin, ts }` and nothing else (pinned). The anon key ships in every page, so anyone holding it can join this
+  topic, and anyone can post to it. If the message carried the board, Carla's collections (business names, amounts)
+  would be published past the member list, and a forged message could paint a number. The listener instead pulls the
+  snapshot through the member-gated `GET /api/accounting-scoreboard`, the same silent read as the tick.
+- **The listener** is `onScoreboardSnapshot(onSnapshot, { blocked })` in `live-client.ts`, called once in
+  `ScoreboardApp`. It returns the unsubscribe, like Firestore's `onSnapshot`. It joins the page's one shared channel for
+  the topic (`joinSharedBroadcast`), and runs `load(week, true)` when:
+  - **a teammate's write lands.** This tab's own writes are skipped, because they already painted locally. `api()` sends
+    the tab's id in `x-acct-sb-tab`; the route echoes it as `origin` only if it is a plain id (8–64 letters, digits,
+    dashes), and the listener drops a message whose origin is its own. A message with no origin is never treated as
+    the tab's own.
+  - **the channel re-subscribes after a drop**, which may have swallowed a message.
+- **Every kind re-reads the whole board.** All-time numbers (the record, All Time, the No Meeting Streak) move with a
+  change to any week, so the listener never filters by week or kind. `kind` is for the logs only.
+- **Bounded, so a flood or a busy morning cannot hammer the server** (`createLiveScheduler`, `live.ts`). A burst
+  coalesces into one re-read after 500 ms. Each tab adds a random 0–1 s, so one save does not hit the server with every
+  open board at once. Re-reads are at least **3 s apart per tab**, however many messages arrive: a board read took
+  ~1.4 s on production (2026-10-06). The timer is armed once and never pushed back, so a steady flood cannot starve the
+  first re-read either. `live.test.ts` replays a message every 50 ms for a minute.
+- **The tick's rules hold.** A live re-read never runs while a cell is being edited (the editing counter), while a
+  foreground load runs, or in a hidden tab. The change stays pending and is checked again every second (local state
+  only, no network), so it lands as soon as the cell loses focus, not on the next tick. A focused cell still keeps its
+  own draft.
+- **It is the fast path only.** The 45 s tick and the focus refresh stay as the floor, so a lost message costs the
+  tick, never correctness. A failed live re-read is a failed refresh: the last good board stays under the "Couldn't
+  refresh" bar, never blanks and never shows zeros. A number a teammate moved sweeps orange (§ Motion).
+- **Measured 2026-10-08** against production's Supabase. An anon subscriber on the topic received a service-role REST
+  send in **212 ms** (one probe message; no table read or written). A board re-read adds ~1.4 s, plus the 0.5–1.5 s
+  coalescing, so a teammate's save shows in about 2–3 s.
+- **Not verified:** two signed-in browsers on the deployed site. The code is not pushed (Open item 409).
 
 ## Not built (on purpose)
 
@@ -962,4 +1004,8 @@ like collecting buckets and etc"*, then *"make sure the progress bar is accurate
   "—" for those people.
 - Locally, `.env.local` is **production**: numbers entered on `localhost:3000/accounting-scoreboard`
   are real board data.
+- **Live refresh (2026-10-08, § Live refresh): no migration, no env var, no table change.** It rides Supabase Realtime
+  Broadcast with the keys the app already has (`NEXT_PUBLIC_SUPABASE_*` in the browser, the service role on the server).
+  **The push: PENDING** (Kane). Until it deploys, boards keep the 45 s tick. A board left open across the deploy listens
+  only after a reload.
 - No n8n, no cron, no new notification type.

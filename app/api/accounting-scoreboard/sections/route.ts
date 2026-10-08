@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import {
   badRequest,
   crashResponse,
@@ -7,6 +8,7 @@ import {
   readJson,
   resolveAccess,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { parseSectionPatch } from '@/lib/accounting-scoreboard/validate';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +30,7 @@ export async function PATCH(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await patchSection(access.value, parsed.value);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('setup', req));
     return okResponse({ setting: result.value });
   } catch (e) {
     return crashResponse(e);

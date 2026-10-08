@@ -1,4 +1,4 @@
-import type { NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
 import {
   badRequest,
   crashResponse,
@@ -9,6 +9,7 @@ import {
   readJson,
   resolveAccess,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { isUuid, parseProblemCreate } from '@/lib/accounting-scoreboard/validate';
 import { todayEastern } from '@/lib/accounting-scoreboard/week';
 
@@ -31,6 +32,7 @@ export async function POST(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await logProblem(access.value, parsed.value);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('problems', req));
     return okResponse({ problem: result.value }, 201);
   } catch (e) {
     return crashResponse(e);
@@ -45,6 +47,7 @@ export async function DELETE(req: NextRequest) {
     if (!isUuid(id)) return badRequest('id must be a problem id');
     const result = await deleteProblem(access.value, id);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('problems', req));
     return okResponse(result.value);
   } catch (e) {
     return crashResponse(e);

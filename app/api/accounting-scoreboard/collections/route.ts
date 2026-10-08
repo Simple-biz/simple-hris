@@ -1,4 +1,4 @@
-import type { NextRequest } from 'next/server';
+import { after, type NextRequest } from 'next/server';
 import {
   badRequest,
   crashResponse,
@@ -9,6 +9,7 @@ import {
   readJson,
   resolveAccess,
 } from '@/lib/accounting-scoreboard/server';
+import { announceScoreboardChange } from '@/lib/accounting-scoreboard/live-server';
 import { isUuid, parseCollectionCreate } from '@/lib/accounting-scoreboard/validate';
 import { todayEastern } from '@/lib/accounting-scoreboard/week';
 
@@ -32,6 +33,7 @@ export async function POST(req: Request) {
     if (!parsed.ok) return badRequest(parsed.error);
     const result = await logCollection(access.value, parsed.value);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('collections', req));
     return okResponse({ collection: result.value }, 201);
   } catch (e) {
     return crashResponse(e);
@@ -46,6 +48,7 @@ export async function DELETE(req: NextRequest) {
     if (!isUuid(id)) return badRequest('id must be a collection id');
     const result = await deleteCollection(access.value, id);
     if (!result.ok) return failureResponse(result);
+    after(announceScoreboardChange('collections', req));
     return okResponse(result.value);
   } catch (e) {
     return crashResponse(e);
