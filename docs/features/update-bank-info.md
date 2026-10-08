@@ -527,7 +527,10 @@ the new notice is about typing the wrong number.
 ## Open items
 
 - **401 — OPEN** (Sep 29 log): payout change safety committed 2026-10-07 (`eb9a0005`); the
-  `safety` column is APPLIED. Owed: a push (Kane), and a signed-in browser pass of both forms.
+  `safety` column is APPLIED. **PUSHED 2026-10-08** (Kane; `eb9a0005`, `7e93300c`, `63d7ac69` on
+  origin/main) and **DEPLOYED**: production's `/update-bank-info` JS chunk carries the notice text
+  (unauthenticated GET, 2026-10-08 ~02:05Z). Owed: a signed-in pass of both forms, and the first
+  real `bank_update_history.safety` row read back.
   Ruled 2026-10-08: a save still lands when its trail cannot be written (§ *Failure modes*).
 - **216** (Sep 25 log): this surface had no feature doc. It is closed by this file, its INDEX row
   and its README row (Sep 29 log item 265).
