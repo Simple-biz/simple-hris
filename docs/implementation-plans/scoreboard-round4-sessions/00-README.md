@@ -38,7 +38,8 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 - [x] W0.1 Pre-arb in the win ratio: **RULED (a), counts as a loss** (Kane, 2026-10-07; on Open item 392).
 - [x] W0.2 Monday's untyped Payroll Problems: **RULED (a), a script clears them and the team re-logs** (Kane, 2026-10-07;
   on Open item 391).
-- [ ] W0.4 The Google Chat webhook URL in `.env.local` and Vercel as `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL`.
+- [x] W0.4 The Google Chat webhook URL: **set in `.env.local` 2026-10-08** as `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL`
+  (the accounting team space, avatar = the HRIS favicon). **Vercel Production: still Kane.**
 - [ ] W0.5 Joana's sales sheet link (Carla).
 - [ ] W0.6 The second Admin's work email (Carla).
 - [ ] W0.7 Kentshin builds the endpoint in plan Task 10.
