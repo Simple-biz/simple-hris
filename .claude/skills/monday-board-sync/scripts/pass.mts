@@ -879,6 +879,16 @@
  * minutes after 14ea111a was committed, so it almost certainly ran before the deploy its own
  * --deployed flag asserts, and the doc still says PENDING). The other 28 pushed rows with no open step
  * close only on Kane's word that he has seen them live.
+ *
+ * PASS 42b APPLIED 2026-10-08 (hash 72b77167d2b5, 7/7 read back), so its rows leave this array.
+ *
+ * ── PASS 43 · 2026-10-08 — the two features that landed after pass 42 ─────────────────────────────
+ * Kane: "add". 27e69bca..a2a95911, 10 commits, all on origin/main (local == origin after a fetch).
+ * Two are code, one feature each, so 2 rows / 13 SP (cluster note in hris-plan.ts). Both migrations
+ * were MEASURED read-only 2026-10-08 by their own --verify: the scoreboard roles table APPLIED, and the
+ * payout_account_reports table APPLIED. Item 406 still recorded that --apply as pending, so this is
+ * one more stale PENDING claim. No external step is open. Kane has given no word that either is live,
+ * so both are Pending Deploy.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
@@ -886,8 +896,8 @@ import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
 export const PASS_DATE = '2026-10-08';
-export const AUDIT_RANGE = '05b48730..27e69bca';
-export const AUDIT_COMMITS = 63;
+export const AUDIT_RANGE = '27e69bca..a2a95911';
+export const AUDIT_COMMITS = 10;
 
 /** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
 const ON_MAIN =
@@ -964,54 +974,18 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 42b · 2026-10-08 · 5 rows Done on measured evidence, 2 rows In Progress → Pending Deploy ──
+  // —── PASS 43 · 2026-10-08 · 2 new rows / 13 SP, both Pending Deploy, Sprint 30 ─────────────────────
   {
-    name: 'Proof of Residential Address letter - Accounting-only, issued signed from the Signing Queue',
-    status: 'Done',
-    completed: '2026-10-07',
-    dateBasis: 'external',
-    shas: ['897b5237', '5935c119'],
-    basis: "DONE ON MEASURED USE. Item 375. A Proof of Address letter was issued in production and signed end to end: document_requests holds one 'address' row, status signed, signed_at 2026-10-07 16:42Z (read-only 2026-10-08). Its migration was measured NOT applied on the morning of 2026-10-07 and is APPLIED by --verify on 2026-10-08. The Completed Date is 2026-10-07, the day it became provable; the last sha is 2026-10-06. Every sha is on origin/main.",
-  },
-  {
-    name: 'The Offboarded list is a second dataset an external API key can read - REST and MCP, behind its own scope',
-    status: 'Done',
-    completed: '2026-10-07',
-    shas: ['4cf42388', 'cb0b94d4'],
-    basis: "DONE ON MEASURED USE. Items 389 and 395. The job portal's own key made 40 successful production REST reads of /api/external/v1/offboarded between 16:27Z and 18:04Z on 2026-10-07, with 0 refused (cb0b94d4's read-only probe of the production request log). Its scope migration is APPLIED (--verify, 2026-10-08). Whether a match blocks a reapplication is the job portal's own code, not this row. Every sha is on origin/main; the Completed Date is the last sha's commit date.",
-  },
-  {
-    name: 'SSD Medical Records is scored from its Payment Catalog formula - the colour-team workspace is gone',
-    status: 'Done',
-    completed: '2026-10-06',
-    shas: ['5fe90369'],
-    basis: 'DONE ON MEASURED USE. Item 365. Carla re-saved all 68 SSD 2026-09-27 rows at 2026-10-06 15:07Z with the catalog inputs this code reads, and the week went Ready at 15:08Z (measured read-only 2026-10-07). On origin/main; the Completed Date is the commit date. The repricing of that week (PHP 103,449.96 to 87,704.49) is money item 383, open on its own.',
-  },
-  {
-    name: "Mark Arriola's name-in-email ghost master row is retired - three People edits reverted, its stamp re-dated to 07-16, and its two Lead Gen bonus rows deleted",
-    status: 'Done',
-    completed: '2026-10-07',
-    shas: ['976c58d9', 'e0f6773e', '6ed59243', '59d7908a', '2077e215'],
-    basis: "DONE ON MEASUREMENT. Items 364 and 384, a data cleanup whose deliverable is the production state. Applied 2026-10-08 01:28Z on Kane's ruling (b), and re-measured read-only 2026-10-08: the revert script's guards read the reverted values, the stamp reads 07-16 duplicate_cleanup by system:arriola-ghost-redate-2026-10-07, and both Lead Gen bonus rows read missing. Every sha is on origin/main; the Completed Date is the last sha's commit date (01:28Z is 21:28 EDT on 10-07).",
-  },
-  {
-    name: "A guarded script clears one week's untyped Payroll Problems grid counts on the Accounting Scoreboard",
-    status: 'Done',
-    completed: '2026-10-08',
-    shas: ['42388492'],
-    basis: "DONE ON USE. Item 391 (4), Kane's ruling (a). A one-off script with no prod surface (the pass 17 precedent): Kane ran it on the 2026-10-05 grid and the result was measured afterwards (6745bafd). Pushed by Kane 2026-10-08 (origin/main a2a95911). The Completed Date is its commit date.",
-  },
-  {
-    name: 'Accounting Scoreboard Losses and Pre-arb show negative with a Net, set by a flag and never a typed sign, and Pre-arb counts as a loss in the win ratio',
+    name: 'The Accounting Scoreboard has its own roles - Admin, Assistant and Team member, granted in Setup - and HRIS accounting alone no longer manages it',
     status: 'Pending Deploy',
-    shas: ['63500994', 'c88c554c'],
-    basis: pd42("Item 392, Kane's ruling that Pre-arb is a loss. Up from In Progress: Kane pushed c88c554c on 2026-10-08. The Pre-arb flag migration is MEASURED applied 2026-10-08 (--verify, all checks passed)."),
+    shas: ['74f6d2ee'],
+    basis: pd42("Item 393, Carla's roles from the 2026-10-07 call, which Kane confirmed. Its roles migration is MEASURED applied 2026-10-08 (--verify, all checks passed), and the two Admin grants are recorded in a2a95911. No external step is open."),
   },
   {
-    name: 'Self-service bank saves fail closed on an unreadable payroll lock, and the code check answers the same for every email',
+    name: 'Employees can report a payout account closed, deactivated or frozen, and Accounting sees it on Mark Paid and People before paying',
     status: 'Pending Deploy',
-    shas: ['27e69bca'],
-    basis: pd42('Item 402, which closes two of the four gaps item 266 found on the public bank-update flow. Up from In Progress: Kane pushed it on 2026-10-08.'),
+    shas: ['20a1287a'],
+    basis: pd42("Item 406, Kane's ask 2026-10-08. It informs only: it never holds a payout or switches to the backup account. Its table is MEASURED applied 2026-10-08 (--verify, all checks passed), although the building session recorded the --apply as pending. No external step is open."),
   },
 ];
 

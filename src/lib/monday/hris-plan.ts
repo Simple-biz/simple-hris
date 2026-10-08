@@ -2413,4 +2413,11 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-15', name: 'The meeting-notes skill is ported from Gridline - a call writes its notes, its INDEX links and an Open items row for every ask', type: 'Chore', sp: 2, done: false, sprint: 'S30', priority: 'Low' },
   { epic: 'HRIS-05', name: 'Security review - API keys on phones, certificate pinning and deep links, answered from the code and a production probe', type: 'Spike', sp: 2, done: false, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-15', name: 'The Monday evidence run lists the work Kane rules off the board and keeps it out of every row', type: 'Chore', sp: 2, done: true, sprint: 'S30', priority: 'Low' },
+  // —── PASS 43 · 2026-10-08 · the two features after pass 42, 2 rows, 13 SP, Sprint 30 ──────────────
+  // Kane: "add". Range 27e69bca..a2a95911, 10 commits, all on origin/main. Two are code, one feature
+  // each: 74f6d2ee (scoreboard roles, item 393) and 20a1287a (payout account reports, item 406). No
+  // row: e7701bc9 / a2a95911 (item 393 status notes), 3f07f348 / ffee159b / 240bbd48 (the W0.4 Google
+  // Chat webhook, set in .env.local, docs only), 0ea5ede5 (item 403 finding), and pass 42's own commits.
+  { epic: 'HRIS-06', name: 'The Accounting Scoreboard has its own roles - Admin, Assistant and Team member, granted in Setup - and HRIS accounting alone no longer manages it', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-25', name: 'Employees can report a payout account closed, deactivated or frozen, and Accounting sees it on Mark Paid and People before paying', type: 'Feature', sp: 8, done: false, sprint: 'S30', priority: 'High' },
 ];
