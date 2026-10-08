@@ -2767,7 +2767,9 @@ board-sync commits.
 | realtime-js patch (419) | No hand step: `patch-package` runs on postinstall |
 | Interns cap data (417) | Applied 9/9 in production before the push |
 
-**Owed after 00:00 UTC:** `review.mts`, Kane's approval of that hash, then `apply.mts --apply --only-new
---approve <hash>` (16 creates), and a 1-call `getItemsByIds` read-back. Kane's "add" covered only the
-first 2-row shape, so this pass needs his approval of the new hash. If more commits land first,
-re-derive before reviewing.
+**Kane closed the rest, 19:3xZ:** *"All of those 13 pending deploys are already done"*. 11 rows go Done on his word, at their last sha's date (2026-10-08). The 2 hires rows do not. An assertion cannot set an env var (the pass 38b rule), and every hires sync in `audit_log` ran as Kane, so none of them proves prod. They wait on his yes to whether `HRIS_HIRES_*` is set in Vercel production. The shape is now **13 Done (59 SP) · 2 Pending Deploy · 1 In Progress**, and his close plus that shape is the approval (the pass 40 precedent).
+
+**Owed after 00:00 UTC:** `review.mts` (it must show 16 created, 13 Done, nothing re-filed), then `apply.mts --apply --only-new
+--approve <hash>` (16 creates), and a 1-call `getItemsByIds` read-back. His close covers that shape and
+nothing else, so a proposal of any other shape needs his approval of its hash. If more commits land
+first, re-derive before reviewing.
