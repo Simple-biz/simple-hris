@@ -22,6 +22,7 @@ import { useSession } from 'next-auth/react';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
 import { hashEmail } from '@/lib/collab/peer-color';
+import { COLLAB_RETRACK_MS, pickLiveMeta } from '@/lib/collab/presence-meta';
 import { playPingChime, playPingSent } from '@/lib/sound/ping-chime';
 import CobrowseSurface from './CobrowseSurface';
 import { useCobrowse } from '@/hooks/useCobrowse';
@@ -183,7 +184,32 @@ interface PresencePayload {
   name: string | null;
   avatarUrl: string | null;
   section: string;
+  /** This tab is visible. A person can have several tabs in the room; the
+   *  rail names the one they are looking at (`pickLiveMeta`). */
+  active: boolean;
+  /** When this tab was last shown or focused; null until it has been. */
+  focused_at: string | null;
   online_at: string;
+}
+
+/** True when two rosters would render the same rail. The roster is rebuilt on
+ *  every re-announce, which now happens on a beat, so an unchanged list keeps
+ *  its identity instead of re-rendering every avatar. */
+function sameRoster(a: readonly PeerMeta[], b: readonly PeerMeta[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.email !== y.email ||
+      x.name !== y.name ||
+      x.avatarUrl !== y.avatarUrl ||
+      x.section !== y.section
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // --- cursor trails (per-person flair) ----------------------------------------
@@ -1094,6 +1120,40 @@ export default function CollabLayer({
   const pingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   sectionRef.current = section;
 
+  // Self meta in refs so `retrack` stays stable and always sends the freshest
+  // values (a re-announce never needs to re-subscribe).
+  const selfNameRef = useRef(selfName);
+  const selfAvatarRef = useRef(selfAvatarUrl);
+  selfNameRef.current = selfName;
+  selfAvatarRef.current = selfAvatarUrl;
+  // When this tab was last shown or focused. A tab opened in the background
+  // has not been looked at yet, so it starts null and loses to one that has.
+  const focusedAtRef = useRef<string | null>(
+    typeof document !== 'undefined' && document.visibilityState === 'visible'
+      ? new Date().toISOString()
+      : null,
+  );
+  const subscribedRef = useRef(false);
+
+  // Announce this tab's section to the room. Presence delivers each change
+  // once, as a diff, so this also runs on a beat while the tab is visible:
+  // a viewer whose diff was dropped is corrected within one beat instead of
+  // naming the old section until the next tab change. No-ops until
+  // SUBSCRIBED; the subscribe callback announces then.
+  const retrack = useCallback(() => {
+    const ch = channelRef.current;
+    if (!ch || !normSelf || !subscribedRef.current) return;
+    void ch.track({
+      email: normSelf,
+      name: selfNameRef.current,
+      avatarUrl: selfAvatarRef.current,
+      section: sectionRef.current,
+      active: typeof document !== 'undefined' ? document.visibilityState === 'visible' : true,
+      focused_at: focusedAtRef.current,
+      online_at: new Date().toISOString(),
+    } satisfies PresencePayload);
+  }, [normSelf]);
+
   // Show + sound an incoming ping on the sender's avatar; auto-clear after the
   // TTL. A newer ping from the same sender resets the bubble and its timer.
   const receivePing = useCallback((sender: string, text: string) => {
@@ -1165,8 +1225,11 @@ export default function CollabLayer({
     const syncRoster = () => {
       const state = ch.presenceState<PresencePayload>();
       const list: PeerMeta[] = [];
+      const now = Date.now();
       for (const key of Object.keys(state)) {
-        const meta = state[key]?.[0];
+        // Never `[0]`: that is the person's OLDEST entry, i.e. their first
+        // tab, or a stale section left behind. See src/lib/collab/presence-meta.ts.
+        const meta = pickLiveMeta(state[key], now);
         if (!meta) continue;
         const email = normEmail(meta.email ?? key) ?? (meta.email ?? key).trim().toLowerCase();
         if (!email || email === 'anon' || email === normSelf) continue;
@@ -1178,7 +1241,7 @@ export default function CollabLayer({
         });
       }
       list.sort((a, b) => a.email.localeCompare(b.email));
-      setPeers(list);
+      setPeers((prev) => (sameRoster(prev, list) ? prev : list));
     };
 
     ch.on('broadcast', { event: 'ac' }, ({ payload }: { payload: CollabMsg }) => {
@@ -1226,29 +1289,21 @@ export default function CollabLayer({
       .on('presence', { event: 'join' }, syncRoster)
       .on('presence', { event: 'leave' }, syncRoster)
       .subscribe((status: string) => {
-        if (status !== 'SUBSCRIBED') return;
-        void ch.track({
-          email: normSelf,
-          name: selfNameRef.current,
-          avatarUrl: selfAvatarRef.current,
-          section: sectionRef.current,
-          online_at: new Date().toISOString(),
-        } satisfies PresencePayload);
+        // Every rejoin re-subscribes; the old channel process (and its
+        // tracked entry) is gone, so announce again on each SUBSCRIBED.
+        subscribedRef.current = status === 'SUBSCRIBED';
+        if (subscribedRef.current) retrack();
       });
 
     return () => {
+      subscribedRef.current = false;
       void supabase.removeChannel(ch);
       channelRef.current = null;
       sendRef.current = null;
     };
-  }, [normSelf, channel]);
+  }, [normSelf, channel, retrack]);
 
-  // Keep self meta in refs so we can re-track without re-subscribing.
-  const selfNameRef = useRef(selfName);
-  const selfAvatarRef = useRef(selfAvatarUrl);
   const peersNameRef = useRef<Map<string, string | null>>(new Map());
-  selfNameRef.current = selfName;
-  selfAvatarRef.current = selfAvatarUrl;
   peersNameRef.current = useMemo(() => {
     const m = new Map<string, string | null>();
     for (const p of peers) m.set(p.email, p.name);
@@ -1258,15 +1313,37 @@ export default function CollabLayer({
   // Re-broadcast presence when our section / name / avatar changes, and clear
   // the cursor map on section change (old-section cursors must disappear).
   useEffect(() => {
-    if (!channelRef.current || !normSelf) return;
-    void channelRef.current.track({
-      email: normSelf,
-      name: selfName,
-      avatarUrl: selfAvatarUrl,
-      section,
-      online_at: new Date().toISOString(),
-    } satisfies PresencePayload);
-  }, [section, selfName, selfAvatarUrl, normSelf]);
+    retrack();
+  }, [section, selfName, selfAvatarUrl, retrack]);
+
+  // The beat, plus visibility and focus. Visible tabs re-announce every
+  // COLLAB_RETRACK_MS so a missed diff heals; a hidden tab says so at once
+  // (it stops being the one the rail names) and then stays quiet. Showing or
+  // focusing a tab makes it the person's most recent tab.
+  useEffect(() => {
+    if (!normSelf) return;
+    const markFocused = () => {
+      focusedAtRef.current = new Date().toISOString();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') markFocused();
+      retrack();
+    };
+    const onFocus = () => {
+      markFocused();
+      retrack();
+    };
+    const beat = window.setInterval(() => {
+      if (document.visibilityState === 'visible') retrack();
+    }, COLLAB_RETRACK_MS);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(beat);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [normSelf, retrack]);
 
   useEffect(() => {
     // Different section now -> drop any cursors we were showing.

@@ -12,6 +12,7 @@ import { useCobrowse } from '@/hooks/useCobrowse';
 import CobrowseSurface from '@/components/collab/CobrowseSurface';
 import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { normEmail } from '@/lib/email/norm-email';
+import { pickLiveMeta, type RankableMeta } from '@/lib/collab/presence-meta';
 import { playPaymentConfirmed } from '@/lib/sound/ping-chime';
 import { selectNewlyPaidEntries } from '@/lib/ceo/newly-paid-feed';
 
@@ -86,7 +87,7 @@ const PAYROLL_SECTIONS: Record<string, { surface: 'wizard' | 'dispatch'; activit
   'payment-dispatch': { surface: 'dispatch', activity: 'In Payment Dispatch' },
 };
 
-interface AccountingPresence {
+interface AccountingPresence extends RankableMeta {
   email?: string;
   name?: string | null;
   avatarUrl?: string | null;
@@ -146,8 +147,11 @@ function usePayrollWatchRoster(viewerEmail: string | null, enabled: boolean): Wa
       const state = ac.presenceState<AccountingPresence>();
       const peers: PayrollLivePeer[] = [];
       const online: OnlinePresence[] = [];
+      const now = Date.now();
       for (const k of Object.keys(state)) {
-        const m = state[k]?.[0];
+        // The same pick as the Accounting rail, so the two never name
+        // different sections for one person (src/lib/collab/presence-meta.ts).
+        const m = pickLiveMeta(state[k], now);
         if (!m) continue;
         const email = normEmail(m.email ?? k) ?? (m.email ?? k).trim().toLowerCase();
         if (!email || email === 'anon') continue;

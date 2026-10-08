@@ -1,0 +1,56 @@
+diff --git a/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js b/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
+index a149790..72e05f8 100644
+--- a/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
++++ b/node_modules/@supabase/realtime-js/dist/main/phoenix/presenceAdapter.js
+@@ -74,11 +74,19 @@ class PresenceAdapter {
+ }
+ exports.default = PresenceAdapter;
+ function transformState(presences) {
++    // Patched (simple-hris, 2026-10-08): copy each meta instead of mutating it.
++    // parseCurrentPresences hands this the LIVE phoenix state, so the in-place
++    // delete of phx_ref meant a later leave could never match that meta: every
++    // section a person visited stayed in a long-lived viewer's roster. This is
++    // the upstream fix as shipped in @supabase/realtime-js 2.117.3.
+     return presences.metas.map((presence) => {
+-        presence['presence_ref'] = presence['phx_ref'];
+-        delete presence['phx_ref'];
+-        delete presence['phx_ref_prev'];
+-        return presence;
++        // Object spread compiles to Object.assign for ES2017, which treats __proto__ as a setter.
++        const descriptors = Object.getOwnPropertyDescriptors(presence);
++        const transformedPresence = Object.defineProperties({}, descriptors);
++        transformedPresence['presence_ref'] = transformedPresence['phx_ref'];
++        delete transformedPresence['phx_ref'];
++        delete transformedPresence['phx_ref_prev'];
++        return transformedPresence;
+     });
+ }
+ function cloneState(state) {
+diff --git a/node_modules/@supabase/realtime-js/dist/module/phoenix/presenceAdapter.js b/node_modules/@supabase/realtime-js/dist/module/phoenix/presenceAdapter.js
+index dd3cbcc..5fc7f9d 100644
+--- a/node_modules/@supabase/realtime-js/dist/module/phoenix/presenceAdapter.js
++++ b/node_modules/@supabase/realtime-js/dist/module/phoenix/presenceAdapter.js
+@@ -71,11 +71,19 @@ export default class PresenceAdapter {
+     }
+ }
+ function transformState(presences) {
++    // Patched (simple-hris, 2026-10-08): copy each meta instead of mutating it.
++    // parseCurrentPresences hands this the LIVE phoenix state, so the in-place
++    // delete of phx_ref meant a later leave could never match that meta: every
++    // section a person visited stayed in a long-lived viewer's roster. This is
++    // the upstream fix as shipped in @supabase/realtime-js 2.117.3.
+     return presences.metas.map((presence) => {
+-        presence['presence_ref'] = presence['phx_ref'];
+-        delete presence['phx_ref'];
+-        delete presence['phx_ref_prev'];
+-        return presence;
++        // Object spread compiles to Object.assign for ES2017, which treats __proto__ as a setter.
++        const descriptors = Object.getOwnPropertyDescriptors(presence);
++        const transformedPresence = Object.defineProperties({}, descriptors);
++        transformedPresence['presence_ref'] = transformedPresence['phx_ref'];
++        delete transformedPresence['phx_ref'];
++        delete transformedPresence['phx_ref_prev'];
++        return transformedPresence;
+     });
+ }
+ function cloneState(state) {

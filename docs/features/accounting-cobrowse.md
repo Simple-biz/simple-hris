@@ -84,6 +84,46 @@ driver's live cursor. See
 [project_accounting_collab_layer](../../) memory and
 `docs/reference/components.md` for the collab layer details.
 
+### 4.1 The rail names the tab the person is looking at
+
+The section under each rail avatar ("Payment Dispatch", "Here - Overview") must be the section
+on that person's screen. Presence keeps **one entry per open tab** under a person's key, so
+"which entry" is a rule, and it lives in one place:
+[`src/lib/collab/presence-meta.ts`](../../src/lib/collab/presence-meta.ts) `pickLiveMeta`.
+
+- **Never `presenceState()[key][0]`.** That is the person's *oldest* entry: their first tab, or a
+  section left behind. Every reader of the `accounting-collab` payload uses `pickLiveMeta`. Today
+  those are `CollabLayer` (the Accounting and HR rails) and `CeoPayrollLive` (the CEO's watch
+  roster), so the two can never name different sections for one person.
+- **The pick:** a *live* entry beats a stale one, then the latest `focused_at`, then the latest
+  `online_at`. Live means the tab said it was visible and has spoken within `COLLAB_STALE_MS`
+  (3 beats, 90 s). A tab running an older bundle sends no `active` flag and is read as visible,
+  as `PresenceProvider` reads it.
+- **Each tab announces** `{ email, name, avatarUrl, section, active, focused_at, online_at }`. It
+  announces on subscribe, on every section/name/avatar change, on every visibility or window-focus
+  change, and **every `COLLAB_RETRACK_MS` (30 s) while visible**. Presence sends each change once,
+  as a diff, so the beat is what corrects a viewer whose diff was dropped. A hidden tab announces
+  `active: false` at once and then stays quiet.
+- **Two windows both visible:** the one the person clicked into last wins (`focused_at`), not
+  the one that happened to re-announce last.
+- **The roster keeps its identity when nothing changed** (`sameRoster`), so the beat does not
+  re-render the rail every few seconds.
+
+**Root cause of the 2026-10-08 report** (Kane: *"I can see lennys screen on payment dispatch but
+the label says its on payroll wizard"*): `@supabase/realtime-js` 2.101.1's presence adapter
+deleted `phx_ref` from the **live** presence state inside its join/leave callbacks, so a leave
+could never match those entries again. Every section a person visited stacked up in a long-lived
+viewer's roster, and `[0]` kept naming the first. A read-only probe that day showed the server
+holding Lenny on `payment-dispatch` (one tab, since 17:16Z) while the rail said Payroll Wizard.
+The same defect left **ghosts**: someone who changed section and then left Accounting stayed on
+the rail until the viewer reloaded. It reached **every** presence channel in the app
+(`hris-presence`, `payroll-live`, HR collab, checklist rooms), not only this one.
+Fixed at the source by `patches/@supabase+realtime-js+2.101.1.patch`, which is upstream's own fix
+as shipped in realtime-js 2.117.3. It is applied by the `postinstall: patch-package` hook and
+pinned by `src/lib/collab/realtime-presence-patch.test.ts`. **Bumping `@supabase/supabase-js`
+retires the patch only if the new realtime-js copies metas in `transformState`.** Keep the pin
+test either way.
+
 ---
 
 ## 5. Two-way tutoring chat + Admin Global Master List (2026-07-09/10)
