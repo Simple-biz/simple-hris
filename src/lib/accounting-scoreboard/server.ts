@@ -80,7 +80,8 @@ import {
   taskProgress,
   type TaskLike,
 } from './tasks';
-import { buildProgressMessage } from './chat-summary';
+import { buildProgressPost } from './chat-summary';
+import { sendChatPost } from './chat-webhook';
 import type { TaskReadProgress } from './task-load-progress';
 import type { BoardRead, BoardReadProgress } from './load-progress';
 import {
@@ -1299,9 +1300,11 @@ const TASKS = 'accounting_scoreboard_tasks';
 const TASK_CHECKS = 'accounting_scoreboard_task_checks';
 const TASK_COLS = 'id, owner_email, title, frequency, sort_order, created_at';
 const TASK_CHECK_COLS = 'id, task_id, period_key, checked_by, checked_at';
-/** The accounting team space's Google Chat incoming webhook. It carries a key: read here only, never echoed. */
+/**
+ * The accounting team space's Google Chat incoming webhook. It carries a key: read here (the click) and in
+ * scheduled-chat.ts only, sent through chat-webhook.ts, never echoed.
+ */
 const CHAT_WEBHOOK_ENV = 'ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL';
-const CHAT_TIMEOUT_MS = 10_000;
 
 type TaskRecord = { id: string; owner_email: string; title: string; frequency: string; sort_order: number; created_at: string };
 type TaskCheckRecord = { id: string; task_id: string; period_key: string; checked_by: string; checked_at: string };
@@ -1613,7 +1616,9 @@ export async function setTaskDone(viewer: Viewer, taskId: string, done: boolean)
  * Admin: post the team's progress to the accounting space's Google Chat (plan Task 8). The message is what Copy
  * message copies. The webhook URL never leaves this function: not in a response, not in an error, not in the audit.
  */
-export async function postTaskProgress(viewer: Viewer): Promise<Result<{ message: string; postedAt: string }>> {
+export async function postTaskProgress(
+  viewer: Viewer,
+): Promise<Result<{ message: string; postedAt: string; withCard: boolean }>> {
   const url = process.env[CHAT_WEBHOOK_ENV]?.trim();
   if (!url) {
     return fail(503, 'chat_not_configured', `Google Chat isn't connected yet: ${CHAT_WEBHOOK_ENV} is not set on the server.`);
@@ -1621,29 +1626,22 @@ export async function postTaskProgress(viewer: Viewer): Promise<Result<{ message
   const team = await readTasks(viewer, { kind: 'all' });
   if (!team.ok) return team;
   const progress = team.value.teamProgress ?? [];
-  const message = buildProgressMessage(progress);
+  const post = buildProgressPost(progress, new Date());
+  const message = post.text;
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify({ text: message }),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
-    });
-  } catch (e) {
-    const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+  // The one sender (chat-webhook.ts), shared with the scheduled posts: same timeout, same reading of a timeout.
+  const sent = await sendChatPost(url, post);
+  if (sent.status !== 'posted') {
+    if (sent.status === 'refused') {
+      return fail(502, 'chat_refused', `Google Chat refused the post (HTTP ${sent.httpStatus}). The webhook may have been removed from the space.`);
+    }
     return fail(
       502,
       'chat_unreachable',
-      timedOut
+      sent.status === 'timed_out'
         ? 'Google Chat did not answer within 10 seconds. The message may or may not have posted: check the space before posting again.'
         : 'Could not reach Google Chat. Nothing was posted.',
     );
-  }
-  if (!res.ok) {
-    return fail(502, 'chat_refused', `Google Chat refused the post (HTTP ${res.status}). The webhook may have been removed from the space.`);
   }
   const postedAt = new Date().toISOString();
   await insertAuditLog({
@@ -1652,7 +1650,7 @@ export async function postTaskProgress(viewer: Viewer): Promise<Result<{ message
     action: 'accounting_scoreboard.tasks_progress_posted',
     resource: TASKS,
     resource_id: null,
-    details: { message, progress },
+    details: { message, progress, card: sent.withCard },
   });
-  return { ok: true, value: { message, postedAt } };
+  return { ok: true, value: { message, postedAt, withCard: sent.withCard } };
 }

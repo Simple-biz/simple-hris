@@ -14,7 +14,8 @@ It lives inside the scoreboard ([accounting-scoreboard.md](accounting-scoreboard
 | Tables, guards, lock-down | `references/sql/create/2026-10-08_accounting_scoreboard_tasks.sql` |
 | Apply / verify (dry by default) | `scripts/apply-accounting-scoreboard-tasks-migration.mts` |
 | Frequencies, periods, progress (pure) | `src/lib/accounting-scoreboard/tasks.ts` (+ `.test.ts`) |
-| The progress message (pure) | `src/lib/accounting-scoreboard/chat-summary.ts` (+ `.test.ts`) |
+| The progress message and its bars card (pure) | `src/lib/accounting-scoreboard/chat-summary.ts` (+ `.test.ts`) |
+| The ONE Chat sender (the click and the schedule) | `src/lib/accounting-scoreboard/chat-webhook.ts` (+ `.test.ts`, which also pins that nothing else calls `fetch` for it) |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` § Task boards (+ `tasks-validate.test.ts`) |
 | Reads, writes, the Chat post | `src/lib/accounting-scoreboard/server.ts` § Task boards |
 | Routes | `app/api/accounting-scoreboard/tasks/route.ts` (GET, `&stream=1` streams it for the loading card · POST / PATCH) · `tasks/checks/route.ts` (POST) · `tasks/frequency/route.ts` (POST, change how often) · `tasks/post-progress/route.ts` (POST) |
@@ -191,13 +192,26 @@ this, the panel unmounted on every Scoreboard → Tasks switch, so every switch 
   No tasks: *"No tasks on the board yet."*
 - **Copy message** copies it. **Post to Chat** (Admin) asks first ("Post this to the accounting team's Google Chat?"),
   then posts it through the space's incoming webhook.
+- **The Chat post is the sentence plus a card of bars** (Kane, 2026-10-08: *"Can we send a progress bar?"*;
+  `buildProgressPost`). Google Chat shows neither an HTML page nor a GIF sent through a webhook, but a card's text takes
+  `<font color>`. So each frequency gets one row: its name, a 20-cell bar of `█` (green when all done, amber when
+  some, grey for the rest) and *"98 of 170 done · 57%"*. The card's header is *"Task progress"* and the Eastern day and
+  time the counts were read. The sentence stays as the message text above the card, word for word. **Copy message
+  stays the sentence alone.** No tasks = the sentence alone, no card.
+  - **A bar is full only when every task is done, and the percent rounds DOWN** (`barCells`, `percentDone`): 169 of 170
+    is 19 cells and 99%, and 1 of 170 still shows 1 cell. Rounding never makes a frequency look finished, or untouched.
+  - **A card Google refuses with HTTP 400 is sent once more as the sentence alone** (`chat-webhook.ts`). A 400 posted
+    nothing, so this can never post twice. Google does not document cards on incoming webhooks; this keeps the proven
+    text post working if it refuses them. No other status is re-sent, and a timeout never is. The click answers
+    `withCard: false`, the audit row says `card: false`, and a scheduled post's row says so in `detail`.
 - **The webhook URL carries a key.** It is `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL`, read only inside
-  `postTaskProgress` and the scheduled post's `runScheduledChatPosts`, and it never appears in a response, an error,
-  the posts table or the audit row. Unset = 503 and the button is
+  `postTaskProgress` and the scheduled post's `runScheduledChatPosts`, both of which send through `sendChatPost`
+  (§ One sender). It never appears in a response, an error, the posts table or the audit row. Unset = 503 and the button is
   disabled with the reason. Google refusing = 502 naming its HTTP status. **No answer within 10 s = 502 that says the
   message may or may not have posted**: check the space before posting again (a timeout is ambiguous, never "failed").
-- Every post writes `accounting_scoreboard.tasks_progress_posted` (the message and the counts) to the audit log,
-  registered in `src/lib/audit/registry.ts`.
+- Every post writes `accounting_scoreboard.tasks_progress_posted` (the message, the counts and `card`, whether the bars
+  went with it) to the audit log, registered in `src/lib/audit/registry.ts`. The click answers
+  `{ message, postedAt, withCard }`.
 - **It also posts itself on Carla's schedule** (2026-10-08): § Scheduled posts below. Carla's personal "you still
   have tasks left" nudge would @mention each person and needs their Chat user ids: not built.
 
@@ -245,7 +259,9 @@ since 2026-10-03 (measured in `audit_log` on 2026-10-08).
   claim error posts nothing:** no claim, no post.
 - **One attempt per slot.** The outcome is stamped once (`posted`, `skipped`, `refused`, `unreachable`, `timed_out`,
   `failed`); the table's trigger refuses a second stamp. The schedule never retries a failed post (Carla can click Post
-  to Chat), and **never retries a timeout, which may have posted.**
+  to Chat), and **never retries a timeout, which may have posted.** The one re-send inside an attempt is the bars card
+  refused with 400 going again as the sentence alone (a 400 posted nothing). That post is stamped `posted` with *"Sent
+  as the sentence alone: Google Chat refused the bars card (HTTP 400)."* as its `detail`.
 - `skipped` = no live tasks of that frequency, so nothing was sent. `failed` = the task read failed, nothing was sent.
 - **A row left at `sending` is not a bug to clean up.** The function died between the claim and the stamp, so the post
   may or may not have gone out. Check the space.
@@ -254,15 +270,17 @@ since 2026-10-03 (measured in `audit_log` on 2026-10-08).
   **502** when a due post did not go out (so Vercel's cron log shows it); **503** when the webhook env or the table is
   missing (nothing claimed, nothing posted).
 - A post that went out writes the click's audit action, `accounting_scoreboard.tasks_progress_posted`, as
-  `Scoreboard Chat Schedule` / `System`, with `trigger: 'schedule'`, the slot, and `resource_id` = the posts row.
+  `Scoreboard Chat Schedule` / `System`, with `trigger: 'schedule'`, the slot, `card` (did the bars go with it), and
+  `resource_id` = the posts row.
 
-### Two senders, one behaviour
+### One sender
 
-The webhook is posted from two places: `postTaskProgress` (the click, `server.ts`) and `sendToChat`
-(`scheduled-chat.ts`). Both have the same 10 s timeout and read a timeout the same way ("may or may not have posted").
-Neither ever puts the URL in a response, an error, the posts table or the audit row. **Change one, change the other.**
-They are two only because `server.ts` was mid-edit by another session on 2026-10-08; moving the click onto
-`sendToChat` is a safe refactor.
+**Every scoreboard Chat post goes through `sendChatPost` (`chat-webhook.ts`)**, the click (`postTaskProgress`) and the
+schedule (`scheduled-chat.ts`) alike: one 10 s timeout, one reading of a timeout ("may or may not have posted"), one
+400 rule. The URL is passed in and never appears in an outcome, so it cannot reach a response, an error, the posts
+table or the audit row. **Never add a `fetch` to the webhook anywhere else**: `chat-webhook.test.ts` fails if
+`server.ts` or `scheduled-chat.ts` gets one. (On 2026-10-08 they were briefly two copies while another session had
+`server.ts` mid-edit; folded into one the same day.)
 
 ## Importing from the sheet
 
@@ -322,6 +340,11 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
 - **Scheduled posts verified (2026-10-08):** 9 schedule tests + 10 claim/post tests; the scoreboard suite 290/290; `tsc`
   clean apart from the same two stale `.next/types/validator.ts` entries. **Not run against Google from the deployed
   cron yet.**
+- **The bars card, verified 2026-10-08:** chat-summary 10 tests (cells, percent, colours, heading, the post), the
+  sender 10 (every Google answer, the 400 re-send, never the URL, and the source pin), the core 11; the scoreboard and
+  audit suites 342/342; `tsc` clean apart from the same two `.next` entries. **PENDING: the first real post.** Google
+  does not document cards on incoming webhooks, so whether the bars show (`card: true` in the audit row) or the sentence
+  goes alone (`card: false`) is only known from a post.
 - **Verified:** 18 task tests + 5 import tests; the scoreboard suite 227/227 and `npm test` 6,402/6,402 before the import
   module; `tsc` clean apart from two stale `.next/types/validator.ts` entries for another feature's routes. **Not
   rendered in a browser and not clicked through signed in.** Rendered on 2026-10-08 with the frequency change and the cache

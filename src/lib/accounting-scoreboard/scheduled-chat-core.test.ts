@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { anyPostFailed, postSlot, type ClaimOutcome, type SendOutcome, type SlotDeps } from './scheduled-chat-core';
+import { SENT_WITHOUT_CARD, anyPostFailed, postSlot, type ClaimOutcome, type SlotDeps } from './scheduled-chat-core';
 import type { ChatSlot } from './chat-schedule';
+import type { SendOutcome } from './chat-webhook';
 import type { FrequencyProgress } from './tasks';
 
 const DAILY: ChatSlot = { date: '2026-10-08', hour: 15, frequencies: ['daily'] };
@@ -17,7 +18,8 @@ function fake(over: { claim?: ClaimOutcome; progress?: FrequencyProgress[] | str
   const calls: string[] = [];
   const sent: string[] = [];
   const stamps: Array<{ status: string; message?: string; detail?: string }> = [];
-  const audits: Array<{ message: string; slot: string }> = [];
+  const audits: Array<{ message: string; slot: string; card: boolean }> = [];
+  const sentProgress: FrequencyProgress[][] = [];
   const deps: SlotDeps = {
     async claim() {
       calls.push('claim');
@@ -28,10 +30,11 @@ function fake(over: { claim?: ClaimOutcome; progress?: FrequencyProgress[] | str
       const p = over.progress ?? TEAM;
       return typeof p === 'string' ? { ok: false, message: p } : { ok: true, progress: p };
     },
-    async send(message) {
+    async send({ message, progress }) {
       calls.push('send');
       sent.push(message);
-      return over.send ?? { status: 'posted' };
+      sentProgress.push(progress);
+      return over.send ?? { status: 'posted', withCard: true };
     },
     async finish(_id, status, fields) {
       calls.push(`finish:${status}`);
@@ -40,10 +43,10 @@ function fake(over: { claim?: ClaimOutcome; progress?: FrequencyProgress[] | str
     },
     async audit(_id, f) {
       calls.push('audit');
-      audits.push({ message: f.message, slot: f.slot });
+      audits.push({ message: f.message, slot: f.slot, card: f.card });
     },
   };
-  return { deps, calls, sent, stamps, audits };
+  return { deps, calls, sent, sentProgress, stamps, audits };
 }
 
 test('the 3 PM post: claimed first, daily only, stamped posted, audited', async () => {
@@ -54,8 +57,19 @@ test('the 3 PM post: claimed first, daily only, stamped posted, audited', async 
     f.sent[0],
     'Current progress: 98 of 170 daily tasks have been completed. As you complete your tasks, remember to check them off.',
   );
-  assert.deepEqual(f.audits, [{ message: f.sent[0], slot: '2026-10-08 15:00 ET' }]);
-  assert.ok(r.ok && r.value.status === 'posted' && r.value.recorded === true);
+  assert.deepEqual(f.audits, [{ message: f.sent[0], slot: '2026-10-08 15:00 ET', card: true }]);
+  // The card is drawn from the slot's frequencies only: the bars match the sentence.
+  assert.deepEqual(f.sentProgress[0], [{ frequency: 'daily', total: 170, done: 98 }]);
+  assert.ok(r.ok && r.value.status === 'posted' && r.value.recorded === true && r.value.detail === undefined);
+});
+
+test('the bars card refused, the sentence posted alone: stamped posted, says so, audited with card false', async () => {
+  const f = fake({ send: { status: 'posted', withCard: false } });
+  const r = await postSlot(DAILY, f.deps);
+  assert.deepEqual(f.calls, ['claim', 'read', 'send', 'finish:posted', 'audit']);
+  assert.equal(f.stamps[0].detail, SENT_WITHOUT_CARD);
+  assert.equal(f.audits[0].card, false);
+  assert.ok(r.ok && r.value.status === 'posted' && r.value.detail === SENT_WITHOUT_CARD);
 });
 
 test('a morning that is weekly and monthly is one message with both, and nothing else (no bi-weekly)', async () => {
@@ -104,7 +118,7 @@ test('a timeout is stamped timed_out, sent once, never audited (it may have post
 });
 
 test('Google refusing is stamped refused with its reason, not audited', async () => {
-  const f = fake({ send: { status: 'refused', detail: 'Google Chat refused the post (HTTP 404).' } });
+  const f = fake({ send: { status: 'refused', httpStatus: 404, detail: 'Google Chat refused the post (HTTP 404).' } });
   await postSlot(DAILY, f.deps);
   assert.deepEqual(f.stamps, [
     {

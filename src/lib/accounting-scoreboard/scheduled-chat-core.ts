@@ -7,7 +7,9 @@
  *   - Nothing is sent without a claim. A slot someone else claimed (a duplicate delivery, the other UTC entry of the
  *     DST pair) is 'already_claimed' and sends nothing; any other claim error stops the run and sends nothing.
  *   - One attempt per slot. A refused, unreachable or timed-out post is stamped and never retried here; a timeout may
- *     have posted, so retrying it could post twice.
+ *     have posted, so retrying it could post twice. (Inside the one attempt, chat-webhook.ts re-sends a bars card that
+ *     Google refused with 400 as the sentence alone: a 400 posted nothing. That post is stamped 'posted' with
+ *     SENT_WITHOUT_CARD as its detail.)
  *   - A slot with no tasks of its frequencies is 'skipped': nothing is sent ("No tasks on the board yet" is not a
  *     reminder anyone needs at 3 PM).
  *   - Only a post that went out writes the audit row.
@@ -17,12 +19,14 @@
 
 import { buildProgressMessage } from './chat-summary';
 import { slotLabel, type ChatSlot } from './chat-schedule';
+import type { SendOutcome } from './chat-webhook';
 import type { FrequencyProgress } from './tasks';
 
 /** The outcome a claimed slot is stamped with (the table's CHECK holds the same list, plus 'sending'). */
 export type PostStatus = 'posted' | 'skipped' | 'refused' | 'unreachable' | 'timed_out' | 'failed';
 
-export type SendOutcome = { status: 'posted' } | { status: 'refused' | 'unreachable' | 'timed_out'; detail: string };
+/** What a scheduled post reports when the bars card was refused and the sentence went alone (chat-webhook.ts). */
+export const SENT_WITHOUT_CARD = 'Sent as the sentence alone: Google Chat refused the bars card (HTTP 400).';
 
 export type ClaimOutcome =
   | { kind: 'claimed'; id: string }
@@ -33,10 +37,11 @@ export interface SlotDeps {
   claim(slot: ChatSlot): Promise<ClaimOutcome>;
   /** The Everyone view's progress, one entry per counted frequency that has tasks. */
   readProgress(): Promise<{ ok: true; progress: FrequencyProgress[] } | { ok: false; message: string }>;
-  send(message: string): Promise<SendOutcome>;
+  /** Post the sentence and its bars card (built from `progress`) through chat-webhook.ts. */
+  send(post: { message: string; progress: FrequencyProgress[] }): Promise<SendOutcome>;
   /** Stamp the claimed row once. False when it could not be written (the post itself stands). */
   finish(id: string, status: PostStatus, fields: { message?: string; progress?: FrequencyProgress[]; detail?: string }): Promise<boolean>;
-  audit(id: string, fields: { message: string; progress: FrequencyProgress[]; slot: string }): Promise<void>;
+  audit(id: string, fields: { message: string; progress: FrequencyProgress[]; slot: string; card: boolean }): Promise<void>;
 }
 
 export interface SlotResult {
@@ -81,9 +86,9 @@ export async function postSlot(slot: ChatSlot, deps: SlotDeps): Promise<SlotRun>
   }
 
   const message = buildProgressMessage(progress);
-  const sent = await deps.send(message);
-  const detail = sent.status === 'posted' ? undefined : sent.detail;
+  const sent = await deps.send({ message, progress });
+  const detail = sent.status !== 'posted' ? sent.detail : sent.withCard ? undefined : SENT_WITHOUT_CARD;
   const recorded = await deps.finish(id, sent.status, { message, progress, detail });
-  if (sent.status === 'posted') await deps.audit(id, { message, progress, slot: label });
+  if (sent.status === 'posted') await deps.audit(id, { message, progress, slot: label, card: sent.withCard });
   return { ok: true, value: { ...base, status: sent.status, message, detail, recorded } };
 }

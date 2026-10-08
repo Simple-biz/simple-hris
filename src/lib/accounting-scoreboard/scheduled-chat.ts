@@ -5,9 +5,10 @@ import 'server-only';
  * Called by GET /api/cron/accounting-scoreboard-chat, which Vercel cron calls four times a day (vercel.json).
  * The order and its rules are in scheduled-chat-core.ts; this file wires the database, Google Chat and the audit log.
  *
- * The counts come from readTasks' Everyone view, the same read the Admin's Post to Chat uses, so the two can never
- * count differently. The webhook URL carries a key: it is read here and in postTaskProgress only, and it never appears
- * in a response, an error, the posts table or the audit row.
+ * The counts come from readTasks' Everyone view, the same read the Admin's Post to Chat uses, and the post goes through
+ * the same sender (chat-webhook.ts), so the two can never count or send differently. The webhook URL carries a key: it
+ * is read here and in postTaskProgress only, and it never appears in a response, an error, the posts table or the
+ * audit row.
  *
  * Governing doc: docs/features/accounting-scoreboard-tasks.md § Scheduled posts.
  */
@@ -16,11 +17,12 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/server';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
 import { readTasks, type Result, type Viewer } from './server';
 import { dueChatSlots, easternClock, slotLabel } from './chat-schedule';
-import { postSlot, type SendOutcome, type SlotDeps, type SlotResult } from './scheduled-chat-core';
+import { buildProgressPost } from './chat-summary';
+import { sendChatPost } from './chat-webhook';
+import { postSlot, type SlotDeps, type SlotResult } from './scheduled-chat-core';
 
 const POSTS = 'accounting_scoreboard_chat_posts';
 const CHAT_WEBHOOK_ENV = 'ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL';
-const CHAT_TIMEOUT_MS = 10_000;
 const ACTOR = { user_name: 'Scoreboard Chat Schedule', user_role: 'System' } as const;
 
 /**
@@ -46,27 +48,6 @@ function client() {
   return sb;
 }
 
-/** One post to the space's incoming webhook. Same timeout and the same reading of a timeout as postTaskProgress. */
-async function sendToChat(url: string, message: string): Promise<SendOutcome> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify({ text: message }),
-      cache: 'no-store',
-      signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
-    });
-  } catch (e) {
-    const timedOut = e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
-    return timedOut
-      ? { status: 'timed_out', detail: 'Google Chat did not answer within 10 seconds. The message may or may not have posted.' }
-      : { status: 'unreachable', detail: 'Could not reach Google Chat. Nothing was posted.' };
-  }
-  if (!res.ok) return { status: 'refused', detail: `Google Chat refused the post (HTTP ${res.status}).` };
-  return { status: 'posted' };
-}
-
 function deps(url: string, schedule: string | null): SlotDeps {
   return {
     async claim(slot) {
@@ -87,7 +68,8 @@ function deps(url: string, schedule: string | null): SlotDeps {
       const team = await readTasks(SCHEDULE_VIEWER, { kind: 'all' });
       return team.ok ? { ok: true, progress: team.value.teamProgress ?? [] } : { ok: false, message: team.message };
     },
-    send: (message) => sendToChat(url, message),
+    // The sentence is buildProgressMessage(progress), which the core already holds as `message`.
+    send: ({ progress }) => sendChatPost(url, buildProgressPost(progress, new Date())),
     async finish(id, status, fields) {
       const { data, error } = await client()
         .from(POSTS)
@@ -107,13 +89,13 @@ function deps(url: string, schedule: string | null): SlotDeps {
       }
       return true;
     },
-    async audit(id, { message, progress, slot }) {
+    async audit(id, { message, progress, slot, card }) {
       await insertAuditLog({
         ...ACTOR,
         action: 'accounting_scoreboard.tasks_progress_posted',
         resource: POSTS,
         resource_id: id,
-        details: { message, progress, trigger: 'schedule', slot },
+        details: { message, progress, trigger: 'schedule', slot, card },
       });
     },
   };

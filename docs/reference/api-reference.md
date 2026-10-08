@@ -3465,8 +3465,13 @@ board payload, and no live announce (`live.test.ts` names why). Archived, never 
   unticked. 422 `same_frequency` for no change; 404 if the task is archived or gone. If the archive fails, the new task is archived again,
   and the answer is the archive's error. If that undo also fails, 500 `on_board_twice`: refresh and remove one.
 - `POST tasks/checks { taskId, done }` (any role; only the owner ticks, the owner or an Admin unticks) → `{ check }` or `{ check: null }`.
-- `POST tasks/post-progress` (Admin) → `{ message, postedAt }`, sent through the Chat webhook (never echoed); 503 when unset, 502 when
+- `POST tasks/post-progress` (Admin) → `{ message, postedAt, withCard }`, sent through the Chat webhook (never echoed) as the sentence
+  plus a card of progress bars; `withCard: false` = Google refused the card (400) and the sentence went alone. 503 when unset, 502 when
   Google refuses or takes over 10 s ("may or may not have posted").
+- `GET|POST /api/cron/accounting-scoreboard-chat` *(2026-10-08)*: Bearer `CRON_SECRET` only (Vercel cron, 13/14/19/20 UTC). Posts the
+  slot due now on Carla's schedule (daily 3 PM, Wed/Fri 9 AM weekly, 1st/30th 9 AM monthly, ET), claiming it first in
+  `accounting_scoreboard_chat_posts`. → `{ success, ranAt, due, results: [{ slot, frequencies, status, message?, detail?, recorded? }] }`;
+  200 nothing due / posted / skipped / already claimed, 502 a due post did not go out, 503 webhook env or table missing.
 
 ---
 
@@ -3597,6 +3602,7 @@ of cells — the matches were not re-run).
 | `/api/contractor/invoices` | GET, POST, DELETE | `requireElevatedSession` | [employee-support-chat](../features/employee-support-chat.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/contractor/invoices/[id]` | GET, PATCH | `requireFeatureAccess` | [employee-support-chat](../features/employee-support-chat.md) · [payroll-wizard-final-pay](../features/payroll-wizard-final-pay.md) |
 | `/api/contractor/profile` | GET, POST, PATCH | `authorizeEmail` | — **no doc** |
+| `/api/cron/accounting-scoreboard-chat` | GET, POST | cron secret only (no session path) | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) § Scheduled posts · *this file* |
 | `/api/cron/apply-scheduled-transfers` | GET, POST | cron secret | [department-transfers](../features/department-transfers.md) |
 | `/api/cron/process-scheduled-deletions` | GET, POST | cron secret | [offboarding-automation](../features/offboarding-automation.md) (§ *The reaper's hold*: a due row is fired only when no live-person signal holds it; the response adds `held_count` / `held[]`; any guard read failure → 500, nothing fired) |
 | `/api/cron/sync-hsl-from-sheet` | GET, POST | cron secret | — **no doc** |
