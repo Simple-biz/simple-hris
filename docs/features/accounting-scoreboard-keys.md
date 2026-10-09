@@ -86,6 +86,14 @@ and roles.
   (`useDeferredValue`), so typing never waits for the grid; a row that drops out fades (0.16 s) and the rest glide into
   place (`layout="position"`, 0.28 s on the settle curve); a row that comes back fades in. Under reduced motion rows
   appear and go at once. Anything that counts rows right after typing must wait for the fade.
+- **10 people per page** (2026-10-09, Kane: *"Lets paginate this table to 10 per page"*), `ui-standards.md` § 5.6:
+  `pageWindow()` (`src/lib/manager/page-window.ts`) clamps the page, so a list that shrinks under you never shows an
+  empty page; *"Showing 11–20 of 28 people"*, Prev, a mono `n / N` chip and Next in the board's orange (`KeysPager`, the
+  shape of Orientation's `Pager`), and **no pager at all for one page**. **Paging is DISPLAY ONLY**: the Person count,
+  the off-the-board banner and every seat count read the whole filtered list, never the page. A search or the holders
+  filter goes back to page 1; a name in the banner jumps to that person's page and opens them; Prev / Next scroll the
+  grid back into view only if its top has left the screen. A page turn swaps the page in one quick fade (the tbody is
+  keyed by the page); only a search animates rows one by one.
 - **A name drops its panel open and folds it shut** (2026-10-09, Kane: *"Improve drop down animation for Keys"*): height and
   fade on the settle curve (0.32 s), the chevron turns orange and rotates, and the seats settle in one after another. The
   animating wrapper clips with `overflow-y-clip`, **never `overflow-hidden`**: hidden makes it the scroll box of the

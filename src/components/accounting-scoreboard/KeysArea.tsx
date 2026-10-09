@@ -12,7 +12,7 @@
 
 import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { AlertTriangle, ChevronDown, KeyRound, Loader2, Plus, Search, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Loader2, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,7 @@ import {
 } from '@/lib/accounting-scoreboard/keys';
 import type { KeySeat, KeysPayload, ScoreboardKey } from '@/lib/accounting-scoreboard/types';
 import type { BoardRole } from '@/lib/accounting-scoreboard/roles';
+import { pageWindow, type PageWindow } from '@/lib/manager/page-window';
 import { clearCachedKeys, readCachedKeys, writeCachedKeys, type CachedKeys } from '@/lib/accounting-scoreboard/tab-cache';
 import { api, EASE_SETTLE, handle, LoadingLines, ScrollEdgeFade, TINY_CAPS, useScrollEdges } from './shared';
 
@@ -54,6 +55,9 @@ const CORNER_RULE =
 const CORNER_RULE_STUCK =
   'shadow-[inset_-1px_0_0_var(--color-zinc-200),inset_0_-1px_0_var(--color-zinc-200),8px_0_10px_-8px_rgb(0_0_0/0.22)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-700),inset_0_-1px_0_var(--color-zinc-700),8px_0_12px_-8px_rgb(0_0_0/0.8)]';
 
+/** People per page (Kane, 2026-10-09: "paginate this table to 10 per page"). Display only (ui-standards § 5.6). */
+export const KEYS_PAGE_SIZE = 10;
+
 /** Search: rows that drop out fade, and the rest glide into place on the settle curve (never a snap). */
 const ROW_MOTION = { duration: 0.28, ease: EASE_SETTLE } as const;
 
@@ -75,7 +79,10 @@ export function KeysArea({ role }: { role: BoardRole }) {
   const [onlyHolders, setOnlyHolders] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [gridRef, gridEdges] = useScrollEdges<HTMLDivElement>();
+  const [gridRef, gridEdges, gridEl] = useScrollEdges<HTMLDivElement>();
+  const [page, setPage] = useState(1);
+  // The rows only animate one by one for a search; a page turn swaps the whole page with one quick fade.
+  const turned = useRef(false);
   const painted = useRef(payload);
   painted.current = payload;
 
@@ -111,6 +118,30 @@ export function KeysArea({ role }: { role: BoardRole }) {
     [grid, searched, onlyHolders],
   );
   const openSeats = grid?.offBoard.reduce((n, p) => n + p.seats.length, 0) ?? 0;
+  // DISPLAY ONLY: the Person count, the banner and every seat count read the full filtered list, never the page.
+  const win = useMemo(() => pageWindow(shown, page, KEYS_PAGE_SIZE), [shown, page]);
+
+  /** Turn the page; bring the grid back into view only if its top has left the screen. */
+  function goToPage(next: number) {
+    turned.current = true;
+    setPage(next);
+    if (gridEl && gridEl.getBoundingClientRect().top < 0) {
+      gridEl.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    }
+  }
+
+  /** Open someone from the banner, on whichever page they are. */
+  function openPerson(email: string) {
+    const i = shown.findIndex((p) => p.email === email);
+    if (i >= 0) {
+      const target = Math.floor(i / KEYS_PAGE_SIZE) + 1;
+      if (target !== win.page) {
+        turned.current = true;
+        setPage(target);
+      }
+    }
+    setOpen(email);
+  }
 
   async function addKey() {
     setAdding(true);
@@ -192,7 +223,7 @@ export function KeysArea({ role }: { role: BoardRole }) {
                   <button
                     type="button"
                     className="font-medium underline decoration-amber-400 underline-offset-2 hover:decoration-amber-700"
-                    onClick={() => setOpen(p.email)}
+                    onClick={() => openPerson(p.email)}
                   >
                     {p.name}
                   </button>
@@ -228,7 +259,11 @@ export function KeysArea({ role }: { role: BoardRole }) {
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-zinc-400" aria-hidden />
           <Input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              turned.current = false;
+              setPage(1);
+            }}
             placeholder="Find a person"
             aria-label="Find a person"
             className="pl-8 md:text-[13px]"
@@ -239,7 +274,11 @@ export function KeysArea({ role }: { role: BoardRole }) {
             type="checkbox"
             className="size-4 accent-orange-600"
             checked={onlyHolders}
-            onChange={(e) => setOnlyHolders(e.target.checked)}
+            onChange={(e) => {
+              setOnlyHolders(e.target.checked);
+              turned.current = false;
+              setPage(1);
+            }}
           />
           Only people holding a seat
         </label>
@@ -303,9 +342,14 @@ export function KeysArea({ role }: { role: BoardRole }) {
                   })}
                 </tr>
               </thead>
-              <tbody>
+              <motion.tbody
+                key={win.page}
+                initial={turned.current && !reduce ? { opacity: 0, y: 4 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22, ease: EASE_SETTLE }}
+              >
                 <AnimatePresence initial={false}>
-                  {shown.map((p) => {
+                  {win.items.map((p) => {
                     const isOpen = open === p.email;
                     return (
                       <Fragment key={p.email}>
@@ -440,14 +484,68 @@ export function KeysArea({ role }: { role: BoardRole }) {
                     </motion.tr>
                   ) : null}
                 </AnimatePresence>
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
           {/* The ticks that do not fit fade out at the right edge instead of being cut through. */}
           <ScrollEdgeFade side="right" shown={gridEdges.right} className="from-white dark:from-zinc-950" />
         </div>
       )}
+      {grid.keys.length ? <KeysPager win={win} onPage={goToPage} /> : null}
     </div>
+  );
+}
+
+/**
+ * ui-standards § 5.6: say which slice, Prev / the page as a mono `n / N` chip / Next, and render nothing for one page.
+ * The shape of Orientation's `Pager` (OrientationAttendancePanel.tsx), in the scoreboard's orange.
+ */
+function KeysPager({ win, onPage }: { win: PageWindow<unknown>; onPage: (page: number) => void }) {
+  if (win.totalPages <= 1) return null;
+  const btn =
+    'h-7 gap-1 border-orange-200 px-2 text-xs text-orange-700 hover:bg-orange-50 disabled:opacity-50 dark:border-orange-900/70 dark:text-orange-300 dark:hover:bg-orange-950/40';
+  return (
+    <nav
+      aria-label="People pages"
+      className="flex flex-col items-center justify-between gap-2 px-1 text-[11px] text-zinc-500 sm:flex-row dark:text-zinc-400"
+    >
+      <span className="tabular-nums" aria-live="polite">
+        Showing{' '}
+        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+          {win.from}–{win.to}
+        </span>{' '}
+        of <span className="font-medium text-zinc-700 dark:text-zinc-300">{win.total}</span> people
+      </span>
+      <div className="flex items-center gap-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={win.page <= 1}
+          onClick={() => onPage(win.page - 1)}
+          className={btn}
+          aria-label="Previous page of people"
+        >
+          <ChevronLeft className="size-3.5" />
+          Prev
+        </Button>
+        <span className="rounded-md border border-zinc-200 bg-white px-2 py-1 font-mono tabular-nums text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+          {win.page} / {win.totalPages}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={win.page >= win.totalPages}
+          onClick={() => onPage(win.page + 1)}
+          className={btn}
+          aria-label="Next page of people"
+        >
+          Next
+          <ChevronRight className="size-3.5" />
+        </Button>
+      </div>
+    </nav>
   );
 }
 
