@@ -961,7 +961,12 @@
  *     scheduling goes to the Backlog for V2 (item 427). The HSL row stays Pending Deploy. --only-new
  *     never moves a row, so tmp-move-hsl-scheduling-bl.mts files it (label + group, status untouched).
  * Shape now: 48 rows, all Done, all Sprint 30: 18 created, 30 existing corrected, plus 1 move to BL
- * by the mover. Still held: Tickets emails (S30), HSL scheduling (BL), the legacy spike (S30) and the
+ * by the mover.
+ *
+ * THIRD WAVE (Kane: "We are packaging HRIS for monday ... we can mark this v1 as done"): the 10 commits
+ * pushed on 10-09 morning (49006919..c7659cea) become 5 rows / 30 SP, all Done. Keys closes on measured
+ * use (23 keys, 56 seats); the other four close on his V1 word. Both 10-09 migrations re-verified.
+ * Final shape: 53 rows, all Done, all Sprint 30: 23 created, 30 corrected, plus the BL move. Still held: Tickets emails (S30), HSL scheduling (BL), the legacy spike (S30) and the
  * bare hsl overrides (BL).
  */
 import { execFileSync } from 'node:child_process';
@@ -1045,6 +1050,12 @@ const KANE_CLOSE_1009 =
   'already from withheld SP". Every sha is on origin/main (local == origin == f0eac591 after a fetch on ' +
   '2026-10-09), no external step is open, and the Completed Date is the last sha\'s commit date.';
 const closed44 = (what: string) => `${KANE_CLOSE_1009} ${what}`;
+/** Kane's V1 word, 2026-10-09 (session 85af82ec) — the basis for the third wave's rows that close on it. */
+const KANE_V1 =
+  "DONE ON KANE'S WORD. Kane, 2026-10-09: \"We are packaging HRIS for monday ... we can mark this v1 as " +
+  'done". Every sha is on origin/main (pushed 2026-10-09 09:33 EDT), no external step is open, and the ' +
+  "Completed Date is the last sha's commit date.";
+const v1 = (what: string) => `${KANE_V1} ${what}`;
 /** Measured production use closes a row without Kane's word (the pass 42b precedent). */
 const inUse = (what: string) =>
   `DONE ON MEASURED PRODUCTION USE (the pass 42b precedent). Every sha is on origin/main, no external ` +
@@ -1420,6 +1431,42 @@ export const ROWS: PassRow[] = [
     completed: '2026-10-07',
     shas: ['0fa0b89d', 'f082ba96', 'fc7c9d99', 'fde162ed'],
     basis: "DONE ON KANE'S WORD. Kane, 2026-10-09, on this row specifically: \"OMS is already done\". Item 334. Its one open step was the OMS env in Vercel production, which only Kane can see; this session has no Vercel CLI and did not measure it. Recorded as his confirmation, not a measurement: the only send in audit_log is 2026-10-07 15:38Z (wizard.orphanage_oms_returned, Kane, one row, verdict ok), and none since. Every sha is on origin/main, and the Completed Date is the last sha's commit date.",
+  },
+  // —── PASS 44, third wave: the commits pushed 2026-10-09 morning (Kane: "we can mark this v1 as done") ─
+  {
+    name: 'Accounting Scoreboard Setup has Keys - which paid platforms each person holds a seat on, cached, and paged ten people at a time',
+    status: 'Done',
+    completed: '2026-10-09',
+    shas: ['49006919', 'b0bf728b', '5cfffc77', '006abe91', '6f61f788'],
+    basis: inUse('Item 424, Carla on the 2026-10-08 call (QBO and Stripe charge per seat). Its migration is MEASURED applied 2026-10-09 (--verify, all checks passed), and production already holds 23 keys and 56 seats (006abe91); Kane is using it. b0bf728b, 5cfffc77 and 6f61f788 are its polish: no cut edges, cached loading lines, ten people a page.'),
+  },
+  {
+    name: 'The Accounting Scoreboard header uses the Simple wordmark in place of the trophy tile',
+    status: 'Done',
+    completed: '2026-10-09',
+    shas: ['b3e57d86'],
+    basis: v1('A style pass across the scoreboard panels: the Simple wordmark replaces the trophy tile. No migration.'),
+  },
+  {
+    name: 'The Accounting Scoreboard Overview shows a database signal - three bars and the round trip in ms',
+    status: 'Done',
+    completed: '2026-10-09',
+    shas: ['909ecb09'],
+    basis: v1('A gated GET /api/accounting-scoreboard/ping, timed in the browser. No migration.'),
+  },
+  {
+    name: 'Accounting Scoreboard History tab - every week as a bar per KPI card, with three highlights and notes',
+    status: 'Done',
+    completed: '2026-10-09',
+    shas: ['8f737179', '78d92c05'],
+    basis: v1('A read-only history route over the weeks already stored, with tests. 78d92c05 waives one impeccable false positive on its table row. No migration.'),
+  },
+  {
+    name: 'Accounting Scoreboard Setup has Scheduled Posts - the Chat posts become rows an Admin edits, pauses and adds, and the cron reads them every hour',
+    status: 'Done',
+    completed: '2026-10-09',
+    shas: ['c7659cea'],
+    basis: v1('Item 430. Its migration is MEASURED applied (13:23Z on Kane\'s word, and --verify passes every check again the same day); Daily, Weekly and Monthly were seeded word for word. vercel.json carries the 24 hourly cron entries, deployed with the push.'),
   },
 ];
 

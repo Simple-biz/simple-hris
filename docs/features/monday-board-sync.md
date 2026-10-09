@@ -2839,7 +2839,7 @@ apply.
 #### Later 2026-10-09 — Kane's follow-ups change the shape (still before the reset)
 
 - *"PUSH!"*: re-probed at 12:03Z, still `DAILY_LIMIT_EXCEEDED` (retry 42,980 s → 00:00 UTC, 08:00 PHT).
-  A session cron (`d040f54d`, 20:07 EDT) runs the apply only if this session is still open.
+  A session cron (`d33adeb7` since the third wave, 20:07 EDT) runs the apply only if this session is still open.
 - *"run this for me please - scripts/backfill-pab-forgive-no-hours.mts --apply"*: ran 13:41Z, 19 of 19,
   G4 re-read null, a dry run afterwards reports CONVERGED. The PAB row's only blocker is gone, so it
   closes, `dateBasis: 'external'`, 2026-10-09 (the pass 42b precedent: dated the day it became provable).
@@ -2856,3 +2856,15 @@ one Backlog move.** `selfcheck` PASS. Still open: Tickets emails (S30), HSL sche
 Deploy), and the two not-started rows.
 The scoreboard commits Kane pushed on 10-09 (`49006919..c7659cea`, items 424 and 430) are NOT in pass 44.
 They are the next pass.
+
+#### Third wave, 2026-10-09 — the V1 close-out (item 431)
+
+Kane: *"We are packaging HRIS for monday ... we can mark this v1 as done"*. The 10 commits pushed that
+morning (`49006919..c7659cea`) join pass 44 as 5 rows / 30 SP, all Done in Sprint 30:
+- **Keys (8):** on measured use, with 23 keys and 56 seats in production. Its migration passes `--verify`.
+- **Scheduled Posts (8):** its migration passes `--verify`, with the 24 hourly crons in `vercel.json`.
+- **History (8), the database signal (3) and the wordmark (3).**
+
+The last four close on his V1 word. **Final shape: 53 rows / 236 SP, all Done: 23 created, 30 corrected,
+plus the HSL Backlog move.** `selfcheck` PASS. The session cron was replaced to match, and it ends with
+`export-board-csv.mts --board`, the board-true V1 CSV (see `hris-v1-closeout.md`).

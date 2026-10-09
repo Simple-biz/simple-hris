@@ -2462,4 +2462,15 @@ export const PLAN_TASKS: PlanTask[] = [
   // (item 411 notes) and the board-sync commits b45174dd / 439cb38c / 3cabe5a2.
   { epic: 'HRIS-24', name: 'The hires sync shows what it has pulled - a Synced data list, and an In database tag beside Synced and Manual', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-06', name: 'Everyone rearranges their own Accounting Scoreboard task list within a card, and an Admin can rearrange anyone', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'Medium' },
+  // —── PASS 44, third wave · 2026-10-09 · the commits Kane pushed that morning, 5 rows, 30 SP, Sprint 30 ──
+  // Kane: "We are packaging HRIS ... we can mark this v1 as done". 49006919..c7659cea, 10 commits, all
+  // authored 2026-10-09 (inside S30's Sep 29-Oct 9), all on origin/main. Clustered by FILE OVERLAP: the
+  // Keys row folds in its polish (b0bf728b, 5cfffc77, 6f61f788) and 006abe91 (its measured status note);
+  // the History row folds in 78d92c05 (the impeccable waiver for HistoryPanel's table row). The database
+  // signal, the wordmark and Scheduled Posts each carry their own files, so each is its own row.
+  { epic: 'HRIS-06', name: 'Accounting Scoreboard Setup has Keys - which paid platforms each person holds a seat on, cached, and paged ten people at a time', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-06', name: 'The Accounting Scoreboard header uses the Simple wordmark in place of the trophy tile', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Low' },
+  { epic: 'HRIS-06', name: 'The Accounting Scoreboard Overview shows a database signal - three bars and the round trip in ms', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Accounting Scoreboard History tab - every week as a bar per KPI card, with three highlights and notes', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'Medium' },
+  { epic: 'HRIS-06', name: 'Accounting Scoreboard Setup has Scheduled Posts - the Chat posts become rows an Admin edits, pauses and adds, and the cron reads them every hour', type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
 ];
