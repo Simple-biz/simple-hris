@@ -910,15 +910,57 @@
  *   • The interns cap (417) was applied 9/9 in production before the push.
  * Two rows close on that measured use (the pass 42b precedent). The rest are Pending Deploy, because
  * Kane has given no word that he has seen them live.
+ *
+ * PASS 43 WAS NEVER WRITTEN. The 2026-10-09 morning probe (one boardGroups call) read
+ * DAILY_LIMIT_EXCEEDED at 11:41:39Z, retry_in_seconds 44300 -> 00:00 UTC, so the budget was spent by an
+ * unknown consumer before any pass ran that UTC day. Its rows are carried into pass 44 below.
+ *
+ * ── PASS 44 · 2026-10-09 — Kane closes the withheld SP ──────────────────────────────────────────────
+ * Kane: "Update our Monday board close everything that are closed already from withheld SP". The three
+ * waiting rooms: the pending ledger owes 0 (70 entries, 0 unflushed); pass 43 is staged and unwritten;
+ * and 13 commits after b7cfe890 have no row. Plus the board itself: 35 open plan rows, 30 of them
+ * Pending Deploy from passes 41-42. After a fetch on 2026-10-09, local main == origin/main == f0eac591,
+ * so every sha below is pushed (b7cfe890 and b2f79853 were pushed 2026-10-08 20:01Z).
+ *
+ * WHAT CLOSES, on Kane's word (the 2026-10-02 and 2026-10-08 precedents: his close covers every pushed
+ * row with no open external step, never a row whose step is measured open):
+ *   • pass 43's 14 Done rows, unchanged (Kane closed them 2026-10-08, or measured production use).
+ *   • pass 43's hires placement row, RE-DERIVED: ed616a87's "A" rule was replaced by e50cb9f4 (item 423,
+ *     "(b) Only the week on screen") the same evening, so the row now describes the current rule, adds
+ *     e50cb9f4 and cd27f41a, and goes 3 -> 5 SP. It never reached the board, so nothing is orphaned.
+ *   • item 421's card row, In Progress -> Done: both shas are pushed, and the one doubt its row named
+ *     ("Google does not document cards on incoming webhooks") is MEASURED settled. audit_log reads
+ *     tasks_progress_posted with card=true at 2026-10-08 19:12Z and 19:41Z, so Google answered 2xx WITH
+ *     the card twice. Both were Kane's clicks from code not yet pushed, so this is not production use.
+ *   • 28 pass 41-42 Pending Deploy rows with no open step.
+ *   • 2 new rows from the 13 commits: bf7d7eb9 (the Synced data list) and d358a4ca (item 422).
+ * WHAT STAYS, re-measured read-only 2026-10-09 ~11:45Z:
+ *   • Tickets emails: webhooks.config (updated 2026-10-05 18:21Z) has ticket_replied and ticket_moved
+ *     active=false with an EMPTY url, so neither email is sent.
+ *   • HSL scheduling: employee_schedule_periods present (a PGRST205 negative control), 0 rows. Nobody has
+ *     saved a period, the row's standing rule since item 342. The 10-08 call put HSL scheduling in V2
+ *     (item 427), which changes no status: the code shipped, and the row waits on its first save.
+ *   • Send to OMS: OMS_* in Vercel production is UNVERIFIED (no Vercel CLI). The one send in audit_log
+ *     (2026-10-07 15:38Z, wizard.orphanage_oms_returned, Kane) cannot say which build sent it.
+ *   • PAB forgiveness: the backfill dry run still plans the same 19 rows.
+ *   • Not started: the legacy rates-sheet spike (S30) and the bare hsl overrides (BL), Kane's calls.
+ *   • b2f79853 (item 408, the Projects Portfolio refresh) gets no row yet: item 340's hardening hard stop
+ *     waits on Kane's (a) doc stands / (b) doc stale, and the script has never run.
+ *   • d1c25a5e (the 10-08 Carla meeting record, items 424-428) landed at 11:51Z on 10-09, after the fetch.
+ *     It is docs only, a record of asks with nothing built, and it is local (main 1 ahead), so no row.
+ * Measured beside, not blocking: bank_update_history has 0 rows with a safety attestation, so payout
+ * change safety closes on Kane's word alone; no hires sync is audited since e50cb9f4 (the last three, 10-08
+ * 18:24Z-18:59Z, ran the old rule).
+ * Shape: 46 rows, all Done, all Sprint 30: 18 created, 28 existing corrected.
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
 import type { TaskStatus } from './monday.mts';
 import { planSpProblems, taskSpProblems } from './sp-scale.mts';
 
-export const PASS_DATE = '2026-10-08';
-export const AUDIT_RANGE = '27e69bca..b7cfe890';
-export const AUDIT_COMMITS = 38;
+export const PASS_DATE = '2026-10-09';
+export const AUDIT_RANGE = '27e69bca..f0eac591';
+export const AUDIT_COMMITS = 51;
 
 /** The standing proof state of every Pending Deploy row in passes 36-38 — pushed is not deployed. */
 const ON_MAIN =
@@ -982,6 +1024,16 @@ const KANE_CLOSE_1008 =
   'deploys are already done". Every sha is on origin/main (81040a76 after a fetch), no external step is ' +
   'open, and the Completed Date is the last sha\'s commit date.';
 const closed43 = (what: string) => `${KANE_CLOSE_1008} ${what}`;
+/**
+ * Kane's word on the withheld SP, 2026-10-09 (session 85af82ec). It closes every pushed row with no open
+ * external step. It does NOT close the four rows whose step was re-measured open the same morning (the
+ * honesty gate: an assertion cannot import a workflow, run a backfill or set an env var).
+ */
+const KANE_CLOSE_1009 =
+  'DONE ON KANE\'S WORD. Kane, 2026-10-09: "Update our Monday board close everything that are closed ' +
+  'already from withheld SP". Every sha is on origin/main (local == origin == f0eac591 after a fetch on ' +
+  '2026-10-09), no external step is open, and the Completed Date is the last sha\'s commit date.';
+const closed44 = (what: string) => `${KANE_CLOSE_1009} ${what}`;
 /** Measured production use closes a row without Kane's word (the pass 42b precedent). */
 const inUse = (what: string) =>
   `DONE ON MEASURED PRODUCTION USE (the pass 42b precedent). Every sha is on origin/main, no external ` +
@@ -1016,7 +1068,7 @@ export interface PassRow {
 }
 
 export const ROWS: PassRow[] = [
-  // —── PASS 43 · 2026-10-08 · 16 new rows / 73 SP, Sprint 30: 2 Done · 13 Pending Deploy · 1 In Progress ─
+  // —── PASS 43, carried into pass 44 · 2026-10-08 · 14 rows, Sprint 30, all Done (Kane 10-08, or use) ─
   {
     name: 'The Accounting Scoreboard has its own roles - Admin, Assistant and Team member, granted in Setup - and HRIS accounting alone no longer manages it',
     status: 'Done',
@@ -1074,24 +1126,11 @@ export const ROWS: PassRow[] = [
     basis: closed43("Item 414. GET /tasks?stream=1 streams a line as each read answers. No migration. Owed: one signed-in Tasks load through Vercel, since the stream has not been proven through Vercel's edge (the board's and NPD's streams are the precedent)."),
   },
   {
-    name: 'The Accounting Scoreboard Chat post carries a card of progress bars that go red, orange and green as the goal nears, through one Chat sender',
-    status: 'In Progress',
-    shas: ['4884086a', 'b7cfe890'],
-    basis: ip43('Item 421. Both the scheduled post and the click now send through chat-webhook.ts, which falls back to text alone once on a 400. A post with card: true is in the audit log at 19:12Z, sent from the unpushed code, so it was a local test post and not production use.'),
-  },
-  {
     name: 'The New Hire Checklist polls the hiring database and places each hire as Synced - interview dates read in US Eastern, a dropped connection retried',
     status: 'Done',
     completed: '2026-10-08',
     shas: ['7dc7500d', 'f6a1c2b0', 'fefe84fc'],
     basis: closed43('Item 411. It polls public.hires every 30 s while the tab is open and broadcasts to the week room, with no cron. f6a1c2b0 reads the interview date in US Eastern, not Manila. fefe84fc retries a dropped connection instead of failing the pass. Its migration is MEASURED applied (--verify 2026-10-08, all checks passed). The HRIS_HIRES_* env in Vercel production is UNVERIFIED: there is no Vercel CLI here, and local dev writes the same database, so a synced row cannot say which build wrote it. Its one open step was the HRIS_HIRES_* env in Vercel production: Kane set it and redeployed at about 19:38Z ("redeployed"). No production sync is in audit_log yet, because a poll that changes nothing writes no audit row, so this closes on his word and his action, not on a measured sync.'),
-  },
-  {
-    name: 'A hire the sync cannot place joins this week or the next open week, and a manual New Hire add stays permanent beside the sync',
-    status: 'Done',
-    completed: '2026-10-08',
-    shas: ['ed616a87', '81040a76'],
-    basis: closed43('Item 411, Kane\'s ruling "A": a hire with no date, a past date or a locked week goes to this week or the next open week. 81040a76 pins, with a test, that a manual add is never touched by the sync. It rides on the sync row above, so it carries the same env blocker. Its one open step was the HRIS_HIRES_* env in Vercel production: Kane set it and redeployed at about 19:38Z ("redeployed"). No production sync is in audit_log yet, because a poll that changes nothing writes no audit row, so this closes on his word and his action, not on a measured sync.'),
   },
   {
     name: 'Payment Dispatch never shows a paid person as Pending when the paid-list read fails - a failed read is an error, never nobody is paid',
@@ -1127,6 +1166,233 @@ export const ROWS: PassRow[] = [
     completed: '2026-10-08',
     shas: ['c87a6703'],
     basis: closed43('Item 420. No migration and no env var. It still alerts nobody while the page is closed: an alert is a new cron or notification, which needs Kane\'s pick, and is not in this row.'),
+  },
+  // —── PASS 44 · 2026-10-09 · Kane closes the withheld SP ─────────────────────────────────────────
+  // Pass 43's two changed rows, then this pass's two new rows (created), then the 28 pass 41-42
+  // Pending Deploy rows already on the board (corrected). All Done, all Sprint 30.
+  {
+    name: 'The Accounting Scoreboard Chat post carries a card of progress bars that go red, orange and green as the goal nears, through one Chat sender',
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['4884086a', 'b7cfe890'],
+    basis: closed44(`Item 421. Both the scheduled post and the click send through chat-webhook.ts, which falls back to text alone once on a 400. The doubt this row named, that Google does not document cards on incoming webhooks, is MEASURED settled: audit_log reads tasks_progress_posted with card=true at 2026-10-08 19:12Z and 19:41Z, so Google answered 2xx with the card twice. Both were Kane's clicks from code not yet pushed, so they prove Google, not production. Both shas were pushed 2026-10-08 20:01Z. The first scheduled post from the pushed code is the 2026-10-09 15:00 ET slot.`),
+  },
+  {
+    name: 'The hires sync writes only the week on the selector and holds a hire it cannot place for HR to add, the New Hire button moves to the top, and its interview date opens on that week',
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['ed616a87', '81040a76', 'cd27f41a', 'e50cb9f4'],
+    basis: closed44(`Items 411 and 423. Re-derived before it reached the board: ed616a87 was Kane's "A" rule (a hire with no usable week joins this week or the next open week), and e50cb9f4 replaced it with Kane's "(b) Only the week on screen". A hire with no interview date, a past week or a locked week is held under Not placed for HR's one-click Add and never auto-added, and a test sweep (every date x selected week x lock state) proves nothing is placed outside the selected week. 81040a76 pins that the sync never touches a manual add, cd27f41a moves the one New Hire button to the top of the toolbar, and the modal's Date of interview opens on the selected week's interview week. No migration. HRIS_HIRES_* was set in Vercel production 2026-10-08 ~19:38Z. No production sync is audited since e50cb9f4.`),
+  },
+  {
+    name: 'The hires sync shows what it has pulled - a Synced data list, and an In database tag beside Synced and Manual',
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['bf7d7eb9'],
+    basis: closed44(`Item 411, Kane: "I want to know the data that has been synced already" (34 of 35 database hires had been matched to rows HR typed, so the grid showed them as Manual). The strip gains Synced data (N), read on demand and never on the 30 s poll. The Received column tags Synced, In database or Manual; the tag is information only and fails open to no tag. No migration.`),
+  },
+  {
+    name: 'Everyone rearranges their own Accounting Scoreboard task list within a card, and an Admin can rearrange anyone',
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['d358a4ca'],
+    basis: closed44(`Item 422, Aliviah via Kane: "each user could rearrange their task list". It was Admin-only, a CHOSEN default from the round 4 plan. Drag or keyboard, within one frequency card. POST /api/accounting-scoreboard/tasks/order is the whole card or nothing: 409 stale, 422 mixed, 403 for anyone but the owner or an Admin. Adding, renaming, changing how often and removing stay Admin-only. No migration; an order is not audited by design.`),
+  },
+  {
+    name: "Accounting can suspend a member's MESA contribution from an effective date without opting out, and every MESA Action column is the same buttons",
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['1f0a7350', '972edc8d'],
+    basis: closed44(`Item 360. Its migration was MEASURED applied 2026-10-07, with suspensions already in production.`),
+  },
+  {
+    name: 'MESA saving but not deducted no longer counts opted-out members - saving needs an open account',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['55999aa5'],
+    basis: closed44(`Item 361. No migration.`),
+  },
+  {
+    name: 'The whole People tab paints from the cache - roster and summary as one entry, the week list, Statistics and Bank changes',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['8186145a'],
+    basis: closed44(`Item 362. No migration.`),
+  },
+  {
+    name: "HRIS vs NPD Export CSV - every row whatever the search or chip, with the person's paystub as Notes on a Mismatch or Not in NPD row",
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['921ddfcd', 'ae229888'],
+    basis: closed44(`Items 366 and 370. No migration.`),
+  },
+  {
+    name: 'HRIS vs NPD leaves out anyone configured not to be paid this week - excluded or paused are not rows, and one line counts them',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['9129b1d0', '7dbd82a3', '089357f9'],
+    basis: closed44(`Items 339 and 367. 089357f9 is the rule after Kane's answer, and the row describes it only. No migration.`),
+  },
+  {
+    name: 'HRIS vs NPD says why under every Mismatch, Not in HRIS and Not in NPD row, and Export CSV gains a Why column',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['fcd609ec'],
+    basis: closed44(`Item 371. Questions (a) and (b) on the NPD columns stay open with Kane, beside this row and not in it.`),
+  },
+  {
+    name: 'My Team cold load paints the frame and skeletons only the data - rail entries, counts and roster rows',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['a2a9ad07'],
+    basis: closed44(`Item 369. No migration.`),
+  },
+  {
+    name: 'An opened paystub in Dispatch Preview Emails has a Refresh - a background re-read of every outside source, with a strip naming the lines that moved',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['fbe841ba'],
+    basis: closed44(`Item 377. The loader gaps are item 378, open on their own and not in this row.`),
+  },
+  {
+    name: 'Accounting Scoreboard round 3 scoring - Buckets 10xC/(C+O), Payment Verified, PM No Meeting Streak, Chargebacks Open Disputes and Outcomes',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['66f40a60'],
+    basis: closed44(`Item 379. Its round 3 migration was MEASURED applied 2026-10-07.`),
+  },
+  {
+    name: 'Accounting Scoreboard typed Payroll Problems log, and custom sections on top of Setup',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['66f40a60'],
+    basis: closed44(`Item 379, the two new logs. Same migration, MEASURED applied 2026-10-07.`),
+  },
+  {
+    name: 'The Accounting Scoreboard paints from the browser cache - no loader on reload, no wait on a cached week, silent refreshes',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['2c7739e8'],
+    basis: closed44(`Item 380. No migration.`),
+  },
+  {
+    name: 'The Accounting Scoreboard loading modal is accurate - the GET streams each group of reads, and the bar is green only once the board is painted',
+    status: 'Done',
+    completed: '2026-10-06',
+    shas: ['05b48730'],
+    basis: closed44(`Item 381. No migration.`),
+  },
+  {
+    name: "HRIS vs NPD reads NPD's locked sheets itself once both All Departments and HSL are locked, and Save output proves the feed against them",
+    status: 'Done',
+    completed: '2026-10-02',
+    shas: ['9d6225b6'],
+    basis: closed44(`Item 337. A read-only npd-feed route. No migration.`),
+  },
+  {
+    name: 'An Accounting Scoreboard custom section can sit inside a built-in tab, and the onboarding section becomes Sales - Payments',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['72f96e70'],
+    basis: closed44(`Item 385. Its migration was MEASURED applied 2026-10-08.`),
+  },
+  {
+    name: 'Every Accounting Scoreboard section can take a goal - Open Disputes is scored like Buckets, Outcomes on a win ratio, and a payroll problem line may be 0',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['0b8748f6', '34b937a2'],
+    basis: closed44(`Item 387, with 34b937a2 (item 399) folded in by file overlap. Its migration was MEASURED applied 2026-10-08.`),
+  },
+  {
+    name: "Carla's Team Score on the Accounting Scoreboard Overview, on the same pace as the lights",
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['fb080059'],
+    basis: closed44(`Item 388, the Team Score only. The spec's nine card edits wait on Carla and are not in this row.`),
+  },
+  {
+    name: 'An Accounting Scoreboard section can be hidden from the Overview and the Team Score',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['476b6b9f'],
+    basis: closed44(`Item 391 (2). Its migration was MEASURED applied 2026-10-08.`),
+  },
+  {
+    name: "The Accounting Scoreboard No Meeting Streak shows as this week's date pills",
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['f770d29b'],
+    basis: closed44(`Item 391 (3). No migration.`),
+  },
+  {
+    name: 'Accounting Scoreboard Losses and Pre-arb show negative with a Net, set by a flag and never a typed sign, and Pre-arb counts as a loss in the win ratio',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['63500994', 'c88c554c'],
+    basis: closed44(`Item 392, Kane's ruling that Pre-arb is a loss. The Pre-arb flag migration was MEASURED applied 2026-10-08.`),
+  },
+  {
+    name: 'Payout change safety on both self-service bank saves - a notice to acknowledge, and card and holder checks that ask to confirm and never block',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['eb9a0005'],
+    basis: closed44(`Item 401. The safety column was MEASURED applied 2026-10-08, and the docs record it pushed and deployed that day. bank_update_history holds 0 attestation rows (re-read 2026-10-09), so nobody has saved through it yet: this closes on Kane's word, not on use.`),
+  },
+  {
+    name: 'Self-service bank saves fail closed on an unreadable payroll lock, and the code check answers the same for every email',
+    status: 'Done',
+    completed: '2026-10-08',
+    shas: ['27e69bca'],
+    basis: closed44(`Item 402, two of the four gaps item 266 found. Gap #4 stays open on item 266, not in this row.`),
+  },
+  {
+    name: 'Time adjustment requests filed under an alternate work email resolve to their owner',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['c073e076'],
+    basis: closed44(`Item 390. The pay overlay for such requests is NOT bridged, an open money item beside this row and not in it.`),
+  },
+  {
+    name: "A returned offboarding queue row notifies the requester and the department's managers",
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['3e5f960e'],
+    basis: closed44(`Item 397. Never the returner or the subject.`),
+  },
+  {
+    name: 'The interns lock-in popup says it locks one week, split per intern',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['134ce6b9'],
+    basis: closed44(`Item 396, the label and the capped-hours measurement. The share mode and the 'next time' cap stay open with Ralph and Kane, beside this row.`),
+  },
+  {
+    name: "COP rates are stored as COP - the Colombians' hourly rates convert at each cycle's FX and still pay on their processor rails",
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['14ea111a'],
+    basis: closed44(`Item 373, Kane's reading (a). Its data step was MEASURED applied 2026-10-08. Item 407's finding (the --apply ran about 3.5 minutes after the commit, likely before the deploy), item 428 (one payee's peso equivalent and an NPD vs HRIS gap of about $2, from the 10-08 call) and the 09-27 NPD confirmation stay open as money notes beside this row, not in it.`),
+  },
+  {
+    name: 'The Oct 7 Carla and Alivia call becomes a 13-task round 4 plan in four waves, with one paste-ready session prompt per task',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['cf2b5ff5', '9118312f', '7ae4536c', '9e4eee8e'],
+    basis: closed44(`Docs only: the meeting doc, the round 4 implementation plan, a session prompt per task, and Kane's rulings on the Oct 7 asks.`),
+  },
+  {
+    name: 'The meeting-notes skill is ported from Gridline - a call writes its notes, its INDEX links and an Open items row for every ask',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['cf2b5ff5'],
+    basis: closed44(`The skill and CLAUDE.md half of cf2b5ff5. The meeting doc in the same commit is the round 4 plan row.`),
+  },
+  {
+    name: 'Security review - API keys on phones, certificate pinning and deep links, answered from the code and a production probe',
+    status: 'Done',
+    completed: '2026-10-02',
+    shas: ['e88315ac'],
+    basis: closed44(`Item 336. Docs only. Its findings live in the repo report, and item 405 (the report on a public repo) is open on its own.`),
   },
 ];
 

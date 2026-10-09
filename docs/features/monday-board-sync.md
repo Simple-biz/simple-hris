@@ -2787,3 +2787,51 @@ re-reads the row after writing. Total SP and SP Completed come from EPIC SP and 
 does not move them: the visible change is the Sprint Tasks relation. Epic Linked Tasks stay a full-reconcile
 debt. Cost: about 12 reads + 1 write + 1 re-read. Order after the reset: the pass's `--only-new` apply first,
 then this script, both on the same day.
+
+### Pass 44 — 2026-10-09 — Kane closes the withheld SP (STAGED, budget dead until 00:00 UTC)
+
+Kane: *"Update our Monday board close everything that are closed already from withheld SP"*. Session
+`85af82ec`. The morning probe (one `boardGroups` call) read `DAILY_LIMIT_EXCEEDED` at 11:41:39Z,
+`retry_in_seconds` 44300 → 00:00 UTC, so nothing was read from or written to the board. **Pass 43 was
+never written** either; it is carried in.
+
+**The three waiting rooms:** the ledger owes 0 (70 entries, 0 unflushed); pass 43 is staged and unwritten;
+13 commits after `b7cfe890` have no row. **The board:** 35 open plan rows, 30 of them Pending Deploy from
+passes 41–42. After a fetch, local `main` == `origin/main` == `f0eac591`, so every sha is pushed.
+
+**What closes (Kane's word, the 10-02 and 10-08 precedents: every pushed row with no open external step):**
+
+| Rows | SP | Basis |
+|---|---|---|
+| Pass 43's 14 Done rows, unchanged | 67 | Kane 10-08, or measured production use |
+| Hires placement row, **re-derived** | 5 | `ed616a87`'s "A" rule was replaced by `e50cb9f4` (item 423, "(b) Only the week on screen") that evening. The row now describes the current rule, folds in `e50cb9f4` + `cd27f41a` (file overlap on the manual-add wiring test), and goes 3 → 5. It never reached the board, so nothing is orphaned |
+| Item 421 card row, In Progress → Done | 3 | Pushed 10-08 20:01Z. Its one doubt is MEASURED settled: `card=true` in `audit_log` at 19:12Z and 19:41Z, so Google took the card twice (Kane's clicks, pre-push code: proves Google, not prod) |
+| 2 new rows: Synced data list (`bf7d7eb9`), rearrange your own tasks (`d358a4ca`, item 422) | 8 | Kane 10-09 |
+| 28 pass 41–42 Pending Deploy rows | 113 | Kane 10-09 |
+
+**Shape: 46 rows / 196 SP, all Done, all Sprint 30: 18 created (83 SP), 28 corrected (113 SP).**
+`selfcheck` PASS.
+
+**What stays, re-measured read-only 2026-10-09 ~11:45Z:**
+
+| Row | Measured |
+|---|---|
+| Tickets emails (5) | `webhooks.config` (saved 10-05 18:21Z): `ticket_replied` and `ticket_moved` `active=false`, url EMPTY |
+| HSL scheduling (5) | `employee_schedule_periods` present (PGRST205 negative control), **0 rows**. Moved to V2 on the 10-08 call (item 427); no status change |
+| Send to OMS (5) | `OMS_*` in Vercel production UNVERIFIED. The one send (10-07 15:38Z, Kane) cannot say which build sent it |
+| PAB forgiveness (5) | Backfill dry run still plans the same 19 rows |
+| Legacy rates-sheet spike (2), bare `hsl` overrides (2, BL) | Not started; Kane's calls |
+
+**No row:** `b2f79853` (item 408 Portfolio refresh) waits on item 340's hardening hard stop, and has never
+run. Do **not** run `tmp-portfolio-rollup.mts` until Kane rules. `d1c25a5e` (10-08 meeting record, docs
+only) landed after the fetch and is local. Status notes and board-sync commits as named in `hris-plan.ts`.
+
+**Measured beside, not blocking:** 0 `bank_update_history` rows carry a safety attestation, so payout
+change safety closes on Kane's word alone. No hires sync is audited since `e50cb9f4`.
+
+**Owed after 00:00 UTC (20:00 EDT):** `review.mts`. It must show **18 created, 28 corrections, all Done,
+nothing re-filed, 0 epics**. Kane's close plus that shape is the approval (the pass 40 precedent), so then
+run `apply.mts --apply --only-new --approve <hash>` (~140 calls), then a 2-call `getItemsByIds` read-back
+(25 ids per call). A proposal of any other shape needs Kane's approval of its hash. If more commits land
+first, re-derive. A session cron does not survive its session (pass 40), so a person has to start the
+apply.
