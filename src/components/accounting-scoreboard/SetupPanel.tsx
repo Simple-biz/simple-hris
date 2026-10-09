@@ -45,6 +45,7 @@ import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BoardPayload, BoardRow, RoleGrant, RosterPerson } from '@/lib/accounting-scoreboard/types';
 import { ROLE_LABEL, can, type BoardRole, type GrantRole } from '@/lib/accounting-scoreboard/roles';
 import { api, EASE_SETTLE, EASE_TAB, handle, SlidingPill, TINY_CAPS } from './shared';
+import { KeysArea } from './KeysArea';
 
 interface Props {
   board: BoardPayload;
@@ -60,8 +61,11 @@ const AREAS = [
   ['sections', 'Sections'],
   ['types', 'Problem types'],
   ['members', 'Members'],
+  ['keys', 'Keys'],
   ['access', 'Access'],
 ] as const;
+/** Admin-only areas, hidden from an Assistant (who sees the rest of Setup read-only). */
+const ADMIN_AREAS: Partial<Record<Area, 'manage_roles' | 'manage_keys'>> = { access: 'manage_roles', keys: 'manage_keys' };
 type Area = (typeof AREAS)[number][0];
 
 const AREA_VARIANTS = {
@@ -73,7 +77,10 @@ const AREA_VARIANTS = {
 export function SetupPanel({ board, sections, role, onChanged }: Props) {
   const reduce = useReducedMotion() ?? false;
   const canEdit = can(role, 'edit_setup');
-  const areas = AREAS.filter(([k]) => k !== 'access' || can(role, 'manage_roles'));
+  const areas = AREAS.filter(([k]) => {
+    const needs = ADMIN_AREAS[k];
+    return !needs || can(role, needs);
+  });
   const [area, setArea] = useState<Area>('rows');
   const [dir, setDir] = useState(1);
   const go = (next: Area) => {
@@ -125,6 +132,7 @@ export function SetupPanel({ board, sections, role, onChanged }: Props) {
               {area === 'types' ? <ProblemTypesArea board={board} onChanged={onChanged} /> : null}
               {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
             </fieldset>
+            {area === 'keys' && can(role, 'manage_keys') ? <KeysArea /> : null}
             {area === 'access' && can(role, 'manage_roles') ? <AccessArea viewerEmail={board.viewer.email} /> : null}
           </motion.div>
         </AnimatePresence>
@@ -1260,7 +1268,7 @@ const ROLE_OPTIONS: { value: GrantRole; label: string }[] = [
 
 /** Carla's three roles, in her words (2026-10-07). */
 const ROLE_SUMMARY: Array<[BoardRole, string]> = [
-  ['admin', 'Everything: Setup, deleting or unchecking anyone’s line, and Access.'],
+  ['admin', 'Everything: Setup, deleting or unchecking anyone’s line, Keys and Access.'],
   ['assistant', 'Sees Setup without changing it. Types and logs like a Team member.'],
   ['member', 'Anyone on a person row or the member list. Types and logs; never Setup.'],
 ];

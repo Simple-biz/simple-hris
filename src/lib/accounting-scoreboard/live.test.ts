@@ -207,6 +207,7 @@ const WRITERS: Record<string, string> = {
 /** Routes under the board's API that change nothing the board GET reads. Each needs its reason. */
 const NOT_THE_BOARD: Record<string, string> = {
   'tasks/': 'the task boards are their own read (GET /tasks, plan Task 7), not the board payload',
+  'keys/': 'Setup → Keys is its own Admin-only read (GET /keys, item 424), not the board payload',
 };
 
 function routeFiles(dir: string, base = ''): string[] {

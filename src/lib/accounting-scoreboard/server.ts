@@ -64,13 +64,17 @@ import type {
   BoardPayload,
   BoardRow,
   BoardTask,
+  KeySeat,
+  KeysPayload,
   ProblemType,
   RoleGrant,
   RosterPerson,
+  ScoreboardKey,
   TaskCheck,
   TaskPerson,
   TasksPayload,
 } from './types';
+import { canArchiveKey } from './keys';
 import {
   FREQUENCY_LABEL,
   changeFrequencyInOrder,
@@ -204,6 +208,7 @@ const REFUSED: Record<BoardAction, string> = {
   lock_week: 'Only an Admin can lock a week.',
   reopen_week: 'Only an Admin can reopen a week.',
   manage_roles: 'Only an Admin can grant or revoke a role.',
+  manage_keys: 'Only an Admin can see or change Keys.',
 };
 
 /**
@@ -1721,4 +1726,141 @@ export async function postTaskProgress(
     details: { message, progress, card: sent.withCard },
   });
   return { ok: true, value: { message, postedAt, withCard: sent.withCard } };
+}
+
+// ---------------------------------------------------------------------------
+// Keys (Open item 424): the paid platforms (QBO, Stripe...) each person holds a seat on, so taking someone off the team
+// shows every seat still to remove. Setup → Keys, Admins only, reading too (manage_keys). Not part of the board read.
+// A key is archived and a seat is removed: both are stamps, nothing is deleted (item 410). A key is archived only
+// once nobody holds a seat on it (the table's trigger refuses it too, under the same per-key lock a new seat takes).
+// Seats are given only to people on the board (listTaskPeople). Governing doc: docs/features/accounting-scoreboard-keys.md.
+// ---------------------------------------------------------------------------
+
+const KEYS = 'accounting_scoreboard_keys';
+const KEY_SEATS = 'accounting_scoreboard_key_seats';
+const KEY_COLS = 'id, label, created_by, created_at, archived_at';
+const SEAT_COLS = 'id, key_id, email, given_by, given_at, removed_by, removed_at';
+
+type KeyRecord = { id: string; label: string; created_by: string; created_at: string; archived_at: string | null };
+type SeatRecord = {
+  id: string;
+  key_id: string;
+  email: string;
+  given_by: string;
+  given_at: string;
+  removed_by: string | null;
+  removed_at: string | null;
+};
+
+function mapKey(r: KeyRecord): ScoreboardKey {
+  return { id: r.id, label: r.label, createdBy: r.created_by, createdAt: r.created_at, archived: r.archived_at !== null };
+}
+
+function mapSeat(r: SeatRecord): KeySeat {
+  return {
+    id: r.id,
+    keyId: r.key_id,
+    email: r.email,
+    givenBy: r.given_by,
+    givenAt: r.given_at,
+    removedBy: r.removed_by,
+    removedAt: r.removed_at,
+  };
+}
+
+/** Every key (archived ones too, so a removed seat still names its platform), every seat, and the board's people. */
+export async function readKeys(viewer: Viewer): Promise<Result<KeysPayload>> {
+  const [keys, seats, people] = await Promise.all([
+    selectAllPaged<KeyRecord>((from, to) => client().from(KEYS).select(KEY_COLS).order('id').range(from, to)),
+    selectAllPaged<SeatRecord>((from, to) => client().from(KEY_SEATS).select(SEAT_COLS).order('id').range(from, to)),
+    listTaskPeople(),
+  ]);
+  if (keys.error) return dbFailure({ message: keys.error }, 'Could not read the keys');
+  if (seats.error) return dbFailure({ message: seats.error }, 'Could not read the seats');
+  if (!people.ok) return people;
+  return {
+    ok: true,
+    value: {
+      viewer: { email: viewer.email, role: viewer.role },
+      keys: keys.rows.map(mapKey),
+      seats: seats.rows.map(mapSeat),
+      people: people.value,
+    },
+  };
+}
+
+async function readLiveKey(id: string): Promise<Result<ScoreboardKey>> {
+  const { data, error } = await client().from(KEYS).select(KEY_COLS).eq('id', id).maybeSingle();
+  if (error) return dbFailure(error, 'Could not read the key');
+  const rec = data as KeyRecord | null;
+  if (!rec) return fail(404, 'not_found', 'That key does not exist.');
+  if (rec.archived_at) return fail(409, 'key_archived', `${rec.label} has been archived. Refresh to see the live keys.`);
+  return { ok: true, value: mapKey(rec) };
+}
+
+export async function createKey(viewer: Viewer, label: string): Promise<Result<ScoreboardKey>> {
+  const { data, error } = await client().from(KEYS).insert({ label, created_by: viewer.email }).select(KEY_COLS).single();
+  if (error?.code === '23505') return fail(409, 'key_exists', `There is already a key named ${label}.`);
+  if (error) return dbFailure(error, 'Could not add the key');
+  return { ok: true, value: mapKey(data as KeyRecord) };
+}
+
+export async function archiveKey(viewer: Viewer, id: string): Promise<Result<{ id: string }>> {
+  const key = await readLiveKey(id);
+  if (!key.ok) return key;
+  const live = await selectAllPaged<{ id: string }>((from, to) =>
+    client().from(KEY_SEATS).select('id').eq('key_id', id).is('removed_at', null).order('id').range(from, to),
+  );
+  if (live.error) return dbFailure({ message: live.error }, 'Could not read the seats');
+  const held = live.rows.length;
+  const stillHeld = fail(
+    409,
+    'key_has_seats',
+    `${held || 'Someone'} ${held === 1 ? 'person still holds' : 'people still hold'} a seat on ${key.value.label}. Remove every seat first.`,
+  );
+  if (!canArchiveKey(held)) return stillHeld;
+  const { data, error } = await client()
+    .from(KEYS)
+    .update({ archived_at: new Date().toISOString(), archived_by: viewer.email })
+    .eq('id', id)
+    .is('archived_at', null)
+    .select('id');
+  // The trigger re-checks under the per-key lock: a seat given in the meantime refuses the archive.
+  if (error?.code === '23514') return stillHeld;
+  if (error) return dbFailure(error, 'Could not archive the key');
+  if (!(data ?? []).length) return fail(409, 'conflict', 'Someone else changed this key just now. Refresh and try again.');
+  return { ok: true, value: { id } };
+}
+
+export async function giveKeySeat(viewer: Viewer, keyId: string, email: string): Promise<Result<KeySeat>> {
+  const [key, people] = await Promise.all([readLiveKey(keyId), listTaskPeople()]);
+  if (!key.ok) return key;
+  if (!people.ok) return people;
+  if (!people.value.some((p) => p.email.trim().toLowerCase() === email)) {
+    return fail(422, 'not_on_board', `${email} is not on the board. Add them under Setup → Members first.`);
+  }
+  const { data, error } = await client()
+    .from(KEY_SEATS)
+    .insert({ key_id: keyId, email, given_by: viewer.email })
+    .select(SEAT_COLS)
+    .single();
+  if (error?.code === '23505') return fail(409, 'already_holds', `${email} already holds a seat on ${key.value.label}.`);
+  if (error?.code === '23514') return fail(409, 'key_archived', `${key.value.label} was archived just now. Refresh to see the live keys.`);
+  if (error) return dbFailure(error, 'Could not give the seat');
+  return { ok: true, value: mapSeat(data as SeatRecord) };
+}
+
+/** The seat was removed on the platform: stamp it (who, when). The row stays as history. */
+export async function removeKeySeat(viewer: Viewer, keyId: string, email: string): Promise<Result<KeySeat>> {
+  const { data, error } = await client()
+    .from(KEY_SEATS)
+    .update({ removed_at: new Date().toISOString(), removed_by: viewer.email })
+    .eq('key_id', keyId)
+    .eq('email', email)
+    .is('removed_at', null)
+    .select(SEAT_COLS);
+  if (error) return dbFailure(error, 'Could not mark the seat removed');
+  const rec = ((data ?? []) as SeatRecord[])[0];
+  if (!rec) return fail(404, 'not_found', `${email} holds no seat on that key. Refresh and try again.`);
+  return { ok: true, value: mapSeat(rec) };
 }

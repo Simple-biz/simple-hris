@@ -42,7 +42,7 @@ every payroll problem, and custom sections.
 | Live refresh: the topic, the re-read signal, the flood-bounded scheduler (§ Live refresh) | `src/lib/accounting-scoreboard/live.ts` (+ `live.test.ts`) · the server's announce `live-server.ts` · the onSnapshot listener `live-client.ts` |
 | Loading modal: lines ↔ reads, the stream, the fail-closed assembler | `src/lib/accounting-scoreboard/load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the dialog `src/components/accounting-scoreboard/ScoreboardLoadDialog.tsx` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
-| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `roles` GET/POST/DELETE (Admins: Setup → Access) · `sections` PATCH · `roster` GET) |
+| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `roles` GET/POST/DELETE (Admins: Setup → Access) · `keys` GET/POST/DELETE and `keys/seats` POST/DELETE (Admins: Setup → Keys, [accounting-scoreboard-keys.md](accounting-scoreboard-keys.md)) · `sections` PATCH · `roster` GET) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
 | UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `ProblemsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
 | Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring with Carla's reference code as the oracle, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
@@ -59,7 +59,7 @@ Admin; not an edit / view / hidden matrix, *"Nah."*). One table decides it: `can
 
 | Role | Who | May |
 |---|---|---|
-| **Admin** | anyone holding HRIS `admin` (the break glass), and anyone with a live **Admin grant** | everything: Setup (rows, section switches and goals, custom sections, problem types, members), **Access** (grant and revoke roles), deleting anyone's collection or problem, unchecking anyone's Payment Verified. Later: the weekly lock (plan Task 5) and adding or removing tasks (Task 7) |
+| **Admin** | anyone holding HRIS `admin` (the break glass), and anyone with a live **Admin grant** | everything: Setup (rows, section switches and goals, custom sections, problem types, members), **Access** (grant and revoke roles), **Keys** (who holds a seat on which paid platform, [accounting-scoreboard-keys.md](accounting-scoreboard-keys.md)), deleting anyone's collection or problem, unchecking anyone's Payment Verified. Later: the weekly lock (plan Task 5) and adding or removing tasks (Task 7) |
 | **Assistant** | a live **Assistant grant** | everything a Team member may, and **sees Setup read-only**: every area except Access, and never the roster picker (it reads every active employee's name). Later: everyone's tasks (Task 7) |
 | **Team member** | anyone else on the list above | types every cell and logs lines, as on the sheet (one person routinely collects numbers for others); deletes or unchecks only their own. **No Setup** |
 
@@ -86,7 +86,8 @@ Admin; not an edit / view / hidden matrix, *"Nah."*). One table decides it: `can
   - `log_lines`: `collections`, `collections/verify` and `problems` (deleting or unchecking someone else's line
     asks `delete_any_line` / `unverify_any` in `server.ts`);
   - `edit_setup`: `rows`, `sections`, `custom-sections`, `problem-types`, `members` and `roster`;
-  - `manage_roles`: `roles`.
+  - `manage_roles`: `roles`;
+  - `manage_keys`: `keys` and `keys/seats` (Admin only, reading too; 2026-10-09, item 424).
 
   A refusal is 403 `not_allowed` and names the role that may. `roles.test.ts` pins that every Setup route asks for
   `edit_setup`, and that nothing on the board reads the old `isManager` flag.

@@ -42,6 +42,8 @@ export const BOARD_ACTIONS = [
   'reopen_week',
   /** Grant and revoke Admin / Assistant. */
   'manage_roles',
+  /** Setup → Keys (Open item 424): see and change who holds a seat on which paid platform. Admin only, reading too. */
+  'manage_keys',
 ] as const;
 export type BoardAction = (typeof BOARD_ACTIONS)[number];
 

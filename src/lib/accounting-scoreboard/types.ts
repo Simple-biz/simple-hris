@@ -103,6 +103,42 @@ export interface RosterPerson {
   workEmail: string;
 }
 
+// ---------------------------------------------------------------------------
+// Keys (Open item 424): GET /api/accounting-scoreboard/keys, Admins only. Not part of the board read.
+// ---------------------------------------------------------------------------
+
+/** One paid platform a person can hold a seat on (accounting_scoreboard_keys). */
+export interface ScoreboardKey {
+  id: string;
+  label: string;
+  createdBy: string;
+  createdAt: string;
+  /** Archived keys are sent so a removed seat still prints its platform's name. */
+  archived: boolean;
+}
+
+/** One seat (accounting_scoreboard_key_seats). Live while `removedAt` is null; a removed seat is history. */
+export interface KeySeat {
+  id: string;
+  keyId: string;
+  email: string;
+  givenBy: string;
+  givenAt: string;
+  removedBy: string | null;
+  removedAt: string | null;
+}
+
+export interface KeysPayload {
+  /** A permission, resolved per request, never cached. */
+  viewer: { email: string; role: BoardRole };
+  /** Every key, live and archived. */
+  keys: ScoreboardKey[];
+  /** Every seat, live and removed. */
+  seats: KeySeat[];
+  /** The board's people (live person rows, Members, role grants): who a seat can be given to. */
+  people: TaskPerson[];
+}
+
 /** Every error body the scoreboard routes return. */
 export interface ApiError {
   error: string;

@@ -53,6 +53,8 @@ test('the permission table (the plan\'s cases, plus unverify_any found in Step 0
     ['admin', 'edit_setup', true], ['admin', 'delete_any_line', true], ['admin', 'unverify_any', true],
     ['admin', 'lock_week', true], ['admin', 'reopen_week', true], ['admin', 'manage_tasks', true],
     ['admin', 'manage_roles', true], ['admin', 'view_setup', true],
+    // Keys (item 424): Admin only, reading too ("It's not for the team").
+    ['member', 'manage_keys', false], ['assistant', 'manage_keys', false], ['admin', 'manage_keys', true],
   ];
   for (const [role, action, expected] of cases) assert.equal(can(role, action), expected, `${role} ${action}`);
 });
@@ -122,6 +124,11 @@ test('every route resolves access through resolveAccess, and setup writes ask fo
   assert.doesNotMatch(roles, /resolveAccess\((?!'manage_roles'\))/, 'the roles route is Admin only');
   const frequency = readFileSync(join(ROOT, 'app', 'api', 'accounting-scoreboard', 'tasks', 'frequency', 'route.ts'), 'utf8');
   assert.doesNotMatch(frequency, /resolveAccess\((?!'manage_tasks'\))/, 'changing how often a task is done is Admin only');
+  for (const name of [join('keys', 'route.ts'), join('keys', 'seats', 'route.ts')]) {
+    const src = readFileSync(join(ROOT, 'app', 'api', 'accounting-scoreboard', name), 'utf8');
+    assert.match(src, /resolveAccess\('manage_keys'\)/, `${name} asks for manage_keys`);
+    assert.doesNotMatch(src, /resolveAccess\((?!'manage_keys'\))/, `${name} is Admin only, reading too`);
+  }
 });
 
 test('the server refuses the last Admin revoke before the database does', () => {
