@@ -20,12 +20,14 @@ import {
   clearCachedRoleGrants,
   clearCachedTasks,
   readCachedBoard,
+  readCachedHistory,
   readCachedKeys,
   readCachedRoleGrants,
   readCachedRoster,
   readCachedTasks,
   scoreboardTabCache,
   writeCachedBoard,
+  writeCachedHistory,
   writeCachedKeys,
   writeCachedRoleGrants,
   writeCachedRoster,
@@ -261,4 +263,22 @@ test('Access grants round-trip, paint only for manage_roles now, and a refusal f
   clearCachedRoleGrants();
   assert.equal(readCachedRoleGrants('admin'), undefined);
   assert.deepEqual(readCachedRoleGrants('admin') ?? [], [], 'nothing cached is a miss, never an empty list painted as real');
+});
+
+test('History: inert until bound, round-trips for its viewer, another viewer purges, a malformed blob is a miss', () => {
+  const HISTORY = {
+    thisWeek: '2026-10-04',
+    firstWeek: '2024-12-29',
+    sectionIds: ['buckets'],
+    weeks: [{ weekStart: '2026-09-27', partial: false, team: { score: 90, light: 'green' as const }, cells: {} }],
+  };
+  writeCachedHistory(HISTORY);
+  bindScoreboardCache('carla@simple.biz');
+  assert.equal(readCachedHistory(), undefined, 'a write before binding is dropped');
+  writeCachedHistory(HISTORY);
+  assert.deepEqual(readCachedHistory(), HISTORY);
+  bindScoreboardCache('someone.else@simple.biz');
+  assert.equal(readCachedHistory(), undefined, 'binding a different viewer purges first');
+  scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.history, { thisWeek: '2026-10-04', sectionIds: [], weeks: 'nope' });
+  assert.equal(readCachedHistory(), undefined, 'fails closed on a malformed blob');
 });

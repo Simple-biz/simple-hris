@@ -162,6 +162,52 @@ export function StopLight({ light, className }: { light: Light; className?: stri
   );
 }
 
+// How a card prints its number, shared by the Overview and the History tab so a week reads the same in both.
+
+/** How a card's number prints: a cycle score or a win ratio as %, a 0–10 score with one decimal, else by its goal. */
+export function headlineFormat(s: BoardSection): (n: number | null) => string {
+  if (s.kind === 'payroll_cycle' || s.kind === 'amount_count') return fmtPct;
+  if (s.score) return fmtScore;
+  return goalFormat(s.goal);
+}
+
+/** A card names its tab where the section's own title would not say it (Chargebacks holds two). */
+export function cardTitle(s: BoardSection): string {
+  if (s.key === 'chargebacks') return 'Chargebacks — Open Disputes';
+  if (s.key === 'chargeback_outcomes') return 'Chargebacks — Outcomes';
+  return s.title;
+}
+
+export function headlineUnit(s: BoardSection): string {
+  if (s.key === 'custom') return s.kind === 'am_pm' ? 'score' : 'this week';
+  switch (s.key) {
+    case 'buckets':
+      return 'overall score';
+    case 'inbox':
+      return 'avg score';
+    case 'chargebacks':
+      return 'score';
+    case 'chargeback_outcomes':
+      return 'won';
+    case 'collections':
+      return 'points';
+    case 'pm_buckets':
+      return 'avg in buckets';
+    case 'payroll_timing':
+      return 'cycle score';
+    case 'onboarding':
+      return 'payments';
+    case 'compliance':
+      return 'done';
+    case 'cancellations':
+      return 'reviewed';
+    case 'payroll_problems':
+      return 'problems';
+    default:
+      return 'this week';
+  }
+}
+
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; error: string; code: string };
 
 /** JSON fetch that never throws and never hands back an HTML page as data. Every call names this browser tab

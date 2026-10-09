@@ -105,6 +105,7 @@ import {
   type TaskFrequencyChange,
   type TaskPatch,
 } from './validate';
+import { historyPayload, type HistoryPayload, type HistoryWindow } from './history';
 
 const ROWS = 'accounting_scoreboard_rows';
 const ENTRIES = 'accounting_scoreboard_entries';
@@ -662,6 +663,103 @@ export async function readBoard(
 /** The week a request asks for: a Sunday key, defaulting to this week (US Eastern). */
 export function currentWeekStart(): string {
   return weekStartOf(todayEastern());
+}
+
+// ---------------------------------------------------------------------------
+// History (docs/features/accounting-scoreboard-history.md): one window of weeks (history.ts, at most 26), never every
+// week at once: the cells alone are 43k rows (2026-10-09) and one all-time read took 13.8–71 s. Read-only. Rows are
+// read archived too, because a past week belongs to the rows that held it. Any failed read fails the whole window, so
+// a week is never drawn from half its numbers.
+// ---------------------------------------------------------------------------
+
+export async function readHistory(window: HistoryWindow): Promise<Result<HistoryPayload>> {
+  const sb = client();
+  const today = todayEastern();
+  const end = addDays(window.to, 6);
+  const first = (table: string, live: boolean) => {
+    const q = sb.from(table).select('entry_date').order('entry_date').limit(1);
+    return live ? q.is('deleted_at', null) : q;
+  };
+  const [rows, entries, collections, problems, payroll, closes, settings, customs, firstEntry, firstCollection, firstProblem] =
+    await Promise.all([
+      selectAllPaged<RowRecord>((from, to) => sb.from(ROWS).select(ROW_COLS).order('id').range(from, to)),
+      selectAllPaged<EntryRecord>((from, to) =>
+        sb
+          .from(ENTRIES)
+          .select('row_id, entry_date, slot, value')
+          .gte('entry_date', window.from)
+          .lte('entry_date', end)
+          .order('entry_date')
+          .order('row_id')
+          .order('slot')
+          .range(from, to),
+      ),
+      selectAllPaged<{ row_id: string; entry_date: string; points: number | string }>((from, to) =>
+        sb
+          .from(COLLECTIONS)
+          .select('row_id, entry_date, points')
+          .is('deleted_at', null)
+          .gte('entry_date', window.from)
+          .lte('entry_date', end)
+          .order('id')
+          .range(from, to),
+      ),
+      selectAllPaged<ProblemRecord>((from, to) =>
+        sb.from(PROBLEMS).select(PROBLEM_COLS).is('deleted_at', null).gte('entry_date', window.from).lte('entry_date', end).order('id').range(from, to),
+      ),
+      // Payroll Timing: every Wizard start and pay-cycle close ever (a past cycle closed late still lands on its week).
+      selectAllPaged<PayrollAuditRow>((from, to) =>
+        sb
+          .from('audit_log')
+          .select('action, created_at, resource_id, src:details->>source_file, csrc:details->cycle->>source_file, cps:details->cycle->>period_start')
+          .in('action', [...PAYROLL_EVENT_ACTIONS])
+          .order('created_at')
+          .order('id')
+          .range(from, to),
+      ),
+      selectAllPaged<Pick<PayrollAuditRow, 'src' | 'resource_id'>>((from, to) =>
+        sb.from('audit_log').select('resource_id, src:details->>source_file').eq('action', 'payment_cycle.closed').order('created_at').order('id').range(from, to),
+      ),
+      sb.from(SECTIONS_TABLE).select(SECTION_COLS),
+      selectAllPaged<CustomSectionRecord>((from, to) =>
+        sb.from(CUSTOM_SECTIONS).select(CUSTOM_COLS).is('archived_at', null).order('id').range(from, to),
+      ),
+      first(ENTRIES, false),
+      first(COLLECTIONS, true),
+      first(PROBLEMS, true),
+    ]);
+  for (const r of [rows, entries, collections, problems, payroll, closes, customs]) {
+    if (r.error) return dbFailure({ message: r.error }, 'Could not read the history');
+  }
+  for (const r of [settings, firstEntry, firstCollection, firstProblem]) {
+    if (r.error) return dbFailure(r.error, 'Could not read the history');
+  }
+  const firsts = [firstEntry, firstCollection, firstProblem]
+    .map((r) => ((r.data ?? []) as { entry_date: string }[])[0]?.entry_date)
+    .filter((d): d is string => typeof d === 'string')
+    .sort();
+
+  return {
+    ok: true,
+    value: historyPayload(
+      {
+        settings: ((settings.data ?? []) as SectionSettingRecord[])
+          .filter((s): s is SectionSettingRecord & { section_key: SectionKey } => isSectionKey(s.section_key))
+          .map(mapSetting),
+        customSections: customs.rows.map(mapCustomSection).filter((c): c is CustomSection => c !== null),
+        rows: rows.rows.map(mapRow).filter((r): r is BoardRow => r !== null),
+        entries: entries.rows.map(mapEntry),
+        collections: collections.rows.map((c) => ({ date: c.entry_date, rowId: c.row_id, points: Number(c.points) })),
+        problems: problems.rows.map(mapProblem),
+        payrollEvents: payroll.rows.map(payrollEventFromAudit).filter((e): e is PayrollEvent => e !== null),
+        firstClosedPeriodEnd: firstClosedPeriodEnd(closes.rows),
+        today,
+        nowIso: new Date().toISOString(),
+        firstWeek: firsts.length ? weekStartOf(firsts[0]) : null,
+      },
+      window,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------

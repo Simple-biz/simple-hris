@@ -43,6 +43,7 @@ import { createTabCache } from '@/lib/dashboard-cache/create-tab-cache';
 import { can, type BoardRole } from './roles';
 import { payloadShowsView as showsView } from './task-load-progress';
 import type { BoardPayload, KeysPayload, RoleGrant, RosterPerson, TasksPayload } from './types';
+import type { HistoryWeek } from './history';
 
 export const scoreboardTabCache = createTabCache('acct-sb:');
 
@@ -61,6 +62,7 @@ export const SCOREBOARD_CACHE_KEYS = {
   taskViews: 'tasks:views',
   keys: 'keys',
   roles: 'roles',
+  history: 'history',
 } as const;
 
 /** A Tasks view as cached: everything GET /tasks returned except the viewer (a permission, never cached). */
@@ -179,4 +181,28 @@ export function writeCachedRoleGrants(grants: RoleGrant[]): void {
 /** Forget the grants: the server refused them (401 / 403). */
 export function clearCachedRoleGrants(): void {
   scoreboardTabCache.clear(SCOREBOARD_CACHE_KEYS.roles);
+}
+
+/**
+ * The History tab as cached: every week loaded so far, merged across its windows. Numbers anyone on the board may see
+ * (the Overview's), so no role check; the cache is still bound to the viewer like every key here. Painted, then every
+ * window is read again (accounting-scoreboard-history.md § Freshness).
+ */
+export interface CachedHistory {
+  thisWeek: string;
+  firstWeek: string | null;
+  sectionIds: string[];
+  weeks: HistoryWeek[];
+}
+
+export function readCachedHistory(): CachedHistory | undefined {
+  const cached = scoreboardTabCache.get<CachedHistory>(SCOREBOARD_CACHE_KEYS.history);
+  if (!cached || typeof cached !== 'object') return undefined;
+  if (typeof cached.thisWeek !== 'string' || !Array.isArray(cached.sectionIds) || !Array.isArray(cached.weeks)) return undefined;
+  return cached;
+}
+
+export function writeCachedHistory(history: CachedHistory): void {
+  if (scoreboardTabCache.boundIdentity() === null) return;
+  scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.history, history);
 }

@@ -21,10 +21,10 @@
  * page is server-rendered, and the first client render must match it.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
-import { AlertTriangle, Archive, ChevronLeft, ChevronRight, LayoutGrid, ListChecks, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
+import { AlertTriangle, Archive, ChartColumn, ChevronLeft, ChevronRight, LayoutGrid, ListChecks, Loader2, Menu, RefreshCw, Settings2, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -69,12 +69,10 @@ import {
   type StoredEntry,
   type WinRatio,
 } from '@/lib/accounting-scoreboard/scoring';
-import { summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
+import { sectionCard, summarizeSection, type BoardContext, type SectionSummary } from '@/lib/accounting-scoreboard/board';
 import { cycleWeek } from '@/lib/accounting-scoreboard/payroll-cycle';
 import { LIGHT_LABEL, weekPace, type Light } from '@/lib/accounting-scoreboard/stoplight';
 import {
-  cardScore,
-  cycleCardScore,
   teamLight,
   teamScore,
   type CardScore,
@@ -85,12 +83,12 @@ import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
 import {
   api,
   BrandMark,
+  cardTitle,
   EASE_TAB,
   Flash,
   fmtNum,
-  fmtPct,
-  fmtScore,
-  goalFormat,
+  headlineFormat,
+  headlineUnit,
   LIGHT_STYLE,
   ScrollEdgeFade,
   sectionIcon,
@@ -117,6 +115,10 @@ import { ProblemsPanel, type NewProblem } from './ProblemsPanel';
 import { SetupPanel } from './SetupPanel';
 import { TasksPanel, type TasksView } from './TasksPanel';
 import { SECTIONS_NAV_ID, SectionsDrawer, type DrawerItem } from './SectionsDrawer';
+import { HistoryPanel } from './HistoryPanel';
+
+/** The History tab sits right after the last built-in section's tab, before any custom section's (Kane, 2026-10-09). */
+const historyAt = (tabs: readonly BoardSection[]) => tabs.filter((s) => s.key !== 'custom').length;
 
 /** 'overview', 'setup', or a section's board id (a built-in key, or `custom:<uuid>`). */
 type Tab = string;
@@ -427,7 +429,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   // A tab whose section was just switched off falls back to the overview.
   // Setup is a tab only for a role that sees it: a Team member whose remembered tab is 'setup' lands on the Overview.
   const activeTab: Tab =
-    tab === 'overview' || (tab === 'setup' && can(viewer.role, 'view_setup')) || tabs.some((s) => s.id === tab) ? tab : 'overview';
+    tab === 'overview' || tab === 'history' || (tab === 'setup' && can(viewer.role, 'view_setup')) || tabs.some((s) => s.id === tab) ? tab : 'overview';
 
   // The mobile menu: the same tabs as the tab row, each section with its stop light for the week on
   // screen, from the summaries the Overview cards use.
@@ -435,8 +437,10 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     if (!board) return [];
     const items: DrawerItem<Tab>[] = [{ key: 'overview', label: 'Overview', icon: LayoutGrid, light: null }];
     summarizeAll(board, tabs, lookup, new Date().toISOString(), sections).forEach(({ section, summary }, i) => {
+      if (i === historyAt(tabs)) items.push({ key: 'history', label: 'History', icon: ChartColumn, light: null });
       items.push({ key: section.id, label: section.tab, icon: sectionIcon(section), light: summary.light, divided: i === 0 });
     });
+    if (historyAt(tabs) === tabs.length) items.push({ key: 'history', label: 'History', icon: ChartColumn, light: null, divided: tabs.length === 0 });
     if (can(board.viewer.role, 'view_setup')) items.push({ key: 'setup', label: 'Setup', icon: Settings2, light: null, divided: true });
     return items;
   }, [board, tabs, lookup]);
@@ -590,7 +594,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   const activeSection = tabs.find((s) => s.id === activeTab) ?? null;
 
   // Tab order for the slide direction: Overview, the sections that are on, Setup.
-  const order: Tab[] = ['overview', ...tabs.map((s) => s.id), 'setup'];
+  const order: Tab[] = ['overview', ...tabs.slice(0, historyAt(tabs)).map((s) => s.id), 'history', ...tabs.slice(historyAt(tabs)).map((s) => s.id), 'setup'];
   const selectTab = (next: Tab) => {
     if (next === activeTab) return;
     setDir(order.indexOf(next) >= order.indexOf(activeTab) ? 1 : -1);
@@ -601,7 +605,15 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     setWeek(next);
   };
   const activeLabel =
-    mode === 'tasks' ? 'Tasks' : activeTab === 'overview' ? 'Overview' : activeTab === 'setup' ? 'Setup' : (activeSection?.tab ?? 'Overview');
+    mode === 'tasks'
+      ? 'Tasks'
+      : activeTab === 'overview'
+        ? 'Overview'
+        : activeTab === 'setup'
+          ? 'Setup'
+          : activeTab === 'history'
+            ? 'History'
+            : (activeSection?.tab ?? 'Overview');
 
   const sectionGrid = (s: BoardSection) => (
     <SectionGrid
@@ -627,6 +639,17 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
       {panel}
       {hostedSections(sections, section).map(sectionGrid)}
     </div>
+  );
+  // History → one week on the Overview: this week is the default (null), any other week is browsed to.
+  const openWeek = (weekStart: string) => {
+    setDir(-1);
+    setTab('overview');
+    setWeek(weekStart >= weekStartOf(board.today) ? null : weekStart);
+  };
+  const historyPill = (
+    <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'history'} onClick={() => selectTab('history')}>
+      <ChartColumn className="size-3.5" /> History
+    </SlidingPill>
   );
   const openCard = (id: string) => {
     const s = sections.find((x) => x.id === id);
@@ -670,7 +693,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
               <ListChecks className="size-3.5" /> Tasks
             </SlidingPill>
           </div>
-          <div className={cn('ml-auto flex items-center gap-1.5 max-sm:w-full', mode === 'tasks' && 'hidden')}>
+          <div className={cn('ml-auto flex items-center gap-1.5 max-sm:w-full', (mode === 'tasks' || activeTab === 'history') && 'hidden')}>
             <Button
               size="icon-sm"
               variant="outline"
@@ -767,11 +790,15 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
             <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
               Overview
             </SlidingPill>
-            {tabs.map((s) => (
-              <SlidingPill key={s.id} layoutId="acct-sb-section-tab" active={activeTab === s.id} onClick={() => selectTab(s.id)}>
-                {s.tab}
-              </SlidingPill>
+            {tabs.map((s, i) => (
+              <Fragment key={s.id}>
+                {i === historyAt(tabs) ? historyPill : null}
+                <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === s.id} onClick={() => selectTab(s.id)}>
+                  {s.tab}
+                </SlidingPill>
+              </Fragment>
             ))}
+            {historyAt(tabs) === tabs.length ? historyPill : null}
             {can(board.viewer.role, 'view_setup') ? (
               <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'setup'} onClick={() => selectTab('setup')}>
                 <Settings2 className="size-3.5" /> Setup
@@ -790,7 +817,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
             <div className="overflow-x-clip">
               <AnimatePresence mode="wait" initial={false} custom={dir}>
                 <motion.div
-                  key={`${activeTab}:${board.weekStart}`}
+                  key={activeTab === 'history' ? 'history' : `${activeTab}:${board.weekStart}`}
                   custom={dir}
                   variants={PANEL_VARIANTS}
                   initial="enter"
@@ -798,7 +825,9 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
                   exit="exit"
                   transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
                 >
-                  {activeTab === 'setup' ? (
+                  {activeTab === 'history' ? (
+                    <HistoryPanel sections={sections} today={board.today} onOpenWeek={openWeek} />
+                  ) : activeTab === 'setup' ? (
                     <SetupPanel board={board} sections={sections} role={board.viewer.role} onChanged={() => void load(week, true)} />
                   ) : !activeSection ? (
                     <Overview board={board} sections={cardSections} all={sections} lookup={lookup} onOpen={openCard} />
@@ -903,11 +932,9 @@ function summarizeAll(
     const wins = s.kind === 'amount_count' ? winRatio(rows, dates, lookup) : null;
     const summary = summarizeSection(s, rows, ctx, board.weekStart, board.lastWeekStart);
     // Carla's Team Score (2026-10-07): the card's % of goal, on the same pace as its light. A past week is
-    // judged on its full goal (pace 1), as its light is.
-    const isCycle = s.kind === 'payroll_cycle';
-    const cycleOf = (weekStart: string) => cycleWeek(board.payrollEvents, weekStart, nowIso, board.firstClosedPeriodEnd);
-    const card: CardScore = isCycle ? cycleCardScore(cycleOf(board.weekStart)) : cardScore(s.goal, summary.headline, weekPace(dates, board.today));
-    const lastCard: CardScore = isCycle ? cycleCardScore(cycleOf(board.lastWeekStart)) : cardScore(s.goal, summary.lastHeadline, 1);
+    // judged on its full goal (pace 1), as its light is. sectionCard is the History tab's rule too.
+    const card: CardScore = sectionCard(s, summary.headline, ctx, board.weekStart, weekPace(dates, board.today));
+    const lastCard: CardScore = sectionCard(s, summary.lastHeadline, ctx, board.lastWeekStart, 1);
     const groupId = tabIdFor(all, s);
     const groupLabel = all.find((x) => x.id === groupId)?.tab ?? s.tab;
     return {
@@ -1200,48 +1227,4 @@ function OverviewCard({
       </div>
     </button>
   );
-}
-
-/** How a card's number prints: a cycle score or a win ratio as %, a 0–10 score with one decimal, else by its goal. */
-function headlineFormat(s: BoardSection): (n: number | null) => string {
-  if (s.kind === 'payroll_cycle' || s.kind === 'amount_count') return fmtPct;
-  if (s.score) return fmtScore;
-  return goalFormat(s.goal);
-}
-
-/** A card names its tab where the section's own title would not say it (Chargebacks holds two). */
-function cardTitle(s: BoardSection): string {
-  if (s.key === 'chargebacks') return 'Chargebacks — Open Disputes';
-  if (s.key === 'chargeback_outcomes') return 'Chargebacks — Outcomes';
-  return s.title;
-}
-
-function headlineUnit(s: BoardSection): string {
-  if (s.key === 'custom') return s.kind === 'am_pm' ? 'score' : 'this week';
-  switch (s.key) {
-    case 'buckets':
-      return 'overall score';
-    case 'inbox':
-      return 'avg score';
-    case 'chargebacks':
-      return 'score';
-    case 'chargeback_outcomes':
-      return 'won';
-    case 'collections':
-      return 'points';
-    case 'pm_buckets':
-      return 'avg in buckets';
-    case 'payroll_timing':
-      return 'cycle score';
-    case 'onboarding':
-      return 'payments';
-    case 'compliance':
-      return 'done';
-    case 'cancellations':
-      return 'reviewed';
-    case 'payroll_problems':
-      return 'problems';
-    default:
-      return 'this week';
-  }
 }
