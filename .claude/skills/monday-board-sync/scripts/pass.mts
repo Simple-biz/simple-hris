@@ -952,6 +952,17 @@
  * change safety closes on Kane's word alone; no hires sync is audited since e50cb9f4 (the last three, 10-08
  * 18:24Z-18:59Z, ran the old rule).
  * Shape: 46 rows, all Done, all Sprint 30: 18 created, 28 existing corrected.
+ *
+ * LATER THE SAME MORNING (still before the reset), Kane's follow-ups:
+ *   • "run this for me please - scripts/backfill-pab-forgive-no-hours.mts --apply": ran 13:41Z, 19/19,
+ *     re-read null, dry run CONVERGED. The PAB row's blocker is gone, so it closes (external date 10-09).
+ *   • "OMS is already done for HSL lets put that in backlog thats for V2". Read as two rulings: Send to
+ *     OMS is done (closes on his word, his confirmation recorded, the env not measured), and HSL
+ *     scheduling goes to the Backlog for V2 (item 427). The HSL row stays Pending Deploy. --only-new
+ *     never moves a row, so tmp-move-hsl-scheduling-bl.mts files it (label + group, status untouched).
+ * Shape now: 48 rows, all Done, all Sprint 30: 18 created, 30 existing corrected, plus 1 move to BL
+ * by the mover. Still held: Tickets emails (S30), HSL scheduling (BL), the legacy spike (S30) and the
+ * bare hsl overrides (BL).
  */
 import { execFileSync } from 'node:child_process';
 import { PLAN_TASKS, REPO_ROOT, TASK_SPRINT_LABELS, taskSprintAttribution } from './monday.mts';
@@ -1393,6 +1404,22 @@ export const ROWS: PassRow[] = [
     completed: '2026-10-02',
     shas: ['e88315ac'],
     basis: closed44(`Item 336. Docs only. Its findings live in the repo report, and item 405 (the report on a public repo) is open on its own.`),
+  },
+  // —── PASS 44, later the same morning: Kane's two follow-ups ──────────────────────────────────────
+  {
+    name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date',
+    status: 'Done',
+    completed: '2026-10-09',
+    shas: ['33fccfbc', 'ca4e5514'],
+    dateBasis: 'external',
+    basis: "DONE ON MEASUREMENT. Item 363, Kane's ruling (b). The one open step was the legacy backfill, and Kane asked for it on 2026-10-09 (\"run this for me please - scripts/backfill-pab-forgive-no-hours.mts --apply\"). It ran --apply in production at 13:41Z: 19 of 19 changed, G2 verdict-neutral, G4 re-read all null, backup references/backups/pab_forgive_override_pre_null_2026-10-09T13-41-05-937Z.json. Confirmed independently: a dry run afterwards reports CONVERGED (0 rows), and audit_log holds 19 pab_dispute.edited rows from 13:40Z. Both shas are on origin/main since 2026-10-06. The Completed Date is the day the backfill made it provable (the pass 42b precedent).",
+  },
+  {
+    name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS',
+    status: 'Done',
+    completed: '2026-10-07',
+    shas: ['0fa0b89d', 'f082ba96', 'fc7c9d99', 'fde162ed'],
+    basis: "DONE ON KANE'S WORD. Kane, 2026-10-09, on this row specifically: \"OMS is already done\". Item 334. Its one open step was the OMS env in Vercel production, which only Kane can see; this session has no Vercel CLI and did not measure it. Recorded as his confirmation, not a measurement: the only send in audit_log is 2026-10-07 15:38Z (wizard.orphanage_oms_returned, Kane, one row, verdict ok), and none since. Every sha is on origin/main, and the Completed Date is the last sha's commit date.",
   },
 ];
 

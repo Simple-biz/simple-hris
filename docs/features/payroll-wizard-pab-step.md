@@ -28,7 +28,7 @@ retired) **2026-10-06**. Source:
 | Failed-day detail — pure, tested | `src/lib/payroll/pab-ineligibility.ts` |
 | One breakdown day: verdict inputs pinned, forgiven flag, shown hours — pure, tested | `src/lib/payroll/pab-breakdown-day.ts` |
 | THE forgiveness rule (null = outright, a SET at ≥ 4 h) + dispatch-vs-step agreement test | `src/lib/payroll/pab-forgiveness.ts` (+ `.test.ts`) |
-| Legacy stored-hours backfill (PENDING `--apply`) | `scripts/backfill-pab-forgive-no-hours.mts` |
+| Legacy stored-hours backfill (APPLIED 2026-10-09) | `scripts/backfill-pab-forgive-no-hours.mts` |
 | The identity alarm | `src/lib/payroll/pab-ineligibility.test.ts` |
 | Payout-week tab gate — pure, tested | `src/lib/payroll/pab-payout-week.ts` (+ `.test.ts`) |
 | Forgive-the-month batch write | `app/api/payroll-wizard/pab-forgive-month/route.ts` |
@@ -94,8 +94,8 @@ also hid every forgiven day in the PAB Calendar (next section).
 **The 19 rows stored before the ruling** (15 Forgive-month at 7, 2 per-day at 5 in July, 2 per-day
 at 7 "schedule transition" in September) still carry their number. They pass either way (a SET ≥
 4 h), and the wizard's calendar already shows their own hours, but the employee-side calendars
-show `7:00` until `scripts/backfill-pab-forgive-no-hours.mts --apply` clears them (verdict-neutral
-by guard; **PENDING** — see Deploy notes).
+showed `7:00` until `scripts/backfill-pab-forgive-no-hours.mts --apply` cleared them (verdict-neutral
+by guard; **APPLIED 2026-10-09** — see Deploy notes).
 
 ## The PAB Calendar shows every forgiven date, with its own hours, and can revoke it
 
@@ -722,14 +722,16 @@ Closing check: `grep -rn "Step [1-9]" src app docs`.
 
 **No migration.** No new table, no new `app_settings` key, no DDL.
 
-**PENDING (Kane) — `npx tsx scripts/backfill-pab-forgive-no-hours.mts --apply`** (2026-10-06,
-item 363). Clears `override_hours` to `null` on the 19 rows the wizard stored hours on before
+**APPLIED 2026-10-09 13:41Z — `npx tsx scripts/backfill-pab-forgive-no-hours.mts --apply`** (asked
+2026-10-06, item 363; run on Kane's word 2026-10-09: 19 of 19 changed, G4 re-read all null, a dry run
+afterwards reports CONVERGED, 19 `pab_dispute.edited` audit rows; backup
+`references/backups/pab_forgive_override_pre_null_2026-10-09T13-41-05-937Z.json`). Item 363. Clears `override_hours` to `null` on the 19 rows the wizard stored hours on before
 the ruling (`status = 'approved'`, `reason = 'other'`, value 5 or 7). Dry run first prints every
 row and writes a backup to `references/backups/`; guards assert each row forgives its day before
 AND after (no PAB money moves), update conditionally one row at a time, write one
-`pab_dispute.edited` audit row each, and re-read. Until it runs, those 19 days read `7:00` on the
-employee-side calendars. **Deploy the code first** — production keeps writing 7 until it does,
-and the script picks up any such rows on the run.
+`pab_dispute.edited` audit row each, and re-read. Before it ran, those 19 days read `7:00` on the
+employee-side calendars. The code was deployed first (on origin/main since 2026-10-06), so nothing
+writes 7 any more; re-running the script is idempotent and reports CONVERGED.
 
 No new notification type — the batch rides `dispute.approved`, already in
 `employee_notifications_type_check`. This was deliberate: a new type is dead until a DDL

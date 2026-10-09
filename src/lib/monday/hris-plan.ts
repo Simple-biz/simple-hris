@@ -1875,7 +1875,9 @@ export const PLAN_TASKS: PlanTask[] = [
   // 5 SP: Scheduling moves INSIDE the HSL department and starts saving. Gated on `scheduling`, NOT
   // `team`. done:false and held at Pending Deploy — `employee_schedule_periods` was MEASURED ABSENT
   // from production on 2026-09-16, so the feature is code-complete and dead. See [[hsl-scheduling-in-department]].
-  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  // Pass 44 (2026-10-09) moves it S30 -> BACKLOG on Kane's word: "thats for V2" (the 10-08 call put HSL
+  // scheduling in V2, item 427). Status stays Pending Deploy: a sprint move is not a claim about progress.
+  { epic: 'HRIS-10', name: 'Scheduling moves inside the HSL department and starts saving, gated on the scheduling grant rather than team membership', type: 'Feature', sp: 5, done: false, sprint: 'BL', priority: 'High' },
   // 1 SP: the Offboarded list shows the inbox that still works after the work account is gone.
   { epic: 'HRIS-01a', name: 'The Offboarded list shows the inbox that still reaches a leaver once the work account is gone', type: 'Feature', sp: 1, done: true, sprint: 'S28', priority: 'Low' },
   // 3 SP: Lead Gen 2026-09-06 pays PHP 38,000 where QC scored PHP 124,750 — a first pass stranded in
@@ -2251,7 +2253,7 @@ export const PLAN_TASKS: PlanTask[] = [
   // PASS 42 (2026-10-08) moves it to Pending Deploy: f082ba96 (10-02) wired the button and fc7c9d99
   // (10-07) stopped the modal clipping, both pushed; OMS created hris_orphanage_returns in its own
   // project (6a292705). Still open outside the repo: the production env (URL, key, OMS_RETURN_TABLE).
-  { epic: 'HRIS-03c', name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-03c', name: 'Send to OMS — the Orphanage step returns each person’s regular and OT hours and paid amount to OMS', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
 
   // —── PASS 36, continued 2026-09-30 · Sep 29, 11 rows, 33 SP — the commits after the staging ────────
   // Sprint 30 was READ off the board 2026-09-30 11:05Z: group_mm7m3x2d, label 106, "Sep 29-Oct 9".
@@ -2365,7 +2367,7 @@ export const PLAN_TASKS: PlanTask[] = [
   { epic: 'HRIS-07', name: "Accounting can suspend a member's MESA contribution from an effective date without opting out, and every MESA Action column is the same buttons", type: 'Feature', sp: 8, done: true, sprint: 'S30', priority: 'High' },
   { epic: 'HRIS-07', name: 'MESA saving but not deducted no longer counts opted-out members - saving needs an open account', type: 'Bug', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
   { epic: 'HRIS-23', name: 'The whole People tab paints from the cache - roster and summary as one entry, the week list, Statistics and Bank changes', type: 'Feature', sp: 3, done: true, sprint: 'S30', priority: 'Medium' },
-  { epic: 'HRIS-02a', name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date', type: 'Feature', sp: 5, done: false, sprint: 'S30', priority: 'High' },
+  { epic: 'HRIS-02a', name: 'PAB forgiveness stores no hours - an approved issue with no hours forgives its day outright, and the PAB Calendar shows and can revoke every forgiven date', type: 'Feature', sp: 5, done: true, sprint: 'S30', priority: 'High' },
   // Renamed and re-scored 3 → 5 by pass 42 (2026-10-08) before it ever reached the board, so no row is
   // orphaned: the stamp script (e0f6773e) was never applied. Kane's ruling (b) retired the ghost with
   // three other guarded scripts instead (6ed59243 revert, 59d7908a re-date, 2077e215 bonus rows).

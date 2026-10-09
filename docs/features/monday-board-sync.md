@@ -2835,3 +2835,24 @@ run `apply.mts --apply --only-new --approve <hash>` (~140 calls), then a 2-call 
 (25 ids per call). A proposal of any other shape needs Kane's approval of its hash. If more commits land
 first, re-derive. A session cron does not survive its session (pass 40), so a person has to start the
 apply.
+
+#### Later 2026-10-09 — Kane's follow-ups change the shape (still before the reset)
+
+- *"PUSH!"*: re-probed at 12:03Z, still `DAILY_LIMIT_EXCEEDED` (retry 42,980 s → 00:00 UTC, 08:00 PHT).
+  A session cron (`d040f54d`, 20:07 EDT) runs the apply only if this session is still open.
+- *"run this for me please - scripts/backfill-pab-forgive-no-hours.mts --apply"*: ran 13:41Z, 19 of 19,
+  G4 re-read null, a dry run afterwards reports CONVERGED. The PAB row's only blocker is gone, so it
+  closes, `dateBasis: 'external'`, 2026-10-09 (the pass 42b precedent: dated the day it became provable).
+- *"OMS is already done for HSL lets put that in backlog thats for V2"*, read as two rulings:
+  - Send to OMS closes on his word. His is the only evidence for the Vercel env: it is recorded as
+    such, not as a measurement.
+  - HSL scheduling moves S30 → **Backlog** for V2 (item 427). The plan row says `BL`. `--only-new`
+    never moves a row, so `tmp-move-hsl-scheduling-bl.mts` writes the label, the group and an evidence
+    update. It refuses unless the row is open, unscored, undated and in the S30 group. Its status stays
+    Pending Deploy.
+
+**Shape now: 48 rows / 206 SP, all Done, Sprint 30: 18 created (83 SP), 30 corrected (123 SP), plus the
+one Backlog move.** `selfcheck` PASS. Still open: Tickets emails (S30), HSL scheduling (Backlog, Pending
+Deploy), and the two not-started rows.
+The scoreboard commits Kane pushed on 10-09 (`49006919..c7659cea`, items 424 and 430) are NOT in pass 44.
+They are the next pass.
