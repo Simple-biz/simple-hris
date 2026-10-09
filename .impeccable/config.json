@@ -179,6 +179,15 @@
         ],
         "createdAt": "2026-10-06T18:18:56.267Z",
         "reason": "Claude (session 48c8828b): L428 archive icon link is zinc-500 only at rest on the neutral white header; the orange-50 background exists only on hover, where the text switches to orange-800. No gray-on-color state renders."
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/components/accounting-scoreboard/HistoryPanel.tsx"
+        ],
+        "createdAt": "2026-10-09T13:29:25.310Z",
+        "reason": "Claude, session 38387a37, verified: L928 is a ternary — picked = text-orange-950 on bg-orange-50, unpicked = text-zinc-700 on bg-white; the two never render together. The real hit at that line (zinc-700 on the picked orange row) was FIXED to orange-950 before this waiver."
       }
     ]
   }
