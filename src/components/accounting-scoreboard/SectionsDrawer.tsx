@@ -11,11 +11,11 @@
 
 import { useEffect, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { Trophy, X, type LucideIcon } from 'lucide-react';
+import { X, type LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { LIGHT_LABEL, type Light } from '@/lib/accounting-scoreboard/stoplight';
-import { EASE_TAB, LIGHT_STYLE } from './shared';
+import { BrandMark, EASE_TAB, LIGHT_STYLE } from './shared';
 
 /** The burger's `aria-controls` target (ui-standards § 2: `<surface>-sidebar-nav`). */
 export const SECTIONS_NAV_ID = 'acct-sb-sidebar-nav';
@@ -83,10 +83,8 @@ export function SectionsDrawer<K extends string>({
           transition={{ duration: reduce ? 0.15 : 0.3, ease: EASE_TAB }}
         >
           <div className="flex shrink-0 items-center gap-2.5 border-b border-orange-100/80 px-4 py-3 supports-[padding:max(0px)]:pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-zinc-800">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-sm">
-              <Trophy className="size-4" aria-hidden />
-            </span>
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            <BrandMark />
+            <span className="min-w-0 flex-1 text-sm font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
               Accounting Scoreboard
             </span>
             <Button type="button" variant="outline" size="icon" onClick={onClose} aria-label="Close sections menu">
@@ -109,14 +107,14 @@ export function SectionsDrawer<K extends string>({
                     className={cn(
                       'flex w-full items-center gap-3 rounded-xl px-2.5 py-1.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60',
                       isActive
-                        ? 'bg-gradient-to-r from-orange-500 to-amber-600 text-white shadow-sm shadow-orange-600/25'
+                        ? 'bg-orange-700 text-white'
                         : 'text-zinc-700 hover:bg-orange-50 hover:text-orange-900 dark:text-zinc-300 dark:hover:bg-orange-950/30 dark:hover:text-orange-200',
                     )}
                   >
                     <span
                       className={cn(
                         'flex size-8 shrink-0 items-center justify-center rounded-lg',
-                        isActive ? 'bg-white/20 text-white' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400',
+                        isActive ? 'bg-white/15 text-white' : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400',
                       )}
                     >
                       <Icon className="size-4" aria-hidden />

@@ -78,6 +78,19 @@ export const SCORE_STATUS_TITLE: Record<Exclude<RowScoreStatus, 'scored'>, strin
 };
 
 /**
+ * The Simple wordmark on a white plate, the dashboards' sidebar logo (`SidebarLogoHeader`), in place of the
+ * old trophy-in-a-gradient tile (Kane, 2026-10-09). The plate stays white in dark mode: the navy wordmark has
+ * no dark variant, and the sidebar plate does the same.
+ */
+export function BrandMark({ className }: { className?: string }) {
+  return (
+    <span className={cn('inline-flex shrink-0 items-center rounded-md border border-zinc-200 bg-white px-1 dark:border-zinc-700', className)}>
+      <img src="/simple-logo.png" alt="Simple" draggable={false} className="h-6 w-auto sm:h-7" />
+    </span>
+  );
+}
+
+/**
  * The stop light's tones (stoplight.ts): emerald = on track, amber = close (the stop light's middle,
  * ui-standards § 6.3 "caution"), rose = behind. `none` stays neutral: absence is not a colour.
  */
@@ -85,7 +98,7 @@ export const LIGHT_STYLE: Record<Light, { tile: string; number: string; icon: st
   green: {
     tile: 'border-emerald-200 bg-emerald-50/70 hover:bg-emerald-50 dark:border-emerald-900/70 dark:bg-emerald-950/25 dark:hover:bg-emerald-950/40',
     number: 'text-emerald-700 dark:text-emerald-300',
-    icon: 'from-emerald-500 to-teal-600 shadow-emerald-600/25',
+    icon: 'text-emerald-600 dark:text-emerald-400',
     chip: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300',
     text: 'text-emerald-700 dark:text-emerald-300',
     dot: 'bg-emerald-500',
@@ -93,7 +106,7 @@ export const LIGHT_STYLE: Record<Light, { tile: string; number: string; icon: st
   amber: {
     tile: 'border-amber-200 bg-amber-50/70 hover:bg-amber-50 dark:border-amber-900/70 dark:bg-amber-950/25 dark:hover:bg-amber-950/40',
     number: 'text-amber-700 dark:text-amber-300',
-    icon: 'from-amber-400 to-orange-500 shadow-amber-600/25',
+    icon: 'text-amber-600 dark:text-amber-400',
     chip: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300',
     text: 'text-amber-700 dark:text-amber-300',
     dot: 'bg-amber-400',
@@ -101,7 +114,7 @@ export const LIGHT_STYLE: Record<Light, { tile: string; number: string; icon: st
   red: {
     tile: 'border-rose-200 bg-rose-50/80 hover:bg-rose-50 dark:border-rose-900/70 dark:bg-rose-950/30 dark:hover:bg-rose-950/45',
     number: 'text-rose-700 dark:text-rose-300',
-    icon: 'from-rose-500 to-red-600 shadow-rose-600/25',
+    icon: 'text-rose-600 dark:text-rose-400',
     chip: 'border-rose-200 bg-rose-50 text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300',
     text: 'text-rose-700 dark:text-rose-300',
     dot: 'bg-rose-500',
@@ -109,7 +122,7 @@ export const LIGHT_STYLE: Record<Light, { tile: string; number: string; icon: st
   none: {
     tile: 'border-zinc-200 bg-white/80 hover:bg-orange-50/40 dark:border-zinc-800 dark:bg-zinc-950/70 dark:hover:bg-zinc-900/60',
     number: 'text-zinc-900 dark:text-zinc-100',
-    icon: 'from-zinc-400 to-zinc-500 shadow-zinc-500/20',
+    icon: 'text-zinc-500 dark:text-zinc-400',
     chip: 'border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400',
     text: 'text-zinc-500 dark:text-zinc-400',
     dot: 'bg-zinc-300 dark:bg-zinc-700',
@@ -239,9 +252,10 @@ export const EASE_TAB = [0.22, 1, 0.36, 1] as const;
 export const EASE_SETTLE = [0.16, 1, 0.3, 1] as const;
 
 /**
- * A pill whose ONE gradient indicator glides between siblings (shared `layoutId`), the
- * house pattern for in-page tab rows (§ 11.1). Every pill in a row passes the same
- * `layoutId`. Use a different id per row, or the indicator flies between rows.
+ * A pill whose ONE indicator glides between siblings (shared `layoutId`), the house pattern for
+ * in-page tab rows (§ 11.1). Every pill in a row passes the same `layoutId`. Use a different id
+ * per row, or the indicator flies between rows. The indicator is solid orange-700, not the house
+ * orange-to-amber gradient (2026-10-09): white on orange-500 is 2.9:1, under AA; on orange-700 it is 5.2:1.
  */
 export function SlidingPill({
   layoutId,
@@ -274,7 +288,7 @@ export function SlidingPill({
         <motion.span
           layoutId={layoutId}
           aria-hidden
-          className="absolute inset-0 rounded-lg bg-gradient-to-r from-orange-500 to-amber-600 shadow-sm shadow-orange-600/25"
+          className="absolute inset-0 rounded-lg bg-orange-700"
           transition={{ duration: reduce ? 0 : 0.28, ease: EASE_TAB }}
         />
       ) : null}

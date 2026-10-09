@@ -145,7 +145,7 @@ export function TasksLoadCard({
             style={{ transform: 'scaleX(0)' }}
             className={cn(
               'absolute inset-0 origin-left overflow-hidden rounded-full will-change-transform',
-              done ? 'bg-emerald-500 dark:bg-emerald-400' : failed ? 'bg-red-500 dark:bg-red-400' : 'bg-gradient-to-r from-orange-500 to-amber-500',
+              done ? 'bg-emerald-500 dark:bg-emerald-400' : failed ? 'bg-red-500 dark:bg-red-400' : 'bg-orange-500',
             )}
           >
             {working ? (

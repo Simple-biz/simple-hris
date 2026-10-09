@@ -73,9 +73,9 @@ const FIELD_LABEL = cn(TINY_CAPS, 'text-zinc-500 dark:text-zinc-400');
 const FIELD = 'bg-white focus-visible:border-orange-400 focus-visible:ring-orange-500/20 dark:bg-zinc-950 dark:focus-visible:border-orange-700';
 
 const PODIUM = [
-  { tone: 'from-amber-400 to-amber-600', Icon: Crown, label: '1st' },
-  { tone: 'from-zinc-300 to-zinc-500', Icon: Medal, label: '2nd' },
-  { tone: 'from-orange-400 to-orange-700', Icon: Medal, label: '3rd' },
+  { tone: 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300', Icon: Crown, label: '1st' },
+  { tone: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300', Icon: Medal, label: '2nd' },
+  { tone: 'bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300', Icon: Medal, label: '3rd' },
 ] as const;
 
 export function CollectionsPanel({ section, board, rows, onLog, onDelete, onVerify }: Props) {
@@ -269,10 +269,10 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete, onVeri
           disabled={busy || !loggable.length || !effectiveRow || !business.trim()}
           title={!business.trim() ? 'Type the business name first' : undefined}
           className={cn(
-            'col-span-2 h-9 bg-gradient-to-r from-orange-500 to-amber-600 text-white shadow-sm shadow-orange-600/20 hover:from-orange-600 hover:to-amber-700 lg:col-span-1',
-            // A solid, readable disabled state. The default 50% opacity let the orange gradient smear
-            // over the orange-tinted form in dark mode.
-            'disabled:bg-none disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-100 disabled:shadow-none dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400',
+            'col-span-2 h-9 bg-orange-700 text-white hover:bg-orange-800 lg:col-span-1',
+            // A solid, readable disabled state. The default 50% opacity smeared the orange over the
+            // orange-tinted form in dark mode.
+            'disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-100 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400',
           )}
         >
           {busy ? <Loader2 className="animate-spin" /> : null}
@@ -303,11 +303,11 @@ export function CollectionsPanel({ section, board, rows, onLog, onDelete, onVeri
                   transition={{ duration: reduce ? 0 : 0.28, ease: EASE_TAB }}
                   className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-950"
                 >
-                  <span className={cn('flex size-7 items-center justify-center rounded-md bg-gradient-to-br text-white shadow-sm', tone)}>
+                  <span className={cn('flex size-7 items-center justify-center rounded-md', tone)}>
                     <Icon className="size-4" />
                   </span>
                   <div>
-                    <div className={cn(TINY_CAPS, 'text-zinc-400')}>{label}</div>
+                    <div className={cn(TINY_CAPS, 'text-zinc-500 dark:text-zinc-400')}>{label}</div>
                     <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
                       {labelOf.get(p.rowId) ?? '—'}{' '}
                       <span className="font-mono text-xs font-normal tabular-nums text-zinc-500">{fmtNum(p.points)} pts</span>

@@ -84,6 +84,7 @@ import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import type { BoardPayload, BoardRow } from '@/lib/accounting-scoreboard/types';
 import {
   api,
+  BrandMark,
   EASE_TAB,
   Flash,
   fmtNum,
@@ -635,7 +636,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
     <Shell>
       {/* While the menu is open the page behind it is inert: no focus, no clicks, nothing read out. */}
       <div className="flex min-h-0 flex-1 flex-col" inert={menuOpen}>
-        <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-orange-100/80 bg-white/90 px-4 py-3 backdrop-blur-md supports-[padding:max(0px)]:pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6 dark:border-zinc-800 dark:bg-zinc-950/90">
+        <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 bg-white px-4 py-3 supports-[padding:max(0px)]:pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6 dark:border-zinc-800 dark:bg-zinc-950">
           <Button
             ref={burgerRef}
             type="button"
@@ -650,9 +651,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
             <Menu className="h-5 w-5" />
           </Button>
           <div className="flex min-w-0 items-center gap-2.5">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-sm">
-              <Trophy className="size-4" />
-            </span>
+            <BrandMark />
             <div className="min-w-0">
               <h1 className="truncate text-base font-semibold leading-tight text-zinc-900 sm:text-lg dark:text-zinc-100">
                 Accounting Scoreboard
@@ -690,7 +689,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
                   transition={{ duration: reduce ? 0 : 0.22, ease: EASE_TAB }}
                 >
                   <div className="text-sm font-medium tabular-nums text-zinc-800 dark:text-zinc-200">{weekLabel(board.weekStart)}</div>
-                  <div className={cn(TINY_CAPS, 'text-[9px]', isThisWeek ? 'text-orange-600' : 'text-zinc-400')}>
+                  <div className={cn(TINY_CAPS, 'text-[9px]', isThisWeek ? 'text-orange-700 dark:text-orange-400' : 'text-zinc-500 dark:text-zinc-400')}>
                     {isThisWeek ? 'This week' : 'Past week'}
                   </div>
                 </motion.div>
@@ -761,7 +760,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
         <div className={cn('relative hidden', mode === 'scoreboard' && 'md:block')}>
           <nav
             ref={navRef}
-            className="flex gap-1 overflow-x-auto border-b border-zinc-100 bg-white/90 px-3 py-2 sm:px-5 dark:border-zinc-900 dark:bg-zinc-950/90"
+            className="flex gap-1 overflow-x-auto border-b border-zinc-200 bg-white px-3 py-2 sm:px-5 dark:border-zinc-800 dark:bg-zinc-950"
             aria-label="Sections"
           >
             <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
@@ -866,7 +865,7 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
 /** The root layout already mounts the app-wide Toaster; this shell must not add a second one. */
 function Shell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
+    <div className="flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-zinc-50 dark:bg-[#0d1117]">
       {children}
     </div>
   );
@@ -955,7 +954,7 @@ function TeamScoreTile({
   scope: string;
 }) {
   return (
-    <section aria-label="Team Score" className={cn('rounded-2xl border p-5 shadow-sm', TEAM_TILE[team.light])}>
+    <section aria-label="Team Score" className={cn('rounded-xl border p-5', TEAM_TILE[team.light])}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-4">
           <StopLight light={team.light} className="mt-1" />
@@ -964,7 +963,7 @@ function TeamScoreTile({
             <div className="mt-2 flex items-baseline gap-2">
               <span
                 className={cn(
-                  'font-mono text-6xl font-semibold leading-none tracking-tight tabular-nums',
+                  'text-6xl font-semibold leading-none tracking-tight tabular-nums',
                   team.score === null ? 'text-zinc-300 dark:text-zinc-700' : LIGHT_STYLE[team.light].number,
                 )}
               >
@@ -1048,13 +1047,16 @@ export function Overview({
   const lastTeam = teamScore(cards.map((c) => ({ groupId: c.groupId, groupLabel: c.groupLabel, card: c.lastCard })));
   // Never hidden silently: the Overview says which sections a manager took off it.
   const hidden = hiddenFromOverview(all);
+  // A past week is judged on its full goal (pace 1), so it never says "this week" or "on pace".
+  const isThisWeek = board.weekStart === weekStartOf(board.today);
 
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">This week at a glance</h2>
+        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{isThisWeek ? 'This week' : weekLabel(board.weekStart)}</h2>
         <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-          Every number adds itself up from what the team typed. This week&rsquo;s totals are judged on pace.
+          Every number adds itself up from what the team typed.{' '}
+          {isThisWeek ? <>This week&rsquo;s totals are judged on pace.</> : 'A past week is judged on its full goal.'}
         </p>
       </div>
       <TeamScoreTile team={team} last={lastTeam} tally={tally} scope={board.weekStart} />
@@ -1105,7 +1107,6 @@ function OverviewCard({
   cycleStartedAt: string | null;
   onOpen: () => void;
 }) {
-  const reduce = useReducedMotion() ?? false;
   const Icon = sectionIcon(section);
   const tone = LIGHT_STYLE[summary.light];
   const isCycle = section.kind === 'payroll_cycle';
@@ -1127,21 +1128,17 @@ function OverviewCard({
           : LIGHT_LABEL.none;
 
   return (
-    <motion.button
+    <button
       type="button"
       onClick={onOpen}
-      whileHover={reduce ? undefined : { y: -2 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 24 }}
       className={cn(
-        'group flex flex-col rounded-2xl border p-5 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60',
+        'group flex flex-col rounded-xl border p-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400/60',
         tone.tile,
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className={cn('flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-md', tone.icon)}>
-            <Icon className="size-5" />
-          </span>
+        <div className="flex min-w-0 items-start gap-2.5">
+          <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone.icon)} />
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{cardTitle(section)}</div>
             <div className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -1158,7 +1155,7 @@ function OverviewCard({
         {/* Absence is quiet, never a bright bar (ui-standards § 12.5). */}
         <span
           className={cn(
-            'font-mono text-5xl font-semibold leading-none tracking-tight tabular-nums',
+            'text-5xl font-semibold leading-none tracking-tight tabular-nums',
             big === '—' ? 'text-zinc-300 dark:text-zinc-700' : tone.number,
           )}
         >
@@ -1196,7 +1193,7 @@ function OverviewCard({
           <span className={cn('font-mono font-semibold tabular-nums', LIGHT_STYLE[summary.lastLight].text)}>{fmt(summary.lastHeadline)}</span>
         </span>
       </div>
-    </motion.button>
+    </button>
   );
 }
 

@@ -665,6 +665,24 @@ out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **d
   `shared.tsx`: the fade shows only on a side that still hides content, sits in a `relative` wrapper, and never takes a
   click. Setup's pills also scroll the picked area into view (the row only, never the page). A new scrolling row uses
   the same pair; a bare `overflow-x-auto` slices a tab or a column in half at the edge.
+- **The look is flat** (Impeccable audit, 2026-10-09, Kane: *"remove AI slop"*). The brand is the **Simple wordmark
+  on a white plate** (`BrandMark` in `shared.tsx`; the archive page inlines the same plate because it is a server
+  component), in the header, the phone menu and the archive header, never the old trophy in an orange tile (Kane:
+  *"the Accounting Trophie scoreboard icon lets change that to something like this one"*). The plate stays white in
+  dark mode, because the navy wordmark has no dark variant. **No gradients**: the page is flat `zinc-50` (dark
+  `#0d1117`), the header and the tab row are solid, with no backdrop blur (nothing scrolls under them). Every orange
+  fill that carries white text (the active pill, the active menu item, Log collection and Log problem) is **solid
+  `orange-700`**: white on the old orange-500 → amber-600 gradient measured 2.9:1, under AA, and orange-700 measures
+  5.22:1. An Overview card's icon is a bare glyph in its light's colour, not a gradient tile, and the card has no
+  shadow and no hover lift. The **Team Score and card headlines are Inter with `tabular-nums`**, not JetBrains Mono:
+  mono stays for the numbers in tables and chips (ui-standards § 5). The podium's medals are flat tints. The
+  Overview's heading is the week (*This week*, or a past week's dates with *"A past week is judged on its full
+  goal"*), where it used to say "This week at a glance" on every week. Kept on purpose: the stop light's glowing
+  lamp (Kane asked for a real stop light), the progress bar's sheen (it is the shared `RefreshProgressDialog`
+  "still working" signal), tiny caps on table headers (the house standard). **This deviates from `ui-standards.md`
+  § 11.1's orange-to-amber indicator on this surface only.** Verified in headless Chromium on the real
+  `ScoreboardApp` with a synthetic board at 1440 light and dark, 390 and 360: contrast as above, the logo loaded,
+  no rendered gradient left except the scroll-edge fades, and no horizontal scroll.
 - **Tabs glide** (§ 11.1): one orange indicator via `SlidingPill`, 0.28 s on `[0.22, 1, 0.36, 1]`.
   Each row has its own `layoutId` (`acct-sb-section-tab`, `acct-sb-setup-area`); a shared one would
   fly the indicator between rows. The panel slides toward where you moved (a later tab or week from
@@ -694,7 +712,7 @@ out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **d
   column. Give the header or the body cell its own padding and the labels drift off the boxes again
   (Kane, 2026-10-01: *"align it to the actual boxes"*).
 - **Log collection's disabled state is solid grey**, not the Button's default 50% opacity, which
-  smeared the orange gradient over the orange-tinted form in dark mode (Kane's "Collections UI bug").
+  smeared the orange (then a gradient) over the orange-tinted form in dark mode (Kane's "Collections UI bug").
   The text fields' focus ring is orange, matching the dropdowns beside them. On a phone a log line
   gives the business name its own full-width line, and the "by" handle shows from `sm`.
 - **Below `md` (768 px) the tabs are in a burger menu** (Kane, 2026-10-01: *"The mobile view please make

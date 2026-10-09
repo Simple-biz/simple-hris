@@ -199,8 +199,8 @@ export function ProblemsPanel({ section, board, rows, lookup, onLog, onDelete }:
           size="lg"
           disabled={busy || !loggable.length || !effectiveRow || !effectiveType}
           className={cn(
-            'h-9 bg-gradient-to-r from-orange-500 to-amber-600 text-white shadow-sm shadow-orange-600/20 hover:from-orange-600 hover:to-amber-700',
-            'disabled:bg-none disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-100 disabled:shadow-none dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400',
+            'h-9 bg-orange-700 text-white hover:bg-orange-800',
+            'disabled:bg-zinc-200 disabled:text-zinc-500 disabled:opacity-100 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-400',
           )}
         >
           {busy ? <Loader2 className="animate-spin" /> : null}

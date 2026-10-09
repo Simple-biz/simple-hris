@@ -8,7 +8,7 @@
  * (the sheet's weekly "Total" lines, a "HOLIDAY" note) is shaded so it reads as a subtotal.
  */
 
-import { Archive, ChevronLeft } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import type { ArchiveTabView } from '@/lib/accounting-scoreboard/archive-server';
 import { SCOREBOARD_PAGE } from '@/lib/accounting-scoreboard/host';
 
@@ -17,8 +17,8 @@ const monthYear = (iso: string | null) => (iso ? `${MONTHS[Number(iso.slice(5, 7
 
 export default function ArchivePanel({ tabs }: { tabs: ArchiveTabView[] }) {
   return (
-    <div className="min-h-dvh w-full bg-gradient-to-br from-white via-orange-50/30 to-blue-50/20 dark:bg-none dark:bg-[#0d1117]">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-orange-100/80 bg-white/90 px-4 py-3 backdrop-blur-md sm:px-6 dark:border-zinc-800 dark:bg-zinc-950/90">
+    <div className="min-h-dvh w-full bg-zinc-50 dark:bg-[#0d1117]">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 bg-white px-4 py-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-950">
         <a
           href={SCOREBOARD_PAGE}
           className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-medium text-zinc-600 underline-offset-4 hover:text-orange-700 hover:underline dark:text-zinc-400 dark:hover:text-orange-300"
@@ -27,8 +27,9 @@ export default function ArchivePanel({ tabs }: { tabs: ArchiveTabView[] }) {
           Scoreboard
         </a>
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-sm">
-            <Archive className="size-4" aria-hidden />
+          {/* shared.tsx BrandMark, inlined: this page is a server component. */}
+          <span className="inline-flex shrink-0 items-center rounded-md border border-zinc-200 bg-white px-1 dark:border-zinc-700">
+            <img src="/simple-logo.png" alt="Simple" draggable={false} className="h-7 w-auto" />
           </span>
           <h1 className="truncate text-base font-semibold leading-tight text-zinc-900 sm:text-lg dark:text-zinc-100">
             Scoreboard archive

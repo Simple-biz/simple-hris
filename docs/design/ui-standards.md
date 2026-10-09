@@ -1322,7 +1322,7 @@ sixty-five `layoutId` sites — counted 2026-09-29; "about forty" on 2026-09-15 
 | Section strip (Departments / HSL) — **underline variant** | `PayrollWizard.tsx` (Additions step) | `additions-section-indicator` |
 | `SlidingTab` (My Team inner tabs · Cards/List · People/Scheduling/Rankings) — **spring variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamInnerTab` · `myTeamViewMode` · `myTeamDeptView` |
 | Department rail row (My Team) — **vertical rail variant, § 11.2** | `manager/ManagerApp.tsx` | `myTeamDeptRail` |
-| `SlidingPill` (Accounting Scoreboard section tabs · Setup's Rows / Sections / Members) — orange `from-orange-500 to-amber-600`, 0.28s tween, not a spring | `accounting-scoreboard/shared.tsx` | `acct-sb-section-tab` · `acct-sb-setup-area` |
+| `SlidingPill` (Accounting Scoreboard section tabs · Setup's Rows / Sections / Members) — **solid `orange-700`** since 2026-10-09 (white on the orange-500 → amber-600 gradient is 2.9:1, under AA; orange-700 is 5.2:1), 0.28s tween, not a spring | `accounting-scoreboard/shared.tsx` | `acct-sb-section-tab` · `acct-sb-setup-area` |
 
 The **underline variant** is the same mechanism with a different indicator: a 2px
 bar (`absolute inset-x-0 bottom-0 h-0.5`) instead of a filled pill, for a strip that
