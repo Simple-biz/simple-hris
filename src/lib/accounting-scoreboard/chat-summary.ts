@@ -24,11 +24,18 @@ const WORD: Record<CountedFrequency, string> = {
   annually: 'annual',
 };
 
+/**
+ * "98 of 170 daily tasks and 13 of 80 weekly tasks": the counts as words. What `{progress}` becomes in a scheduled
+ * post's template (chat-template.ts), so the click and the schedule word the counts the same way.
+ */
+export function progressPhrase(progress: readonly FrequencyProgress[]): string {
+  const parts = progress.map((p) => `${p.done} of ${p.total} ${WORD[p.frequency]} tasks`);
+  return parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
 export function buildProgressMessage(progress: readonly FrequencyProgress[]): string {
   if (progress.length === 0) return 'No tasks on the board yet.';
-  const parts = progress.map((p) => `${p.done} of ${p.total} ${WORD[p.frequency]} tasks`);
-  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-  return `Current progress: ${list} have been completed. As you complete your tasks, remember to check them off.`;
+  return `Current progress: ${progressPhrase(progress)} have been completed. As you complete your tasks, remember to check them off.`;
 }
 
 /** Cells in one bar: short enough for a phone's Chat card on one line. */
@@ -100,8 +107,11 @@ export interface ChatPost {
   cardsV2?: ChatCard[];
 }
 
-export function buildProgressPost(progress: readonly FrequencyProgress[], now: Date): ChatPost {
-  const text = buildProgressMessage(progress);
+/**
+ * `text` is the sentence above the card: the click's wording by default, or a scheduled post's rendered template
+ * (chat-template.ts). The card is always drawn from `progress`, so the bars and the counts never disagree.
+ */
+export function buildProgressPost(progress: readonly FrequencyProgress[], now: Date, text: string = buildProgressMessage(progress)): ChatPost {
   if (progress.length === 0) return { text };
   return {
     text,

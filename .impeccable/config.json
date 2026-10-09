@@ -184,6 +184,15 @@
         "rule": "gray-on-color",
         "value": "*",
         "files": [
+          "src/components/accounting-scoreboard/ChatSchedulesArea.tsx"
+        ],
+        "createdAt": "2026-10-09T13:20:37.977Z",
+        "reason": "Claude, session f4065d68: chip rests zinc-700 on WHITE; on the orange-50 hover the text turns orange-900 (house SlidingPill pattern). Static match of two states on one line."
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
           "src/components/accounting-scoreboard/HistoryPanel.tsx"
         ],
         "createdAt": "2026-10-09T13:29:25.310Z",

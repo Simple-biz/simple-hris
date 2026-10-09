@@ -250,6 +250,12 @@ this, the panel unmounted on every Scoreboard → Tasks switch, so every switch 
 
 ## Scheduled posts
 
+> **Since 2026-10-09 the posts are rows an Admin edits in Setup → Scheduled Posts**, governed by
+> [accounting-scoreboard-scheduled-posts.md](accounting-scoreboard-scheduled-posts.md): any days, any whole Eastern hour,
+> any counted frequency, its own words (`{progress}`), pause and remove. The three posts below are the seeded rows. The
+> claim, the stamp, the sender and the audit action in this section still hold; the times in code and the four
+> `vercel.json` entries do not (the cron now runs at every UTC hour).
+
 Carla, relayed by Kane 2026-10-08: *"Daily: Every day around 3:00 PM · Weekly: Twice a week, ideally Wednesday and
 Friday mornings · Monthly: On the 1st and 30th of each month · The other task don't need to be posted since they are
 mainly Claire and I task."* Until then this section was "nothing posts on a schedule", for want of a time and of a
@@ -273,7 +279,8 @@ since 2026-10-03 (measured in `audit_log` on 2026-10-08).
 
 ### How it fires: Vercel cron, at both UTC hours of each slot
 
-- `vercel.json` calls `GET /api/cron/accounting-scoreboard-chat` at **13:00, 14:00, 19:00 and 20:00 UTC**: each
+- *(Superseded 2026-10-09: every UTC hour, 24 entries; accounting-scoreboard-scheduled-posts.md § How it fires.)*
+  `vercel.json` called `GET /api/cron/accounting-scoreboard-chat` at **13:00, 14:00, 19:00 and 20:00 UTC**: each
   slot's EDT and EST hour. Vercel cron is UTC-only, so the route reads the Eastern clock (`dueChatSlots`) and does
   nothing outside a slot's window. Each entry runs once a day, so a Hobby plan could not refuse the deploy.
 - **A slot is due for 2 hours from its time** (`SLOT_WINDOW_HOURS`). That is wide enough for a cron that lands late
@@ -367,7 +374,8 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
   `CRON_SECRET` is already set in production (the older crons fire daily) and the webhook env is the click's.
   **PENDING:** watch the space at the first 3:00 PM ET after the deploy, then check its row in
   `accounting_scoreboard_chat_posts` (`status = 'posted'`).
-- **To stop the schedule:** remove the four `accounting-scoreboard-chat` entries from `vercel.json` and redeploy.
+- **To stop the schedule:** pause the posts in Setup → Scheduled Posts (2026-10-09, no deploy), or remove the 24
+  `accounting-scoreboard-chat` entries from `vercel.json` and redeploy.
   **Not** Vercel → Settings → Cron Jobs → Disable: that switches off every cron, the deletion reaper and the transfer
   applier included.
 - **Scheduled posts verified (2026-10-08):** 9 schedule tests + 10 claim/post tests; the scoreboard suite 290/290; `tsc`

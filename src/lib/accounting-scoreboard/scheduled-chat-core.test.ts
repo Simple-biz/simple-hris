@@ -1,12 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SENT_WITHOUT_CARD, anyPostFailed, postSlot, type ClaimOutcome, type SlotDeps } from './scheduled-chat-core';
-import type { ChatSlot } from './chat-schedule';
+import { SENT_WITHOUT_CARD, anyPostFailed, composeSlotMessage, postSlot, type ClaimOutcome, type SlotDeps } from './scheduled-chat-core';
+import type { ChatSlot, PostSchedule } from './chat-schedule';
+import { DEFAULT_POST_TEMPLATE } from './chat-template';
 import type { SendOutcome } from './chat-webhook';
 import type { FrequencyProgress } from './tasks';
 
-const DAILY: ChatSlot = { date: '2026-10-08', hour: 15, frequencies: ['daily'] };
-const MORNING: ChatSlot = { date: '2026-10-30', hour: 9, frequencies: ['weekly', 'monthly'] };
+const post = (over: Partial<PostSchedule> & Pick<PostSchedule, 'id' | 'frequencies'>): PostSchedule => ({
+  label: over.id,
+  repeat: 'every_day',
+  weekdays: [],
+  monthDays: [],
+  hour: 9,
+  template: DEFAULT_POST_TEMPLATE,
+  paused: false,
+  timingChangedAt: '2026-01-01T00:00:00Z',
+  ...over,
+});
+const slot = (date: string, hour: number, schedules: PostSchedule[], frequencies: ChatSlot['frequencies']): ChatSlot => ({ date, hour, schedules, frequencies });
+const DAILY: ChatSlot = slot('2026-10-08', 15, [post({ id: 'Daily', hour: 15, frequencies: ['daily'] })], ['daily']);
+const MORNING: ChatSlot = slot(
+  '2026-10-30',
+  9,
+  [post({ id: 'Weekly', frequencies: ['weekly'] }), post({ id: 'Monthly', frequencies: ['monthly'] })],
+  ['weekly', 'monthly'],
+);
 const TEAM: FrequencyProgress[] = [
   { frequency: 'daily', total: 170, done: 98 },
   { frequency: 'weekly', total: 80, done: 13 },
@@ -18,7 +36,7 @@ function fake(over: { claim?: ClaimOutcome; progress?: FrequencyProgress[] | str
   const calls: string[] = [];
   const sent: string[] = [];
   const stamps: Array<{ status: string; message?: string; detail?: string }> = [];
-  const audits: Array<{ message: string; slot: string; card: boolean }> = [];
+  const audits: Array<{ message: string; slot: string; card: boolean; posts: string[] }> = [];
   const sentProgress: FrequencyProgress[][] = [];
   const deps: SlotDeps = {
     async claim() {
@@ -43,7 +61,7 @@ function fake(over: { claim?: ClaimOutcome; progress?: FrequencyProgress[] | str
     },
     async audit(_id, f) {
       calls.push('audit');
-      audits.push({ message: f.message, slot: f.slot, card: f.card });
+      audits.push({ message: f.message, slot: f.slot, card: f.card, posts: f.posts });
     },
   };
   return { deps, calls, sent, sentProgress, stamps, audits };
@@ -57,7 +75,7 @@ test('the 3 PM post: claimed first, daily only, stamped posted, audited', async 
     f.sent[0],
     'Current progress: 98 of 170 daily tasks have been completed. As you complete your tasks, remember to check them off.',
   );
-  assert.deepEqual(f.audits, [{ message: f.sent[0], slot: '2026-10-08 15:00 ET', card: true }]);
+  assert.deepEqual(f.audits, [{ message: f.sent[0], slot: '2026-10-08 15:00 ET', card: true, posts: ['Daily'] }]);
   // The card is drawn from the slot's frequencies only: the bars match the sentence.
   assert.deepEqual(f.sentProgress[0], [{ frequency: 'daily', total: 170, done: 98 }]);
   assert.ok(r.ok && r.value.status === 'posted' && r.value.recorded === true && r.value.detail === undefined);
@@ -138,10 +156,39 @@ test('a post that went out but could not be stamped still counts as posted, and 
 });
 
 test('the route reports a failure when any due post did not go out', () => {
-  const base = { slot: 's', frequencies: ['daily' as const] };
+  const base = { slot: 's', frequencies: ['daily' as const], posts: ['Daily'] };
   assert.equal(anyPostFailed([]), false);
   assert.equal(anyPostFailed([{ ...base, status: 'posted' }, { ...base, status: 'already_claimed' }, { ...base, status: 'skipped' }]), false);
   for (const status of ['refused', 'unreachable', 'timed_out', 'failed'] as const) {
     assert.equal(anyPostFailed([{ ...base, status }]), true, status);
   }
+});
+
+test('each post in its own words; the same words share one sentence over all their counts', () => {
+  const nudge = post({ id: 'Nudge', frequencies: ['daily', 'biweekly'], template: 'Friday check: {progress}. Tick them before you log off!' });
+  const weekly = post({ id: 'Weekly', frequencies: ['weekly'] });
+  const monthly = post({ id: 'Monthly', frequencies: ['monthly'] });
+  const r = composeSlotMessage(slot('2026-10-30', 9, [weekly, nudge, monthly], ['daily', 'weekly', 'biweekly', 'monthly']), TEAM);
+  assert.equal(
+    r.message,
+    'Current progress: 13 of 80 weekly tasks and 5 of 40 monthly tasks have been completed. As you complete your tasks, remember to check them off.' +
+      '\n\nFriday check: 98 of 170 daily tasks and 2 of 10 bi-weekly tasks. Tick them before you log off!',
+  );
+  // The card draws every count in the message, in the board's order, each once.
+  assert.deepEqual(r.progress.map((p) => p.frequency), ['daily', 'weekly', 'biweekly', 'monthly']);
+});
+
+test('a post with no tasks of its kind says nothing; the others still go out', async () => {
+  const quarterly = post({ id: 'Quarterly', frequencies: ['quarterly'], template: 'Quarter: {progress}' });
+  const f = fake();
+  await postSlot(slot('2026-10-08', 15, [quarterly, ...DAILY.schedules], ['daily', 'quarterly']), f.deps);
+  assert.equal(f.sent[0], 'Current progress: 98 of 170 daily tasks have been completed. As you complete your tasks, remember to check them off.');
+  assert.deepEqual(f.audits[0].posts, ['Quarterly', 'Daily']);
+});
+
+test('the sentence sent is the composed message (the sender is handed it, not the click wording)', async () => {
+  const f = fake();
+  await postSlot(slot('2026-10-08', 15, [post({ id: 'Short', hour: 15, frequencies: ['daily'], template: '{progress}!' })], ['daily']), f.deps);
+  assert.equal(f.sent[0], '98 of 170 daily tasks!');
+  assert.equal(f.stamps[0].message, '98 of 170 daily tasks!');
 });

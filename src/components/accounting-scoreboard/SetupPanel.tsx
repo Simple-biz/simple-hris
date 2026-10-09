@@ -3,7 +3,8 @@
 /**
  * Setup (board-local roles, roles.ts): which sections are on and their goals, the Admins' own
  * custom sections, who or what each section's rows are, the Payroll Problems types, the extra
- * members, and (Admins only) Access: who is an Admin or an Assistant. An Assistant sees all of it
+ * members, the Chat posts that go out on a schedule (Scheduled Posts), and (Admins only) Keys and
+ * Access: who is an Admin or an Assistant. An Assistant sees all of it
  * read-only (a disabled fieldset) and never the Access area or the roster picker. Carla asked to track less than the sheet does, so every section can be switched off here
  * without a code change, and (2026-10-02) to create sections of her own.
  *
@@ -56,6 +57,7 @@ import { api, EASE_SETTLE, EASE_TAB, handle, LoadingLines, ScrollEdgeFade, Slidi
 const ROSTER_LOADING_LINES = ['Fetching the roster', 'Reading the active employees', 'Sorting people by department'] as const;
 const ROLES_LOADING_LINES = ['Fetching the roles', 'Reading the Admins and Assistants', 'Checking who granted each role'] as const;
 import { KeysArea } from './KeysArea';
+import { ChatSchedulesArea } from './ChatSchedulesArea';
 
 interface Props {
   board: BoardPayload;
@@ -71,6 +73,7 @@ const AREAS = [
   ['sections', 'Sections'],
   ['types', 'Problem types'],
   ['members', 'Members'],
+  ['posts', 'Scheduled Posts'],
   ['keys', 'Keys'],
   ['access', 'Access'],
 ] as const;
@@ -128,7 +131,7 @@ export function SetupPanel({ board, sections, role, onChanged }: Props) {
           Only an Admin can change Setup. You&rsquo;re an {ROLE_LABEL[role]}, so you can see it but not change it.
         </p>
       ) : null}
-      {/* Six areas outgrow a phone: the row scrolls, its hidden ends fade instead of cutting a pill in half, and the
+      {/* Seven areas outgrow a phone: the row scrolls, its hidden ends fade instead of cutting a pill in half, and the
           picked area is scrolled into view. */}
       <div className="relative inline-flex max-w-full rounded-xl">
         <div
@@ -162,6 +165,7 @@ export function SetupPanel({ board, sections, role, onChanged }: Props) {
               {area === 'sections' ? <SectionsArea sections={sections} onChanged={onChanged} /> : null}
               {area === 'types' ? <ProblemTypesArea board={board} onChanged={onChanged} /> : null}
               {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
+              {area === 'posts' ? <ChatSchedulesArea role={role} canEdit={canEdit} /> : null}
             </fieldset>
             {area === 'keys' && can(role, 'manage_keys') ? <KeysArea role={role} /> : null}
             {area === 'access' && can(role, 'manage_roles') ? <AccessArea viewerEmail={board.viewer.email} role={role} /> : null}

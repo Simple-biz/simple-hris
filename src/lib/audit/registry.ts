@@ -150,8 +150,8 @@ export const AUDIT_FAMILIES: readonly AuditFamily[] = [
   {
     match: 'accounting_scoreboard.',
     surfaces: ['accounting', 'admin'],
-    label: 'Accounting Scoreboard roles and Chat posts',
-    note: 'role_granted / role_revoked — a board Admin granted or revoked Admin or Assistant on the Accounting Scoreboard (details: email, role; resource_id = the accounting_scoreboard_roles row). Team members are the member list and write no row here. tasks_progress_posted — an Admin posted the team\x27s task progress to the accounting team\x27s Google Chat, or the schedule did (user "Scoreboard Chat Schedule" / System, details.trigger = schedule, details.slot, resource_id = the accounting_scoreboard_chat_posts row) (details: the message, the counts per frequency, and card = whether the progress-bars card went with it; never the webhook URL)',
+    label: 'Accounting Scoreboard roles, Chat posts and Scheduled Posts',
+    note: 'role_granted / role_revoked — a board Admin granted or revoked Admin or Assistant on the Accounting Scoreboard (details: email, role; resource_id = the accounting_scoreboard_roles row). Team members are the member list and write no row here. tasks_progress_posted — an Admin posted the team\x27s task progress to the accounting team\x27s Google Chat, or the schedule did (user "Scoreboard Chat Schedule" / System, details.trigger = schedule, details.slot, resource_id = the accounting_scoreboard_chat_posts row) (details: the message, the counts per frequency, and card = whether the progress-bars card went with it; posts = the scheduled posts it carried; never the webhook URL). chat_schedule_created / chat_schedule_updated / chat_schedule_paused / chat_schedule_resumed / chat_schedule_removed — a board Admin changed Setup → Scheduled Posts (resource_id = the accounting_scoreboard_chat_schedules row; details: the whole definition on created / removed, { field: { from, to } } as changes otherwise)',
   },
   {
     match: 'accounting.payroll_wizard_notes.',
