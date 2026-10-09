@@ -2,12 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PAYOUT_CHANGE_NOTICE_VERSION,
+  PAYOUT_GUARDRAIL_KEY,
   assessPayoutChange,
   attestationAlertSentences,
   buildPayoutAttestation,
   foldPayoutTrackRecord,
+  guardrailFromPayload,
   holderNameVerdict,
+  isPayoutGuardrailKey,
   judgePayoutChange,
+  parsePayoutGuardrail,
   looksLikeCardNumber,
   parsePayoutTrack,
   payoutDestinationKey,
@@ -245,6 +249,7 @@ test('the attestation records version, flags, confirmations and the account bein
   );
   const att = buildPayoutAttestation(a, answers, previous, new Date('2026-10-07T12:00:00Z'));
   assert.deepEqual(att, {
+    guardrail: 'on',
     notice_version: PAYOUT_CHANGE_NOTICE_VERSION,
     attested_at: '2026-10-07T12:00:00.000Z',
     destination_changed: true,
@@ -264,4 +269,50 @@ test('an unreadable previous record is null in the attestation, never zero', () 
   const att = buildPayoutAttestation(a, ACK, { status: 'unavailable' });
   assert.equal(att.previous_account, null);
   assert.deepEqual(attestationAlertSentences(att), []);
+});
+
+// ── Class 6: the System Settings switch (2026-10-09) ────────────────────────
+
+test('the switch is OFF only for exactly "off"; missing, blank, other casing or junk all read ON', () => {
+  assert.equal(parsePayoutGuardrail('off'), false);
+  for (const raw of [null, undefined, '', 'on', 'OFF', ' off', 'false', '0', 'disabled']) {
+    assert.equal(parsePayoutGuardrail(raw), true, `${JSON.stringify(raw)} must read ON`);
+  }
+  assert.equal(isPayoutGuardrailKey(PAYOUT_GUARDRAIL_KEY), true);
+  assert.equal(isPayoutGuardrailKey(' Banking.Payout_Guardrail '), true, 'a near-spelling is caught by the route gate');
+  assert.equal(isPayoutGuardrailKey('banking.payout_guardrail_at'), false);
+});
+
+test('a form shows the notice unless the payload says literally false', () => {
+  assert.equal(guardrailFromPayload(false), false);
+  for (const raw of [undefined, null, true, 'false', 0, {}]) {
+    assert.equal(guardrailFromPayload(raw), true, `${JSON.stringify(raw)} must show the notice`);
+  }
+});
+
+test('guardrail ON is the default: a caller that does not pass the switch is still gated', () => {
+  const a = assessPayoutChange(stored, { account_number: '5550001112' }, ['Juan Santos']);
+  assert.equal(judgePayoutChange(a, {}).ok, false);
+  assert.equal(judgePayoutChange(a, {}, { guardrail: true }).ok, false);
+});
+
+test('guardrail OFF: no acknowledgement or confirmation is needed, and the flags still ride along', () => {
+  const a = assessPayoutChange(stored, { account_holder_name: 'Maria Santos', account_number: '4111111111111111' }, ['Juan Santos']);
+  const v = judgePayoutChange(a, {}, { guardrail: false });
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.assessment.flags, ['card_shaped_account', 'holder_not_employee']);
+});
+
+test('guardrail OFF: the record claims no acknowledgement, even if the body posted one', () => {
+  const a = assessPayoutChange(stored, { account_holder_name: 'Maria Santos', account_number: '4111111111111111' }, ['Juan Santos']);
+  const posted = { ...ACK, confirm_holder_is_self: true, confirm_not_card_number: true };
+  const att = buildPayoutAttestation(a, posted, null, new Date('2026-10-09T12:00:00Z'), { guardrail: false });
+  assert.equal(att.guardrail, 'off');
+  assert.equal(att.notice_version, null);
+  assert.equal(att.holder_confirmed, false);
+  assert.equal(att.card_confirmed, false);
+  assert.deepEqual(att.flags, ['card_shaped_account', 'holder_not_employee']);
+  const sentences = attestationAlertSentences(att);
+  assert.equal(sentences.length, 2);
+  assert.ok(sentences.every((s) => s.includes('not asked') && !s.includes('employee confirmed')));
 });

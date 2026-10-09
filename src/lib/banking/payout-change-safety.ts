@@ -49,6 +49,69 @@ export const PAYOUT_CHANGE_NOTICE = {
     'I have checked these details. This is my own, open bank account or wallet, and I understand a mistake in them is my responsibility.',
 } as const;
 
+// ── The switch (Accounting → System Settings) ───────────────────────────────
+
+/**
+ * The `app_settings` key that turns the guardrail off. Kane, 2026-10-09: "add a
+ * button in Accounting - System Settings - Where we can disable Guardrail for
+ * banks". Only `'off'` turns it off. A missing row, an unreadable row and any
+ * other value all mean ON, so the guardrail fails toward ASKING, never toward
+ * skipping. `/api/app-settings` accepts only these two values for this key and
+ * only from Admin or Accounting → System Settings edit.
+ */
+export const PAYOUT_GUARDRAIL_KEY = 'banking.payout_guardrail';
+export const PAYOUT_GUARDRAIL_VALUES = ['on', 'off'] as const;
+export type PayoutGuardrailValue = (typeof PAYOUT_GUARDRAIL_VALUES)[number];
+
+export function isPayoutGuardrailKey(key: string): boolean {
+  return key.trim().toLowerCase() === PAYOUT_GUARDRAIL_KEY;
+}
+
+/** True (ON) unless the stored value is exactly `'off'`. */
+export function parsePayoutGuardrail(raw: string | null | undefined): boolean {
+  return raw !== 'off';
+}
+
+/**
+ * Read the switch off an API payload (`payout_guardrail` / `payoutGuardrail`).
+ * Only a literal `false` turns it off: an older server that does not send it,
+ * or anything malformed, shows the notice.
+ */
+export function guardrailFromPayload(raw: unknown): boolean {
+  return raw !== false;
+}
+
+/**
+ * What System Settings says the guardrail does, beside the switch. It lives here,
+ * next to the notice and the gate, so the description cannot drift from the code
+ * it describes. The notice's own four rules are rendered from
+ * `PAYOUT_CHANGE_NOTICE.rules`, not restated.
+ */
+export const PAYOUT_GUARDRAIL_EXPLAINER = {
+  summary:
+    'A safety check on employees changing where they are paid. Before a new bank account or wallet is saved, the employee reads a warning about the mistakes that stop pay and confirms the details are their own. A wrong account is then on record as the employee’s error, not an HRIS or payroll one.',
+  where: [
+    'The public Update Bank Info page (/update-bank-info), reached with a code mailed to the work email.',
+    'Employee Dashboard → Profile → Compensation → Payout.',
+    'Only employees changing their OWN details. Staff fixing someone else’s row (People tab, Payroll Wizard Readiness) are never asked.',
+  ],
+  whileOn: [
+    'Shows the bank-change notice under the form, with the four rules below.',
+    'Save stays disabled until the employee ticks the acknowledgement, and the server refuses a save without it, not just the button.',
+    'A new account number that looks like a debit or credit card number (15–19 digits, a card-network prefix, a valid check digit) needs a second tick. The employee confirms; the save is never blocked.',
+    'An account holder name without both the employee’s first name and surname (a spouse’s or relative’s account looks like this) needs a tick saying the account is their own. Married names and short forms pass by confirming.',
+    'What they confirmed is recorded on the bank change (People → Bank changes → View), and a flagged change carries a Check account chip.',
+  ],
+  whileOff: [
+    'No notice and no tick boxes: the employee saves straight away.',
+    'A card-shaped number or a holder-name mismatch is still flagged to Accounting (alert and Check account chip), marked as not confirmed.',
+    'The record shows the guardrail was off, so nothing is claimed as acknowledged.',
+    'Unchanged: the “Paid N times to this account” line, Accounting’s alert on every change, and the payroll lock (no bank changes while payroll is being processed).',
+  ],
+  timing:
+    'Takes effect on the next save. A page opened while the guardrail was off asks for the tick if it is turned back on before that page saves.',
+} as const;
+
 /** What the holder-name confirmation says, word for word (both forms). */
 export const HOLDER_CONFIRM_TEXT =
   'This account is in my own name (for example under my married name or a short form of my name). It is not my spouse’s, a relative’s or anyone else’s account.';
@@ -439,12 +502,18 @@ export type PayoutSafetyVerdict =
  * a code the form uses to show the box it was missing. Strict equality only: a
  * stale page posting an older notice version, or a truthy string instead of
  * `true`, is a refusal. A save that changes nothing needs no acknowledgement.
+ *
+ * `guardrail: false` (switched off in System Settings) lets every change through;
+ * the assessment still rides along, so its flags still reach Accounting. The
+ * default is ON: a caller that does not say is gated.
  */
 export function judgePayoutChange(
   assessment: PayoutChangeAssessment,
   answers: PayoutSafetyAnswers,
+  opts: { guardrail: boolean } = { guardrail: true },
 ): PayoutSafetyVerdict {
   if (!assessment.changed) return { ok: true, assessment };
+  if (opts.guardrail === false) return { ok: true, assessment };
   if (answers.payout_notice_ack !== PAYOUT_CHANGE_NOTICE_VERSION) {
     return {
       ok: false,
@@ -479,9 +548,18 @@ export function judgePayoutChange(
  * The record kept of what the employee attested, written to the audit row, the
  * non-clearable `bank_update_history.safety` column and Accounting's alert. No
  * value is in it, only flags and counts (update-bank-info.md rule 22).
+ *
+ * With the guardrail OFF nothing was shown and nothing was acknowledged, so the
+ * record says so: `guardrail: 'off'`, `notice_version: null`, both confirmations
+ * false. The flags are still judged, so Accounting still sees a card-shaped
+ * number or a holder who is not the employee. Rows written before 2026-10-09
+ * carry no `guardrail`; they were all written with it on.
  */
 export type PayoutChangeAttestation = {
-  notice_version: string;
+  guardrail: 'on' | 'off';
+  /** The notice version acknowledged; null when the guardrail was off and none was shown. */
+  notice_version: string | null;
+  /** When the change was saved (and, with the guardrail on, attested). */
   attested_at: string;
   destination_changed: boolean;
   flags: PayoutSafetyFlag[];
@@ -496,14 +574,18 @@ export function buildPayoutAttestation(
   answers: PayoutSafetyAnswers,
   previous: PayoutTrackRecord | null,
   now: Date = new Date(),
+  opts: { guardrail: boolean } = { guardrail: true },
 ): PayoutChangeAttestation {
+  const on = opts.guardrail !== false;
   return {
-    notice_version: PAYOUT_CHANGE_NOTICE_VERSION,
+    guardrail: on ? 'on' : 'off',
+    notice_version: on ? PAYOUT_CHANGE_NOTICE_VERSION : null,
     attested_at: now.toISOString(),
     destination_changed: assessment.destinationChanged,
     flags: assessment.flags,
-    holder_confirmed: answers.confirm_holder_is_self === true,
-    card_confirmed: answers.confirm_not_card_number === true,
+    // Off: no box was shown, so nothing posted can count as a confirmation.
+    holder_confirmed: on && answers.confirm_holder_is_self === true,
+    card_confirmed: on && answers.confirm_not_card_number === true,
     previous_account:
       previous && previous.status === 'ok' && previous.destination !== 'none'
         ? { paid_count: previous.paidCount, problem_count: previous.problemCount, last_paid_on: previous.lastPaidOn }
@@ -514,11 +596,23 @@ export function buildPayoutAttestation(
 /** The sentences Accounting's alert appends for a flagged or account-moving change. Field names and counts only. */
 export function attestationAlertSentences(a: PayoutChangeAttestation): string[] {
   const out: string[] = [];
+  const unconfirmed =
+    a.guardrail === 'off'
+      ? 'the employee was not asked to confirm it (bank guardrail off).'
+      : 'the employee did not confirm it.';
   if (a.flags.includes('card_shaped_account')) {
-    out.push('The new account number looks like a card number; the employee confirmed it is an account number.');
+    out.push(
+      `The new account number looks like a card number; ${
+        a.card_confirmed ? 'the employee confirmed it is an account number.' : unconfirmed
+      }`,
+    );
   }
   if (a.flags.includes('holder_not_employee')) {
-    out.push('The account holder name does not match the employee’s name; the employee confirmed the account is their own.');
+    out.push(
+      `The account holder name does not match the employee’s name; ${
+        a.holder_confirmed ? 'the employee confirmed the account is their own.' : unconfirmed
+      }`,
+    );
   }
   if (a.destination_changed && a.previous_account && a.previous_account.paid_count > 0) {
     const n = a.previous_account.paid_count;

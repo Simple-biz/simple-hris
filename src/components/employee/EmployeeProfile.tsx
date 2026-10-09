@@ -133,6 +133,7 @@ import {
 import {
   PAYOUT_CHANGE_NOTICE_VERSION,
   assessPayoutChange,
+  guardrailFromPayload,
   parsePayoutTrack,
   type PayoutTrackRecord,
 } from '@/lib/banking/payout-change-safety';
@@ -1228,6 +1229,10 @@ export default function EmployeeProfile({
   const [payoutHolderConfirmed, setPayoutHolderConfirmed] = useState(false);
   const [forcePayoutCardConfirm, setForcePayoutCardConfirm] = useState(false);
   const [forcePayoutHolderConfirm, setForcePayoutHolderConfirm] = useState(false);
+  // Whether the notice and its boxes are shown at all (Accounting → System
+  // Settings, 2026-10-09). Rides the same `&track=1` read; starts ON, and a save
+  // refused by the safety gate turns it back ON. The save route is the authority.
+  const [payoutGuardrailOn, setPayoutGuardrailOn] = useState(true);
   // Accounts the employee reported closed / deactivated / frozen
   // (payout-account-reports.md). Rides the same uncached `&track=1` read; plain
   // state, never a cache key (§3 condition 2).
@@ -1849,6 +1854,7 @@ export default function EmployeeProfile({
           walletRail?: unknown;
           payoutTrack?: unknown;
           accountReports?: unknown;
+          payoutGuardrail?: unknown;
         };
         const fxJson = (await fxRes.json()) as { value: string | null };
 
@@ -1906,6 +1912,7 @@ export default function EmployeeProfile({
         setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
         setPayoutTrack(parsePayoutTrack(idsJson.payoutTrack));
         setAccountReports(parseAccountReportsView(idsJson.accountReports));
+        setPayoutGuardrailOn(guardrailFromPayload(idsJson.payoutGuardrail));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load profile');
       } finally {
@@ -2054,12 +2061,15 @@ export default function EmployeeProfile({
     payoutFields,
     [master?.name ?? null, bankInfo?.name ?? null],
   );
-  const payoutCardShaped = forcePayoutCardConfirm || payoutSafety.flags.includes('card_shaped_account');
-  const payoutHolderMismatch = forcePayoutHolderConfirm || payoutSafety.flags.includes('holder_not_employee');
+  const payoutCardShaped =
+    payoutGuardrailOn && (forcePayoutCardConfirm || payoutSafety.flags.includes('card_shaped_account'));
+  const payoutHolderMismatch =
+    payoutGuardrailOn && (forcePayoutHolderConfirm || payoutSafety.flags.includes('holder_not_employee'));
   const payoutSafetyReady =
-    payoutNoticeAck &&
-    (!payoutCardShaped || payoutCardConfirmed) &&
-    (!payoutHolderMismatch || payoutHolderConfirmed);
+    !payoutGuardrailOn ||
+    (payoutNoticeAck &&
+      (!payoutCardShaped || payoutCardConfirmed) &&
+      (!payoutHolderMismatch || payoutHolderConfirmed));
 
   // An account the employee reported is not one to call "no problems on record",
   // and not one to count as proven in the change notice: while the PAID account
@@ -2113,7 +2123,8 @@ export default function EmployeeProfile({
           work_email: norm,
           bootstrap_display_name: bootstrapName || undefined,
           ...payoutFields,
-          payout_notice_ack: PAYOUT_CHANGE_NOTICE_VERSION,
+          // With the guardrail off nothing was shown, so nothing is claimed.
+          ...(payoutGuardrailOn && payoutNoticeAck ? { payout_notice_ack: PAYOUT_CHANGE_NOTICE_VERSION } : {}),
           confirm_not_card_number: payoutCardShaped && payoutCardConfirmed,
           confirm_holder_is_self: payoutHolderMismatch && payoutHolderConfirmed,
         }),
@@ -2123,7 +2134,12 @@ export default function EmployeeProfile({
         success?: boolean;
         code?: string;
       };
-      // The safety gate flagged something this form did not: show that box.
+      // The safety gate flagged something this form did not: show that box. Any
+      // safety refusal also means the guardrail is ON now, whatever this form
+      // loaded with.
+      if (json.code === 'card_confirm_required' || json.code === 'holder_confirm_required' || json.code === 'payout_notice_ack_required') {
+        setPayoutGuardrailOn(true);
+      }
       if (json.code === 'card_confirm_required') setForcePayoutCardConfirm(true);
       if (json.code === 'holder_confirm_required') setForcePayoutHolderConfirm(true);
       if (json.code === 'payout_notice_ack_required') setPayoutNoticeAck(false);
@@ -2138,6 +2154,7 @@ export default function EmployeeProfile({
         walletRail?: unknown;
         payoutTrack?: unknown;
         accountReports?: unknown;
+        payoutGuardrail?: unknown;
       };
       const myId = (idsJson.rows ?? [])[0];
       setBankInfo(myId ?? null);
@@ -2145,6 +2162,7 @@ export default function EmployeeProfile({
       // record of whatever account is on file NOW.
       setWalletRailEffective(walletRailEffectiveFromPayload(idsJson.walletRail));
       setPayoutTrack(parsePayoutTrack(idsJson.payoutTrack));
+      setPayoutGuardrailOn(guardrailFromPayload(idsJson.payoutGuardrail));
       // A replaced account's report no longer attaches to anything on file.
       setAccountReports(parseAccountReportsView(idsJson.accountReports));
       setPayoutNoticeAck(false);
@@ -3212,21 +3230,25 @@ export default function EmployeeProfile({
                                         on file is worth, what a mistake costs,
                                         and whose error it is. The Save button
                                         above stays disabled until it is
-                                        acknowledged; the route refuses without. */}
-                                    <PayoutChangeNotice
-                                      idPrefix="profile-payout-safety"
-                                      track={displayedPayoutTrack}
-                                      ownName={payoutOwnName}
-                                      acknowledged={payoutNoticeAck}
-                                      onAcknowledgedChange={setPayoutNoticeAck}
-                                      cardShaped={payoutCardShaped}
-                                      cardConfirmed={payoutCardConfirmed}
-                                      onCardConfirmedChange={setPayoutCardConfirmed}
-                                      holderMismatch={payoutHolderMismatch}
-                                      holderConfirmed={payoutHolderConfirmed}
-                                      onHolderConfirmedChange={setPayoutHolderConfirmed}
-                                      disabled={payoutReadOnly || payoutSaving}
-                                    />
+                                        acknowledged; the route refuses without.
+                                        Hidden while Accounting has the bank
+                                        guardrail switched off. */}
+                                    {payoutGuardrailOn ? (
+                                      <PayoutChangeNotice
+                                        idPrefix="profile-payout-safety"
+                                        track={displayedPayoutTrack}
+                                        ownName={payoutOwnName}
+                                        acknowledged={payoutNoticeAck}
+                                        onAcknowledgedChange={setPayoutNoticeAck}
+                                        cardShaped={payoutCardShaped}
+                                        cardConfirmed={payoutCardConfirmed}
+                                        onCardConfirmedChange={setPayoutCardConfirmed}
+                                        holderMismatch={payoutHolderMismatch}
+                                        holderConfirmed={payoutHolderConfirmed}
+                                        onHolderConfirmedChange={setPayoutHolderConfirmed}
+                                        disabled={payoutReadOnly || payoutSaving}
+                                      />
+                                    ) : null}
                                   </div>
                                 ) : (
                                   <div className="space-y-4">

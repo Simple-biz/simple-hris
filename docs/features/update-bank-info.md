@@ -20,7 +20,9 @@ the account on file has been paid, and a save that changes anything is refused u
 acknowledges a versioned notice (card numbers, closed accounts, a spouse's or anyone else's
 account), plus a separate confirmation when the new account looks like a card number or its holder
 is not them. What they attested is recorded. The same gate runs on the Employee Dashboard's own
-save ([employee-profile.md](employee-profile.md) §6.4).
+save ([employee-profile.md](employee-profile.md) §6.4). **Since 2026-10-09 Accounting can switch
+the guardrail off** in Accounting → System Settings → Bank Guardrail (rule 32): the notice, the
+boxes and the refusals go, the flags and the record stay.
 
 It is the precedent the gift-address link was copied from
 ([gift-address-external-link.md:34-37](gift-address-external-link.md)). The two flows now
@@ -46,7 +48,9 @@ differ in places, which §*Security notes* lists.
 | Edge allowlist, rate limit, host isolation | `proxy.ts` |
 | Migrations | `references/sql/migrate/2026-06-29_bank_update_external_link.sql` · `2026-07-01_bank_update_history.sql` |
 | The email that links here | `references/n8n/bank-info-missing-notify.workflow.json` · `src/lib/people/bank-info-notify.ts` · `app/api/people/request-bank-info/route.ts` |
-| Payout change safety: notice text + version, card/holder checks, the gate, the attestation, the track-record fold | `src/lib/banking/payout-change-safety.ts` (+ `.test.ts`, 25 tests) |
+| Payout change safety: notice text + version, card/holder checks, the gate, the attestation, the track-record fold, the switch's key/parser and the System Settings explainer | `src/lib/banking/payout-change-safety.ts` (+ `.test.ts`, 30 tests) |
+| The switch's server read (fails ON) | `src/lib/supabase/payout-guardrail.ts` (`readPayoutGuardrailOn`) |
+| The switch's panel (Accounting → System Settings → Banking → Bank Guardrail) | `src/components/SystemSettings.tsx` (`bank-guardrail` tab) · write gate in `app/api/app-settings/route.ts` |
 | Track record reader (`payment_dispatches`, paged) | `src/lib/supabase/payout-track-record.ts` |
 | The notice and the track line (shared with the dashboard) | `src/components/banking/payout-change-notice.tsx` |
 | The attestation column | `references/sql/alter/2026-10-07_bank_update_history_safety.sql` · `scripts/apply-bank-update-history-safety-migration.mts` |
@@ -96,7 +100,8 @@ differ in places, which §*Security notes* lists.
    The fields for the chosen method render from the shared component. The track line sits above
    them and the payout change notice below them (§ *Payout change safety*). **Save** is blocked in
    the browser until a method is chosen, its required fields are filled, and the notice (plus any
-   card or holder confirmation it raised) is ticked.
+   card or holder confirmation it raised) is ticked. With the bank guardrail OFF (rule 32) the
+   notice and its boxes are not rendered and Save waits only on the method and its fields.
 5. **Save.** POSTs the session token, the 18 payout keys and the three safety answers. Server
    order: token → 401 · service role → 500 · field validation → 400 · dispatch lock → 423 ·
    before-snapshot · **safety gate → 400** (with a `bank_update.safety_refused` audit row) · write ·
@@ -246,8 +251,9 @@ Each is what the code does at HEAD, with where it does it.
 
 ### Payout change safety (2026-10-07)
 
-26. **A self-service save that changes anything is refused (400 `payout_notice_ack_required`)
-    unless `payout_notice_ack` equals `PAYOUT_CHANGE_NOTICE_VERSION` exactly.** A stale page
+26. **While the bank guardrail is ON (rule 32), a self-service save that changes anything is
+    refused (400 `payout_notice_ack_required`) unless `payout_notice_ack` equals
+    `PAYOUT_CHANGE_NOTICE_VERSION` exactly.** A stale page
     posting an older version, or `true`, is refused. A save that changes nothing needs no
     acknowledgement. "Changed" compares each posted field with the stored row; the stored row is
     read whole and best-effort, and an unread row (`{}`) makes everything read as changed, so the
@@ -260,25 +266,49 @@ Each is what the code does at HEAD, with where it does it.
     count is "on record", a floor.
 28. **A card-shaped account number is confirmed, never blocked.** A NEW account number (changed in
     this save) with 15–19 digits, a card-network prefix and a valid Luhn digit needs
-    `confirm_not_card_number: true` (400 `card_confirm_required`). Not a block, because 2 of the 8
-    card-shaped numbers on file were paid successfully (measured 2026-10-07). A number already on
-    file is not re-flagged.
+    `confirm_not_card_number: true` (400 `card_confirm_required`) while the guardrail is ON; with it
+    OFF it is still flagged (record, alert, *Check account* chip) but not asked. Not a block, because
+    2 of the 8 card-shaped numbers on file were paid successfully (measured 2026-10-07). A number
+    already on file is not re-flagged.
 29. **A holder who is not the employee is confirmed, never blocked.** When a slot's details change
     (or the paid slot switches) and its holder name does not carry BOTH a given name and a surname
     of the employee, or HiGlobe's account name likewise, the save needs
-    `confirm_holder_is_self: true` (400 `holder_confirm_required`). A shared surname alone is what a
+    `confirm_holder_is_self: true` (400 `holder_confirm_required`) while the guardrail is ON; with it
+    OFF it is still flagged but not asked. A shared surname alone is what a
     spouse's account looks like, so it is a mismatch; surname particles (*dela*, *de los*, *san*)
     never count. The names judged against come from the roster and the payout row, **never the
     body**. Not a block, because 115 of 1,044 bank-rail holders on file read as a mismatch
     (married names, short forms, roster typos).
-30. **What the employee attested is recorded and holds no value**: notice version, time, flags,
-    both confirmations, whether the destination moved, and the paid/problem counts of the account
-    they left. It goes on the `bank_update.saved` audit row (`details.safety`), the non-clearable
-    `bank_update_history.safety` column, and Accounting's alert (`details.safety` plus plain
-    sentences). A flagged change without a sending-bank mismatch is titled *"Bank details updated —
-    check the new account"*; the mismatch title keeps precedence (rule 18).
+30. **What the employee attested is recorded and holds no value**: whether the guardrail was on,
+    notice version, time, flags, both confirmations, whether the destination moved, and the
+    paid/problem counts of the account they left. It goes on the `bank_update.saved` audit row
+    (`details.safety`), the non-clearable `bank_update_history.safety` column, and Accounting's alert
+    (`details.safety` plus plain sentences). A flagged change without a sending-bank mismatch is
+    titled *"Bank details updated — check the new account"*; the mismatch title keeps precedence
+    (rule 18). **A save made with the guardrail OFF claims nothing**: `guardrail: 'off'`,
+    `notice_version: null` and both confirmations false, even if the body posted them, because
+    nothing was shown. The alert says the flag was *"not asked to confirm (bank guardrail off)"*, and
+    People → Bank changes → View says the employee *"was not shown the bank-change notice and
+    acknowledged nothing"*. Rows written before 2026-10-09 carry no `guardrail` and read as ON.
 31. **A refusal is recorded too** (`bank_update.safety_refused`, `{via, code, flags}`), so the
-    record shows the employee was warned even when nothing was saved.
+    record shows the employee was warned even when nothing was saved. With the guardrail OFF there
+    are no refusals.
+32. **The guardrail has one switch: Accounting → System Settings → Banking → Bank Guardrail**
+    (Kane, 2026-10-09: *"add a button in Accounting - System Settings - Where we can disable
+    Guardrail for banks in there please - also layout a text what that guardrail does"*). It is the
+    `app_settings` row `banking.payout_guardrail`. **Only the exact value `off` turns it off.** A
+    missing row, an unreadable row and every other value are ON (`parsePayoutGuardrail`,
+    `readPayoutGuardrailOn`), so the switch fails toward asking, never toward skipping. Both save
+    routes re-read it on every save, with no cache, and are the only authority. The forms learn it
+    from `verify-otp` (`payout_guardrail`) and `/api/employee-ids?…&track=1` (`payoutGuardrail`)
+    for display only, and a form that loaded with it OFF turns the notice back on when a save comes
+    back with any safety refusal code. **Writing it needs Accounting → System Settings edit (admin
+    bypasses), and the value must be exactly `on` or `off`** (`/api/app-settings` 403/400).
+    `hr_coordinator` is elevated but cannot write it. Every switch is an `app_settings.changed`
+    audit row with before and after. OFF changes nothing else: the track line, the reviewer alert
+    on every change, the masking, the payroll lock and the staff-edit exemption all stand. The panel
+    beside the switch explains the guardrail from `PAYOUT_GUARDRAIL_EXPLAINER` and the notice's own
+    rules, both in `payout-change-safety.ts`, so the description cannot drift from the gate.
 
 ## What it writes
 
@@ -377,7 +407,19 @@ Bank changes shows a *Check account* chip on a flagged change, and **View** show
 attestation (`BankChangeDetailDialog` → `AttestationBlock`).
 
 **This page's older card-safety notice is unchanged.** It is about phishing (never share a CVV);
-the new notice is about typing the wrong number.
+the new notice is about typing the wrong number. It is NOT governed by the bank guardrail switch
+and shows either way.
+
+**The switch (2026-10-09, Open item 436).** Kane first asked to *"Disable this feature for now"*,
+then for *"a button in Accounting - System Settings"* with *"a text what that guardrail does"*.
+Item 436 records the hardening conflict this answered (rule 26 and the 2026-10-08 call's *"The
+payout guardrail stays as built"*). Accounting → System Settings now has a **Banking → Bank
+Guardrail** panel: an on/off switch, a *BANK GUARDRAIL OFF* pill in the page header while it is
+off, and a plain description of where the guardrail runs, what it does while on (with the four
+rules and the acknowledgement word for word), and what changes while off. Rule 32 holds the
+behaviour. What OFF keeps is deliberate: the card and holder checks still run on every self-service
+change, so Accounting still sees *Check account* on exactly the changes the guardrail would have
+asked about, now marked as not confirmed.
 
 ## Limits and expiry
 

@@ -144,10 +144,14 @@ function toEntry(r: Record<string, unknown>): BankChangeEntry {
 function toAttestation(raw: unknown): PayoutChangeAttestation | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  if (typeof o.notice_version !== 'string') return null;
+  // Rows before 2026-10-09 carry no `guardrail`: every one was written with it
+  // on. An OFF row carries no notice version (none was shown); an ON row must.
+  const guardrail: PayoutChangeAttestation['guardrail'] = o.guardrail === 'off' ? 'off' : 'on';
+  if (guardrail === 'on' && typeof o.notice_version !== 'string') return null;
   const prev = o.previous_account as Record<string, unknown> | null | undefined;
   return {
-    notice_version: o.notice_version,
+    guardrail,
+    notice_version: guardrail === 'on' ? (o.notice_version as string) : null,
     attested_at: String(o.attested_at ?? ''),
     destination_changed: o.destination_changed === true,
     flags: Array.isArray(o.flags)

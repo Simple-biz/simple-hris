@@ -19,6 +19,7 @@ import { requireFeatureEditAnyView } from "@/lib/auth/authorize-feature";
 import { findActiveEmployeeByEmail } from "@/lib/bank-update/otp";
 import { resolveEffectivePayoutProcessor } from "@/lib/employee/payout-completeness";
 import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
+import { readPayoutGuardrailOn } from "@/lib/supabase/payout-guardrail";
 import {
   SELF_SERVICE_PAYOUT_FIELDS,
   assessPayoutChange,
@@ -532,9 +533,15 @@ export async function POST(req: Request) {
     // own account, and their edit is attributed to them in the trail. The names
     // judged against are the roster's and the payout row's, never
     // `bootstrap_display_name`, which the caller supplies.
+    // Accounting can switch the guardrail off in System Settings (2026-10-09):
+    // then nothing is refused, but the flags are still judged and still reach
+    // Accounting. An unreadable switch is ON.
     let attestation: PayoutChangeAttestation | null = null;
     if (isSelfEdit && bankChangedFields.length > 0) {
-      const roster = await findActiveEmployeeByEmail(authz.effectiveEmail);
+      const [roster, guardrail] = await Promise.all([
+        findActiveEmployeeByEmail(authz.effectiveEmail),
+        readPayoutGuardrailOn(),
+      ]);
       const answers: PayoutSafetyAnswers = {
         payout_notice_ack: fields.payout_notice_ack,
         confirm_holder_is_self: fields.confirm_holder_is_self,
@@ -546,6 +553,7 @@ export async function POST(req: Request) {
           typeof beforeRow.name === "string" ? beforeRow.name : null,
         ]),
         answers,
+        { guardrail },
       );
       if (!verdict.ok) {
         // The record that the employee WAS warned, even though nothing was saved.
@@ -579,7 +587,7 @@ export async function POST(req: Request) {
               rail: resolveEffectivePayoutProcessor(beforeRow),
             })
           : null;
-        attestation = buildPayoutAttestation(verdict.assessment, answers, previousTrack);
+        attestation = buildPayoutAttestation(verdict.assessment, answers, previousTrack, new Date(), { guardrail });
       }
     }
 

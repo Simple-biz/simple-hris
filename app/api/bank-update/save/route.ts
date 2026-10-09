@@ -13,6 +13,7 @@ import { maskFieldValue } from "@/lib/bank-update/mask-field";
 import { sendFromMismatch, sendFromMismatchSentence } from "@/lib/employee-payment-processors";
 import { resolveEffectivePayoutProcessor } from "@/lib/employee/payout-completeness";
 import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
+import { readPayoutGuardrailOn } from "@/lib/supabase/payout-guardrail";
 import {
   SELF_SERVICE_PAYOUT_FIELDS,
   assessPayoutChange,
@@ -232,6 +233,10 @@ export async function POST(req: Request) {
     // confirmed that separately. The names judged against are the roster's and
     // the payout row's own, never anything from the body. See
     // payout-change-safety.ts and update-bank-info.md § Payout change safety.
+    // Accounting can switch the guardrail off in System Settings (2026-10-09):
+    // then nothing is refused, but the flags are still judged and still reach
+    // Accounting. An unreadable switch is ON.
+    const guardrail = await readPayoutGuardrailOn();
     const answers: PayoutSafetyAnswers = {
       payout_notice_ack: body.payout_notice_ack,
       confirm_holder_is_self: body.confirm_holder_is_self,
@@ -243,6 +248,7 @@ export async function POST(req: Request) {
         typeof beforeRow.name === "string" ? beforeRow.name : null,
       ]),
       answers,
+      { guardrail },
     );
     if (!verdict.ok) {
       // The record that the employee WAS warned, even though nothing was saved.
@@ -270,7 +276,7 @@ export async function POST(req: Request) {
         })
       : null;
     const attestation = verdict.assessment.changed
-      ? buildPayoutAttestation(verdict.assessment, answers, previousTrack)
+      ? buildPayoutAttestation(verdict.assessment, answers, previousTrack, new Date(), { guardrail })
       : null;
     // Advisory, like the dashboard route: the 1:1 rule is enforced where the
     // sending bank is SET (People → Banking); a save here only reports it.

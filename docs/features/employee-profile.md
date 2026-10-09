@@ -401,6 +401,11 @@ the component and the gate.
   `/api/update-employee-ids` refuses a self-service change without them (400 with a `code` the form
   uses to show the box it was missing). Cancel and a successful save clear every box: each change is
   acknowledged on its own.
+- **While Accounting has the bank guardrail OFF** (System Settings → Bank Guardrail, 2026-10-09,
+  [update-bank-info.md](update-bank-info.md) rule 32) the notice is not rendered and Save waits only
+  on the fields. `payoutGuardrail` rides the same `&track=1` read into plain `useState` (§3
+  condition 2 holds), starts ON, and turns back ON when a save comes back with any safety refusal
+  code. The route re-reads the switch and is the authority. The track line shows either way.
 - **§3 condition 2 still holds.** The record rides the same uncached read,
   `/api/employee-ids?email=…&track=1` (only this Profile asks for `track`; the shell's completeness
   read does not pay for it), into plain `useState`. No cache key, no storage.

@@ -3,6 +3,7 @@ import { authorizeEmailAccess, deniedResponse } from "@/lib/auth/authorize-email
 import { resolveWalletRailLock } from "@/lib/employee/wallet-rail-lock";
 import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
 import { readAccountReportsView } from "@/lib/supabase/payout-account-reports";
+import { readPayoutGuardrailOn } from "@/lib/supabase/payout-guardrail";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -49,7 +50,11 @@ export async function GET(req: NextRequest) {
               readPayoutTrackRecord({ emails, row: record, rail: walletRail.effectiveRail }),
               readAccountReportsView({ emails, row: record, rail: walletRail.effectiveRail }),
             ]);
-      return NextResponse.json({ rows: row ? [row] : [], error, walletRail, payoutTrack, accountReports });
+      // Whether Profile → Payout shows the bank-change notice and its tick boxes
+      // (Accounting → System Settings, 2026-10-09). The save route re-reads it
+      // and is the only authority; an unreadable switch is ON.
+      const payoutGuardrail = await readPayoutGuardrailOn();
+      return NextResponse.json({ rows: row ? [row] : [], error, walletRail, payoutTrack, accountReports, payoutGuardrail });
     }
     return NextResponse.json({ rows: row ? [row] : [], error, walletRail });
   }

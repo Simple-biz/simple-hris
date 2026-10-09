@@ -5,6 +5,7 @@ import { verifyFailureResponse } from "@/lib/bank-update/verify-failure";
 import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { normEmail } from "@/lib/email/norm-email";
 import { readPayoutTrackRecord } from "@/lib/supabase/payout-track-record";
+import { readPayoutGuardrailOn } from "@/lib/supabase/payout-guardrail";
 import { loadPayoutRowAndRail, readAccountReportsView } from "@/lib/supabase/payout-account-reports";
 import type { PayoutTrackRecord } from "@/lib/banking/payout-change-safety";
 import type { AccountReportsView } from "@/lib/banking/payout-account-reports";
@@ -71,6 +72,10 @@ export async function POST(req: Request) {
         readPayoutTrackRecord({ emails: recordEmails, row: payoutRecord.row, rail: payoutRecord.rail }),
         readAccountReportsView({ emails: recordEmails, row: payoutRecord.row, rail: payoutRecord.rail }),
       ]);
+  // Whether the page shows the bank-change notice and its tick boxes (Accounting
+  // → System Settings, 2026-10-09). The save route re-reads it and is the only
+  // authority; an unreadable switch is ON.
+  const payoutGuardrail = await readPayoutGuardrailOn();
 
   void insertAuditLog({
     user_name: "external",
@@ -90,5 +95,6 @@ export async function POST(req: Request) {
     payout: payout ?? {},
     payout_track: payoutTrack,
     account_reports: accountReports,
+    payout_guardrail: payoutGuardrail,
   });
 }

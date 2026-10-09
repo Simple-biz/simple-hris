@@ -333,20 +333,28 @@ function AttestationBlock({ a }: { a: PayoutChangeAttestation }) {
         <FileSignature className="h-3.5 w-3.5" /> Employee attestation
       </div>
       <ul className="space-y-1.5 text-zinc-700 dark:text-zinc-300">
-        <li>
-          Acknowledged the bank-change notice (version {a.notice_version})
-          {a.attested_at ? <> on {absoluteTime(a.attested_at)}</> : null}: own, open account; a mistake in it is
-          theirs, not an HRIS or payroll error.
-        </li>
+        {a.guardrail === 'off' ? (
+          <li className="text-amber-700 dark:text-amber-300">
+            Saved with the bank guardrail OFF
+            {a.attested_at ? <> on {absoluteTime(a.attested_at)}</> : null}: the employee was not shown the
+            bank-change notice and acknowledged nothing.
+          </li>
+        ) : (
+          <li>
+            Acknowledged the bank-change notice (version {a.notice_version})
+            {a.attested_at ? <> on {absoluteTime(a.attested_at)}</> : null}: own, open account; a mistake in it is
+            theirs, not an HRIS or payroll error.
+          </li>
+        )}
         {a.flags.map((f) => (
           <li key={f} className="text-rose-700 dark:text-rose-300">
             {safetyFlagLabel(f)} —{' '}
-            {f === 'card_shaped_account'
-              ? a.card_confirmed
+            {(f === 'card_shaped_account' ? a.card_confirmed : a.holder_confirmed)
+              ? f === 'card_shaped_account'
                 ? 'employee confirmed it is an account number, not a card.'
-                : 'not confirmed.'
-              : a.holder_confirmed
-                ? 'employee confirmed the account is in their own name.'
+                : 'employee confirmed the account is in their own name.'
+              : a.guardrail === 'off'
+                ? 'not confirmed (guardrail off, the employee was not asked).'
                 : 'not confirmed.'}
           </li>
         ))}

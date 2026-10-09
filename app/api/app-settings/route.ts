@@ -6,7 +6,12 @@ import {
   upsertAppSetting,
 } from '@/lib/supabase/app-settings';
 import { requireElevatedSession, requireAdminSession, deniedResponse } from '@/lib/auth/authorize-email';
-import { requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import { requireFeatureEdit, requireFeatureEditAnyView } from '@/lib/auth/authorize-feature';
+import {
+  PAYOUT_GUARDRAIL_KEY,
+  PAYOUT_GUARDRAIL_VALUES,
+  isPayoutGuardrailKey,
+} from '@/lib/banking/payout-change-safety';
 import { isWizardAdditionsKey } from '@/lib/payroll/wizard-additions';
 import { isComparePasteKey } from '@/lib/qc/compare-paste';
 import { insertAuditLog } from '@/lib/supabase/audit-log';
@@ -195,6 +200,30 @@ export async function POST(request: Request) {
           { error: 'Forbidden — changing the payroll lock needs Payment Dispatch or Payroll Wizard edit access.' },
           { status: 403 },
         );
+      }
+    }
+
+    // 4. The bank-change guardrail (Accounting → System Settings, 2026-10-09).
+    //    Switching it off lets employees change where they are paid without the
+    //    notice, so the bar is Accounting → System Settings EDIT (admin
+    //    bypasses), not merely elevated: `hr_coordinator` is elevated and must
+    //    not be able to drop it. Exactly 'on' or 'off', nothing else: the reader
+    //    treats any other value as ON, so a typo would look saved and do nothing.
+    if (isPayoutGuardrailKey(body.key)) {
+      if (body.key !== PAYOUT_GUARDRAIL_KEY || !(PAYOUT_GUARDRAIL_VALUES as readonly string[]).includes(body.value)) {
+        return NextResponse.json(
+          { error: `${PAYOUT_GUARDRAIL_KEY} takes exactly "on" or "off".` },
+          { status: 400 },
+        );
+      }
+      if (!isAdmin) {
+        const settingsAuthz = await requireFeatureEdit('accounting', 'settings');
+        if (!settingsAuthz.ok) {
+          return NextResponse.json(
+            { error: 'Forbidden — the bank guardrail needs Accounting → System Settings edit access.' },
+            { status: 403 },
+          );
+        }
       }
     }
 

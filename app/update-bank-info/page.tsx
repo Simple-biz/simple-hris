@@ -37,6 +37,7 @@ import {
 import {
   PAYOUT_CHANGE_NOTICE_VERSION,
   assessPayoutChange,
+  guardrailFromPayload,
   parsePayoutTrack,
   type PayoutTrackRecord,
 } from '@/lib/banking/payout-change-safety';
@@ -74,6 +75,11 @@ export default function UpdateBankInfoPage() {
   const [holderConfirmed, setHolderConfirmed] = useState(false);
   const [forceCardConfirm, setForceCardConfirm] = useState(false);
   const [forceHolderConfirm, setForceHolderConfirm] = useState(false);
+  // Whether the notice and its boxes are shown at all (Accounting → System
+  // Settings, 2026-10-09). Starts ON; the verify response says otherwise, and a
+  // save refused for a missing acknowledgement turns it back ON (the switch was
+  // flipped on after this page loaded). The save route is the authority.
+  const [guardrailOn, setGuardrailOn] = useState(true);
   // Accounts the employee reported closed / deactivated / frozen
   // (payout-account-reports.md), from the verify response and every report call.
   const [accountReports, setAccountReports] = useState<AccountReportsView | null>(null);
@@ -159,6 +165,7 @@ export default function UpdateBankInfoPage() {
         payout?: Record<string, unknown>;
         payout_track?: unknown;
         account_reports?: unknown;
+        payout_guardrail?: unknown;
         error?: string;
       };
       if (!res.ok || json.error) throw new Error(json.error ?? 'That code is incorrect.');
@@ -171,6 +178,7 @@ export default function UpdateBankInfoPage() {
       setStoredPayout(payoutRow);
       setPayoutTrack(parsePayoutTrack(json.payout_track));
       setAccountReports(parseAccountReportsView(json.account_reports));
+      setGuardrailOn(guardrailFromPayload(json.payout_guardrail));
       resetSafety();
       const draft = payoutDraftFromIdsRow(payoutRow);
       // Seed the picker from the rail the employee is ACTUALLY paid on: their
@@ -221,10 +229,11 @@ export default function UpdateBankInfoPage() {
     alt_routing_number: payout.altSwiftCode,
   };
   const safety = assessPayoutChange(storedPayout, payoutFields, [name]);
-  const cardShaped = forceCardConfirm || safety.flags.includes('card_shaped_account');
-  const holderMismatch = forceHolderConfirm || safety.flags.includes('holder_not_employee');
+  const cardShaped = guardrailOn && (forceCardConfirm || safety.flags.includes('card_shaped_account'));
+  const holderMismatch = guardrailOn && (forceHolderConfirm || safety.flags.includes('holder_not_employee'));
   const safetyReady =
-    noticeAck && (!cardShaped || cardConfirmed) && (!holderMismatch || holderConfirmed);
+    !guardrailOn ||
+    (noticeAck && (!cardShaped || cardConfirmed) && (!holderMismatch || holderConfirmed));
 
   // A reported PAID account is not one to call "no problems on record".
   const paidAccountReported =
@@ -260,10 +269,12 @@ export default function UpdateBankInfoPage() {
       toast.error('Read the notice above and tick the confirmation box before saving.');
       return;
     }
+    // With the guardrail off nothing was shown, so nothing is claimed: the
+    // acknowledgement is posted only when the employee actually ticked it.
     const payload = {
       session_token: sessionToken,
       ...payoutFields,
-      payout_notice_ack: PAYOUT_CHANGE_NOTICE_VERSION,
+      ...(guardrailOn && noticeAck ? { payout_notice_ack: PAYOUT_CHANGE_NOTICE_VERSION } : {}),
       confirm_not_card_number: cardShaped && cardConfirmed,
       confirm_holder_is_self: holderMismatch && holderConfirmed,
     };
@@ -284,7 +295,12 @@ export default function UpdateBankInfoPage() {
       // 423 = payroll dispatch lock flipped on mid-session. Reflect it in the UI
       // (greys the controls, shows the notice) so it matches the server's block.
       if (res.status === 423) setPayrollLocked(true);
-      // The safety gate flagged something this page did not: show that box.
+      // The safety gate flagged something this page did not: show that box. Any
+      // safety refusal also means the guardrail is ON now, whatever this page
+      // loaded with.
+      if (json.code === 'card_confirm_required' || json.code === 'holder_confirm_required' || json.code === 'payout_notice_ack_required') {
+        setGuardrailOn(true);
+      }
       if (json.code === 'card_confirm_required') setForceCardConfirm(true);
       if (json.code === 'holder_confirm_required') setForceHolderConfirm(true);
       if (json.code === 'payout_notice_ack_required') setNoticeAck(false);
@@ -441,20 +457,22 @@ export default function UpdateBankInfoPage() {
                 </p>
               )}
 
-              <PayoutChangeNotice
-                idPrefix="bu-safety"
-                track={displayedTrack}
-                ownName={name}
-                acknowledged={noticeAck}
-                onAcknowledgedChange={setNoticeAck}
-                cardShaped={cardShaped}
-                cardConfirmed={cardConfirmed}
-                onCardConfirmedChange={setCardConfirmed}
-                holderMismatch={holderMismatch}
-                holderConfirmed={holderConfirmed}
-                onHolderConfirmedChange={setHolderConfirmed}
-                disabled={busy || payrollLocked}
-              />
+              {guardrailOn ? (
+                <PayoutChangeNotice
+                  idPrefix="bu-safety"
+                  track={displayedTrack}
+                  ownName={name}
+                  acknowledged={noticeAck}
+                  onAcknowledgedChange={setNoticeAck}
+                  cardShaped={cardShaped}
+                  cardConfirmed={cardConfirmed}
+                  onCardConfirmedChange={setCardConfirmed}
+                  holderMismatch={holderMismatch}
+                  holderConfirmed={holderConfirmed}
+                  onHolderConfirmedChange={setHolderConfirmed}
+                  disabled={busy || payrollLocked}
+                />
+              ) : null}
 
               <Button
                 type="button"

@@ -18,6 +18,9 @@ import {
   Plus,
   Trash2,
   Sparkles,
+  ShieldCheck,
+  ShieldOff,
+  Landmark,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -31,11 +34,17 @@ import {
   serializeUsHolidaysList,
   type UsHoliday,
 } from '@/lib/us-holidays';
+import {
+  PAYOUT_CHANGE_NOTICE,
+  PAYOUT_GUARDRAIL_EXPLAINER,
+  PAYOUT_GUARDRAIL_KEY,
+  parsePayoutGuardrail,
+} from '@/lib/banking/payout-change-safety';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
-type RightTab  = 'ot' | 'audit' | 'holidays';
+type RightTab  = 'ot' | 'audit' | 'holidays' | 'bank-guardrail';
 
 // ─── Custom Toggle ────────────────────────────────────────────────────────────
 
@@ -218,6 +227,11 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
   const [newHolidayDate, setNewHolidayDate] = useState<string>('');
   const [newHolidayName, setNewHolidayName] = useState<string>('');
 
+  // ── Bank guardrail (2026-10-09) ──
+  // null while loading; 'unreadable' when the read failed, which the save routes
+  // treat as ON, so the panel says so instead of guessing.
+  const [guardrail, setGuardrail] = useState<boolean | 'unreadable' | null>(null);
+
   // ── Load settings ──
   useEffect(() => {
     const load = async () => {
@@ -236,6 +250,16 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
       // Holidays — default to enabled and seeded with current-year federal holidays
       const holidayEnabledVal = await fetchSetting(US_HOLIDAYS_ENABLED_KEY).catch(() => null);
       setHolidaysEnabled(holidayEnabledVal === null ? true : holidayEnabledVal === 'true');
+
+      // The guardrail is read strictly: a failed read must not show "on" or "off"
+      // as if it were the stored value.
+      try {
+        const res = await fetch(`/api/app-settings?key=${encodeURIComponent(PAYOUT_GUARDRAIL_KEY)}`, { cache: 'no-store' });
+        const json = (await res.json()) as { value: string | null; error?: string | null };
+        setGuardrail(!res.ok || json.error ? 'unreadable' : parsePayoutGuardrail(json.value));
+      } catch {
+        setGuardrail('unreadable');
+      }
 
       const holidayListVal = await fetchSetting(US_HOLIDAYS_LIST_KEY).catch(() => null);
       const parsed = parseUsHolidaysList(holidayListVal);
@@ -309,6 +333,30 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
       details:     { department: dept?.name ?? dKey, enabled: val },
     });
   }, [persist]);
+
+  // ── Bank guardrail handler ──
+  // The server records who switched it, from what, to what (app_settings.changed);
+  // only Admin or Accounting → System Settings edit may write it.
+  const handleGuardrail = useCallback(async (on: boolean) => {
+    const previous = guardrail;
+    setGuardrail(on);
+    setSaveStates((p) => ({ ...p, [PAYOUT_GUARDRAIL_KEY]: 'saving' }));
+    try {
+      await saveSetting(PAYOUT_GUARDRAIL_KEY, on ? 'on' : 'off');
+      setSaveStates((p) => ({ ...p, [PAYOUT_GUARDRAIL_KEY]: 'saved' }));
+      toast.success(on ? 'Bank guardrail turned on' : 'Bank guardrail turned off', {
+        description: on
+          ? 'Employees confirm the notice before changing bank details.'
+          : 'Employees change bank details without the notice or tick boxes.',
+      });
+      setTimeout(() => setSaveStates((p) => ({ ...p, [PAYOUT_GUARDRAIL_KEY]: 'idle' })), 2000);
+    } catch (e) {
+      setGuardrail(previous);
+      setSaveStates((p) => ({ ...p, [PAYOUT_GUARDRAIL_KEY]: 'error' }));
+      toast.error('Save failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+      setTimeout(() => setSaveStates((p) => ({ ...p, [PAYOUT_GUARDRAIL_KEY]: 'idle' })), 3000);
+    }
+  }, [guardrail]);
 
   // ── Holidays handlers ──
   const persistHolidayList = useCallback(async (next: UsHoliday[], action: string, details: Record<string, unknown>) => {
@@ -426,6 +474,16 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
                 <span className="text-[10px] font-bold text-red-700 dark:text-red-400">OT GLOBALLY SUSPENDED</span>
               </div>
             )}
+            {guardrail === false && (
+              <button
+                type="button"
+                onClick={() => setRightTab('bank-guardrail')}
+                className="flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 dark:border-amber-800 dark:bg-amber-950/40"
+              >
+                <ShieldOff className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+                <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300">BANK GUARDRAIL OFF</span>
+              </button>
+            )}
             {!globalOtSuspended && otOffCount > 0 && (
               <div className="flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 dark:border-red-800/50 dark:bg-red-950/20">
                 <Clock className="h-3 w-3 text-red-400" />
@@ -491,6 +549,43 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* Banking */}
+          <div className="border-b border-zinc-100 p-4 dark:border-zinc-800">
+            <div className="mb-2.5 flex items-center gap-2">
+              <Landmark className="h-3.5 w-3.5 text-amber-500" />
+              <span className="text-xs font-bold text-zinc-700 dark:text-zinc-300">Banking</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRightTab('bank-guardrail')}
+              className={cn(
+                'flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors',
+                rightTab === 'bank-guardrail'
+                  ? 'border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/20'
+                  : 'border-zinc-200 bg-zinc-50/60 hover:border-amber-200 hover:bg-amber-50/30 dark:border-zinc-700 dark:bg-zinc-800/20 dark:hover:border-amber-900/30',
+              )}
+            >
+              {guardrail === false ? (
+                <ShieldOff className={cn('mt-0.5 h-3 w-3 flex-shrink-0', rightTab === 'bank-guardrail' ? 'text-amber-500' : 'text-zinc-400')} />
+              ) : (
+                <ShieldCheck className={cn('mt-0.5 h-3 w-3 flex-shrink-0', rightTab === 'bank-guardrail' ? 'text-amber-500' : 'text-zinc-400')} />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className={cn('text-[11px] font-medium', rightTab === 'bank-guardrail' ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-600 dark:text-zinc-400')}>Bank Guardrail</p>
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-600">
+                  {guardrail === null
+                    ? 'Loading…'
+                    : guardrail === 'unreadable'
+                      ? 'Setting unreadable (treated as on)'
+                      : guardrail
+                        ? 'On: employees confirm bank changes'
+                        : 'Off: no warning on bank changes'}
+                </p>
+              </div>
+              <ChevronRight className={cn('mt-0.5 h-3 w-3 flex-shrink-0 text-zinc-300 dark:text-zinc-600', rightTab === 'bank-guardrail' && 'text-amber-400')} />
+            </button>
           </div>
 
           {/* Access Control */}
@@ -791,6 +886,92 @@ export default function SystemSettings({ sessionEmail }: { sessionEmail?: string
                       Saved
                     </span>
                   )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── Bank guardrail tab ── */}
+          {rightTab === 'bank-guardrail' && (
+            <>
+              <div className="flex flex-shrink-0 flex-col gap-3 border-b border-zinc-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-zinc-800">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-950/30">
+                    <ShieldCheck className="h-3.5 w-3.5 text-amber-500" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-zinc-900 dark:text-white">Bank Guardrail</p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">What employees confirm before they change where they are paid</p>
+                  </div>
+                </div>
+                <div className={cn(
+                  'flex flex-shrink-0 items-center gap-3 rounded-xl border px-3 py-2 transition-all duration-200',
+                  guardrail === false
+                    ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
+                    : 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/20',
+                )}>
+                  <div className="min-w-0 flex-1 sm:flex-initial">
+                    <p className={cn('text-[11px] font-bold', guardrail === false ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-400')}>
+                      {guardrail === null ? 'Loading…' : guardrail === false ? 'Guardrail off' : 'Guardrail on'}
+                    </p>
+                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                      {guardrail === 'unreadable' ? 'Could not read the setting; saves treat it as on' : 'Both bank-change forms'}
+                    </p>
+                  </div>
+                  {saveStates[PAYOUT_GUARDRAIL_KEY] === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+                  {saveStates[PAYOUT_GUARDRAIL_KEY] === 'saved'  && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+                  {saveStates[PAYOUT_GUARDRAIL_KEY] === 'error'  && <AlertTriangle className="h-3.5 w-3.5 text-red-400" />}
+                  <Toggle
+                    checked={guardrail !== false}
+                    onChange={handleGuardrail}
+                    disabled={guardrail === null || saveStates[PAYOUT_GUARDRAIL_KEY] === 'saving'}
+                    colorOn="emerald"
+                  />
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+                <div className="max-w-2xl space-y-4 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+                  {guardrail === false && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                      <ShieldOff className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                      <p>The guardrail is <strong>off</strong>. Employees are changing bank details without the warning or the tick boxes. Turn it back on with the switch above.</p>
+                    </div>
+                  )}
+
+                  <p className="text-[13px] text-zinc-800 dark:text-zinc-100">{PAYOUT_GUARDRAIL_EXPLAINER.summary}</p>
+
+                  <section>
+                    <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 dark:text-zinc-500">Where it runs</h3>
+                    <ul className="list-disc space-y-1 pl-4">
+                      {PAYOUT_GUARDRAIL_EXPLAINER.where.map((line) => <li key={line}>{line}</li>)}
+                    </ul>
+                  </section>
+
+                  <section className={cn('rounded-lg border px-3 py-2.5', guardrail === false ? 'border-zinc-200 dark:border-zinc-700' : 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/40 dark:bg-emerald-950/10')}>
+                    <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">While it is on</h3>
+                    <ul className="list-disc space-y-1 pl-4">
+                      {PAYOUT_GUARDRAIL_EXPLAINER.whileOn.map((line) => <li key={line}>{line}</li>)}
+                    </ul>
+                    <div className="mt-2.5 rounded-md border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900/60">
+                      <p className="mb-1 text-[11px] font-semibold text-zinc-800 dark:text-zinc-100">What the employee reads: &ldquo;{PAYOUT_CHANGE_NOTICE.title}&rdquo;</p>
+                      <ol className="list-decimal space-y-0.5 pl-4 text-[11px]">
+                        {PAYOUT_CHANGE_NOTICE.rules.map((rule) => <li key={rule}>{rule}</li>)}
+                      </ol>
+                      <p className="mt-1.5 text-[11px] italic text-zinc-500 dark:text-zinc-400">They tick: &ldquo;{PAYOUT_CHANGE_NOTICE.acknowledgement}&rdquo;</p>
+                    </div>
+                  </section>
+
+                  <section className={cn('rounded-lg border px-3 py-2.5', guardrail === false ? 'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20' : 'border-zinc-200 dark:border-zinc-700')}>
+                    <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">While it is off</h3>
+                    <ul className="list-disc space-y-1 pl-4">
+                      {PAYOUT_GUARDRAIL_EXPLAINER.whileOff.map((line) => <li key={line}>{line}</li>)}
+                    </ul>
+                  </section>
+
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                    {PAYOUT_GUARDRAIL_EXPLAINER.timing} Only Admin, or Accounting with System Settings edit access, can switch it. Every switch is in the Audit Log with who, when, and from what to what.
+                  </p>
                 </div>
               </div>
             </>
