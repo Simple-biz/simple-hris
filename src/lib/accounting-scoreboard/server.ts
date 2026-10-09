@@ -75,6 +75,7 @@ import type {
   TasksPayload,
 } from './types';
 import { canArchiveKey } from './keys';
+import { DB_PING_TIMEOUT_MS, type DbPing } from './db-signal';
 import {
   FREQUENCY_LABEL,
   changeFrequencyInOrder,
@@ -1863,4 +1864,30 @@ export async function removeKeySeat(viewer: Viewer, keyId: string, email: string
   const rec = ((data ?? []) as SeatRecord[])[0];
   if (!rec) return fail(404, 'not_found', `${email} holds no seat on that key. Refresh and try again.`);
   return { ok: true, value: mapSeat(rec) };
+}
+
+// ---------------------------------------------------------------------------
+// The Overview's database signal (db-signal.ts): the SERVER's round trip to the database for one tiny read. Read-only,
+// one row, raced against DB_PING_TIMEOUT_MS so a hung database answers "not answering" instead of hanging the route.
+// ---------------------------------------------------------------------------
+
+export async function pingDatabase(): Promise<DbPing> {
+  const t0 = performance.now();
+  const read = client().from(SECTIONS_TABLE).select('section_key').limit(1);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), DB_PING_TIMEOUT_MS);
+  });
+  try {
+    const result = await Promise.race([read, timeout]);
+    const ms = performance.now() - t0;
+    const checkedAt = new Date().toISOString();
+    if (result === 'timeout') return { ok: false, timedOut: true, ms, checkedAt };
+    if (result.error) return { ok: false, timedOut: false, ms, checkedAt };
+    return { ok: true, ms, checkedAt };
+  } catch {
+    return { ok: false, timedOut: false, ms: performance.now() - t0, checkedAt: new Date().toISOString() };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

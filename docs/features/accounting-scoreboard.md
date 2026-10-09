@@ -41,8 +41,9 @@ every payroll problem, and custom sections.
 | Browser cache (board per week, Setup's roster, the Tasks views) | `src/lib/accounting-scoreboard/tab-cache.ts` (+ `.test.ts`), on `src/lib/dashboard-cache/create-tab-cache.ts` |
 | Live refresh: the topic, the re-read signal, the flood-bounded scheduler (§ Live refresh) | `src/lib/accounting-scoreboard/live.ts` (+ `live.test.ts`) · the server's announce `live-server.ts` · the onSnapshot listener `live-client.ts` |
 | Loading modal: lines ↔ reads, the stream, the fail-closed assembler | `src/lib/accounting-scoreboard/load-progress.ts` (+ `.test.ts`), on `src/lib/refresh-progress/refresh-progress.ts` · the dialog `src/components/accounting-scoreboard/ScoreboardLoadDialog.tsx` |
+| The Overview's database signal: the lines (pure) · the ping · the bars | `src/lib/accounting-scoreboard/db-signal.ts` (+ `.test.ts`) · `pingDatabase` in `server.ts` · `src/components/accounting-scoreboard/DbSignal.tsx` |
 | Wire types | `src/lib/accounting-scoreboard/types.ts` |
-| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `roles` GET/POST/DELETE (Admins: Setup → Access) · `keys` GET/POST/DELETE and `keys/seats` POST/DELETE (Admins: Setup → Keys, [accounting-scoreboard-keys.md](accounting-scoreboard-keys.md)) · `sections` PATCH · `roster` GET) |
+| Routes | `app/api/accounting-scoreboard/` (`route.ts` GET board, `&stream=1` streams it for the loading modal · `entries` PUT · `collections` POST/DELETE · `collections/verify` POST · `problems` POST/DELETE · `problem-types` POST/PATCH · `custom-sections` POST/PATCH · `rows` POST/PATCH · `members` POST/DELETE · `roles` GET/POST/DELETE (Admins: Setup → Access) · `keys` GET/POST/DELETE and `keys/seats` POST/DELETE (Admins: Setup → Keys, [accounting-scoreboard-keys.md](accounting-scoreboard-keys.md)) · `sections` PATCH · `roster` GET · `ping` GET, the database signal, anyone on the board) |
 | Page (server guard) | `app/accounting-scoreboard/page.tsx` |
 | UI | `src/components/accounting-scoreboard/` (`ScoreboardApp` with `Overview` · `SectionGrid` · `CollectionsPanel` · `ProblemsPanel` · `PayrollCyclePanel` · `SetupPanel` · `SectionsDrawer` (the phone menu) · `shared`) |
 | Tests | `src/lib/accounting-scoreboard/*.test.ts` (sections ↔ SQL pin, week, scoring with Carla's reference code as the oracle, board, stoplight, payroll cycle, bonus preview, host, validate, names) |
@@ -505,6 +506,41 @@ processing per week and close it"* and *"Make sure to check previous weeks"*.
   is unrecorded, and the week shows the next stamped start or "Not in Wizard". Most weeks also hold global
   locks with no stamp beside them, which are Payment Dispatch's own starts. A lost stamp and a Dispatch start
   look the same, so the gap cannot be measured from the log.
+
+## Database signal on the Overview (2026-10-09)
+
+Kane: *"Overview Page - Lets add like a 3 bar signal and an MS on our DATABASE connection 3rd bar in green should be
+blinking"*, then *"1 bar being red and 2 bar being orange"*. A pill at the top right of the Overview: three bars, the
+word *Database*, and a number in ms.
+
+| Reading | Bars | Says |
+| --- | --- | --- |
+| under 500 ms | 3 green, **the 3rd blinks** | *42 ms* |
+| 500 to 2000 ms | 2 orange | *900 ms* |
+| over 2000 ms | 1 red | *2600 ms* |
+| no answer within 3 s, or a failed read | 1 red | *Not answering* / *Unreachable* |
+
+- **The ms is the SERVER's round trip to the database** for one tiny read (`pingDatabase`: one row of
+  `accounting_scoreboard_sections`, raced against 3 s), never the browser's round trip: Vercel and someone's internet are
+  not the database. So on a laptop running local dev it reads the laptop's distance to Supabase (measured 360–540 ms from
+  Kane's machine on 2026-10-09, i.e. orange) while production reads Vercel's (tens of ms). Orange on local dev is not a bug.
+- **The lines are Admin → Diagnostics' own** for the same kind of read (`system-diagnostics.md`: `supabase-client`
+  healthy under 500 ms, warning 500–2000 ms; `supabase-postgres` calls reads over 2 s overloaded). `db-signal.test.ts`
+  pins the two together, so the screens never disagree about the same database. Change them in both or neither.
+- **A slow or failed database is an answer, not an error**: `GET /api/accounting-scoreboard/ping` returns 200 with
+  `ok: false`, so the bars can show it. Only a refused viewer is a 401 / 403, and that, a crash or a browser that gives
+  up after 8 s also shows one red bar (*Unreachable*).
+- **It costs one 1-row read every 30 s per open Overview**, and only while the Overview is on screen and the browser tab
+  is visible (plus once on coming back to the tab). The database's load grows with every open screen (items 415, 416), so
+  never poll it from the header, another tab or a hidden page.
+- **The 3rd bar blinks only when all three are green**: one Web Animation (`BlinkingBar`, the board's tool for its
+  flashes), cancelled when the reading changes. `motion`'s infinite keyframes did not run here, measured; do not swap it
+  back without checking the bar actually moves. Under reduced motion the bar stays lit, steady.
+- Screen readers hear the state (*Database connection: Good*) when it changes, never the ms every 30 s. The tooltip says
+  the full sentence and the time of the last check (ET).
+- Verified 2026-10-09 headless on synthetic answers: every state's bars, colour and words in light and dark, the blink,
+  no blink on orange, reduced motion, a re-ping on coming back to the tab, and no sideways scroll at 390 px (35 checks).
+  The real query answered on production (3 reads, read-only). **Not clicked through signed in.**
 
 ## Stop light
 

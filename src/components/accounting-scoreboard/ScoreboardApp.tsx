@@ -100,6 +100,7 @@ import {
   TINY_CAPS,
   useScrollEdges,
 } from './shared';
+import { DbSignal } from './DbSignal';
 
 /** The board's reads, in the load modal's own words (load-progress.ts), cycled under it while nothing is painted. */
 const BOARD_LOADING_LINES = [
@@ -1052,12 +1053,16 @@ export function Overview({
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{isThisWeek ? 'This week' : weekLabel(board.weekStart)}</h2>
-        <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-          Every number adds itself up from what the team typed.{' '}
-          {isThisWeek ? <>This week&rsquo;s totals are judged on pace.</> : 'A past week is judged on its full goal.'}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{isThisWeek ? 'This week' : weekLabel(board.weekStart)}</h2>
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            Every number adds itself up from what the team typed.{' '}
+            {isThisWeek ? <>This week&rsquo;s totals are judged on pace.</> : 'A past week is judged on its full goal.'}
+          </p>
+        </div>
+        {/* The database connection: 3 bars + the server's round trip in ms (DbSignal; § Database signal). */}
+        <DbSignal />
       </div>
       <TeamScoreTile team={team} last={lastTeam} tally={tally} scope={board.weekStart} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
