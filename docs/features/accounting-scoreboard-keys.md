@@ -133,7 +133,10 @@ and roles.
    board). Here only Keys would break, but keep the order:
    `node --import tsx scripts/apply-accounting-scoreboard-keys-migration.mts --apply`, then `--verify`.
    Dry run passed on production 2026-10-09 (session `24ba2a0d`): every object, privilege, positive and negative
-   control, rolled back. **`--apply` PENDING (Kane).**
-2. Push and deploy. **PENDING (Kane).** No env var, no cron, no n8n.
-3. Signed-in pass: an Admin opens Setup → Keys, adds a key, ticks a person, opens them, marks the seat removed.
-   An Assistant must not see the Keys area. **PENDING.**
+   control, rolled back. **APPLIED (measured 2026-10-09 by `--verify`: every check passes, 23 keys and 56 seats already
+   in production).**
+2. Push and deploy. **PUSHED** (`49006919` is on `origin/main`, measured 2026-10-09); the later polish commits are
+   Kane's to push. Deployed: not measurable from here, but the keys in production were added through the page. No env
+   var, no cron, no n8n.
+3. Signed-in pass: in use by Kane on 2026-10-09 (his screenshot shows 28 people and real keys). Still owed: an
+   Assistant must not see the Keys area.
