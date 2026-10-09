@@ -3,7 +3,8 @@
 /**
  * Payroll Timing: Carla's "Payroll Scoreboard (Timing)" table, filled from HRIS itself.
  * Nothing on it is typed. Started = the Payroll Wizard's first Start Processing on the week's pay
- * cycle; Closed = Close Pay Cycle for that cycle. See payroll-cycle.ts for the rules and
+ * cycle; Closed = Close Pay Cycle for that cycle, or the close set by hand for it (Open item 437; shown
+ * like any other close, Kane 2026-10-09). See payroll-cycle.ts for the rules and
  * docs/features/accounting-scoreboard.md § Payroll Timing fills itself.
  */
 

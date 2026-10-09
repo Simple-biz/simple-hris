@@ -45,7 +45,7 @@ export const BOARD_READS = {
   numbers: ['entries'],
   collections: ['collections', 'collectionWeeks'],
   problems: ['problems', 'problemTypes'],
-  payroll: ['payrollEvents', 'closes'],
+  payroll: ['payrollEvents', 'closes', 'handCloses'],
   setup: ['settings', 'customSections', 'bonus', 'lastMeeting', 'members'],
 } as const satisfies Record<ServerLine, readonly string[]>;
 export type BoardRead = (typeof BOARD_READS)[ServerLine][number];

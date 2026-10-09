@@ -18,7 +18,11 @@ import {
   cycleRange,
   cycleWeek,
   eventCycleStart,
+  handSetCloseFromRecord,
+  payrollEventsFrom,
   type CheckState,
+  type CycleCloseRecord,
+  type HandSetClose,
   type PayrollEvent,
 } from './payroll-cycle';
 import { formatEasternDateTime } from './week';
@@ -234,4 +238,90 @@ test('cycle stop light: all decided on time green, none red, a mix amber, nothin
   assert.equal(cycleLight({ start: 'pending', close: 'pending' }), 'none');
   assert.equal(cycleLight({ start: 'no_record', close: 'no_record' }), 'none');
   assert.equal(cycleLight({ start: 'late', close: 'no_record' }), 'red');
+});
+
+// ---------------------------------------------------------------------------
+// A close set by hand (Open item 437). The audit events are the REAL ones for the Sep 27 – Oct 3 cycle,
+// read 2026-10-09: Wizard start Tue 10/6 11:59 AM, Close Pay Cycle Fri 10/9 12:00:32 PM, reopened 12:01:03 PM.
+// Kane: "I just want todays cycle to be closed at 11:55", then "override".
+// ---------------------------------------------------------------------------
+
+const OCT3 = file('2026-09-27', '2026-10-03');
+const OCT9_EVENTS: PayrollEvent[] = [
+  started('2026-10-06T15:59:09Z', '2026-09-27', '2026-10-03'),
+  closed('2026-10-09T16:00:32Z', OCT3),
+  reopened('2026-10-09T16:01:03Z', OCT3),
+];
+const OCT9_NOW = '2026-10-09T16:30:00Z'; // Fri 10/9 12:30 PM ET
+const handRecord = (over: Partial<CycleCloseRecord> = {}): CycleCloseRecord => ({
+  cycle_start: '2026-09-27',
+  closed_at: '2026-10-09T15:55:00+00:00',
+  set_by: 'kaner@simple.biz',
+  reason: 'Kane, 2026-10-09 (Open item 437).',
+  set_at: '2026-10-09T16:20:00+00:00',
+  ...over,
+});
+const hand = (over: Partial<CycleCloseRecord> = {}): HandSetClose => {
+  const e = handSetCloseFromRecord(handRecord(over));
+  assert.ok(e !== null);
+  return e;
+};
+const oct = (events: PayrollEvent[], now = OCT9_NOW) => cycleWeek(events, '2026-10-04', now, FIRST_CLOSED);
+
+test('the record alone: the 10/9 close was reopened, so past Friday noon the close is missed', () => {
+  const w = oct(OCT9_EVENTS);
+  assert.equal(w.start, 'on_time');
+  assert.equal(w.closedAt, null);
+  assert.equal(w.reopened, true);
+  assert.equal(w.close, 'missed');
+  assert.equal(w.closeSetByHand, null);
+  assert.equal(w.score, 25);
+});
+
+test('a close set by hand replaces the record (and its reopen), and says it was set by hand', () => {
+  const w = oct([...OCT9_EVENTS, hand()]);
+  assert.equal(at(w.closedAt), '10/9 11:55 AM');
+  assert.equal(w.close, 'on_time');
+  assert.equal(w.reopened, false);
+  assert.deepEqual(w.closeSetByHand, { setBy: 'kaner@simple.biz', reason: 'Kane, 2026-10-09 (Open item 437).', setAt: '2026-10-09T16:20:00.000Z' });
+  assert.equal(w.score, 100);
+  assert.equal(cycleLight(w), 'green');
+});
+
+test('a hand-set close outlasts a later Close Pay Cycle of the same cycle', () => {
+  const w = oct([...OCT9_EVENTS, hand(), closed('2026-10-09T17:10:00Z', OCT3)], '2026-10-09T18:00:00Z');
+  assert.equal(at(w.closedAt), '10/9 11:55 AM');
+  assert.ok(w.closeSetByHand !== null);
+});
+
+test('the newest hand-set close wins; a cleared one hands the cycle back to the record', () => {
+  const later = hand({ closed_at: '2026-10-09T16:05:00Z', set_at: '2026-10-09T16:25:00Z' });
+  assert.equal(at(oct([...OCT9_EVENTS, later, hand()]).closedAt), '10/9 12:05 PM', 'order in the list does not matter');
+  const cleared = hand({ closed_at: null, set_at: '2026-10-09T16:25:00Z' });
+  const w = oct([...OCT9_EVENTS, hand(), cleared]);
+  assert.equal(w.closedAt, null);
+  assert.equal(w.close, 'missed');
+  assert.equal(w.closeSetByHand, null);
+});
+
+test("a hand-set close touches only its own cycle, and never the start", () => {
+  const other = oct([...OCT9_EVENTS, hand({ cycle_start: '2026-09-20', closed_at: '2026-10-02T15:00:00Z' })]);
+  assert.equal(other.close, 'missed');
+  assert.equal(other.closeSetByHand, null);
+  const w = oct([...OCT9_EVENTS, hand()]);
+  assert.equal(at(w.startedAt), '10/6 11:59 AM');
+  assert.equal(week('2026-10-04', [...EVENTS, hand()], OCT9_NOW).startedAt, null, 'it adds no start');
+});
+
+test('an unreadable hand-set row never counts; payrollEventsFrom merges both sources', () => {
+  assert.equal(handSetCloseFromRecord(handRecord({ cycle_start: '2026-09-28' })), null, 'not a Sunday');
+  assert.equal(handSetCloseFromRecord(handRecord({ cycle_start: 'soon' })), null);
+  assert.equal(handSetCloseFromRecord(handRecord({ set_at: 'never' })), null);
+  assert.equal(handSetCloseFromRecord(handRecord({ closed_at: 'never' })), null);
+  const events = payrollEventsFrom(
+    [{ action: 'payment_cycle.closed', created_at: '2026-10-09T16:00:32Z', resource_id: OCT3, src: OCT3, csrc: null, cps: null }],
+    [handRecord(), handRecord({ cycle_start: '2026-09-28' })],
+  );
+  assert.deepEqual(events.map((e) => e.action), ['payment_cycle.closed', 'close_set_by_hand']);
+  assert.ok(!(PAYROLL_EVENT_ACTIONS as readonly string[]).includes('close_set_by_hand'), 'never read from audit_log');
 });

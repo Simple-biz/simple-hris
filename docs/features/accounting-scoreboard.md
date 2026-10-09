@@ -33,7 +33,8 @@ every payroll problem, and custom sections.
 | One headline and one stop light per section | `src/lib/accounting-scoreboard/board.ts` |
 | The stop light (green / amber / red, paced) | `src/lib/accounting-scoreboard/stoplight.ts` |
 | The Team Score (card → group → team, its bands) | `src/lib/accounting-scoreboard/team-score.ts` (+ `.test.ts`, Carla's worked example) |
-| Payroll Timing from the Wizard (cycle match, deadlines, no_record, score) | `src/lib/accounting-scoreboard/payroll-cycle.ts` |
+| Payroll Timing from the Wizard (cycle match, deadlines, no_record, score, a close set by hand) | `src/lib/accounting-scoreboard/payroll-cycle.ts` |
+| A close set by hand: the table, its one seeded row, the checks | `references/sql/create/2026-10-09_accounting_scoreboard_cycle_closes.sql` · `scripts/apply-accounting-scoreboard-cycle-closes-migration.mts` |
 | Dancing Queen preview | `src/lib/accounting-scoreboard/bonus-preview.ts` |
 | Host rule for the domain | `src/lib/accounting-scoreboard/host.ts`, called from `proxy.ts` |
 | Request parsing | `src/lib/accounting-scoreboard/validate.ts` |
@@ -154,7 +155,7 @@ Admins can also add sections of their own (§ Custom sections).
 | Chargebacks · Outcomes | $ and # a day, shown inside the Chargebacks tab | Mon–Fri | **win ratio** = wins ÷ (wins + losses + Pre-arb), by count; per outcome: week $ (signed by its flag) and week #; **Net** = wins − losses − Pre-arb, in $ | ≥ 50% (Carla, 2026-10-07) |
 | Compliance | daily | Mon–Fri | week total | ≥ 30 |
 | Cancellation Call Recordings | daily | Mon–Fri | week total + share | none by default; "at least N reviewed", set in Setup |
-| Payroll Timing | **from the Payroll Wizard, nothing typed** (§ Payroll Timing fills itself) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
+| Payroll Timing | **from the Payroll Wizard, nothing typed on the board**; a close can be set by hand, by script only (§ Payroll Timing fills itself, § A close set by hand) | Tue · Fri (its deadlines) | cycle score 0–100% | ≥ 100% |
 | Payroll Problems | **log**, one line per problem (or batch) with its type (§ Payroll Problems) | Mon–Fri | week total | < 20 |
 | an Admin's custom section | one number a day, or AM/PM scored like Buckets; a tab of its own or shown inside a built-in tab | Mon–Fri | week total, or the Buckets overall | optional |
 
@@ -448,7 +449,7 @@ hide it from the overview."* Carla: *"Under sections."*
 Kane, 2026-10-01, with a screenshot of Carla's "Payroll Scoreboard (Timing)": per week, when the cycle
 **started** (goal Tuesday 12:00 PM) and **closed** (goal Friday 12:00 PM), each on time or not, a cycle score,
 and an Average over This week / Last week / Two weeks ago. Every time on that sheet is one of HRIS's **own
-audit events**, so nobody types this section (the same day it replaced a per-person start/end-time grid, goal
+audit events**, so nobody types this section on the board (one exception since 2026-10-09: § A close set by hand, below; the same day it replaced a per-person start/end-time grid, goal
 "< 20 hours"). Later that day: *"lets connect this to the actual payroll Wizard where we first started
 processing per week and close it"* and *"Make sure to check previous weeks"*.
 
@@ -468,6 +469,7 @@ processing per week and close it"* and *"Make sure to check previous weeks"*.
 - **Closed = the `payment_cycle.closed` of the same cycle** (Close Pay Cycle, which lives only in Payment
   Dispatch's Stop dialog; the Wizard never closes, `cycle-closeout.md` § Downloadable report). A
   `payment_cycle.reopened` after the close opens it again, and the close that sticks is the one judged.
+  **Unless a close was set by hand for that cycle**, which replaces both (§ A close set by hand).
 - **Every event is matched to its cycle on the parsed period**, by the Sunday the period starts (a cycle is
   a period, not a file: `diagnostics-performance-tabs.md` § A cycle is a PERIOD; memory
   `orphanage-source-file-drift-hides-a-week`). The " (1).csv" and " 4.csv" names and June's two 8-day
@@ -502,6 +504,23 @@ processing per week and close it"* and *"Make sure to check previous weeks"*.
   past week still lands. It also reads the file of every `payment_cycle.closed` for the boundary. Both reads
   are paged. It never reads or writes the close-out record, which holds unpaid payees. The 3 rows and 1
   entry typed under the old grid are kept and not shown.
+- **A close set by hand (Kane, 2026-10-09, Open item 437).** Kane: *"Run me a migration on this week sep 27 - oct 3
+  where it closed today at 11:55AM"* · *"override"* · *"remove set by hand in there"*. The record for that cycle: Carla's
+  Close Pay Cycle at 12:00:32 PM ET (32 s past Friday noon) and her reopen at 12:01:03 PM, so the board read Close =
+  missed. `accounting_scoreboard_cycle_closes` holds closes set by hand: one row per setting (`cycle_start` = the pay
+  cycle's Sunday, `closed_at`, `reason`, `set_by`, `set_at`), **append-only** (`acct_sb_cycle_closes_guard` refuses
+  UPDATE and DELETE), the **newest row per cycle wins**, and a row with `closed_at` NULL hands the cycle back to the
+  record. CHECKs: a Sunday, a close after the paid week ended and never in the future, a reason, a lower-case setter.
+  It travels inside `payrollEvents` as a `close_set_by_hand` event (`HandSetClose`, `payrollEventsFrom`), so a board
+  cached before it existed still paints. `cycleWeek` lets it replace the record's close AND any reopen, including a
+  later Close Pay Cycle, and sets `closeSetByHand` (who, why, when). **The panel shows it like any other close, with no
+  label** (Kane: *"remove set by hand in there"*); the loading line does not count it either. The table row and its
+  reason are where it is recorded. **It never writes `audit_log`, the close-out record or Payment Dispatch**, so
+  Diagnostics' Payroll Cycles and Payment Dispatch still show the 12:00:32 PM close and the reopen: the scoreboard and
+  Diagnostics disagree on that cycle by design. There is no screen to set one: a row is inserted by script on Kane's
+  word (the migration seeded Sep 27 – Oct 3 = 11:55 AM ET, set by kaner@). **Never change a time by editing or
+  backdating `audit_log`**: it is append-only (`audit-log.md` § 1), Diagnostics reads the same events, and a backdated
+  close would still lose to the later reopen. Claude Code's permission check refused that route on 10-09.
 - **Known gap (Open item 318):** the Wizard writes its stamp from the browser, fire-and-forget (`logAudit`
   in `client-log.ts`, `keepalive`; the POST needs only a signed-in session). If the write fails, that start
   is unrecorded, and the week shows the next stamped start or "Not in Wizard". Most weeks also hold global
@@ -1094,4 +1113,9 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
   Broadcast with the keys the app already has (`NEXT_PUBLIC_SUPABASE_*` in the browser, the service role on the server).
   **The push: PENDING** (Kane). Until it deploys, boards keep the 45 s tick. A board left open across the deploy listens
   only after a reload.
+- **A close set by hand (item 437): migration APPLIED 2026-10-09 ~16:25 UTC** by session `c3e35660` on Kane's *"override"* ·
+  *"Approve it"*: `apply-accounting-scoreboard-cycle-closes-migration.mts` dry 28/28, `--apply`, `--verify` 27/27 (the
+  data-step check runs on dry/apply only); PostgREST read the seeded row back as service role, anon refused `42501`.
+  **The push: PENDING** (Kane). The migration went first, so the push is safe. Until it deploys, the live board reads the
+  record: Close = missed for Sep 27 – Oct 3.
 - No n8n, no cron, no new notification type.

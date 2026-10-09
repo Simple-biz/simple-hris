@@ -105,6 +105,8 @@ test('a line is reported only when its LAST read answered, with what came back; 
   assert.deepEqual(seen.at(-1), ['problems', 'No payroll problems logged this week or last']);
   t.done('payrollEvents', 12);
   t.done('closes', 9);
+  assert.deepEqual(seen.at(-1), ['problems', 'No payroll problems logged this week or last'], 'payroll waits for the hand-set closes');
+  t.done('handCloses', 1);
   assert.deepEqual(seen.at(-1), ['payroll', 'Found 12 Payroll Wizard starts and closes']);
   for (const r of ['settings', 'customSections', 'lastMeeting', 'members'] as const) t.done(r, 1);
   t.done('bonus', 1, 'the bonus formula could not be read');

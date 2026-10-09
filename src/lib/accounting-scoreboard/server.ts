@@ -53,9 +53,9 @@ import {
 import {
   PAYROLL_EVENT_ACTIONS,
   firstClosedPeriodEnd,
-  payrollEventFromAudit,
+  payrollEventsFrom,
+  type CycleCloseRecord,
   type PayrollAuditRow,
-  type PayrollEvent,
 } from './payroll-cycle';
 import { collectionsHistory, type CollectionEntry, type ProblemEntry, type StoredEntry } from './scoring';
 import { pickPreviewBonus, type FormulaBonus, type PreviewVerdict } from './bonus-preview';
@@ -121,6 +121,9 @@ const PROBLEM_TYPES = 'accounting_scoreboard_problem_types';
 const PROBLEMS = 'accounting_scoreboard_problems';
 // Board-local roles (references/sql/create/2026-10-08_accounting_scoreboard_roles.sql).
 const ROLES = 'accounting_scoreboard_roles';
+/** Payroll Timing closes set by hand (Open item 437). Append-only; the newest per cycle wins. */
+const CYCLE_CLOSES = 'accounting_scoreboard_cycle_closes';
+const CYCLE_CLOSE_COLS = 'cycle_start, closed_at, set_by, reason, set_at';
 
 export interface Viewer {
   email: string;
@@ -464,7 +467,7 @@ export async function readBoard(
   // weeks back. No upper bound: a past cycle started or closed late still lands on its own week.
   const eventsFrom = easternToUtc(addDays(weekStart, -21), 0).toISOString();
 
-  const [liveRows, entries, collections, history, settings, bonus, payroll, closes, problems, problemTypes, customs, lastMeeting] = await Promise.all([
+  const [liveRows, entries, collections, history, settings, bonus, payroll, closes, handCloses, problems, problemTypes, customs, lastMeeting] = await Promise.all([
     paged('rows', selectAllPaged<RowRecord>((from, to) =>
       sb.from(ROWS).select(ROW_COLS).is('archived_at', null).order('id').range(from, to),
     )),
@@ -532,6 +535,10 @@ export async function readBoard(
         .order('id')
         .range(from, to),
     )),
+    // Payroll Timing closes set by hand (Open item 437): every one, a handful at most; the newest per cycle wins.
+    paged('handCloses', selectAllPaged<CycleCloseRecord>((from, to) =>
+      sb.from(CYCLE_CLOSES).select(CYCLE_CLOSE_COLS).order('set_at').order('id').range(from, to),
+    )),
     // Payroll Problems: this week's and last week's live log lines.
     paged('problems', selectAllPaged<ProblemRecord>((from, to) =>
       sb
@@ -566,7 +573,7 @@ export async function readBoard(
     ),
   ]);
 
-  for (const r of [liveRows, entries, collections, history, payroll, closes, problems, problemTypes, customs]) {
+  for (const r of [liveRows, entries, collections, history, payroll, closes, handCloses, problems, problemTypes, customs]) {
     if (r.error) return dbFailure({ message: r.error }, 'Could not read the scoreboard');
   }
   if (settings.error) return dbFailure(settings.error, 'Could not read the scoreboard');
@@ -653,7 +660,7 @@ export async function readBoard(
       history: { allTimeByRow: Object.fromEntries(hist.allTimeByRow), record: hist.record, liveSince },
       members,
       bonus,
-      payrollEvents: payroll.rows.map(payrollEventFromAudit).filter((e): e is PayrollEvent => e !== null),
+      payrollEvents: payrollEventsFrom(payroll.rows, handCloses.rows),
       firstClosedPeriodEnd: firstClosedPeriodEnd(closes.rows),
       generatedAt: new Date().toISOString(),
     },
@@ -680,7 +687,7 @@ export async function readHistory(window: HistoryWindow): Promise<Result<History
     const q = sb.from(table).select('entry_date').order('entry_date').limit(1);
     return live ? q.is('deleted_at', null) : q;
   };
-  const [rows, entries, collections, problems, payroll, closes, settings, customs, firstEntry, firstCollection, firstProblem] =
+  const [rows, entries, collections, problems, payroll, closes, handCloses, settings, customs, firstEntry, firstCollection, firstProblem] =
     await Promise.all([
       selectAllPaged<RowRecord>((from, to) => sb.from(ROWS).select(ROW_COLS).order('id').range(from, to)),
       selectAllPaged<EntryRecord>((from, to) =>
@@ -720,6 +727,7 @@ export async function readHistory(window: HistoryWindow): Promise<Result<History
       selectAllPaged<Pick<PayrollAuditRow, 'src' | 'resource_id'>>((from, to) =>
         sb.from('audit_log').select('resource_id, src:details->>source_file').eq('action', 'payment_cycle.closed').order('created_at').order('id').range(from, to),
       ),
+      selectAllPaged<CycleCloseRecord>((from, to) => sb.from(CYCLE_CLOSES).select(CYCLE_CLOSE_COLS).order('set_at').order('id').range(from, to)),
       sb.from(SECTIONS_TABLE).select(SECTION_COLS),
       selectAllPaged<CustomSectionRecord>((from, to) =>
         sb.from(CUSTOM_SECTIONS).select(CUSTOM_COLS).is('archived_at', null).order('id').range(from, to),
@@ -728,7 +736,7 @@ export async function readHistory(window: HistoryWindow): Promise<Result<History
       first(COLLECTIONS, true),
       first(PROBLEMS, true),
     ]);
-  for (const r of [rows, entries, collections, problems, payroll, closes, customs]) {
+  for (const r of [rows, entries, collections, problems, payroll, closes, handCloses, customs]) {
     if (r.error) return dbFailure({ message: r.error }, 'Could not read the history');
   }
   for (const r of [settings, firstEntry, firstCollection, firstProblem]) {
@@ -751,7 +759,7 @@ export async function readHistory(window: HistoryWindow): Promise<Result<History
         entries: entries.rows.map(mapEntry),
         collections: collections.rows.map((c) => ({ date: c.entry_date, rowId: c.row_id, points: Number(c.points) })),
         problems: problems.rows.map(mapProblem),
-        payrollEvents: payroll.rows.map(payrollEventFromAudit).filter((e): e is PayrollEvent => e !== null),
+        payrollEvents: payrollEventsFrom(payroll.rows, handCloses.rows),
         firstClosedPeriodEnd: firstClosedPeriodEnd(closes.rows),
         today,
         nowIso: new Date().toISOString(),

@@ -80,8 +80,8 @@ export interface BoardPayload {
   /**
    * The Payroll Wizard's Start Processing stamps (each names the cycle it was on) and the pay-cycle
    * closes/reopens, from three weeks before the week shown onward (audit_log; action, time, cycle
-   * file and period only). Payroll Timing is computed from these and nothing is typed
-   * (payroll-cycle.ts).
+   * file and period only), plus every close set by hand (accounting_scoreboard_cycle_closes, Open item
+   * 437; `close_set_by_hand`). Payroll Timing is computed from these (payroll-cycle.ts).
    */
   payrollEvents: PayrollEvent[];
   /** The period end of the first cycle ever closed; a cycle that ended before it predates Close Pay Cycle. */

@@ -17,6 +17,12 @@
  *   - closed  = the cycle's `payment_cycle.closed` (Close Pay Cycle in Payment Dispatch; the Wizard
  *     never closes, cycle-closeout.md § Downloadable report). A `payment_cycle.reopened` after the
  *     close opens the cycle again, and the close that sticks is the one judged.
+ *   - EXCEPT a close set by hand (`accounting_scoreboard_cycle_closes`; Kane, 2026-10-09, Open item 437:
+ *     "I just want todays cycle to be closed at 11:55", then "override"). The newest one for the cycle
+ *     replaces the record's close and any reopen; a cleared one (no time) hands the cycle back to the
+ *     record. It is never an audit row: audit_log and the close-out record keep what happened. The panel
+ *     shows it like any other close (Kane, 2026-10-09: "remove set by hand in there"); `closeSetByHand`
+ *     keeps who set it and why.
  *
  * Every event is matched to its cycle on the PARSED period, by the Sunday the period starts (a cycle
  * is a period, not a file: diagnostics-performance-tabs.md § A cycle is a PERIOD; " (1).csv" drift).
@@ -46,7 +52,8 @@ import type { Light } from './stoplight';
 export const PAYROLL_EVENT_ACTIONS = ['dispatch.lock_acquired', 'payment_cycle.closed', 'payment_cycle.reopened'] as const;
 export type PayrollEventAction = (typeof PAYROLL_EVENT_ACTIONS)[number];
 
-export interface PayrollEvent {
+/** One of the three audit actions, read from audit_log. */
+export interface AuditPayrollEvent {
   action: PayrollEventAction;
   /** ISO timestamp (audit_log.created_at). */
   at: string;
@@ -54,6 +61,63 @@ export interface PayrollEvent {
   sourceFile: string | null;
   /** The Sunday its pay cycle starts on (`eventCycleStart`). Null = unreadable, and the event never counts. */
   cycleStart: string | null;
+}
+
+/** The action of a close set by hand. Not an audit action: it is never read from or written to audit_log. */
+export const HAND_SET_CLOSE = 'close_set_by_hand' as const;
+
+/**
+ * A close set by hand (a row of `accounting_scoreboard_cycle_closes`, Open item 437). It travels in the same
+ * list as the audit events (BoardPayload.payrollEvents), so a board cached before it existed still reads.
+ */
+export interface HandSetClose {
+  action: typeof HAND_SET_CLOSE;
+  /** When it was set (ISO). The newest per cycle wins. */
+  at: string;
+  /** The Sunday its pay cycle starts on. */
+  cycleStart: string;
+  /** The close time Payroll Timing shows (ISO); null = cleared, the record is read again. */
+  closedAt: string | null;
+  /** Who set it (an email). */
+  setBy: string;
+  reason: string;
+}
+
+export type PayrollEvent = AuditPayrollEvent | HandSetClose;
+
+/** A stored row of accounting_scoreboard_cycle_closes, as server.ts reads it. */
+export interface CycleCloseRecord {
+  cycle_start: string;
+  closed_at: string | null;
+  set_by: string;
+  reason: string;
+  set_at: string;
+}
+
+/** A stored hand-set close as an event; null when its cycle or a time does not read (it never counts). */
+export function handSetCloseFromRecord(r: CycleCloseRecord): HandSetClose | null {
+  const setAt = Date.parse(r.set_at);
+  const closedAt = r.closed_at === null ? null : Date.parse(r.closed_at);
+  if (!isIsoDate(r.cycle_start) || weekStartOf(r.cycle_start) !== r.cycle_start) return null;
+  if (!Number.isFinite(setAt) || (closedAt !== null && !Number.isFinite(closedAt))) return null;
+  return {
+    action: HAND_SET_CLOSE,
+    at: new Date(setAt).toISOString(),
+    cycleStart: r.cycle_start,
+    closedAt: closedAt === null ? null : new Date(closedAt).toISOString(),
+    setBy: r.set_by,
+    reason: r.reason,
+  };
+}
+
+/** The hand-set close that stands for a cycle: its newest one, unless that one cleared it. */
+export function handSetCloseFor(events: readonly PayrollEvent[], cycleStart: string): HandSetClose | null {
+  let newest: HandSetClose | null = null;
+  for (const e of events) {
+    if (e.action !== HAND_SET_CLOSE || e.cycleStart !== cycleStart) continue;
+    if (newest === null || Date.parse(e.at) >= Date.parse(newest.at)) newest = e;
+  }
+  return newest !== null && newest.closedAt !== null ? newest : null;
 }
 
 /** Carla's deadlines: start by Tuesday noon, close by Friday noon (Eastern). */
@@ -84,6 +148,8 @@ export interface CycleWeek {
   close: CheckState;
   /** The cycle was closed and then reopened, and is not closed again. */
   reopened: boolean;
+  /** The close shown was set by hand (accounting_scoreboard_cycle_closes), not Close Pay Cycle; null = the record's. */
+  closeSetByHand: { setBy: string; reason: string; setAt: string } | null;
   /** 0–100 once both checks are judged, else null. */
   score: number | null;
 }
@@ -124,7 +190,7 @@ function isPayrollAction(action: string): action is PayrollEventAction {
 }
 
 /** One audit row as a Payroll Timing event; null for any other action. */
-export function payrollEventFromAudit(r: PayrollAuditRow): PayrollEvent | null {
+export function payrollEventFromAudit(r: PayrollAuditRow): AuditPayrollEvent | null {
   if (!isPayrollAction(r.action)) return null;
   if (r.action === 'dispatch.lock_acquired') {
     return { action: r.action, at: r.created_at, sourceFile: r.csrc, cycleStart: eventCycleStart(r.cps, r.csrc) };
@@ -132,6 +198,20 @@ export function payrollEventFromAudit(r: PayrollAuditRow): PayrollEvent | null {
   // The close-out route writes the file to both details.source_file and resource_id.
   const sourceFile = r.src ?? r.resource_id;
   return { action: r.action, at: r.created_at, sourceFile, cycleStart: eventCycleStart(null, sourceFile) };
+}
+
+/** Payroll Timing's events: the audit rows' and the hand-set closes', each unreadable one left out. */
+export function payrollEventsFrom(audit: readonly PayrollAuditRow[], handSet: readonly CycleCloseRecord[]): PayrollEvent[] {
+  const events: PayrollEvent[] = [];
+  for (const r of audit) {
+    const e = payrollEventFromAudit(r);
+    if (e !== null) events.push(e);
+  }
+  for (const r of handSet) {
+    const e = handSetCloseFromRecord(r);
+    if (e !== null) events.push(e);
+  }
+  return events;
 }
 
 /**
@@ -199,6 +279,13 @@ export function cycleWeek(
     }
   }
 
+  // A close set by hand replaces the record's close and any reopen (Open item 437).
+  const handSet = handSetCloseFor(events, paysWeek.start);
+  if (handSet !== null) {
+    closedAt = handSet.closedAt;
+    reopened = false;
+  }
+
   const now = Date.parse(nowIso);
   const preCloseout = firstClosedPeriodEnd !== null && paysWeek.end < firstClosedPeriodEnd;
 
@@ -227,6 +314,7 @@ export function cycleWeek(
     closeDeadline: closeDeadline.toISOString(),
     close,
     reopened,
+    closeSetByHand: handSet === null ? null : { setBy: handSet.setBy, reason: handSet.reason, setAt: handSet.at },
     score,
   };
 }

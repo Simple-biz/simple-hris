@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { sectionHeadline, summarizeSection, type BoardContext } from './board';
 import { buildLookup, type AmPmRowMeta, type StoredEntry } from './scoring';
 import { resolveSections, type SectionKey } from './sections';
-import { eventCycleStart, type PayrollEvent } from './payroll-cycle';
+import { eventCycleStart, type AuditPayrollEvent, type PayrollEvent } from './payroll-cycle';
 
 const sections = resolveSections([]);
 const sec = (k: SectionKey) => sections.find((s) => s.key === k)!;
@@ -60,7 +60,7 @@ test('payroll problems: the log plus the old grid; over the goal is not green; a
 });
 
 test('payroll timing comes from the Wizard and close-out events, not from rows', () => {
-  const ev = (action: PayrollEvent['action'], at: string, sourceFile: string): PayrollEvent => ({
+  const ev = (action: AuditPayrollEvent['action'], at: string, sourceFile: string): PayrollEvent => ({
     action,
     at,
     sourceFile,
