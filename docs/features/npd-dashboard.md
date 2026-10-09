@@ -613,8 +613,8 @@ the **only** reader besides this page, and it is held to the following, seen fro
   `node --import tsx scripts/apply-npd-formulas-migration.mts --apply`, **32/32 checks** after commit.
   A dry run minutes earlier had passed 32/32 too, with Lock in rehearsed inside it.
   `npd_save_sheet_v2` now exists, so the formulas code and the Google Sheet sync can save. The
-  original `npd_save_sheet` is kept, so code not yet redeployed still saves. **Remaining order: push**
-  (Kane's). The code that saves through v2 is committed but not pushed.
+  original `npd_save_sheet` is kept, so code not yet redeployed still saves. **The push: done**
+  (measured 2026-10-09: the code that saves through v2 is on `origin/main` since 2026-10-02 15:57 EDT; the deploy is not measured from here).
 - **Grant PENDING:** Admin → Roles → Accounting → **NPD (New Payroll Dashboard)** → Edit for each
   person who will paste (Aliviah). Measured 2026-10-01: **0** active `npd` grants. Admins see it
   already.

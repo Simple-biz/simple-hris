@@ -45,6 +45,16 @@ sessionEmail, elevated, requestedEmail })`. It returns one of:
 Unauthenticated users never reach `evaluateRouteAccess` — the proxy redirects
 them to `/login?callbackUrl=…` first (this branch is unchanged).
 
+**Host blocks run first** (documented here 2026-10-09; they existed before). Before any of
+this, `proxy.ts` scopes three hosts: the bank-update host, the gift-address host, and, since
+2026-10-01, the **Accounting Scoreboard host** (`ACCOUNTING_SCOREBOARD_HOST`, decided by the pure
+`decideScoreboardHost()` in `src/lib/accounting-scoreboard/host.ts`). The scoreboard host is the
+one that is **signed-in**: a path that exists there (the board, its API, `/login`,
+`/auth-callback`, `/api/auth/*`) falls through to the normal pipeline, so this layer still runs.
+Every other page redirects to the board and every other API answers **403** `host_scoped`. Each
+block is inert until its env var is set. See
+[accounting-scoreboard.md](./accounting-scoreboard.md) § *Its own domain*.
+
 ### Layer 2 — server page guard
 
 **Every** privileged dashboard has an `app/<dashboard>/layout.tsx` that calls
@@ -84,6 +94,8 @@ From `src/lib/auth/route-access.ts` (`ROUTE_REQUIRED_ROLES`):
 | `/hr` | `hr_coordinator`, `admin` |
 | `/orphanage` | `orphanage_manager`, `admin` |
 | `/manager` | `manager`, `admin` |
+| `/qc` | `qc`, `admin` |
+| `/tickets` | `tickets`, `employee_support`, `admin` (`employee_support` opens the ROUTE only; the board stays behind the `tickets` feature key, see the comment in `route-access.ts`) |
 
 `admin` is accepted on every privileged route on purpose ("keys to the castle",
 mirroring `viewsForRoles()` in `src/lib/rbac/views.ts`).
@@ -91,6 +103,12 @@ mirroring `viewsForRoles()` in `src/lib/rbac/views.ts`).
 **Open to any authenticated user** (deliberately *not* in the map): `/`,
 `/auth-callback` (dispatchers); `/employee`, `/contractor` (personal portals,
 scoped to the session owner); `/login`, `/onboarding/*` (public).
+`/accounting-scoreboard` (and `/accounting-scoreboard/archive`) is absent on purpose: the board's
+own **member list** gates it in its page and API (`resolveAccess` in
+`src/lib/accounting-scoreboard/server.ts`), because most of the team who type its numbers hold no
+HRIS role. **The `/accounting` prefix must never be widened to swallow it**; `host.test.ts` pins
+that. (The `/qc` and `/tickets` rows, and this sentence, were missing from this table until
+2026-10-09, although the code had them.)
 
 > **Note on `/payroll-clerk`:** gated to `accounting`/`admin` because it is a
 > money-dispatch surface. If a payment processor operates it without the

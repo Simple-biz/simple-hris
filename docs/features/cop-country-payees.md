@@ -6,7 +6,7 @@
 > three surfaces (Kane: *"COP people will be paid in COP Values, this should reach Payment
 > Dispatch and Payroll Wizard as well"*). Still no migration. **Extended 2026-10-07** (item
 > 373): a Colombian's RATE may itself be COP-denominated, and they stay on the PHP rails
-> (§0.1). The `--apply` is **PENDING** (§0.1, Deploy).
+> (§0.1). The `--apply` **RAN 2026-10-07 13:56Z** (backup `references/backups/cop_denominated_rates_2026-10-07T13-56-24-154Z.json`), about 3½ minutes after `14ea111a` was committed and almost certainly before its deploy (Open item 407); a 2026-10-08 dry run finds every target already in COP.
 
 Colombian staff are paid in Colombian pesos, and they ride the ordinary **PHP** rails
 (peso-equivalent → USD → their bank). Most of them hold a **peso** rate. Since 2026-10-07
@@ -98,7 +98,7 @@ these three, labelled as pesos. (2) The Wizard snapshot's stale-rate check
 today. So a Wizard tab left open from before the fix can republish 22,200 figures: reload
 every Wizard tab after the change.
 
-**Deploy (PENDING until Kane confirms).** 1. Push and let the commit deploy. 2.
+**Deploy (the data step RAN 2026-10-07 13:56Z, ahead of the deploy; Open item 407).** As written: 1. Push and let the commit deploy. 2.
 `node --import tsx scripts/apply-cop-denominated-rates.mts --apply --deployed`. This sets the
 three structures and the "Lead Gen (COP)" bonus to COP, and re-prices that bonus's live-week
 applied row (reinelr@ 3 appts: ₱42,000 → ₱808.81). It backs up first and reads back after.

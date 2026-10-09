@@ -977,7 +977,7 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
 - **Measured 2026-10-08** against production's Supabase. An anon subscriber on the topic received a service-role REST
   send in **212 ms** (one probe message; no table read or written). A board re-read adds ~1.4 s, plus the 0.5–1.5 s
   coalescing, so a teammate's save shows in about 2–3 s.
-- **Not verified:** two signed-in browsers on the deployed site. The code is not pushed (Open item 409).
+- **Not verified:** two signed-in browsers on the deployed site (Open item 409). The code is pushed (measured 2026-10-09: on `origin/main` since 2026-10-08 09:36 EDT); the deploy is not measured from here.
 
 ## Not built (on purpose)
 
@@ -1086,7 +1086,7 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
   "not set up yet" (503). Before the push, an Admin may add the 2 people who would lose access under Setup → Members, if
   they should keep it.
 - **The No Meeting Streak's date pills (2026-10-07, item 391): no migration, no new read, display only.** **Pushed: measured 2026-10-08** (on origin/main; deploy not measured from here) (`f770d29b`).
-- **Pre-arb flag migration: APPLIED 2026-10-08 ~11:13 UTC** by session `5fae2311` on Kane's *"go"*. **The push: PENDING** (Kane).
+- **Pre-arb flag migration: APPLIED 2026-10-08 ~11:13 UTC** by session `5fae2311` on Kane's *"go"*. **Pushed: measured 2026-10-09** (on `origin/main` since 2026-10-08 07:36 EDT; deploy not measured from here).
   `2026-10-07_accounting_scoreboard_pre_arb_flag.sql` re-declares CHECK `acct_sb_rows_outcome_valid` with `'pre_arb'`
   added (the 2026-10-07 text copied verbatim otherwise). Its script's data step flags the one live "Pre-arb" Outcomes
   line, after writing that row to `docs/audits/backups/` on `--apply`
@@ -1111,11 +1111,11 @@ Kane, 2026-10-08: *"Accounting Scoreboard - Should use realtime feature of supab
   are real board data.
 - **Live refresh (2026-10-08, § Live refresh): no migration, no env var, no table change.** It rides Supabase Realtime
   Broadcast with the keys the app already has (`NEXT_PUBLIC_SUPABASE_*` in the browser, the service role on the server).
-  **The push: PENDING** (Kane). Until it deploys, boards keep the 45 s tick. A board left open across the deploy listens
+  **Pushed: measured 2026-10-09** (on `origin/main` since 2026-10-08 09:36 EDT; deploy not measured from here). Until it deploys, boards keep the 45 s tick. A board left open across the deploy listens
   only after a reload.
 - **A close set by hand (item 437): migration APPLIED 2026-10-09 ~16:25 UTC** by session `c3e35660` on Kane's *"override"* ·
   *"Approve it"*: `apply-accounting-scoreboard-cycle-closes-migration.mts` dry 28/28, `--apply`, `--verify` 27/27 (the
   data-step check runs on dry/apply only); PostgREST read the seeded row back as service role, anon refused `42501`.
-  **The push: PENDING** (Kane). The migration went first, so the push is safe. Until it deploys, the live board reads the
+  **Pushed: measured 2026-10-09** (on `origin/main` since 2026-10-09 12:30 EDT, push `19672c89`; deploy not measured from here). The migration went first, so the push was safe. Until it deploys, the live board reads the
   record: Close = missed for Sep 27 – Oct 3.
 - No n8n, no cron, no new notification type.

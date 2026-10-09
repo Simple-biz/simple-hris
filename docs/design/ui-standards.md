@@ -662,6 +662,14 @@ See `ProcessorQueue.tsx` (`EmptyQueueState`, `NoMatchesState`,
 § 12.3. A table's **Refresh** never re-shows its loading state; it opens the refresh modal
 (§ 12.3, 2026-10-05).
 
+**The spinner's caption may cycle, but only through real reads** (2026-10-09, one user: `LoadingLines` in
+`src/components/accounting-scoreboard/shared.tsx`; Kane: *"random texts while its loading like 'Fetching data' …
+depending on the tab"*). The centered spinner + tiny-caps caption above, with the caption changing every 1.6 s through
+the reads **that view really has in flight**. No line ticks or says "done": ticking real steps is § 10.1's loading
+card. Screen readers hear one stable `role="status"` label, never the cycling lines. Reduced motion keeps the lines
+changing and drops only the slide. A view painted from cache shows no lines at all.
+[accounting-scoreboard.md](../features/accounting-scoreboard.md) § Loading.
+
 ### 5.6 Pagination (display only, 2026-09-29)
 
 Paging is DISPLAY ONLY: counts, pills, totals, KPI tiles and exports read the full filtered
@@ -689,6 +697,22 @@ Append variant, used by the Rankings leaderboards: "Show 25 more · N left"
 (`AppointmentLeaderboardPane.tsx:51, 636`; `AppointmentRankingsPane.tsx:45`).
 
 ---
+
+### 5.7 Reordering a list (2026-10-08, one user)
+
+The reference is the Accounting Scoreboard's task boards (`TasksPanel.tsx`; Aliviah's ask, item 422), on dnd-kit like
+the tickets Kanban (§ 17.9):
+
+- **A grip per row**, shown only where the viewer may reorder. A click on the grip does nothing: **5 px of travel**
+  starts a drag (the tickets board's rule).
+- **Keyboard:** focus the grip, **Space**, the up and down arrows, **Space** to drop, **Escape** to cancel. Screen
+  readers hear the item's title and its place ("3 of 16").
+- **The whole list or nothing.** The request names every live item once; a list that changed since it loaded is
+  refused **409** and never applied in part. The rows move at once and **snap back** if the server refuses.
+- **Each group is its own drag area** (each frequency card, there): an item never moves between groups by drag, and
+  the server refuses a list that mixes them.
+
+[accounting-scoreboard-tasks.md](../features/accounting-scoreboard-tasks.md) § Rearranging a list.
 
 ## 6. Cards / Panels
 
@@ -1519,6 +1543,19 @@ Three flavors:
   Payroll Notes card keeps what is on screen through a background failure
   (`PayrollNotesSetupCard.tsx:37-42`), and Diagnostics' background refresh "covers nothing"
   (`performance-ui.tsx:36-38`). A skeleton is for the first paint.
+- **A cold load skeletons the data, never the frame** (two users; Kane on both, 2026-10-05 and
+  10-06: *"only the table is being skeletoned … the rest are already loaded"*). Whatever does not
+  depend on the read in flight paints real and interactive at once: header, tab bar, toolbar,
+  search box, the rail's frame, the table's header. Only what that read fills in is a placeholder,
+  shaped like what arrives. Render the frame through **one tree across the `loading` flip**, so it
+  mounts once and never replays its entrance (Employee Profile's `ProfileFrame`,
+  [employee-profile.md § 5.1](../features/employee-profile.md)). A value already resolved elsewhere,
+  such as the shell's name and department, may paint while loading but never decides. With nothing
+  to paint it is a skeleton bar, **never a guessed fallback** (the email prefix). A pane whose rows
+  would be mis-scoped before the data lands waits for it instead of mounting early (Manager → My
+  Team's hire panes, `TeamRosterSkeleton.tsx`,
+  [manager-my-team.md § Loading](../features/manager-my-team.md)). Shown only when there is nothing
+  cached to paint.
 - **A table's Refresh click opens the refresh modal** (2026-10-05, Kane: *"not reload the table as
   skeleton but rather a modal with a progress bar on it"*). It is `useTableRefresh` in
   `src/components/common/RefreshProgressDialog.tsx`, on every table and list with a Refresh button. The
@@ -1630,6 +1667,20 @@ are the canonical "money / hours / counters" treatment.
 
 The project uses `motion/react` (Framer Motion successor). One canonical ease
 curve and a small set of stagger / delay constants.
+
+> ⚠ **OPEN 326 (found 2026-10-02, Kane's call; recorded in this file 2026-10-09):** Tailwind
+> transition classes do nothing in this app. `src/index.css:864-871` ("Smooth theme transitions")
+> sets `transition-property` / `-duration` / `-timing-function` on `*, *::before, *::after`
+> **outside any `@layer`**, and unlayered CSS outranks Tailwind v4's `@layer utilities` whatever the
+> specificity. So `transition-opacity`, `transition-transform`, `transition-[…]`, `duration-*` and
+> `ease-*` are silently ignored: fades and height changes snap, and only colour properties animate,
+> which is why it looks fine in review. That includes § 14.4's left-edge accent rule as written.
+> Until 326 is ruled (the real fix is moving the rule into `@layer base`, which touches every
+> screen), animate opacity, transform or height with an inline `style={{ transitionProperty,
+> transitionDuration, transitionTimingFunction }}`, or with `motion` / WAAPI (NPD's locked bar and
+> sync bar do), and check `getComputedStyle(el).transitionProperty` before trusting a class. The
+> reduced-motion `transition: none !important` still wins over the inline style.
+> [[global-star-transition-beats-tailwind]]
 
 ### 14.1 Standard ease
 
@@ -1864,9 +1915,12 @@ with the reasoning in the commit message, never by changing the resting colour.
 `ignoreFiles`. A rule is waived per file (`value: "*"`, `files: [...]`); a value rule is
 waived per value (`bounce-easing` → `jam-wobble`, d9dc6322 — the impeccable skill's own
 procedure for value findings). Every entry carries `createdAt` and a `reason` naming who
-decided (Kane, or a Claude session id) and the evidence. Rules waived so far:
-`gray-on-color` (11 files, every one a hover-only ground, § 15.3), `broken-image` (4 —
-runtime signed URLs, or files with no JSX), `gradient-text` (1), `bounce-easing` (1).
+decided (Kane, or a Claude session id) and the evidence. Rules waived so far (re-counted
+2026-10-09 from the config): `gray-on-color` (15 files, every one a hover-only ground, § 15.3;
+11 on 2026-09-29, the four since are Accounting Scoreboard files), `broken-image` (4 —
+runtime signed URLs, or files with no JSX), `gradient-text` (1), `bounce-easing` (1),
+`side-tab` (1 — `AdminRoles.tsx`, the Roles cards' left-4 accent, kept as designed by Kane
+2026-10-05, `09618ab3`).
 `.impeccable/hook.cache.json` is local (`.git/info/exclude`).
 
 Two findings, recorded here and not acted on (§ 20 D14):

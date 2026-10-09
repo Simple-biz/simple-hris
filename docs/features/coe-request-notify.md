@@ -122,6 +122,9 @@ entry in `app_settings`.
    attach the Gmail OAuth2 credential to **Send COE Alert (Gmail)**, then Activate.
 2. HRIS: Admin → Webhooks & Integrations → Webhooks → **COE Request → Notify (n8n)**. Paste the
    production webhook URL, toggle Active, then Save. Env fallback: `N8N_COE_REQUEST_NOTIFY_WEBHOOK_URL`.
+   **Use the card URL, not the env fallback, if the recipient will ever be edited:** on an env URL the
+   Admin-edited recipients are ignored and jakec@ is mailed whatever the editor shows (Open item 352, still OPEN for
+   `coe_request_notify`; [webhook-automations.md](./webhook-automations.md) § Edits apply only to a URL set on the card).
 3. Check it: open the card's **Open automation**. jakec@simple.biz should be listed under "default".
    Click **Send test run to me**, and a `[TEST RUN]` email should arrive in your own inbox.
 

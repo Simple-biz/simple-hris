@@ -12,8 +12,10 @@ Real Time … a new column for us where we can know the timestamp … saved in o
 well … we will still have the Manual Option but find a way that we can prioritize the Polling of
 data"*). The source is **`public.hires` in simple-recruitment-portal** (Kane's screenshot, same
 day). The migration was **APPLIED 2026-10-08** and the first real sync ran that evening from a local
-`next dev` (§ Deploy notes). **Production cannot pull yet:** the code is not pushed and the
-`HRIS_HIRES_*` env is not in Vercel.
+`next dev` (§ Deploy notes). **Production is set up:** Kane set the `HRIS_HIRES_*` env in Vercel production
+and redeployed at ~19:38Z on 2026-10-08 (*"redeployed"*, Open item 408), and the code is on `origin/main` since
+2026-10-08 16:13 EDT (measured 2026-10-09). **No production sync is audited yet**: a poll that changes nothing
+writes no audit row, so the first one shows when a new hire arrives.
 
 The checklist's own rules (atomic per-row writes, the lock, the Lead Gen-only orientation
 email) are in [new-hire-checklist.md](./new-hire-checklist.md); this doc adds one way for a row
@@ -309,19 +311,20 @@ the strip says "not applied yet" with that command, and the grid works as before
 | `HRIS_HIRES_COL_NAME` … `_COUNTRY` (10) | no | Kane's names: `name`, `personalEmail`, `location`, `phoneNumber`, `dateOfInterview`, `hiringSource`, `referredBy`, `hiredBy`, `department`, `country` | set in `.env.local`; all 10 measured present |
 | `HRIS_HIRES_COL_CREATED_AT` / `_UPDATED_AT` | no | unset (not read) | `created_at` / `updated_at`, set in `.env.local` (both measured present) |
 
-Every identifier is regex-checked and refused **by variable name**, never echoed. **PENDING (Kane):
-all of these in Vercel production too.**
+Every identifier is regex-checked and refused **by variable name**, never echoed. **In Vercel production
+since ~19:38Z 2026-10-08** (Kane set them and redeployed; Open item 408. Not measurable from here: no Vercel CLI).
 
 **The table name (resolved the same day).** Morning probes of `hires` and 14 other names answered
 `PGRST205` (no such table). Kane then sent a screenshot of `public.hires`, and the re-probe read it.
 It was created or exposed in between. If a probe says "no such table" again, re-check before
 concluding it's the wrong name.
 
-**One week per pass (b), 2026-10-08: no migration, no env var.** Its push is PENDING with the rest.
+**One week per pass (b), 2026-10-08: no migration, no env var.** Pushed with the rest (measured
+2026-10-09: on `origin/main` since 2026-10-08 16:13 EDT).
 
-**PENDING (Kane):** the push, and every `HRIS_HIRES_*` variable above in **Vercel production**. Until
-both are done, production cannot pull. A signed-in click-through of the strip and the Received column
-is also owed.
+**Done:** the `HRIS_HIRES_*` variables in **Vercel production** (Kane, ~19:38Z 2026-10-08, item 408) and the
+push (measured 2026-10-09 from the `origin/main` reflog). **Still owed:** a signed-in click-through of the strip and
+the Received column, and the first audited production sync.
 
 **The first real sync (measured 2026-10-08 18:23:59Z, actor `kaner@simple.biz`, from a local
 `next dev` on production data, the minute the migration landed):** 34 pulled, all "Lead

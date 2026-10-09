@@ -114,7 +114,7 @@ quarters are still loading, the notes say *so far*.
 - **No migration.** No env vars. No n8n import. Reads only.
 - The route is new: `GET /api/accounting-scoreboard/history`. On the scoreboard host it passes under the existing
   `/api/accounting-scoreboard/*` rule (`host.ts`); nothing to configure.
-- **PENDING (Kane):** push. Verified locally: 374/374 scoreboard tests, `tsc` clean, headless Chromium on the real
+- **Pushed: measured 2026-10-09** (on `origin/main` since 2026-10-09 09:33 EDT, push `c7659cea`; the deploy is not measured from here). Verified locally: 374/374 scoreboard tests, `tsc` clean, headless Chromium on the real
   `ScoreboardApp` fed the History payload computed from production (aggregates and section ids only, no names) at
   1440 light and dark and 390, reduced motion, a failing window, the table view and the keyboard. Not clicked through
   signed in on the deployed site.

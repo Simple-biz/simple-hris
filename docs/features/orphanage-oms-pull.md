@@ -254,11 +254,33 @@ Env, server-only (`.env.example` carries the full block). **PENDING — Kane fil
 
 Every identifier is regex-checked (`isSafeOmsIdentifier`); a bad one is refused **by
 variable name**, and no value is ever echoed. Without URL + key the route answers 503
-`configured:false` and the tab says "OMS is not configured". **Until the OMS schema is
-confirmed against these names, the week filter is an assumption** (a DATE column holding
-the Sunday); if OMS keys the week differently, the column env var changes, not the code.
+`configured:false` and the tab says "OMS is not configured". The **Default** column is the code's default.
+**The project the HRIS points at (`pymcftszftvhxssczhos`, below) uses other names**, so `.env.local` sets them
+(2026-10-07): `OMS_HOURS_COL_WEEK_START=week_start_date`, `OMS_HOURS_COL_PAY_WEEK=serial_num`,
+`OMS_HOURS_COL_UPDATED_AT=synced_at`; `work_email`, `hours` and `status` match the defaults. All six were measured
+present in that project's `orphanage_hours` (read-only, 2026-10-07, Open item 334). If OMS keys the week differently
+again, the column env var changes, not the code.
 
-### Send to OMS — PENDING, three steps outside this repo
+### Send to OMS — the table exists; one confirmation and one live send still owed
+
+**State, 2026-10-09** (rewritten by the documentation sweep from Open item 334, which holds the measurements):
+
+- **OMS created `public.hris_orphanage_returns`** from the 2026-10-07 SQL file in **`pymcftszftvhxssczhos`**. Confirmed
+  read-only the same day: anon gets `42501 permission denied` (a made-up table gets `PGRST205`), and the grants match
+  the file's revoke. So option (a) below was in effect taken.
+- **`pymcf` was EMPTY on 2026-10-07**: 0 rows in `work_hour_log`, `payroll_export_batch`, `payroll_report`,
+  `global_master_list`, `orphanage_hours` and `hris_orphanage_returns`. OMS's only data is in
+  `xllfslvceolnfzdfgudo`, which the note below calls "their prod" as it was believed on 2026-10-07. **Owed:** OMS
+  confirms that `pymcf` is the live project. Until it has hours, **Load Orphanage Hours finds nothing there**.
+- **`.env.local`** points `OMS_SUPABASE_URL` / `OMS_SUPABASE_KEY` at `pymcf` (its `service_role` key; the `xllf` pair is
+  kept commented) with `OMS_RETURN_TABLE=hris_orphanage_returns`. `readOmsReturnConfig` + `probeOmsReturnTable` answered
+  config ok and `ready: true` (2026-10-07).
+- **Vercel production:** Kane, 2026-10-09: *"OMS is already done"*. That is recorded as his word that the Vercel step
+  is done. **It is not measured** (no Vercel CLI here), and the only send in `audit_log` is still the local one at
+  2026-10-07 15:38Z.
+- The button is live (step 3).
+
+The 2026-10-07 hold note, kept as written:
 
 > **2026-10-07 — this plan is on hold, waiting on Kane.** OMS's dev could not create the table from its name
 > alone and asked for this doc (which carries the DDL), but pointed out first that OMS already built the return path: `POST /api/hris/payroll-report` (HMAC-signed over the raw body, idempotent
@@ -271,7 +293,7 @@ the Sunday); if OMS keys the week differently, the column env var changes, not t
 > locally on 2026-10-07, so until (a) or (b) the modal reads *"OMS has no table named hris_orphanage_returns"*.
 > Audit item 334.
 
-1. **PENDING — the OMS team creates the table in THEIR project** (this file is the contract;
+1. **DONE 2026-10-07 in `pymcf` (above)** — the OMS team creates the table in THEIR project (this file is the contract;
    `oms-return.test.ts` fails if the column list below drifts from `OMS_RETURN_COLUMNS`).
    **The file to send their dev** is `references/sql/external/oms/2026-10-07_hris_orphanage_returns.sql`
    (2026-10-07): the same columns, also test-pinned, plus the concrete access block. Our key is an
@@ -308,18 +330,18 @@ grant select, insert on public.hris_orphanage_returns to <that role>;
 
    OMS reads a week as: the rows of the newest `push_id` for that `week_start`. Older
    pushes stay as history; the HRIS never deletes them.
-2. **PENDING — Kane sets `OMS_RETURN_TABLE`** (e.g. `hris_orphanage_returns`) in `.env.local`
-   **and Vercel production**. Unset ⇒ the modal says so and Send stays disabled.
+2. **Kane sets `OMS_RETURN_TABLE`** (`hris_orphanage_returns`) in `.env.local` (**done** 2026-10-07)
+   **and Vercel production** (done on Kane's word 2026-10-09, **not measured**). Unset ⇒ the modal says so and Send
+   stays disabled.
 3. **The "Send to OMS" button is wired (2026-10-03, Kane: *"Send to OMS - fix this code wise"*;
-   committed, NOT pushed).** It sits after **Load Orphanage Hours** in the Refresh / Load row and
+   pushed: measured 2026-10-09, on `origin/main` since 2026-10-02 21:15 EDT).** It sits after **Load Orphanage Hours** in the Refresh / Load row and
    only opens the modal: no spinner, because the modal carries the loading. It is disabled while
    `sendBlockedReason` is set (Test mode, replay, no period), and its wrapper's `title` names the
    reason, because a disabled button gets no hover. `src/lib/oms/oms-panel-wiring.test.ts` pins
    the four points (it opens the modal, the disabled guard, Test and replay both block, and no
    spinner), so the button cannot silently disappear again. From 2026-09-28 to 2026-10-03 the modal
    shipped with nothing opening it: the one edit that added the button was refused by a permission
-   classifier and not retried. Audit items 235, 334. **Steps 1 and 2 are still PENDING**: until OMS
-   creates the table and `OMS_RETURN_TABLE` is set, the button opens a modal that says *"Sending to
-   OMS is not set up"*.
+   classifier and not retried. Audit items 235, 334. *(Until 2026-10-07 steps 1 and 2 were PENDING and the
+   button opened a modal that said "Sending to OMS is not set up"; see the state above for what is done now.)*
 
 No HRIS migration: what we sent is recorded in the audit row and held by OMS's own table.

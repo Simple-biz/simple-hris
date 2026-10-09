@@ -2415,8 +2415,14 @@ Returns time adjustment requests scoped to the authenticated manager's departmen
 
 **Department scoping (non-elevated):**
 1. Fetches the manager's active dept assignments from `department_managers`.
-2. Batch-looks up each unique `work_email` in the result set against `active_employees."Department"`.
-3. Keeps only rows where the employee's department is in the manager's assignments.
+2. Reads the active roster once (`getEmployeesForAuthorizedServerRoute`). An unreadable roster answers
+   `500 { rows: [], error }`, never an empty queue.
+3. Resolves each filer with `pickRosterIdentity`: `Work Email` first, then `Alternate Work Email` /
+   `Alternate Work Email 2`, so a request filed under an alternate address belongs to its owner (an alternate on two
+   people resolves to nobody). Keeps rows whose resolved department the caller manages, **plus** rows whose
+   `second_approver_email` is any of the caller's own addresses. *(Since 2026-10-07, `c073e076`, item 390; until then
+   it looked each `work_email` up against `active_employees."Department"` and an alternate-email filer matched no one.
+   Corrected here 2026-10-09.)*
 
 **Response `200`:**
 ```json
@@ -2529,7 +2535,7 @@ Granular per-row checklist API (rows persist atomically as they're typed — no 
 
 | Method | Body | Purpose |
 |---|---|---|
-| `GET` | `?period=YYYY-MM-DD` (required) | That week's rows + its lock state. `400` without a valid period. |
+| `GET` | `?period=YYYY-MM-DD` (required) | That week's rows + its lock state, + `inDatabaseIds` (the row ids the hiring-database copy points at; information only) and `inDatabaseError` (a failed copy read still serves the week, with no tags; since 2026-10-08, `bf7d7eb9`, see new-hire-source-sync.md § What has been synced). `400` without a valid period. |
 | `POST` | `{ period_start, period_end?, values }` | Add ONE hire (atomic insert; concurrent adders never collide). `409` if the week is locked. Audit `hr.new_hire_checklist.row_added`. |
 | `PATCH` | single `{ id, values, expectedUpdatedAt? }` **or** bulk `{ ids[], field, value }` | Single: update named fields; a stale `expectedUpdatedAt` → `409 { conflict: true }` (co-editor won). Bulk: set one column across many ids (bulk-apply department/country). Audit `…row_updated` / `…bulk_set`. |
 | `DELETE` | `{ id? }` or `{ ids[] }` | Delete exactly the named ids (never "everything not in the payload"). Audit `…row_deleted`. |
@@ -3051,19 +3057,31 @@ active_only: true, client, columns, expires_at } }`. Off-boarded people are unre
 for EXPIRED), `429` + `Retry-After`, `503` unconfigured / unavailable. Every call, denied ones included, writes one
 `external_api_requests` row.
 
+### `GET /api/external/v1/offboarded` *(added 2026-10-07; documented here 2026-10-09)*
+
+The leavers ledger, for a key holding the scope **`offboarded.read`** (any other key: `403`). Same Bearer key, rate
+budget and `external_api_requests` log as the roster. Query: `email`, `department`, `reason` (a **category**, never the
+stored label), `since` / `until` (`YYYY-MM-DD`, the UTC date of `off_boarded_at`; `until` before `since` is a `400`),
+`search`, `limit` 1–500 (default 100), `cursor` (the ledger's integer id, keyset ascending). **Any other parameter is a
+`400`** (`KNOWN_PARAMS` in `src/lib/external-api/offboarded.ts`). Returns `200 { data, page, meta: { dataset:
+'offboarded', … } }`. Temporary pauses and "Active" rows are never served. The full contract and the fixed field list
+are [external-api-offboarded.md](../features/external-api-offboarded.md) § Query contract.
+
 ### `POST /api/external/mcp`
 
 Streamable HTTP MCP server, stateless, JSON responses; same Bearer key. Tools: `describe_access`,
-`query_global_master_list({ department?, email?, search?, limit?, cursor? })`. Every POST is one call against the same
-per-client rate limit. `GET` / `DELETE` are `405`.
+`query_global_master_list({ department?, email?, search?, limit?, cursor? })` and, since 2026-10-07,
+`query_offboarded({ email?, department?, reason?, since?, until?, search?, limit?, cursor? })`. A key is offered only
+the tools its scopes reach (`describe_access` always). Every POST is one call against the same per-client rate limit.
+`GET` / `DELETE` are `405`.
 
 ### Admin — `requireAdminSession()`
 
 | Route | Body → result |
 | --- | --- |
-| `GET /api/admin/external-api-clients` | `{ clients: [+ calls_7d, denied_7d, throttled_7d], unattributed, unattributed_7d, configured, migration_applied, rest_path, mcp_path }` |
-| `POST /api/admin/external-api-clients` | `{ name, system, contact_email?, granted_columns?: null \| string[], expiry: '1d' \| '15d' \| '30d' \| 'never', rate_limit_per_minute? (1..600, default 60) }` → `{ client, api_key }` — the plaintext key, ONCE |
-| `PATCH /api/admin/external-api-clients/{id}` | `{ action: 'revoke' \| 'restore' \| 'rotate' \| 'update', name?, system?, contact_email?, granted_columns?, expiry?, rate_limit_per_minute? }` — rotate returns `api_key` ONCE; update audits before/after |
+| `GET /api/admin/external-api-clients` | `{ clients: [+ calls_7d, denied_7d, throttled_7d], unattributed, unattributed_7d, configured, migration_applied, rest_path, offboarded_rest_path, mcp_path }` |
+| `POST /api/admin/external-api-clients` | `{ name, system, contact_email?, scopes?: ('global_master_list.read' \| 'offboarded.read')[], granted_columns?: null \| string[], expiry: '1d' \| '15d' \| '30d' \| 'never', rate_limit_per_minute? (1..600, default 60) }` → `{ client, api_key }` — the plaintext key, ONCE. `scopes` absent = roster only (since 2026-10-07); `503 SCOPE_MIGRATION_PENDING` while the database CHECK refuses the new scope |
+| `PATCH /api/admin/external-api-clients/{id}` | `{ action: 'revoke' \| 'restore' \| 'rotate' \| 'update', name?, system?, contact_email?, scopes?, granted_columns?, expiry?, rate_limit_per_minute? }` — rotate returns `api_key` ONCE; update audits before/after |
 | `GET /api/admin/external-api-clients/{id}/requests?limit=` | the newest calls (≤500) |
 
 No DELETE — `external_api_requests.client_id` is `ON DELETE RESTRICT`. Audit family `external_api.` (created / revoked /
@@ -3378,8 +3396,38 @@ Carla's team scoreboard at `/accounting-scoreboard` (and the whole site on `ACCO
 Governing doc: [accounting-scoreboard.md](../features/accounting-scoreboard.md). Tables `accounting_scoreboard_*`,
 migrations `references/sql/create/2026-10-01_accounting_scoreboard.sql` (**applied** 2026-10-01) and `2026-10-06_accounting_scoreboard_round3.sql` (**applied** 2026-10-06: custom sections, Chargeback Outcomes, Payment Verified, the Payroll Problems log). **Every route gates on the
 board's MEMBER list, not an HRIS role** (`resolveAccess` in `src/lib/accounting-scoreboard/server.ts`): members are live
-person rows + `accounting_scoreboard_members`; `accounting` / `admin` are managers. Errors are `{ error, code }`:
-`401 auth_required`, `403 not_member | not_manager`, `503 not_set_up` (tables missing), `400 bad_request`, `409`, `422 refused`.
+person rows + `accounting_scoreboard_members`. **What a caller may do is its board-local role** (Admin / Assistant / Team
+member; `can(role, action)` in `src/lib/accounting-scoreboard/roles.ts`, since 2026-10-08, `74f6d2ee`, item 393): HRIS
+`admin` is a board Admin, and HRIS `accounting` alone grants nothing. Errors are `{ error, code }`:
+`401 auth_required`, `403 not_member | not_allowed` (the sentence names the role that may), `503 not_set_up` (tables
+missing), `400 bad_request`, `409`, `422 refused`. *(Until 2026-10-08 `accounting` / `admin` were "managers" and the
+code was `not_manager`; the per-route "Managers." labels below now mean the board action `edit_setup`, Admins.
+Corrected here 2026-10-09.)*
+
+### `GET /api/accounting-scoreboard/roles` · `POST { email, role }` · `DELETE ?email=` *(2026-10-08)*
+
+`manage_roles` (Admins). GET → `{ grants }`, the live Admin / Assistant grants (a Team member is the member list, not a
+grant). POST grants `admin` or `assistant` → `201 { grant }`; a grant on someone who holds the other role is `409` (a role
+change is a revoke and a new grant). DELETE revokes by stamp; **the last live Admin grant cannot be revoked** (`409`, and
+the table's trigger under a lock; an HRIS admin is the break glass). Audited `accounting_scoreboard.role_granted` /
+`role_revoked`; announces `roles` on the live channel.
+
+### The 2026-10-09 routes: `history` · `keys` · `keys/seats` · `ping` · `chat-schedules` *(documented here 2026-10-09)*
+
+- **`GET /api/accounting-scoreboard/history?from=YYYY-MM-DD&to=YYYY-MM-DD`**: `resolveAccess()`, anyone on the board.
+  Sundays only, at most **26 weeks**, never past this week (`parseHistoryWindow`); the panel asks for one quarter at a
+  time, newest first. Per week: every Overview card's number, stop light and Team Score card, plus the week's Team
+  Score, computed by the Overview's own calls. Read-only, not on the live channel.
+  [accounting-scoreboard-history.md](../features/accounting-scoreboard-history.md) § Reading.
+- **`GET · POST · DELETE /api/accounting-scoreboard/keys`** and **`POST · DELETE /api/accounting-scoreboard/keys/seats`**:
+  `resolveAccess('manage_keys')`, Admins only, reading too. A key is a platform, a seat is one person holding it, and
+  removal is a stamp, never a delete. [accounting-scoreboard-keys.md](../features/accounting-scoreboard-keys.md).
+- **`GET /api/accounting-scoreboard/ping`**: `resolveAccess()`. The server's round trip for one tiny read
+  (`pingDatabase`); a slow or failed database is a **200 answer**, not an error.
+  [accounting-scoreboard.md](../features/accounting-scoreboard.md) § the Overview's database signal.
+- **`GET · POST · PATCH · DELETE /api/accounting-scoreboard/chat-schedules`**: GET `resolveAccess('view_setup')`
+  (Admins and Assistants), writes `resolveAccess('edit_setup')` (Admins). The scheduled Chat posts as rows.
+  [accounting-scoreboard-scheduled-posts.md](../features/accounting-scoreboard-scheduled-posts.md) § Editing.
 Every `*_by` is the session email. Nothing here writes pay.
 
 **Live (2026-10-08):** every write below (each POST / PUT / PATCH / DELETE, except `tasks/*`) announces on Supabase Realtime
@@ -3485,9 +3533,11 @@ board payload, and no live announce (`live.test.ts` names why). Archived, never 
 - `POST tasks/post-progress` (Admin) → `{ message, postedAt, withCard }`, sent through the Chat webhook (never echoed) as the sentence
   plus a card of progress bars; `withCard: false` = Google refused the card (400) and the sentence went alone. 503 when unset, 502 when
   Google refuses or takes over 10 s ("may or may not have posted").
-- `GET|POST /api/cron/accounting-scoreboard-chat` *(2026-10-08)*: Bearer `CRON_SECRET` only (Vercel cron, 13/14/19/20 UTC). Posts the
-  slot due now on Carla's schedule (daily 3 PM, Wed/Fri 9 AM weekly, 1st/30th 9 AM monthly, ET), claiming it first in
-  `accounting_scoreboard_chat_posts`. → `{ success, ranAt, due, results: [{ slot, frequencies, status, message?, detail?, recorded? }] }`;
+- `GET|POST /api/cron/accounting-scoreboard-chat` *(2026-10-08; rows since 2026-10-09)*: Bearer `CRON_SECRET` only (Vercel cron,
+  **every UTC hour**: 24 `vercel.json` entries since 2026-10-09, item 430). Posts every live
+  `accounting_scoreboard_chat_schedules` row due this Eastern hour as **ONE** message, claiming it first in
+  `accounting_scoreboard_chat_posts`; see [accounting-scoreboard-scheduled-posts.md](../features/accounting-scoreboard-scheduled-posts.md).
+  (Until 2026-10-09 it ran at 13/14/19/20 UTC on three constants: daily 3 PM, Wed/Fri 9 AM weekly, 1st/30th 9 AM monthly, ET.) → `{ success, ranAt, due, results: [{ slot, frequencies, status, message?, detail?, recorded? }] }`;
   200 nothing due / posted / skipped / already claimed, 502 a due post did not go out, 503 webhook env or table missing.
 
 ---
@@ -3497,7 +3547,7 @@ board payload, and no live announce (`live.test.ts` names why). Archived, never 
 **Generated 2026-09-22 by walking `app/api/`; 325 route files** (323 after
 `/api/bank-preferred-requests` and its `[id]` route were deleted on 2026-09-24 with the retired
 sending-bank approval gate). Later commits have added rows since: **337 route files on 2026-09-29**, and this table
-lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). **2026-10-08**: five more (§ 24: `roles`, `tasks`, `tasks/checks`, `tasks/post-progress`, `tasks/frequency`), found missing from this table when `tasks/frequency` was added, and every scoreboard row's Gate re-read from its route file (the board-local actions of `roles.ts`; the old `'member'` / `'manager'` gates no longer exist). Also that day: `/api/hr/new-hire-checklist/source-sync` (item 411's route, found missing when its `sync` body changed). The rest of the table was not re-diffed against the tree. `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
+lists all 337; **338 on 2026-10-01**, adding `/api/accounting/npd` (§ 23). **345 later on 2026-10-01**: the seven `/api/accounting-scoreboard` routes (§ 24). **346 on 2026-10-02**: `/api/accounting/npd/google-sheet` (§ 23). **2026-10-06**: four `/api/accounting-scoreboard` routes (§ 24: `collections/verify`, `problems`, `problem-types`, `custom-sections`). **2026-10-08**: five more (§ 24: `roles`, `tasks`, `tasks/checks`, `tasks/post-progress`, `tasks/frequency`), found missing from this table when `tasks/frequency` was added, and every scoreboard row's Gate re-read from its route file (the board-local actions of `roles.ts`; the old `'member'` / `'manager'` gates no longer exist). Also that day: `/api/hr/new-hire-checklist/source-sync` (item 411's route, found missing when its `sync` body changed). The rest of the table was not re-diffed against the tree. **2026-10-09** (documentation sweep, session `c0549c5f`): the table **was** re-diffed against the tree, the first time since 2026-09-29. `app/api` held **375** route files and this table **365**; the 10 missing rows are added: `/api/accounting-scoreboard/chat-schedules`, `history`, `keys`, `keys/seats`, `ping` (the § 24 family, built 10-09), `/api/accounting/documents/address` and `address/preview` (10-06), `/api/external/v1/offboarded` (10-07), `/api/mesa-suspensions` and `[id]` (10-06; specified by hand above but never indexed). Each Gate was read from its route file. The table now lists all 375, and no row names a route that is not on disk. `git ls-files` counted **354** tracked route files just before them, so 8 routes were added after the 346 count without a note here; the table was not re-diffed against the tree on this date. Two were added after the sweep below counted 335: `/api/payment-dispatches/auto-threshold`
 (`c7a437ff`, whose row was added but not counted) and `/api/manager/kpi-insights/hsl`. The earlier count, **335**
 (`git ls-files 'app/api/**/route.ts'`), was the whole tree at the sweep — the last two missing then,
 `/api/employee/current-paycycle` and `/api/manager/kpi-insights`, were added that day. This section exists because the
@@ -3545,11 +3595,16 @@ of cells — the matches were not re-run).
 | Route | Verbs | Gate | Mentioned in |
 |---|---|---|---|
 | `/api/accounting-scoreboard` | GET | `resolveAccess()` (any role on the board) | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/chat-schedules` | GET, POST, PATCH, DELETE | GET: `resolveAccess('view_setup')` · POST, PATCH, DELETE: `resolveAccess('edit_setup')` | [accounting-scoreboard-scheduled-posts](../features/accounting-scoreboard-scheduled-posts.md) |
 | `/api/accounting-scoreboard/collections` | POST, DELETE | `resolveAccess('log_lines')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/collections/verify` | POST | `resolveAccess('log_lines')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/custom-sections` | POST, PATCH | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/entries` | PUT | `resolveAccess('edit_cells')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/history` | GET | `resolveAccess()` (any role on the board) | [accounting-scoreboard-history](../features/accounting-scoreboard-history.md) |
+| `/api/accounting-scoreboard/keys` | GET, POST, DELETE | `resolveAccess('manage_keys')` | [accounting-scoreboard-keys](../features/accounting-scoreboard-keys.md) |
+| `/api/accounting-scoreboard/keys/seats` | POST, DELETE | `resolveAccess('manage_keys')` | [accounting-scoreboard-keys](../features/accounting-scoreboard-keys.md) |
 | `/api/accounting-scoreboard/members` | POST, DELETE | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
+| `/api/accounting-scoreboard/ping` | GET | `resolveAccess()` (any role on the board) | [accounting-scoreboard](../features/accounting-scoreboard.md) |
 | `/api/accounting-scoreboard/problem-types` | POST, PATCH | `resolveAccess('edit_setup')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/problems` | POST, DELETE | `resolveAccess('log_lines')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
 | `/api/accounting-scoreboard/roles` | GET, POST, DELETE | `resolveAccess('manage_roles')` | [accounting-scoreboard](../features/accounting-scoreboard.md) · *this file* |
@@ -3563,6 +3618,8 @@ of cells — the matches were not re-run).
 | `/api/accounting-scoreboard/tasks/post-progress` | POST | `resolveAccess('manage_tasks')` | [accounting-scoreboard-tasks](../features/accounting-scoreboard-tasks.md) · *this file* |
 | `/api/accounting/documents` | GET | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
 | `/api/accounting/documents/[id]` | GET, PATCH, DELETE | `requireFeatureAccess` | [documents-tab](../features/documents-tab.md) · *this file* |
+| `/api/accounting/documents/address` | POST | `requireFeatureEdit('accounting', 'documents')` | [proof-of-address-letter](../features/proof-of-address-letter.md) |
+| `/api/accounting/documents/address/preview` | GET | `requireFeatureEdit('accounting', 'documents')` | [proof-of-address-letter](../features/proof-of-address-letter.md) |
 | `/api/accounting/documents/coe` | POST | `requireFeatureEdit` | — **no doc** |
 | `/api/accounting/documents/coe/preview` | GET | `requireFeatureEdit` | — **no doc** |
 | `/api/accounting/documents/coe/search` | GET | `requireFeatureAccess` | — **no doc** |
@@ -3674,6 +3731,7 @@ of cells — the matches were not re-run).
 | `/api/employees` | GET | `authorizeEmail` | [employee-dashboard-cache](../features/employee-dashboard-cache.md) · [employee-id-card](../features/employee-id-card.md) · *this file* |
 | `/api/external/mcp` | POST | `admitExternalCall` (per-client API key) | [external-api-integrations](../features/external-api-integrations.md) · *this file* |
 | `/api/external/v1/global-master-list` | GET | `admitExternalCall` (per-client API key) | [external-api-integrations](../features/external-api-integrations.md) · *this file* |
+| `/api/external/v1/offboarded` | GET | `admitExternalCall` (per-client API key, scope `offboarded.read`) | [external-api-offboarded](../features/external-api-offboarded.md) |
 | `/api/fpu-attendance` | GET, POST | `authorizeEmail` | [fpu-groups-attendance](../features/fpu-groups-attendance.md) · *this file* |
 | `/api/fpu-enroll` | GET, POST | `authorizeEmail` | [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) · *this file* |
 | `/api/gift-address/owed` | POST | — **none found** | [gift-address-external-link](../features/gift-address-external-link.md) · [gift-alternate-recipient](../features/gift-alternate-recipient.md) |
@@ -3772,6 +3830,8 @@ of cells — the matches were not re-run).
 | `/api/mesa-requests/[id]` | PATCH, DELETE | `requireFeatureEditAnyView` | [fpu-enrollment](../features/fpu-enrollment.md) · [mesa](../features/mesa.md) · *this file* |
 | `/api/mesa-requests/[id]/dispatch` | POST | `requireFeatureEdit` | [mesa](../features/mesa.md) · [urgent-payments](../features/urgent-payments.md) |
 | `/api/mesa-requests/[id]/receipts` | GET, POST, DELETE | `authorizeEmail` | [mesa](../features/mesa.md) |
+| `/api/mesa-suspensions` | GET, POST | GET: `requireElevatedSession` · POST: `requireFeatureEditAnyView('mesa')` | [mesa-suspension](../features/mesa-suspension.md) · *this file* |
+| `/api/mesa-suspensions/[id]` | PATCH | `requireFeatureEditAnyView('mesa')` | [mesa-suspension](../features/mesa-suspension.md) · *this file* |
 | `/api/offboarding-queue` | GET, POST, PATCH | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) |
 | `/api/offboarding-queue/[id]` | PATCH, DELETE | `getServerSession` | [manager-dashboard-cache](../features/manager-dashboard-cache.md) · [offboarding-automation](../features/offboarding-automation.md) (§ Returned to the manager: PATCH answers `notification: { type, notified, error }`) · [notification-alerts](../features/notification-alerts.md) |
 | `/api/onboarding/[token]` | GET, POST | — **none found** | [onboarding-calltools-username](../features/onboarding-calltools-username.md) · [onboarding-gmail-surname](../features/onboarding-gmail-surname.md) · *this file* |

@@ -109,13 +109,16 @@ hris@simple.biz)** (one item per recipient, `onError: continueRegularOutput`).
 
 The Code node was run locally on 2026-10-05 against a sample payload. It fanned out 2 items from 3
 recipients, the duplicate dropped, `<b>` was escaped, and a wrong event and an empty list were each
-refused. **It has not run inside n8n.**
+refused. It had not run inside n8n then. On 2026-10-06 the workflow was measured imported and active
+(below), but **no run inside n8n has been observed yet**.
 
 ## Deploy notes
 
 **No migration.** The editor writes two optional fields onto the slug's `webhooks.config` entry.
 
-**PENDING Kane (nothing is emailed until all three are done):**
+**Steps 1–2 DONE, measured read-only 2026-10-06** (session `adf12936`, Open item 350): `mesa_request_notify`
+is active with an n8n cloud URL in `webhooks.config` (saved 2026-10-05 18:21Z). **Step 3 is still PENDING:** no
+Send test run and no member filing had been observed. The steps, as written for Kane:
 
 1. n8n: import [`references/n8n/mesa-request-notify.workflow.json`](../../references/n8n/mesa-request-notify.workflow.json).
    Attach the **hris@simple.biz** Gmail OAuth2 credential to **Send MESA Alert (Gmail · hris@simple.biz)**;

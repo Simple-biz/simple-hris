@@ -164,7 +164,8 @@ Chrome here does not paint canvas text, so the text was checked through pdf.js's
 
 ## Deploy notes
 
-- **Migration, PENDING. Kane runs it:** `node --import tsx scripts/apply-address-letter-migration.mts`
+- **Migration: APPLIED** (measured 2026-10-07 by session `3bc62721`: `--verify` passes; Open item 375, `630e50b6`).
+  Re-check with `--verify`. How it was run: `node --import tsx scripts/apply-address-letter-migration.mts`
   (a dry run, rolled back), then the same with `--apply`. It widens
   `document_requests_document_type_check` to admit `'address'`. Every control insert is rolled back.
   Until it runs, Issue & sign answers **503 "needs a one-time database update"** and leaves nothing

@@ -13,15 +13,15 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 
 | Order | File | Can start | Kane after it |
 |---|---|---|---|
-| 1 | `task-01-hide-from-overview.md` | now | apply migration → push |
-| 2 | `task-02-streak-pills.md` | after 1 is committed | push |
-| 3 | `task-03-chargebacks-signs-net.md` | after 2 | apply migration → push |
-| 4 | `task-04-roles.md` | after 3, **and W0.6** (second Admin) for the apply | apply migration → push |
+| 1 | ~~`task-01-hide-from-overview.md`~~ **BUILT 2026-10-07 (`476b6b9f`), migration APPLIED, pushed; do not paste** | — | — |
+| 2 | ~~`task-02-streak-pills.md`~~ **BUILT 2026-10-07 (session `63e0ef1e`, `f770d29b`), pushed; do not paste** | — | — |
+| 3 | ~~`task-03-chargebacks-signs-net.md`~~ **BUILT (`63500994`, `c88c554c`), migration APPLIED 2026-10-08, pushed; do not paste** | — | — |
+| 4 | ~~`task-04-roles.md`~~ **BUILT 2026-10-08 (session `63e0ef1e`, `74f6d2ee`), migration APPLIED 2026-10-08 (`a2a95911`), pushed; do not paste** | — | — |
 | 5 | `task-05-weekly-lock.md` | after 4 is **applied** | apply migration → push |
 | 6 | `task-06-sales-timing-log.md` | after 5 is **applied**; apply on a weekend | apply (Sat/Sun) → push before Monday |
 | 7 | ~~`task-07-task-boards.md`~~ **BUILT 2026-10-08 (session `39022c5c`), do not paste** | — | apply the tasks migration → fill the import map → import `--apply` → push |
 | 8 | ~~`task-08-progress-message.md`~~ **BUILT 2026-10-08 with Task 7, do not paste** | — | (same push) |
-| any | `task-09-old-grid-problems.md` | **W0.2 ruled (a)**: in the next free lane-A slot, never alongside another lane-A session | run the clear script `--apply`, then the team re-logs |
+| any | ~~`task-09-old-grid-problems.md`~~ **BUILT (`42388492`); clear script APPLIED 2026-10-08 11:24Z; do not paste** | — | the team re-logs Monday 10-05 typed |
 | any | `task-15-keep-every-edit.md` | **next free lane-A slot, before Task 5 if you can** (Kane's histogram ask, 2026-10-08) | apply migration → push |
 | any | `task-10-compliance-portal.md` | only after **W0.7** (Kentshin's endpoint) | push |
 
@@ -29,10 +29,10 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 
 | File | Can start |
 |---|---|
-| `task-11-job-portal-probe.md` | now (you run the probe it writes) |
-| `task-12-interns-measure-and-label.md` | now (measure + label only); the money part is on **HOLD** (Kane) until Ralph |
-| `task-14-arriola-revert-and-stamp.md` | now (**384 ruled (a)**) |
-| `task-13-queue-return-notification.md` | now |
+| ~~`task-11-job-portal-probe.md`~~ **DONE 2026-10-08 (session `913c9ae5`, `cb0b94d4`): the key reads the Offboarded list; do not paste** | — |
+| ~~`task-12-interns-measure-and-label.md`~~ **measure + label BUILT 2026-10-08 (session `28856f9b`); the money part stays on HOLD (Kane) until Ralph; the 6 h cap shipped separately (item 417)** | — |
+| ~~`task-14-arriola-revert-and-stamp.md`~~ **APPLIED 2026-10-08 (session `b447e9cc`); do not paste** | — |
+| ~~`task-13-queue-return-notification.md`~~ **BUILT 2026-10-08 (session `63e0ef1e`, `3e5f960e`), pushed; do not paste** | — |
 
 ## Wave 0: what only you can give (from the plan § 1)
 
@@ -45,10 +45,10 @@ commit sweeps in the other's half-finished edits. Start the next lane-A file onl
 - [x] W0.6 The second Admin's work email: **`claire@simple.biz`** (Kane, 2026-10-08). The roles migration was APPLIED that day.
 - [ ] W0.7 Kentshin builds the endpoint in plan Task 10.
 - [ ] W0.8 Ralph answers on interns' hours over 5, the monthly payout and the PAB. **Kane: HOLD** (2026-10-07) until then.
-- [ ] W0.9 Run the probe from session 11.
+- [x] W0.9 Run the probe from session 11: **done 2026-10-08** (`cb0b94d4`).
 
 Also ruled 2026-10-07: the HRIS `accounting` role change in Task 4 is **CONFIRMED**, and the Arriola ghost row (item 384)
-is **(a) revert + stamp** (`task-14`). The 09-20 ₱750 on the ghost key is still yours to rule.
+is **(a) revert + stamp** (`task-14`). The 09-20 ₱750 on the ghost key was **deleted 2026-10-08 11:13Z** on Kane's go (item 384).
 
 ## Every session follows the same rules
 

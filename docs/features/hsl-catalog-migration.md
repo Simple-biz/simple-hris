@@ -1,4 +1,4 @@
-# HSL KPI Calculator → Payment Catalog (overlay NOT BUILT; 9 of 12 cut over by §7d)
+# HSL KPI Calculator → Payment Catalog (overlay NOT BUILT; 10 of 12 cut over by §7d)
 
 **Update 2026-09-28:** the GOAL of this doc (rule definitions Accounting can edit
 in the Payment Catalog) is live for **9 of the 12** authorable depts, through
@@ -239,7 +239,7 @@ this direction **nothing moves**, which is the strongest form of not losing it.
       number** — and note an Accounting edit to the formula would now change it
       with no engineering step.
 - [ ] Build the definitions overlay (§4). `src/lib/hsl-bonus-catalog/` still does not exist.
-      **Overtaken for 9 of 12 depts (2026-09-22, 2026-09-28)** by a different route to
+      **Overtaken for 10 of 12 depts (2026-09-22, 2026-09-28, 2026-10-06)** by a different route to
       the same goal. Instead of an overlay whose empty state is byte-identical to
       `HSL_DEPTS`, a branch whose Library formula is proven to pay what its code did
       drops the code outright (`hsl-subdepartments.md` §7d). The definitions are

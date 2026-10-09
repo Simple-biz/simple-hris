@@ -6,8 +6,13 @@
 > `blueprint` runs through the `blueprint` skill. This plan does not replace either of them. It gives them their scope,
 > their tests, and their order.
 
-> **Status: AWAITING KANE'S REVIEW (2026-10-07). Task 1 is BUILT (2026-10-07; its migration is APPLIED, the push is
-> PENDING Kane, see Task 1). No other task has written to `src/`, `app/`, `references/` or `scripts/`.**
+> **Status, 2026-10-09 (documentation sweep, from the Open items and git): IN EXECUTION, one session per task.** Kane
+> ruled on 2026-10-07: W0.1 (a), W0.2 (a), the HRIS `accounting` role change confirmed, 384 (a), interns on HOLD.
+> **BUILT:** Tasks 1, 2, 3, 4, 7, 8, 9, 11, 12 (measure + label; the money is on HOLD for Ralph), 13 and 14. Every
+> migration they need is APPLIED, and every commit is on `origin/main` (pushed; the deploy is not measured from here).
+> **Not built:** 5 (weekly lock-in), 6 (Sales timing log), 10 (waits on Kentshin, W0.7) and 15 (keep every edit).
+> [`scoreboard-round4-sessions/00-README.md`](./scoreboard-round4-sessions/00-README.md) tracks each one. *(Until
+> 2026-10-09 this line read "AWAITING KANE'S REVIEW … Task 1 is BUILT … No other task has written to `src/`".)*
 > Source record: [the Oct 7 meeting](../meetings/2026-10-07-carla-alivia-scoreboard-tasks-roles-and-interns.md).
 > Tracked as Open items **391–397**, with this plan as **398**, in the
 > [Sep 29 log](../audits/audit-2026-09-29-session-log.md).
@@ -435,6 +440,9 @@ That is Carla's ask, but it removes Setup and delete-anyone's-line from about 9 
 the 11 `accounting` holders are not on the GML**, so they would lose access entirely unless added under Setup →
 Members. The blueprint brief lists them by count, and the migration's dry run prints them.
 
+> **APPLIED 2026-10-08** (session `781461ee`, `a2a95911`, Admins carla@ + claire@); the one holder who would have lost
+> access was kept as a Team member (`7ed5b3f8`). The note below is from before the apply.
+>
 > **BUILT 2026-10-08 (session `63e0ef1e`, `blueprint`). The migration is NOT applied: it waits on W0.6 (the second
 > Admin's email) and Kane's go.** Step 0 found where the code disagreed with this task. The code won, and the task
 > below is corrected to what shipped.
@@ -1188,7 +1196,9 @@ export function buildProgressMessage(progress: readonly FrequencyProgress[]): st
 **Contradiction until ruled:** *"the grid takes no writes"* (feature doc § Payroll Problems) vs Carla's *"I don't have an
 option to edit or delete the Monday problems"*.
 
-> **RULED (a) by Kane 2026-10-07; branch (a) BUILT 2026-10-08** (dry run done, `--apply` PENDING Kane). **Corrected against
+> **RULED (a) by Kane 2026-10-07; branch (a) BUILT 2026-10-08; `--apply` APPLIED 2026-10-08 11:24Z by Kane**
+> (`--week 2026-10-04`, `6745bafd`; Open item 391). The team re-logs Monday 10-05 typed. *(Was: dry run done, `--apply`
+> PENDING Kane.)* **Corrected against
 > the code (Step 0; the code wins):** old-grid counts are `accounting_scoreboard_entries` rows, slot `day`, on
 > `payroll_problems` rows, read as `UNTYPED_PROBLEMS` by `problemsWeekStats` (`scoring.ts:505-538`); entries keep
 > `updated_at` only (no `created_at`), so the cutoff is checked on that. **Measured:** the week holds 3 entries, all Monday

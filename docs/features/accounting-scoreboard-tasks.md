@@ -357,30 +357,30 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
   touches these tables, so an unapplied migration only makes the Tasks view say "not set up yet"; the scoreboard itself
   is unaffected. Re-check any time with `--verify`.
 - **Changing how often and the browser cache (2026-10-08): no migration, no env var, no table change.** The new route
-  writes only what Add and Remove already write (an insert and the archive stamp). **The push: PENDING** (Kane).
+  writes only what Add and Remove already write (an insert and the archive stamp). **Pushed: measured 2026-10-09** (on `origin/main` since 2026-10-08 12:34 EDT; deploy not measured from here).
 - **The loading card (2026-10-08): no migration, no env var.** `GET /tasks` gains `&stream=1`; without it the answer is
   unchanged (the silent revalidation and a Refresh click read it). The scheduled post calls `readTasks` directly, with no
-  `lines`, so its reads now run side by side too and nothing else changes for it. **The push: PENDING** (Kane).
+  `lines`, so its reads now run side by side too and nothing else changes for it. **Pushed: measured 2026-10-09** (on `origin/main` since 2026-10-08 13:16 EDT; deploy not measured from here).
 - **Env:** `ACCOUNTING_SCOREBOARD_CHAT_WEBHOOK_URL` is in `.env.local` (2026-10-08; proven with two manual posts) and in
   `.env.example` with no value. Vercel Production: Kane (he was deploying it on 2026-10-08).
 - **Import: APPLIED 2026-10-08 14:05Z** on Kane's *"Go"* (Open item 393, `0b7d39c9`): 338 tasks on 23 boards. The 7 Florida
   tabs whose people are not on the board are "skip" in the map (99 tasks): add them under Setup → Members, map them, and
   re-run (it skips what is already live).
-- **Scheduled posts migration: PENDING (Kane). Apply it BEFORE the push.**
+- **Scheduled posts migration: APPLIED** (measured by `--verify` on 2026-10-08, Open item 408). It went in before the push, as required.
   `node --import tsx scripts/apply-accounting-scoreboard-chat-posts-migration.mts` (dry run, rolled back) passed every
   check on 2026-10-08: 16 object and privilege checks, the anon refusal, 7 positive and 13 negative controls. Then
   `--apply`, then `--verify`. Pushed without it, each due slot answers 503 "not set up" and posts nothing.
-- **Scheduled posts go live with the push** (the four `vercel.json` entries deploy with it). No new env:
-  `CRON_SECRET` is already set in production (the older crons fire daily) and the webhook env is the click's.
-  **PENDING:** watch the space at the first 3:00 PM ET after the deploy, then check its row in
-  `accounting_scoreboard_chat_posts` (`status = 'posted'`).
+- **Scheduled posts are LIVE.** The Vercel cron claimed the 2026-10-08 3:00 PM ET slot at 19:00:49Z and its
+  `accounting_scoreboard_chat_posts` row reads `posted` (measured, Open item 408). No new env: `CRON_SECRET` was already
+  set in production and the webhook env is the click's. Since 2026-10-09 the schedule is rows and the cron runs every
+  UTC hour (24 entries; [accounting-scoreboard-scheduled-posts.md](./accounting-scoreboard-scheduled-posts.md)).
 - **To stop the schedule:** pause the posts in Setup → Scheduled Posts (2026-10-09, no deploy), or remove the 24
   `accounting-scoreboard-chat` entries from `vercel.json` and redeploy.
   **Not** Vercel → Settings → Cron Jobs → Disable: that switches off every cron, the deletion reaper and the transfer
   applier included.
 - **Scheduled posts verified (2026-10-08):** 9 schedule tests + 10 claim/post tests; the scoreboard suite 290/290; `tsc`
-  clean apart from the same two stale `.next/types/validator.ts` entries. **Not run against Google from the deployed
-  cron yet.**
+  clean apart from the same two stale `.next/types/validator.ts` entries. **Run against Google from the deployed
+  cron since 2026-10-08 19:00:49Z** (above).
 - **Rearranging, verified 2026-10-08:** `task-order.test.ts` 8 tests (the numbering, ties from the import, a stale or
   shrunk list refused whole, a removed task, mixed cards and people, the card read narrowed, the board order) and the
   parser test; scoreboard + audit suites 352/352; `tsc` clean apart from the same two `.next` entries. **PENDING: not
@@ -388,7 +388,7 @@ the repo is public). Dry by default; `--apply` commits; `--undo` archives every 
   browser-side mocks of the earlier harness cannot sign in). No migration: the table already lets `sort_order` change.
 - **The bars card, verified 2026-10-08:** chat-summary 10 tests (cells, percent, colours, heading, the post), the
   sender 10 (every Google answer, the 400 re-send, never the URL, and the source pin), the core 11; the scoreboard and
-  audit suites 342/342; `tsc` clean apart from the same two `.next` entries. **PENDING: the first real post.** Google
+  audit suites 342/342; `tsc` clean apart from the same two `.next` entries. **PROVEN 2026-10-09:** the scheduled 09:00 ET weekly post (claimed 13:00:17Z, `posted`) rendered the bars card in the space (Kane's screenshot; memory `accounting-scoreboard-tasks`). Google
   does not document cards on incoming webhooks, so whether the bars show (`card: true` in the audit row) or the sentence
   goes alone (`card: false`) is only known from a post. **Red → orange → green, same day:** chat-summary now 11 tests
   (the tier boundaries 49 / 50 / 89 / 90%, 89.9% staying orange, each tier's cells, one colour per bar); the scoreboard

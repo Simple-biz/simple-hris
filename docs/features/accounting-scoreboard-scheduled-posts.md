@@ -140,7 +140,7 @@ and add a new one as well"*. Until then the schedule was three constants in code
    posts). The dry run on production passed first (every object, 8 positive and 22 negative controls, rolled back). It
    changed no existing row: the 10-08 and 10-09 posts keep `schedule_ids` NULL. The code that was live keeps posting under
    it (its claims are still valid), so applying before the push changed nothing that was running.
-2. **The push: PENDING (Kane).** It deploys the area, the cron reading the table, and the 24 `vercel.json` entries. Pushed
+2. **The push: done, measured 2026-10-09** (on `origin/main` since 2026-10-09 09:33 EDT, push `c7659cea`; the deploy is not measured from here). It deploys the area, the cron reading the table, and the 24 `vercel.json` entries. Pushed
    without the migration, every slot would answer 503 "not set up" and post nothing; the migration is already in.
 3. **After the deploy: PENDING.** Watch the next slot (3 PM ET daily) in the space, then its row in
    `accounting_scoreboard_chat_posts`: `status = 'posted'` and `schedule_ids` holding the Daily post's id.

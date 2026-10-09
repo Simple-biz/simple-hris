@@ -122,10 +122,10 @@ follow-up, not a refusal.
 
 ## Deploy notes
 
-- **PENDING (Open item 406): the table.** Kane runs
-  `node --import tsx scripts/apply-payout-account-reports-migration.mts --apply`. Dry run 2026-10-08:
-  14 object checks and 12 controls pass (RLS on, 0 policies, one-open index, every CHECK bites), all
-  rolled back. Until it runs, every read is `unavailable` and Report is refused with 503. Nothing else
-  breaks.
+- **The table: APPLIED** (measured 2026-10-08 by session `7d2d772e`: `apply-payout-account-reports-migration.mts
+  --verify` passes every check; Open item 406). The script: `node --import tsx
+  scripts/apply-payout-account-reports-migration.mts --apply`. Its dry run 2026-10-08: 14 object checks and 12 controls
+  pass (RLS on, 0 policies, one-open index, every CHECK bites), all rolled back. Without the table every read is
+  `unavailable` and Report is refused with 503. **Still owed:** a signed-in browser pass.
 - `NEXTAUTH_SECRET` must be set (it already is wherever sign-in works).
 - No new notification type, no n8n import, no env var.

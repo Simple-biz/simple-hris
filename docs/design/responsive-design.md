@@ -118,6 +118,7 @@ scrolling form + pinned footer, all four rules applied).
 - Shared **`components/ui/table.tsx`** wraps every `<table>` in a container with **`overflow-x-auto`**, so wide grids scroll horizontally on small screens.
 - A global CSS rule in **`src/index.css`** stacks every `<table>` into per-row cards below `640px` (`@media (max-width: 639px) { table:not(.table-keep) … }`): `thead` is visually hidden and each `<td>` becomes a label/value row (the label comes from a `data-label="…"` attribute on the cell). **Opt out with the `table-keep` class** on the `<table>` — reserve that for computational grids where the column relationships are load-bearing (e.g. the bonus calculators).
 - Individual views (Overview, Rates, Payroll Wizard, etc.) may add their own scroll regions; prefer keeping **`min-h-0`** on flex children so nested `overflow-auto` works.
+- **A row that scrolls sideways fades at a hidden end, never cuts** (2026-10-09, Kane: *"I can see clear cut on the edges"*). A bare `overflow-x-auto` slices a tab or a column in half at the edge. Use `useScrollEdges` + `ScrollEdgeFade` (today in `src/components/accounting-scoreboard/shared.tsx`; the section tabs, Setup's area pills and the Keys grid): the fade shows only on a side that still hides content, sits in a `relative` wrapper, and never takes a click. A picked item scrolls into view in the row only, never the page. See [accounting-scoreboard.md](../features/accounting-scoreboard.md).
 
 ## Login page
 

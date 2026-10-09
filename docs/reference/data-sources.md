@@ -353,8 +353,8 @@ Employee-submitted MESA program requests. Run `references/sql/create/add_mesa_re
 | `reviewed_by` | text | Session email of the reviewer |
 | `reviewed_at` | timestamptz | When the review was completed |
 | `dispatched_at` *(2026-06-04)* | timestamptz | Stamped when an approved disbursement is paid out via the Urgent Payments queue. Non-null = money sent; the request can no longer be revoked or deleted |
-| `archived_at` *(2026-10-05, PENDING)* | timestamptz | Accounting archived this **completed** request out of the Requests main view. NULL = active. `mesa_requests_archive_only_completed_chk` admits it only on a denied row, an approved opt-out/opt-in, or an approved disbursement WITH `dispatched_at` — so a revoke or a dispatch undo on an archived row is refused until it is unarchived |
-| `archived_by` *(2026-10-05, PENDING)* | text | Session email of the archiver. Set and cleared with `archived_at` (`mesa_requests_archive_pair_chk`) |
+| `archived_at` *(2026-10-05; applied, measured 2026-10-06)* | timestamptz | Accounting archived this **completed** request out of the Requests main view. NULL = active. `mesa_requests_archive_only_completed_chk` admits it only on a denied row, an approved opt-out/opt-in, or an approved disbursement WITH `dispatched_at` — so a revoke or a dispatch undo on an archived row is refused until it is unarchived |
+| `archived_by` *(2026-10-05; applied, measured 2026-10-06)* | text | Session email of the archiver. Set and cleared with `archived_at` (`mesa_requests_archive_pair_chk`) |
 | `created_at` | timestamptz | Submission time |
 
 **Indexes**: `work_email`, `status`, `created_at DESC`, plus a partial index `idx_mesa_requests_urgent_queue` on `(status, request_type, dispatched_at) WHERE status='approved' AND request_type='disbursement'` for the Urgent Payments queue.
