@@ -8,6 +8,8 @@ import { insertAuditLog } from "@/lib/supabase/audit-log";
 import { getSessionActor } from "@/lib/auth/session-actor";
 import { deniedResponse } from "@/lib/auth/authorize-email";
 import { requireFeatureAccess, requireFeatureEdit } from "@/lib/auth/authorize-feature";
+import { loadAddressHolders } from "@/lib/supabase/paystub-address-holders";
+import { guardPaystubEntries } from "@/lib/payroll/paystub-delivery-address";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,7 +64,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ staged: 0, error: "Missing source_file" }, { status: 400 });
   }
   const entries = Array.isArray(body.entries) ? body.entries : [];
-  const valid = entries.filter((e) => e && typeof e.recipient_email === "string" && e.recipient_email.trim());
+  const filtered = entries.filter((e) => e && typeof e.recipient_email === "string" && e.recipient_email.trim());
+
+  // A paystub is mailed to a PERSONAL email, and never one a previous holder of
+  // this work email left behind (Open item 432, Kane ruled (b) 2026-10-09). The
+  // wizard looks the address up BY the work email, so a recycled address used to
+  // carry the old holder's inbox. Fail closed: without the holder read we cannot
+  // tell, and staging the old address is the exact defect.
+  const { holders, error: holdersError } = await loadAddressHolders(filtered.map((e) => e.recipient_email));
+  if (!holders) {
+    return NextResponse.json(
+      { staged: 0, error: `Could not check paystub addresses against previous holders: ${holdersError ?? "unknown error"}` },
+      { status: 500 },
+    );
+  }
+  const { entries: valid, outcomes: delivery } = guardPaystubEntries(filtered, holders);
 
   let lockedBy: string | null = null;
   let lockedByRole = "user";
@@ -100,8 +116,18 @@ export async function POST(req: NextRequest) {
       // The "do not pay" set this lock recorded — the durable audit of who was
       // excluded each cycle (capped to keep the log row bounded).
       excluded_emails: excludedEmails.slice(0, 200),
+      // Work emails whose staged address was a previous holder's (432). Work
+      // emails and the verdict only; no personal address enters the log.
+      delivery_address_guard: delivery.length > 0 ? delivery.slice(0, 200) : undefined,
     },
   });
 
-  return NextResponse.json({ staged, excluded: excludedEmails.length, error: null });
+  const replaced = delivery.filter((d) => d.kind === "replace").map((d) => d.recipient_email);
+  const withheld = delivery.filter((d) => d.kind === "withhold").map((d) => d.recipient_email);
+  return NextResponse.json({
+    staged,
+    excluded: excludedEmails.length,
+    delivery: { replaced, withheld },
+    error: null,
+  });
 }

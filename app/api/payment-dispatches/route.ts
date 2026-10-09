@@ -17,7 +17,9 @@ import {
   refreshPaystubQueuePayload,
   markPaystubSent,
   markPaystubSendError,
+  setPaystubQueueDeliveryAddress,
 } from "@/lib/supabase/paystub-dispatch-queue";
+import { checkQueuedPaystubAddress } from "@/lib/supabase/paystub-address-holders";
 import { getFreshPaystubEntry } from "@/lib/payroll/paystub-fresh";
 import { forwardPaystubDispatch } from "@/lib/payroll/paystub-dispatch";
 import { mapPayloadToPayStub } from "@/lib/payroll/paystub-view";
@@ -558,6 +560,14 @@ export async function POST(req: NextRequest) {
           }
         })();
 
+        // ── Never mail a previous holder of this work email (Open item 432) ──
+        // A re-send reads the QUEUED address, and a row staged before the
+        // staging guard can still carry the inbox of someone who left under this
+        // address. Re-point it at the current holder, or mail nobody.
+        const addressCheck = shouldSendPaystub
+          ? await checkQueuedPaystubAddress(row.recipient_email, stubPayload, staged.recipient_name ?? null)
+          : null;
+
         if (!shouldSendPaystub) {
           // Deliberately not sent. Recorded so the decision is auditable — "no
           // second copy was emailed" is a fact someone will need to prove, and
@@ -577,7 +587,40 @@ export async function POST(req: NextRequest) {
               reason: "clerk declined to reissue",
             },
           });
+        } else if (addressCheck?.kind === "block") {
+          // A failed send, stamped like any other so the row keeps last_error
+          // and can be re-sent once the address is fixed. The payment stands.
+          paystub.error = addressCheck.reason;
+          await markPaystubSendError({
+            sourceFile: row.cycle_source_file,
+            recipientEmail: row.recipient_email,
+            error: addressCheck.reason,
+          });
+          void insertAuditLog({
+            user_name: createdBy ?? "unknown",
+            user_role: createdByRole,
+            action: "paystub.send_failed",
+            resource: "paystub_dispatch_queue",
+            resource_id: row.id,
+            details: {
+              recipient_email: row.recipient_email,
+              source_file: row.cycle_source_file,
+              error: addressCheck.reason,
+              delivery_address_guard: "withheld",
+            },
+          });
         } else {
+          if (addressCheck?.kind === "replace") {
+            // Persist FIRST, like the figures above, so the queue row, the
+            // viewers and any later re-send all carry the address actually used.
+            stubPayload = addressCheck.payload;
+            await setPaystubQueueDeliveryAddress({
+              sourceFile: row.cycle_source_file,
+              recipientEmail: row.recipient_email,
+              personalEmail: addressCheck.to,
+              payload: addressCheck.payload,
+            });
+          }
           // The emailed statement is rendered from THIS view — the reconciled one,
           // whose total matches the money this row just recorded — so the email,
           // the Pay Stubs tab, and the payment can't describe the week differently.

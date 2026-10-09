@@ -1463,6 +1463,7 @@ Side effects:
 
 **Per-employee paystub send** *(added 2026-06-16)* — when the dispatch lands as `status='paid'` **and** has a `cycle_source_file`, the route looks up the staged paystub row for that `(cycle_source_file, recipient_email)` in `paystub_dispatch_queue` (see [§14](#14-paystub-dispatch-queue)) and, if found, fires the n8n paystub webhook for **just that one person** via `forwardPaystubDispatch` (`src/lib/payroll/paystub-dispatch.ts`). This replaces the old batch email of every paystub at once. Behavior:
 - **Best-effort** — a failed send never fails the payment (the money already moved); the error is stamped on the queue row (`markPaystubSendError`) so it can be re-sent from the Excluded tab. A success calls `markPaystubSent` (bumps `send_count`, stamps `sent_at`/`sent_by`).
+- **Address check before the send** (2026-10-09, Open item 432): `checkQueuedPaystubAddress` re-points a queued address that belongs to a previous holder of the work email (column + payload, persisted first, then sent to the current holder), or sends nothing and stamps `last_error` with the reason (`paystub.send_failed`, `delivery_address_guard: "withheld"`). A failed holder read sends nothing.
 - The `paystub` result tells the client what happened: `{ staged: true, sent: true }` (mailed), `{ staged: true, sent: false, error }` (staged but send failed / no resolvable personal email), or `{ staged: false }` (no staged row — nothing to mail).
 - Writes a `paystub.sent` or `paystub.send_failed` audit entry.
 - **Scope-safe**: MESA disbursements and orphanage-budget payouts go through their own routes, so they never reach this salary-paystub send path.
@@ -2054,7 +2055,7 @@ Returns `{ rows: [], error: null }` when `source_file` is missing.
 
 The Payroll Wizard's "Lock in Values & Send to Payment Dispatch" stages **every** payable + excluded employee's paystub payload for the cycle here, replacing the prior staged set for that `source_file`.
 
-**Auth**: `requireElevatedSession` (same gate as the wizard's other writes — payroll / admin).
+**Auth**: `requireFeatureEdit("accounting", "payroll_wizard")` (same gate as the wizard's other writes).
 
 **Request Body** `application/json`:
 ```json
@@ -2069,10 +2070,11 @@ The Payroll Wizard's "Lock in Values & Send to Payment Dispatch" stages **every*
 
 - `source_file` required (`400` otherwise).
 - `entries` are filtered to those with a non-empty `recipient_email` before upsert.
+- **Delivery-address guard** (2026-10-09, Open item 432): an entry whose `payload.personal_email` belongs to someone who LEFT under the same work email is re-pointed to the current holder's master personal email, or staged with none (`withheld`). The name on the statement decides whose pay it is. Rules: [paystub-dispatch.md § A recycled work email never carries a previous holder's inbox](../features/paystub-dispatch.md#a-recycled-work-email-never-carries-a-previous-holders-inbox--2026-10-09).
 
-**Response** `200`: `{ "staged": 42, "excluded": 3, "error": null }`. On DB error: `500` with `{ "staged": 0, "error": "<message>" }`.
+**Response** `200`: `{ "staged": 42, "excluded": 3, "delivery": { "replaced": ["krisd@simple.biz"], "withheld": [] }, "error": null }` (`delivery` lists work emails only). On DB error: `500` with `{ "staged": 0, "error": "<message>" }`. If the holder read fails: `500`, nothing staged.
 
-Audit log: `paystubs.staged` (records `source_file`, `staged`, `payable`, `excluded`, and a capped `excluded_emails` list — the durable record of who was held this cycle).
+Audit log: `paystubs.staged` (records `source_file`, `staged`, `payable`, `excluded`, a capped `excluded_emails` list — the durable record of who was held this cycle — and `delivery_address_guard` when the guard changed an entry: work email and verdict, no personal address).
 
 **Tables**: `paystub_dispatch_queue`, `audit_log`
 **Service Role**: Required

@@ -185,6 +185,31 @@ export async function refreshPaystubQueuePayload(params: {
   return { error: error ? error.message : null };
 }
 
+/**
+ * Re-point one staged row's delivery address: the `personal_email` column AND
+ * the payload n8n mails, together, so the row can never disagree with what it
+ * sends (Open item 432). Figures, send tracking and lock columns are untouched.
+ * `payload` must already carry `personalEmail`.
+ */
+export async function setPaystubQueueDeliveryAddress(params: {
+  sourceFile: string;
+  recipientEmail: string;
+  personalEmail: string;
+  payload: Record<string, unknown>;
+}): Promise<{ error: string | null }> {
+  if (params.payload.personal_email !== params.personalEmail) {
+    return { error: "payload.personal_email does not match the address being set" };
+  }
+  const supabase = createSupabaseServiceRoleClient() ?? createSupabaseServerClient();
+  if (!supabase) return { error: "Supabase client unavailable" };
+  const { error } = await supabase
+    .from("paystub_dispatch_queue")
+    .update({ personal_email: norm(params.personalEmail), payload: params.payload })
+    .eq("cycle_source_file", params.sourceFile)
+    .eq("recipient_email", norm(params.recipientEmail));
+  return { error: error ? error.message : null };
+}
+
 /** Single staged row (with payload) by cycle + work email. */
 export async function getPaystubDispatchEntry(
   sourceFile: string,

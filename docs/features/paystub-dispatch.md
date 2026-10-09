@@ -196,12 +196,18 @@ The **test** URL only fires while "Listen for test event" is active in the n8n e
 `app/api/paystub-dispatch-queue/route.ts`. The wizard's "Lock in Values & Send to Payment
 Dispatch" posts `{ source_file, pay_period, entries[] }` here.
 
-- Auth: `requireElevatedSession()` (payroll/admin) — same gate as the wizard's other writes.
-  Lenny's narrower `payment_dispatch` grant is separate.
-- `entries` filtered to those with a non-empty `recipient_email`, then upserted via
-  `upsertPaystubDispatchQueue` (replace-for-cycle; see [Staging table](#staging-table--paystub_dispatch_queue)).
-- Writes a `paystubs.staged` audit row (`{ staged, payable, excluded, excluded_emails[≤200] }`).
-- Returns `{ staged, excluded, error }`.
+- Auth: `requireFeatureEdit("accounting", "payroll_wizard")` — same gate as the wizard's other
+  writes. Lenny's narrower `payment_dispatch` grant is separate.
+- `entries` filtered to those with a non-empty `recipient_email`, then passed through the
+  **delivery-address guard** (`guardPaystubEntries`, see
+  [A recycled work email…](#a-recycled-work-email-never-carries-a-previous-holders-inbox--2026-10-09)),
+  then upserted via `upsertPaystubDispatchQueue` (replace-for-cycle; see
+  [Staging table](#staging-table--paystub_dispatch_queue)). If the holder read fails the request
+  fails (`500`) and **nothing is staged**: without it the guard cannot tell a previous holder.
+- Writes a `paystubs.staged` audit row (`{ staged, payable, excluded, excluded_emails[≤200],
+  delivery_address_guard? }`). The guard list carries work emails and verdicts only.
+- Returns `{ staged, excluded, delivery: { replaced[], withheld[] }, error }` (work emails). The
+  wizard warns on `withheld`, which were staged with no address.
 - `GET /api/paystub-dispatch-queue?source_file=<file>` (view-gated) returns the lightweight
   list (no `payload` / bank creds) that `useDispatchQueue` uses to route excluded people.
 - `GET /api/paystub-dispatch-queue/arrears` (view-gated) returns the cross-cycle owed rollup
@@ -224,6 +230,12 @@ stamped on the queue row (`markPaystubSent` / `markPaystubSendError`) and return
 **Since 2026-09-12 this send is gated when a statement already went out for the week** — see
 § Reissues below. The response also carries `skipped: true` when the clerk declined to reissue
 (distinct from `sent: false`, which means it failed) and `issue` naming which issue it became.
+
+**Since 2026-10-09 the queued address is checked before every send** (`checkQueuedPaystubAddress`,
+Open item 432). A row staged before the staging guard existed can still carry a previous holder's
+inbox. `replace` re-points the row (column and payload, persisted first) and sends to the current
+holder. `block` sends nothing and stamps `last_error` like any failed send, so the payment stands
+and the row can be re-sent once fixed. A failed holder read blocks.
 
 ### Reissues — asking before a second copy, and naming which issue it is
 
@@ -451,7 +463,7 @@ Built in `dispatchData` (a `useMemo` in `PayrollWizard.tsx`) and posted as:
 | `pay_period.hubstaff_source_file` | `calcSourceFile` (selected Hubstaff CSV). |
 | `pay_period.week` | `parseDateRangeFromFilename(calcSourceFile)` → `{ start, end }`. Falls back to Mon–Sun of the latest parseable date column if the filename doesn't match `YYYY-MM-DD_to_YYYY-MM-DD`. ISO-formatted. |
 | `pay_period.pab_evaluation` | `pabMonthRange` — the PAB month inferred for the current UI context (see `BUSINESS_LOGIC.md#PAB month period`). |
-| `personal_email` | Resolved per-row by `resolvePersonalEmail`: (1) rate row keyed by Hubstaff work email, (2) `global_master_list` match on `work_email`, (3) `global_master_list` name match via `normalizeNameTokens`, (4) the off-boarded overlay. **Each tier must yield a MAILABLE address** (`mailableEmail`, `src/lib/email/norm-email.ts`), not merely a non-empty cell: a tier holding anything else falls through (2026-09-24, Open item 199: `breyl@`'s rates-sheet Personal Email was his name, it won over a real master-list address, and n8n skipped six weeks of paystubs). Rows without a mailable personal email in any tier are **skipped** with a toast warning. **A re-send reads the QUEUED `payload.personal_email`** (`getFreshPaystubEntry` → `staged.payload`), so fixing the roster does not repair a week that is already locked — the queue row must be corrected too (see `scripts/fix-breyl-personal-email.mjs`). |
+| `personal_email` | **Always a personal email, never a work email** (Kane, 2026-10-09: work emails get re-issued). Resolved per-row by `resolvePersonalEmail`: (1) rate row keyed by Hubstaff work email, (2) `global_master_list` match on `work_email`, (3) `global_master_list` name match via `normalizeNameTokens`, (4) the off-boarded overlay. **Each tier must yield a MAILABLE address** (`mailableEmail`, `src/lib/email/norm-email.ts`), not merely a non-empty cell: a tier holding anything else falls through (2026-09-24, Open item 199: `breyl@`'s rates-sheet Personal Email was his name, it won over a real master-list address, and n8n skipped six weeks of paystubs). Rows without a mailable personal email in any tier are **skipped** with a toast warning. **The server then refuses a previous holder's inbox** (2026-10-09, Open item 432): staging re-points an address that belongs to someone who left under the same work email to the current holder's master address, or stages none. See [A recycled work email never carries a previous holder's inbox](#a-recycled-work-email-never-carries-a-previous-holders-inbox--2026-10-09). **A re-send reads the QUEUED `payload.personal_email`** (`getFreshPaystubEntry` → `staged.payload`), so fixing the roster does not repair a week that is already locked — the queue row must be corrected too (see `scripts/fix-breyl-personal-email.mjs`, `scripts/fix-recycled-paystub-addresses.mts`). |
 | `department_key/name` | `employeeDepts[email]` → `DEPARTMENTS.find(...)`. |
 | `hours.*` | From `effectiveCalcResults[].totalHours/regularHours/otHours`. Non-HSL weeks from **2026-09-27** carry the **2dp** hours they were priced on; earlier daily-column weeks carry raw seconds ÷ 3600 (see [2dp hours pricing](#2dp-hours-pricing--2026-09-30)). |
 | `rates_php.*` | From `effectiveCalcResults[].regularRate/otRate`. |
@@ -500,6 +512,81 @@ could not see this gap.
 | `pay_php.other_bonuses` | `bonusTotals[email] − toggledPab − toggledTech`. Department-specific bonuses (collections tiers, per-ticket, etc.). |
 | `pay_php.bonuses_total` | Recomposed: `perfect_attendance_bonus + tech_bonus + other_bonuses`. |
 | `pay_php.final` | `initial + bonuses_total`. |
+
+## A recycled work email never carries a previous holder's inbox — 2026-10-09
+
+Kane, on `krisd@`'s paystubs going to the person who held the address before: *"the rule for the
+paystub is only to send it to a personal email we are never sending this to a work email because
+it has a risk of getting reused!"*. Then he ruled **(b)** on Open item 432: fix the data **and**
+let the master list win when the address belongs to someone who left under the same work email.
+
+**The defect.** Delivery already followed the rule: n8n mails `personal_email` only. The leak
+was in the **lookup**. `resolvePersonalEmail`'s first tier is the rates-sheet row keyed by the
+work email. When HR re-issued an address, that row still held the previous holder's inbox, and it
+won. Measured 2026-10-09: 116 queued statements across 18 addresses carried someone else's address.
+For example, all four of Kris Alilyn Dolz's statements went to Marjorie Kriestyl Diez, who left on
+01-12. The money went to the right accounts. Only the emails were wrong.
+
+**Holders of an address** (`loadAddressHolders`, `src/lib/supabase/paystub-address-holders.ts`):
+
+| | Source |
+|---|---|
+| Current | `global_master_list` rows with `off_boarded_at IS NULL` carrying the address as primary or alternate work email: their mailable personal emails and names |
+| Previous | off-boarded `global_master_list` rows **plus** the `offboarded_sheet` ledger (a leaver's master row is often gone: Diez has only a ledger row), each personal email with the names it was recorded under |
+
+**The decision** (`decidePaystubDeliveryAddress`, `src/lib/payroll/paystub-delivery-address.ts`,
+pure, 18 tests). It runs only when the proposed address belongs to someone who left under this
+work email, someone else holds the address now, and the current holder does not carry that address
+too. Then **the name on the statement** decides whose pay it is:
+
+| Statement named for | Result |
+|---|---|
+| the current holder (and not a different person who left with this address) | **replace** with the current holder's master address. More than one, or none: **withhold** |
+| the person who left with this address | **keep**: it is their own statement (settling their old held week) |
+| neither, or both and they are different people | **withhold** |
+
+A rehire whose old and new rows carry the same name is one person, and gets the current address.
+Names match when one token set contains the other and they share at least two tokens
+(`sameName`). "Aireen Pinili" therefore matches "Pinili, Aireen Grace". "Sarmiento, Rodney Clark"
+and "Sarmiento, Rodney Ken" are two people, and both held `rodneys@`.
+
+**Why the name and not a date.** A first cut placed each statement by its week against the
+current holder's Start Date. `aaronr@` broke it: Ramilo started 08-03 while Ramo worked on until
+10-06, so four of Ramo's own statements would have been re-pointed at Ramilo. That is the same
+leak in reverse. Tenures overlap, so a date cannot say whose statement it is.
+
+**Withhold means mail nobody, never the previous holder.** A withheld entry is staged with no
+address (column and payload), so it reaches the existing skip path, and the wizard warns by work
+email. At send time a block stamps `last_error`.
+
+**Where it runs.**
+
+| Point | What happens |
+|---|---|
+| `POST /api/paystub-dispatch-queue` | every entry through `guardPaystubEntries`. The payload's address is the one judged (n8n mails it) and both fields are rewritten together. A failed holder read fails the stage |
+| `POST /api/payment-dispatches` (Mark Paid) | `checkQueuedPaystubAddress` on the queued payload before `forwardPaystubDispatch`. Replace persists first via `setPaystubQueueDeliveryAddress`. Block stamps `last_error` |
+| `scripts/fix-recycled-paystub-addresses.mts` | the same function over every queued row and rate row. Dry run by default, `--apply` writes a backup to `references/backups/` first, then updates by id with the replaced address as a compare-and-swap. Holds no personal email |
+
+**Data fix, APPLIED 2026-10-09 15:10Z** (Kane: "B"): 116 `paystub_dispatch_queue` rows (`personal_email`
+and `payload.personal_email`; figures, `sent_at`, `send_count` untouched) and 152
+`employee_hourly_rates` rows (`"Personal Email"` only). A re-run plans 0. **Nothing was re-sent.**
+The 116 still carry `sent_at` from the misdelivery, so a re-send numbers as issue 2. Open item 433
+holds the scope and the label for Kane.
+
+**Not covered, on purpose:**
+
+- **An address whose latest holder also left** (no active row): there is no current holder to
+  prefer, so the proposal stands. 6 of item 432's 14 are like this now (`dennisc@`, `johnm@`,
+  `josha@`, `mariap@`, `marke@`, `markm@`). Their misdelivered rows were not re-pointed. Open item 432.
+- **A rate row on an address where someone other than the current holder had a statement in the
+  last 28 days** is not re-pointed by the script (`aaronr@`): that leaver may still have final pay
+  to stage, and the guard keeps a current holder's address whatever the name says. The guard
+  decides those statements by name at staging.
+- **A hire on a recycled address with no master row** (`failed_to_promote`, item 344) has no
+  current holder either. HR has not re-issued an address since 10-05
+  ([[recycled-work-email-same-dept-promote]]).
+- The wizard's own tier order is unchanged. The server decides, so a stale wizard tab cannot
+  bypass it.
 
 ## Weekend Hours (HSL) — 2026-07-30
 
@@ -1490,7 +1577,8 @@ launch disables the whole recovery path, this key included.
 - Mid-week transfer disclosure: `src/lib/payroll/department-transfer-legs.ts` (`buildTransferLegsByEmail`, `transferBlockForWeek`, `formatTransferLabel`) + `src/lib/payroll/hsl-transfer-effective.ts` (`fetchDepartmentTransferRows`).
 - Paystub freshness: `src/lib/payroll/paystub-fresh.ts` (`mergeSnapshotIntoStaged`, `getFreshPaystubEntry`, `refreshPaystubQueuePayload`).
 - Time Adjustment line: `src/lib/payroll/paystub-view.ts` (`parseTimeAdjustmentBlock`, `showsTimeAdjustmentLine`, `formatTimeAdjustmentDetail`) + `paystub-time-adjustment-line.test.ts`; the pay-week scope it discloses is `src/lib/payroll-wizard/time-adjustment-week-scope.ts` (`buildTimeAdjustmentDeltas`).
-- Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`).
+- Queue data access: `src/lib/supabase/paystub-dispatch-queue.ts` (`upsertPaystubDispatchQueue`, `getPaystubDispatchEntry`, `listExcludedArrears`, `markPaystubSent` / `markPaystubSendError`, `setPaystubQueueDeliveryAddress`).
+- Delivery-address guard (Open item 432): `src/lib/payroll/paystub-delivery-address.ts` (`decidePaystubDeliveryAddress`, `guardPaystubEntries`, `sameName`) + `src/lib/supabase/paystub-address-holders.ts` (`loadAddressHolders`, `checkQueuedPaystubAddress`, `buildAddressHolders`), tests beside each; data fix `scripts/fix-recycled-paystub-addresses.mts`.
 - Realtime lock hook: `src/hooks/useWizardDispatchLock.ts`.
 - Clerk-side queue: `src/components/payroll-clerk/useDispatchQueue.ts` + `ExcludedQueue.tsx`.
 - Wizard: `src/components/PayrollWizard.tsx` (`dispatchData` useMemo + Dispatch step JSX + Preview modal).

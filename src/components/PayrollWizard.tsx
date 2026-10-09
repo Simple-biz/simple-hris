@@ -21629,6 +21629,20 @@ export default function PayrollWizard({
                       });
                       return;
                     }
+                    // The server never stages a previous holder's inbox (Open item
+                    // 432). When it cannot name the current holder's address it
+                    // stages none, so say who will get no email, like `missing`.
+                    const withheld: string[] = Array.isArray(data?.delivery?.withheld) ? data.delivery.withheld : [];
+                    if (withheld.length > 0) {
+                      toast.warning(
+                        `${withheld.length} paystub${withheld.length === 1 ? '' : 's'} will not be emailed: the address on file belongs to someone who left`,
+                        {
+                          description:
+                            withheld.slice(0, 5).join(', ') + (withheld.length > 5 ? '…' : '') +
+                            ". Check that work email's master row (the holder's name and personal email), then unlock and lock again.",
+                        },
+                      );
+                    }
                     // Flip the realtime "values locked" flag so Payment Dispatch
                     // goes live for this cycle (and stays empty until then).
                     try {
