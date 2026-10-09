@@ -91,10 +91,12 @@ import {
   fmtScore,
   goalFormat,
   LIGHT_STYLE,
+  ScrollEdgeFade,
   sectionIcon,
   SlidingPill,
   StopLight,
   TINY_CAPS,
+  useScrollEdges,
 } from './shared';
 import { PayrollCyclePanel } from './PayrollCyclePanel';
 import { SectionGrid } from './SectionGrid';
@@ -173,6 +175,8 @@ const thisWeekStart = () => weekStartOf(todayEastern());
 
 export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer'] }) {
   const reduce = useReducedMotion() ?? false;
+  // The section tabs outgrow a laptop: their hidden ends fade instead of cutting a tab in half.
+  const [navRef, navEdges] = useScrollEdges<HTMLElement>();
   const [dir, setDir] = useState(1);
   const [week, setWeek] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
@@ -746,27 +750,29 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
           ) : null}
         </AnimatePresence>
 
-        <nav
-          className={cn(
-            'hidden gap-1 overflow-x-auto border-b border-zinc-100 bg-white/90 px-3 py-2 sm:px-5 dark:border-zinc-900 dark:bg-zinc-950/90',
-            mode === 'scoreboard' && 'md:flex',
-          )}
-          aria-label="Sections"
-        >
-          <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
-            Overview
-          </SlidingPill>
-          {tabs.map((s) => (
-            <SlidingPill key={s.id} layoutId="acct-sb-section-tab" active={activeTab === s.id} onClick={() => selectTab(s.id)}>
-              {s.tab}
+        <div className={cn('relative hidden', mode === 'scoreboard' && 'md:block')}>
+          <nav
+            ref={navRef}
+            className="flex gap-1 overflow-x-auto border-b border-zinc-100 bg-white/90 px-3 py-2 sm:px-5 dark:border-zinc-900 dark:bg-zinc-950/90"
+            aria-label="Sections"
+          >
+            <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'overview'} onClick={() => selectTab('overview')}>
+              Overview
             </SlidingPill>
-          ))}
-          {can(board.viewer.role, 'view_setup') ? (
-            <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'setup'} onClick={() => selectTab('setup')}>
-              <Settings2 className="size-3.5" /> Setup
-            </SlidingPill>
-          ) : null}
-        </nav>
+            {tabs.map((s) => (
+              <SlidingPill key={s.id} layoutId="acct-sb-section-tab" active={activeTab === s.id} onClick={() => selectTab(s.id)}>
+                {s.tab}
+              </SlidingPill>
+            ))}
+            {can(board.viewer.role, 'view_setup') ? (
+              <SlidingPill layoutId="acct-sb-section-tab" active={activeTab === 'setup'} onClick={() => selectTab('setup')}>
+                <Settings2 className="size-3.5" /> Setup
+              </SlidingPill>
+            ) : null}
+          </nav>
+          <ScrollEdgeFade side="left" shown={navEdges.left} className="from-white dark:from-zinc-950" />
+          <ScrollEdgeFade side="right" shown={navEdges.right} className="from-white dark:from-zinc-950" />
+        </div>
 
         <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {/* overflow-x-clip, not hidden: the slide never spawns a scrollbar, and sticky headers keep working (§ 11.1). */}

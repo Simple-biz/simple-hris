@@ -82,6 +82,11 @@ and roles.
 - **A name opens that person's seats**: *"Seats to remove before <name> leaves"*, each with **Seat removed**, then the
   **Removed** history (platform, when, by whom, held since when). This is Carla's offboarding checklist.
 - Search by name or address; *Only people holding a seat* hides the rest.
+- **No cut edges** (2026-10-09, Kane: *"I can see clear cut on the edges"*): while the grid hides columns to the right,
+  that edge fades (`ScrollEdgeFade`), and once it is scrolled the sticky name column casts a shadow (`STUCK_EDGE`) so the
+  ticks slide under it. An opened panel pads its right side while the fade shows, so **Seat removed** is never under it.
+  Every header label sits on one fixed-height line (`h-6`), with or without its archive ×. On a phone the name column is
+  narrower (10.5rem) and "Off the board" sits on the name line, so the address is not truncated by the badge.
 - On a phone the grid scrolls sideways inside its box, the name column stays put (sticky), and an opened person's panel
   is exactly the visible width (`@container` + `w-[100cqw]` + sticky), so **Seat removed** is never off-screen.
   The off-the-board tint is **opaque** and the same on the row and its sticky name cell (`OFF_BOARD_BG`): a

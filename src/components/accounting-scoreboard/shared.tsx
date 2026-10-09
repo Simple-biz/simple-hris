@@ -282,6 +282,61 @@ export function SlidingPill({
   );
 }
 
+/**
+ * Which ends of a sideways-scrolling box still hide content. A callback ref (the box can mount after a load), and the
+ * box AND its first child are observed, so a column added later (a new key) shows its edge without a scroll.
+ */
+export function useScrollEdges<T extends HTMLElement>(): [(el: T | null) => void, { left: boolean; right: boolean }, T | null] {
+  const [el, setEl] = useState<T | null>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  useEffect(() => {
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > 1;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+      setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro?.disconnect();
+    };
+  }, [el]);
+  return [setEl, edges, el];
+}
+
+/**
+ * The soft edge on a sideways-scrolling box: shown only on a side that still hides content, so a row cut in half reads
+ * as "there is more" instead of a clipped edge. Sits inside a `relative` wrapper around the box; never takes a click.
+ */
+export function ScrollEdgeFade({
+  side,
+  shown,
+  className,
+}: {
+  side: 'left' | 'right';
+  shown: boolean;
+  /** The colour the box sits on, as the gradient's `from-` (light and dark). */
+  className: string;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'pointer-events-none absolute inset-y-px z-20 w-8 transition-opacity duration-200',
+        side === 'left' ? 'left-px rounded-l-[inherit] bg-gradient-to-r' : 'right-px rounded-r-[inherit] bg-gradient-to-l',
+        'to-transparent',
+        shown ? 'opacity-100' : 'opacity-0',
+        className,
+      )}
+    />
+  );
+}
+
 function isDark(): boolean {
   return typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 }

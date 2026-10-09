@@ -44,7 +44,7 @@ import { readCachedRoster, writeCachedRoster } from '@/lib/accounting-scoreboard
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BoardPayload, BoardRow, RoleGrant, RosterPerson } from '@/lib/accounting-scoreboard/types';
 import { ROLE_LABEL, can, type BoardRole, type GrantRole } from '@/lib/accounting-scoreboard/roles';
-import { api, EASE_SETTLE, EASE_TAB, handle, SlidingPill, TINY_CAPS } from './shared';
+import { api, EASE_SETTLE, EASE_TAB, handle, ScrollEdgeFade, SlidingPill, TINY_CAPS, useScrollEdges } from './shared';
 import { KeysArea } from './KeysArea';
 
 interface Props {
@@ -89,6 +89,18 @@ export function SetupPanel({ board, sections, role, onChanged }: Props) {
     setDir(to >= from ? 1 : -1);
     setArea(next);
   };
+  const [pillsRef, pillEdges, pillsEl] = useScrollEdges<HTMLDivElement>();
+  // Keep the picked area fully in view (with room for the fade), scrolling the row only, never the page.
+  useEffect(() => {
+    const active = pillsEl?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!pillsEl || !active) return;
+    const pad = 28;
+    const start = active.offsetLeft - pad;
+    const end = active.offsetLeft + active.offsetWidth + pad - pillsEl.clientWidth;
+    const behavior = reduce ? 'auto' : 'smooth';
+    if (start < pillsEl.scrollLeft) pillsEl.scrollTo({ left: Math.max(0, start), behavior });
+    else if (end > pillsEl.scrollLeft) pillsEl.scrollTo({ left: end, behavior });
+  }, [area, pillsEl, reduce]);
   return (
     <div className="space-y-5">
       <div>
@@ -106,12 +118,21 @@ export function SetupPanel({ board, sections, role, onChanged }: Props) {
           Only an Admin can change Setup. You&rsquo;re an {ROLE_LABEL[role]}, so you can see it but not change it.
         </p>
       ) : null}
-      <div className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-xl border border-zinc-200 bg-white/70 p-1 dark:border-zinc-800 dark:bg-zinc-900/60">
-        {areas.map(([k, label]) => (
-          <SlidingPill key={k} layoutId="acct-sb-setup-area" active={area === k} onClick={() => go(k)}>
-            {label}
-          </SlidingPill>
-        ))}
+      {/* Six areas outgrow a phone: the row scrolls, its hidden ends fade instead of cutting a pill in half, and the
+          picked area is scrolled into view. */}
+      <div className="relative inline-flex max-w-full rounded-xl">
+        <div
+          ref={pillsRef}
+          className="relative inline-flex max-w-full gap-0.5 overflow-x-auto rounded-xl border border-zinc-200 bg-white/70 p-1 [scrollbar-width:none] dark:border-zinc-800 dark:bg-zinc-900/60 [&::-webkit-scrollbar]:hidden"
+        >
+          {areas.map(([k, label]) => (
+            <SlidingPill key={k} layoutId="acct-sb-setup-area" active={area === k} onClick={() => go(k)}>
+              {label}
+            </SlidingPill>
+          ))}
+        </div>
+        <ScrollEdgeFade side="left" shown={pillEdges.left} className="from-white dark:from-zinc-900" />
+        <ScrollEdgeFade side="right" shown={pillEdges.right} className="from-white dark:from-zinc-900" />
       </div>
       <div className="overflow-x-clip">
         <AnimatePresence mode="wait" initial={false} custom={dir}>

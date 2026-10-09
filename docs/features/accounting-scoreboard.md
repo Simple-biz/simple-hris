@@ -660,6 +660,11 @@ out of it (§ Hidden from the Overview, 2026-10-07) (`team-score.ts`). It is **d
 - **Every `<table>` carries `table-keep`.** Below 640 px, `src/index.css` collapses any table without
   it into stacked cards. These are computational grids, so on a phone they scroll sideways instead,
   with the row label stuck to the left. Drop the class and the grid falls apart on a phone.
+- **A row that scrolls sideways fades at a hidden end, never cuts** (2026-10-09, Kane: *"I can see clear cut on the
+  edges"*). The section tabs, Setup's area pills and the Keys grid use `useScrollEdges` + `ScrollEdgeFade` from
+  `shared.tsx`: the fade shows only on a side that still hides content, sits in a `relative` wrapper, and never takes a
+  click. Setup's pills also scroll the picked area into view (the row only, never the page). A new scrolling row uses
+  the same pair; a bare `overflow-x-auto` slices a tab or a column in half at the edge.
 - **Tabs glide** (§ 11.1): one orange indicator via `SlidingPill`, 0.28 s on `[0.22, 1, 0.36, 1]`.
   Each row has its own `layoutId` (`acct-sb-section-tab`, `acct-sb-setup-area`); a shared one would
   fly the indicator between rows. The panel slides toward where you moved (a later tab or week from

@@ -25,13 +25,16 @@ import {
   type KeyGridPerson,
 } from '@/lib/accounting-scoreboard/keys';
 import type { KeySeat, KeysPayload, ScoreboardKey } from '@/lib/accounting-scoreboard/types';
-import { api, handle, TINY_CAPS } from './shared';
+import { api, handle, ScrollEdgeFade, TINY_CAPS, useScrollEdges } from './shared';
 
 /**
  * The off-the-board row tint. OPAQUE and the same on the row and its sticky name cell: a see-through sticky cell would
  * show the ticks scrolling under it, and a different tint makes the name cell read as its own block.
  */
 const OFF_BOARD_BG = 'bg-amber-50 dark:bg-[color-mix(in_oklab,var(--color-amber-900)_30%,var(--color-zinc-950))]';
+
+/** The name column's edge while the grid is scrolled sideways: the ticks slide under it instead of being cut off. */
+const STUCK_EDGE = 'shadow-[8px_0_10px_-8px_rgb(0_0_0/0.22)] dark:shadow-[8px_0_12px_-8px_rgb(0_0_0/0.8)]';
 
 const DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
 const when = (iso: string | null) => (iso ? DAY.format(new Date(iso)) : '');
@@ -45,6 +48,7 @@ export function KeysArea() {
   const [onlyHolders, setOnlyHolders] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [gridRef, gridEdges] = useScrollEdges<HTMLDivElement>();
 
   async function load() {
     const res = await api<KeysPayload>('/api/accounting-scoreboard/keys');
@@ -214,143 +218,156 @@ export function KeysArea() {
       ) : (
         // A size container, so an opened person's panel can be exactly as wide as what is visible (100cqw) and stay put
         // while the grid scrolls sideways on a phone: otherwise "Seat removed" sits off-screen to the right.
-        <div className="@container overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
-          <table className="table-keep w-full border-collapse text-[13px]">
-            <thead>
-              <tr className="border-b border-zinc-200 dark:border-zinc-800">
-                <th
-                  scope="col"
-                  className={cn(TINY_CAPS, 'sticky left-0 z-10 bg-white px-3 py-2 text-left text-zinc-500 dark:bg-zinc-950')}
-                >
-                  Person ({shown.length})
-                </th>
-                {grid.keys.map((k) => {
-                  const seats = grid.seatCount[k.id] ?? 0;
+        <div className="relative rounded-xl">
+          <div
+            ref={gridRef}
+            className="@container overflow-x-auto rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            <table className="table-keep w-full border-collapse text-[13px]">
+              <thead>
+                <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                  <th
+                    scope="col"
+                    className={cn(
+                      TINY_CAPS,
+                      'sticky left-0 z-10 bg-white px-3 py-2 text-left text-zinc-500 transition-shadow dark:bg-zinc-950',
+                      gridEdges.left && STUCK_EDGE,
+                    )}
+                  >
+                    Person ({shown.length})
+                  </th>
+                  {grid.keys.map((k) => {
+                    const seats = grid.seatCount[k.id] ?? 0;
+                    return (
+                      <th key={k.id} scope="col" className="px-2 py-2 text-center align-bottom font-semibold whitespace-nowrap text-zinc-800 dark:text-zinc-200">
+                        <div className="flex h-6 items-center justify-center gap-0.5">
+                          <span>{k.label}</span>
+                          {canArchiveKey(seats) ? (
+                            <Button
+                              size="icon-xs"
+                              variant="ghost"
+                              className="text-zinc-400 hover:text-zinc-800 dark:text-zinc-500 dark:hover:text-zinc-200"
+                              aria-label={`Archive ${k.label}`}
+                              title={`Archive ${k.label} (nobody holds a seat on it)`}
+                              disabled={busy === `key:${k.id}`}
+                              onClick={() => void archive(k)}
+                            >
+                              {busy === `key:${k.id}` ? <Loader2 className="animate-spin" /> : <X />}
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div className="text-[11px] font-normal text-zinc-500 tabular-nums">
+                          {seats === 1 ? '1 seat' : `${seats} seats`}
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((p) => {
+                  const isOpen = open === p.email;
                   return (
-                    <th key={k.id} scope="col" className="px-2 py-2 text-center align-bottom font-semibold whitespace-nowrap text-zinc-800 dark:text-zinc-200">
-                      <div className="flex items-center justify-center gap-1">
-                        <span>{k.label}</span>
-                        {canArchiveKey(seats) ? (
-                          <Button
-                            size="icon-xs"
-                            variant="ghost"
-                            aria-label={`Archive ${k.label}`}
-                            title={`Archive ${k.label} (nobody holds a seat on it)`}
-                            disabled={busy === `key:${k.id}`}
-                            onClick={() => void archive(k)}
-                          >
-                            {busy === `key:${k.id}` ? <Loader2 className="animate-spin" /> : <X />}
-                          </Button>
-                        ) : null}
-                      </div>
-                      <div className="text-[11px] font-normal text-zinc-500 tabular-nums">
-                        {seats === 1 ? '1 seat' : `${seats} seats`}
-                      </div>
-                    </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((p) => {
-                const isOpen = open === p.email;
-                return (
-                  <Fragment key={p.email}>
-                    <tr
-                      className={cn(
-                        'border-b border-zinc-100 last:border-0 dark:border-zinc-900',
-                        !p.onBoard && p.seats.length > 0 && OFF_BOARD_BG,
-                      )}
-                    >
-                      <th
-                        scope="row"
+                    <Fragment key={p.email}>
+                      <tr
                         className={cn(
-                          'sticky left-0 z-10 px-3 py-1.5 text-left font-normal',
-                          !p.onBoard && p.seats.length > 0 ? OFF_BOARD_BG : 'bg-white dark:bg-zinc-950',
+                          'border-b border-zinc-100 last:border-0 dark:border-zinc-900',
+                          !p.onBoard && p.seats.length > 0 && OFF_BOARD_BG,
                         )}
                       >
-                        <button
-                          type="button"
-                          aria-expanded={isOpen}
-                          onClick={() => setOpen(isOpen ? null : p.email)}
-                          className="group flex max-w-[16rem] items-center gap-1.5 text-left"
+                        <th
+                          scope="row"
+                          className={cn(
+                            'sticky left-0 z-10 px-3 py-1.5 text-left font-normal transition-shadow',
+                            !p.onBoard && p.seats.length > 0 ? OFF_BOARD_BG : 'bg-white dark:bg-zinc-950',
+                            gridEdges.left && STUCK_EDGE,
+                          )}
                         >
-                          <ChevronDown
-                            className={cn('size-3.5 shrink-0 text-zinc-400 transition-transform', isOpen && 'rotate-180')}
-                            aria-hidden
-                          />
-                          <span className="min-w-0">
-                            <span className="block truncate font-medium text-zinc-900 group-hover:underline dark:text-zinc-100">
-                              {p.name}
-                            </span>
-                            <span className="block truncate font-mono text-[11px] text-zinc-500">{p.email}</span>
-                          </span>
-                          {!p.onBoard ? (
-                            <span className="ml-1 shrink-0 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[10px] font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
-                              Off the board
-                            </span>
-                          ) : null}
-                        </button>
-                      </th>
-                      {grid.keys.map((k) => {
-                        const seat = liveSeatOf(p, k.id);
-                        const cell = `${k.id}:${p.email}`;
-                        // Someone off the board can lose a seat here, never gain one (the server refuses it too).
-                        const canGive = p.onBoard;
-                        return (
-                          <td key={k.id} className="px-2 py-1.5 text-center">
-                            {busy === cell ? (
-                              <Loader2 className="mx-auto size-4 animate-spin text-zinc-400" aria-label="Saving" />
-                            ) : (
-                              <input
-                                type="checkbox"
-                                className="size-4 accent-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
-                                checked={!!seat}
-                                disabled={!seat && !canGive}
-                                aria-label={`${p.name} holds a seat on ${k.label}`}
-                                title={
-                                  seat
-                                    ? `Since ${when(seat.givenAt)}, by ${handle(seat.givenBy)}. Untick once the seat is removed on ${k.label}.`
-                                    : canGive
-                                      ? `Give ${p.name} a seat on ${k.label}`
-                                      : 'Off the board: add them under Members to give a seat'
-                                }
-                                onChange={(e) => void setHolds(p, k, e.target.checked)}
-                              />
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                    {isOpen ? (
-                      <tr className="border-b border-zinc-100 bg-zinc-50/70 dark:border-zinc-900 dark:bg-zinc-900/40">
-                        <td colSpan={grid.keys.length + 1} className="p-0">
-                          <div className="sticky left-0 box-border w-[100cqw] px-3 py-3">
-                            <PersonSeats
-                            person={p}
-                            labelOf={labelOf}
-                            busy={busy}
-                            onRemove={(seat) => {
-                              const key = grid.keys.find((k) => k.id === seat.keyId);
-                              if (key) void setHolds(p, key, false);
-                            }}
+                          <button
+                            type="button"
+                            aria-expanded={isOpen}
+                            onClick={() => setOpen(isOpen ? null : p.email)}
+                            className="group flex max-w-[10.5rem] items-center gap-1.5 text-left sm:max-w-[16rem]"
+                          >
+                            <ChevronDown
+                              className={cn('size-3.5 shrink-0 text-zinc-400 transition-transform', isOpen && 'rotate-180')}
+                              aria-hidden
                             />
-                          </div>
-                        </td>
+                            <span className="min-w-0">
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate font-medium text-zinc-900 group-hover:underline dark:text-zinc-100">{p.name}</span>
+                                {!p.onBoard ? (
+                                  <span className="shrink-0 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[10px] font-semibold whitespace-nowrap text-amber-900 dark:border-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                    Off the board
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="block truncate font-mono text-[11px] text-zinc-500">{p.email}</span>
+                            </span>
+                          </button>
+                        </th>
+                        {grid.keys.map((k) => {
+                          const seat = liveSeatOf(p, k.id);
+                          const cell = `${k.id}:${p.email}`;
+                          // Someone off the board can lose a seat here, never gain one (the server refuses it too).
+                          const canGive = p.onBoard;
+                          return (
+                            <td key={k.id} className="px-2 py-1.5 text-center">
+                              {busy === cell ? (
+                                <Loader2 className="mx-auto size-4 animate-spin text-zinc-400" aria-label="Saving" />
+                              ) : (
+                                <input
+                                  type="checkbox"
+                                  className="size-4 accent-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                  checked={!!seat}
+                                  disabled={!seat && !canGive}
+                                  aria-label={`${p.name} holds a seat on ${k.label}`}
+                                  title={
+                                    seat
+                                      ? `Since ${when(seat.givenAt)}, by ${handle(seat.givenBy)}. Untick once the seat is removed on ${k.label}.`
+                                      : canGive
+                                        ? `Give ${p.name} a seat on ${k.label}`
+                                        : 'Off the board: add them under Members to give a seat'
+                                  }
+                                  onChange={(e) => void setHolds(p, k, e.target.checked)}
+                                />
+                              )}
+                            </td>
+                          );
+                        })}
                       </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-              {!shown.length ? (
-                <tr>
-                  <td colSpan={grid.keys.length + 1} className="px-3 py-6 text-center text-xs text-zinc-500">
-                    {query.trim() ? 'Nobody matches that search.' : 'Nobody holds a seat yet.'}
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+                      {isOpen ? (
+                        <tr className="border-b border-zinc-100 bg-zinc-50/70 dark:border-zinc-900 dark:bg-zinc-900/40">
+                          <td colSpan={grid.keys.length + 1} className="p-0">
+                            <div className={cn('sticky left-0 box-border w-[100cqw] px-3 py-3', gridEdges.right && 'pr-9')}>
+                              <PersonSeats
+                              person={p}
+                              labelOf={labelOf}
+                              busy={busy}
+                              onRemove={(seat) => {
+                                const key = grid.keys.find((k) => k.id === seat.keyId);
+                                if (key) void setHolds(p, key, false);
+                              }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+                {!shown.length ? (
+                  <tr>
+                    <td colSpan={grid.keys.length + 1} className="px-3 py-6 text-center text-xs text-zinc-500">
+                      {query.trim() ? 'Nobody matches that search.' : 'Nobody holds a seat yet.'}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          {/* The ticks that do not fit fade out at the right edge instead of being cut through. */}
+          <ScrollEdgeFade side="right" shown={gridEdges.right} className="from-white dark:from-zinc-950" />
         </div>
       )}
     </div>
