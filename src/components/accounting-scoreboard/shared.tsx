@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { toast } from 'sonner';
 import {
   FolderKanban,
@@ -15,6 +15,7 @@ import {
   Headphones,
   Layers,
   LayoutList,
+  Loader2,
   Mail,
   Scale,
   ShieldAlert,
@@ -334,6 +335,48 @@ export function ScrollEdgeFade({
         className,
       )}
     />
+  );
+}
+
+/** How long each loading line stays before the next (a load usually lands inside the first two or three). */
+export const LOADING_LINE_MS = 1600;
+
+/**
+ * A tab's loading state (ui-standards § 5.5): a centered spinner over a tiny-caps caption that cycles through what the
+ * tab is really fetching (Kane, 2026-10-09: *"random texts while its loading like 'Fetching data' … depending on the
+ * tab"*). Each line names a read that is genuinely in flight; none ticks or claims "done" (that is the load modal's
+ * job, with real steps). Screen readers hear the stable `label` once, never the cycling lines. Reduced motion keeps
+ * the lines changing and drops only the crossfade. Shown ONLY when there is nothing to paint: a cached tab never
+ * shows it (§ Browser cache).
+ */
+export function LoadingLines({ label, lines, className }: { label: string; lines: readonly string[]; className?: string }) {
+  const reduce = useReducedMotion() ?? false;
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (lines.length < 2) return;
+    const id = window.setInterval(() => setI((n) => (n + 1) % lines.length), LOADING_LINE_MS);
+    return () => window.clearInterval(id);
+  }, [lines.length]);
+  const line = lines[i % Math.max(1, lines.length)] ?? label;
+  return (
+    <div role="status" className={cn('flex flex-col items-center justify-center gap-2.5 py-10 text-zinc-400', className)}>
+      <Loader2 className="size-4 animate-spin text-orange-500" aria-hidden />
+      <span className="sr-only">{label}</span>
+      <span aria-hidden className="relative block h-4 w-full overflow-hidden text-center">
+        <AnimatePresence initial={false} mode="popLayout">
+          <motion.span
+            key={line}
+            initial={reduce ? { opacity: 1 } : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduce ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, y: -6 }}
+            transition={{ duration: reduce ? 0 : 0.26, ease: EASE_TAB }}
+            className="absolute inset-x-0 text-[10px] uppercase tracking-[0.22em]"
+          >
+            {line}
+          </motion.span>
+        </AnimatePresence>
+      </span>
+    </div>
   );
 }
 

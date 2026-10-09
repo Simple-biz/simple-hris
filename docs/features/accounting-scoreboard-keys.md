@@ -81,22 +81,40 @@ and roles.
 - Each column header shows its live seat count; the archive button (×) appears only on a key nobody holds.
 - **A name opens that person's seats**: *"Seats to remove before <name> leaves"*, each with **Seat removed**, then the
   **Removed** history (platform, when, by whom, held since when). This is Carla's offboarding checklist.
-- Search by name or address; *Only people holding a seat* hides the rest.
+- Search by name or address; *Only people holding a seat* hides the rest. **Searching is smooth, never a snap**
+  (2026-10-09, Kane: *"smooth search experience not snappy like that"*): the filter runs on a deferred copy of the query
+  (`useDeferredValue`), so typing never waits for the grid; a row that drops out fades (0.16 s) and the rest glide into
+  place (`layout="position"`, 0.28 s on the settle curve); a row that comes back fades in. Under reduced motion rows
+  appear and go at once. Anything that counts rows right after typing must wait for the fade.
+- **A name drops its panel open and folds it shut** (2026-10-09, Kane: *"Improve drop down animation for Keys"*): height and
+  fade on the settle curve (0.32 s), the chevron turns orange and rotates, and the seats settle in one after another. The
+  animating wrapper clips with `overflow-y-clip`, **never `overflow-hidden`**: hidden makes it the scroll box of the
+  sticky panel inside and pins the panel to the table's left edge again on a phone.
+- **Two hairline rules** (2026-10-09, Kane's sketch: a line after the Person column and under the header, *"less thick"*):
+  1 px, drawn as **inset shadows, never borders** (`COL_RULE`, `HEAD_RULE`, `CORNER_RULE`). A collapsed table border
+  stays behind while the sticky Person cell slides over it. Each cell carries ONE box-shadow, so the scrolled state is its
+  own full value (`*_STUCK`: the rule plus the drop shadow); two shadow classes on one cell would cancel each other.
 - **No cut edges** (2026-10-09, Kane: *"I can see clear cut on the edges"*): while the grid hides columns to the right,
-  that edge fades (`ScrollEdgeFade`), and once it is scrolled the sticky name column casts a shadow (`STUCK_EDGE`) so the
-  ticks slide under it. An opened panel pads its right side while the fade shows, so **Seat removed** is never under it.
+  that edge fades (`ScrollEdgeFade`), and once it is scrolled the sticky name column casts a shadow (`COL_RULE_STUCK`) so
+  the ticks slide under it. An opened panel pads its right side while the fade shows, so **Seat removed** is never under it.
   Every header label sits on one fixed-height line (`h-6`), with or without its archive ×. On a phone the name column is
   narrower (10.5rem) and "Off the board" sits on the name line, so the address is not truncated by the badge.
 - On a phone the grid scrolls sideways inside its box, the name column stays put (sticky), and an opened person's panel
   is exactly the visible width (`@container` + `w-[100cqw]` + sticky), so **Seat removed** is never off-screen.
   The off-the-board tint is **opaque** and the same on the row and its sticky name cell (`OFF_BOARD_BG`): a
   see-through sticky cell shows the ticks scrolling under it.
-- The area loads on open and re-reads after every write (like Access). It is not cached and not on the live channel.
+- **It paints from the browser cache and fetches anyway** (2026-10-09, Kane: *"make sure have stored data in cache as
+  well"*): `acct-sb:keys` holds the last GET answer **minus the viewer**, read only for a role that may see Keys NOW
+  (`readCachedKeys(role)`, the role the server page resolved on this load). Every visit and every write still re-reads.
+  A refused read (401 / 403) forgets the cached copy and shows why; any other failed refresh keeps the painted grid and
+  says so in a toast. With nothing painted (the first visit in a browser tab), the area shows the scoreboard's
+  `LoadingLines`: a centered spinner over *Fetching the keys*, *Reading who holds which seat*, *Gathering the board's
+  people*, in turn (the three reads `readKeys` really sends). Not on the live channel.
 
 ## Not part of the board
 
-- `readBoard` never reads the Keys tables, so Keys is not in the board payload, the browser cache, the loading modal,
-  the Overview or the Team Score. Until the migration is applied, **only Setup → Keys** says "not set up yet".
+- `readBoard` never reads the Keys tables, so Keys is not in the board payload, the board's cached blob (it has its own
+  key, above), the loading modal, the Overview or the Team Score. Until the migration is applied, **only Setup → Keys** says "not set up yet".
 - No write here announces on the live channel: `live.test.ts` lists `keys/` in `NOT_THE_BOARD` with its reason.
 - No audit rows. The tables carry who and when (like Members), so the audit registry is unchanged.
 - The HRIS Offboarding queue does not know about Keys. Whether it should was not asked (meeting § Keys).

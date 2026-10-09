@@ -95,9 +95,19 @@ import {
   sectionIcon,
   SlidingPill,
   StopLight,
+  LoadingLines,
   TINY_CAPS,
   useScrollEdges,
 } from './shared';
+
+/** The board's reads, in the load modal's own words (load-progress.ts), cycled under it while nothing is painted. */
+const BOARD_LOADING_LINES = [
+  'Fetching the scoreboard',
+  'Gathering the buckets, inboxes and people',
+  'Collecting the collections log',
+  'Collecting payroll problems',
+  'Checking Payroll Wizard starts and closes',
+] as const;
 import { PayrollCyclePanel } from './PayrollCyclePanel';
 import { SectionGrid } from './SectionGrid';
 import { CollectionsPanel, type NewCollection } from './CollectionsPanel';
@@ -546,11 +556,9 @@ export default function ScoreboardApp({ viewer }: { viewer: BoardPayload['viewer
   if (fetching && !board) {
     return (
       <Shell>
-        {/* Under the loading modal; it is what stays if the modal is closed while the board loads. */}
-        <div className="flex flex-1 items-center justify-center gap-2 text-zinc-400">
-          <Loader2 className="size-4 animate-spin" />
-          <span className="text-[10px] uppercase tracking-[0.22em]">Loading the scoreboard</span>
-        </div>
+        {/* Under the loading modal; it is what stays if the modal is closed while the board loads. Its lines are the
+            board's real reads (load-progress.ts BOARD_READS), cycling; the modal is the one that ticks them off. */}
+        <LoadingLines label="Loading the scoreboard" lines={BOARD_LOADING_LINES} className="flex-1" />
         {loadDialog}
       </Shell>
     );

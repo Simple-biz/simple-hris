@@ -779,6 +779,19 @@ header spinner on every 45 s and focus refresh.
   adds two guards: someone else's board or Everyone paints only for a role that may see it now, and a view paints only on
   the Eastern day it was read. See [accounting-scoreboard-tasks.md](accounting-scoreboard-tasks.md) § Loading and the
   browser cache.
+- **Setup → Keys and Setup → Access cache under keys of their own** (`acct-sb:keys`, `acct-sb:roles`, 2026-10-09, Kane:
+  *"make sure have stored data in cache as well"*), on the same rules: they paint and never decide, the viewer is never
+  cached, only the server's answer is written back, and each paints **only for a role that may see it NOW**
+  (`manage_keys` / `manage_roles`, the role the page just resolved). A 401 / 403 forgets the copy; any other failed
+  refresh keeps what is painted and says so in a toast. A painted grant decides nothing: the server refuses a stale
+  revoke (409, and the table's trigger).
+- **A tab with nothing to paint says what it is fetching** (2026-10-09, Kane: *"random texts while its loading like
+  'Fetching data' … depending on the tab"*). `LoadingLines` (`shared.tsx`) is `ui-standards.md` § 5.5's centered
+  spinner and tiny-caps caption, whose caption cycles every 1.6 s through that tab's own reads: the board's fallback
+  under the load modal (the modal's own read names), Keys, Access and the roster picker. **Every line names a read
+  really in flight; none ticks or says "done"**: ticking real steps is the load modal's and the Tasks card's job, and
+  they are unchanged. Screen readers hear one stable label (`role="status"`), never the cycling lines. Reduced motion
+  keeps the lines changing and drops only the slide. Painted from the cache = no lines at all.
 - Verified 2026-10-06 in headless Chromium against a 1.5 s API, 16 checks. The first visit shows the loader once.
   A reload paints within 400 ms with no loader or spinner and still fetches. Five tab switches make no fetch.
   An uncached week spins, stepping back to a cached week is instant, and the second Setup visit has no roster

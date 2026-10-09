@@ -12,7 +12,7 @@
  * picker's FILTER, never the section's definition (analysis note § 4).
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowDown, ArrowUp, Loader2, Lock, Plus, ShieldCheck, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -40,11 +40,21 @@ import {
 } from '@/lib/accounting-scoreboard/sections';
 import { goalText } from '@/lib/accounting-scoreboard/scoring';
 import { shortNameFromRoster } from '@/lib/accounting-scoreboard/names';
-import { readCachedRoster, writeCachedRoster } from '@/lib/accounting-scoreboard/tab-cache';
+import {
+  clearCachedRoleGrants,
+  readCachedRoleGrants,
+  readCachedRoster,
+  writeCachedRoleGrants,
+  writeCachedRoster,
+} from '@/lib/accounting-scoreboard/tab-cache';
 import { formatDeptLabel } from '@/lib/departments/hsl-subdept';
 import type { BoardPayload, BoardRow, RoleGrant, RosterPerson } from '@/lib/accounting-scoreboard/types';
 import { ROLE_LABEL, can, type BoardRole, type GrantRole } from '@/lib/accounting-scoreboard/roles';
-import { api, EASE_SETTLE, EASE_TAB, handle, ScrollEdgeFade, SlidingPill, TINY_CAPS, useScrollEdges } from './shared';
+import { api, EASE_SETTLE, EASE_TAB, handle, LoadingLines, ScrollEdgeFade, SlidingPill, TINY_CAPS, useScrollEdges } from './shared';
+
+/** What each Setup read really fetches: shown in turn, only while nothing is painted yet (shared.tsx LoadingLines). */
+const ROSTER_LOADING_LINES = ['Fetching the roster', 'Reading the active employees', 'Sorting people by department'] as const;
+const ROLES_LOADING_LINES = ['Fetching the roles', 'Reading the Admins and Assistants', 'Checking who granted each role'] as const;
 import { KeysArea } from './KeysArea';
 
 interface Props {
@@ -153,8 +163,8 @@ export function SetupPanel({ board, sections, role, onChanged }: Props) {
               {area === 'types' ? <ProblemTypesArea board={board} onChanged={onChanged} /> : null}
               {area === 'members' ? <MembersArea board={board} onChanged={onChanged} /> : null}
             </fieldset>
-            {area === 'keys' && can(role, 'manage_keys') ? <KeysArea /> : null}
-            {area === 'access' && can(role, 'manage_roles') ? <AccessArea viewerEmail={board.viewer.email} /> : null}
+            {area === 'keys' && can(role, 'manage_keys') ? <KeysArea role={role} /> : null}
+            {area === 'access' && can(role, 'manage_roles') ? <AccessArea viewerEmail={board.viewer.email} role={role} /> : null}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -1041,11 +1051,7 @@ function RosterPicker({
         <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Add someone from the roster</h3>
       </div>
       {error ? <p className="text-xs text-amber-700">{error}</p> : null}
-      {!people && !error ? (
-        <p className="flex items-center gap-2 text-xs text-zinc-500">
-          <Loader2 className="size-3.5 animate-spin" /> Loading the roster…
-        </p>
-      ) : null}
+      {!people && !error ? <LoadingLines label="Loading the roster" lines={ROSTER_LOADING_LINES} className="py-6" /> : null}
       {people ? (
         <>
           <SmoothSelect
@@ -1299,9 +1305,12 @@ const ROLE_SUMMARY: Array<[BoardRole, string]> = [
  * grant. A role change is a revoke and a new grant. The last Admin grant cannot be revoked: the button says so,
  * the server answers 409, and the table's trigger refuses it under a lock. An HRIS admin is the break glass.
  */
-function AccessArea({ viewerEmail }: { viewerEmail: string }) {
+function AccessArea({ viewerEmail, role: viewerRole }: { viewerEmail: string; role: BoardRole }) {
   const reduce = useReducedMotion() ?? false;
-  const [grants, setGrants] = useState<RoleGrant[] | null>(null);
+  // Paint the last answer at once (only for a role that may manage roles NOW), then fetch anyway.
+  const [grants, setGrants] = useState<RoleGrant[] | null>(() => readCachedRoleGrants(viewerRole) ?? null);
+  const painted = useRef(grants);
+  painted.current = grants;
   const [loadError, setLoadError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<GrantRole>('assistant');
@@ -1311,11 +1320,21 @@ function AccessArea({ viewerEmail }: { viewerEmail: string }) {
   async function load() {
     const res = await api<{ grants: RoleGrant[] }>('/api/accounting-scoreboard/roles');
     if (!res.ok) {
-      setLoadError(res.error);
+      // Refused: forget the cached grants so they never paint again.
+      if (res.status === 401 || res.status === 403) {
+        clearCachedRoleGrants();
+        setGrants(null);
+        setLoadError(res.error);
+        return;
+      }
+      // Painted grants stay on screen through a failed refresh; with nothing painted, the error is the content.
+      if (painted.current) toast.error(`Couldn't refresh the roles: ${res.error}`);
+      else setLoadError(res.error);
       return;
     }
     setLoadError(null);
     setGrants(res.data.grants);
+    writeCachedRoleGrants(res.data.grants);
   }
   useEffect(() => {
     void load();
@@ -1384,9 +1403,7 @@ function AccessArea({ viewerEmail }: { viewerEmail: string }) {
             </Button>
           </div>
         ) : grants === null ? (
-          <p className="flex items-center gap-2 px-1 text-xs text-zinc-500">
-            <Loader2 className="size-3.5 animate-spin" /> Loading the roles…
-          </p>
+          <LoadingLines label="Loading the roles" lines={ROLES_LOADING_LINES} className="py-8" />
         ) : (
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
             <AnimatePresence initial={false}>

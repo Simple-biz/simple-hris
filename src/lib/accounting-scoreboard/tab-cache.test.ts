@@ -16,16 +16,22 @@ import {
   MAX_CACHED_WEEKS,
   SCOREBOARD_CACHE_KEYS,
   bindScoreboardCache,
+  clearCachedKeys,
+  clearCachedRoleGrants,
   clearCachedTasks,
   readCachedBoard,
+  readCachedKeys,
+  readCachedRoleGrants,
   readCachedRoster,
   readCachedTasks,
   scoreboardTabCache,
   writeCachedBoard,
+  writeCachedKeys,
+  writeCachedRoleGrants,
   writeCachedRoster,
   writeCachedTasks,
 } from './tab-cache';
-import type { BoardPayload, TasksPayload } from './types';
+import type { BoardPayload, KeysPayload, RoleGrant, TasksPayload } from './types';
 
 function fakeStorage(): Storage {
   const map = new Map<string, string>();
@@ -210,4 +216,49 @@ test(`only the newest ${MAX_CACHED_TASK_VIEWS} Tasks views are kept`, () => {
   assert.equal(readCachedTasks(emails[0], TODAY, 'admin'), undefined, 'the oldest-written view was dropped');
   for (const email of emails.slice(1)) assert.ok(readCachedTasks(email, TODAY, 'admin'), email);
   assert.equal(scoreboardTabCache.get<string[]>(SCOREBOARD_CACHE_KEYS.taskViews)?.length, MAX_CACHED_TASK_VIEWS);
+});
+
+// ── Setup → Keys and Setup → Access (2026-10-09) ─────────────────────────────
+
+const KEYS: KeysPayload = {
+  viewer: { email: 'carla@simple.biz', role: 'admin' },
+  keys: [{ id: 'k1', label: 'QBO', createdBy: 'carla@simple.biz', createdAt: '2026-10-09T12:00:00Z', archived: false }],
+  seats: [{ id: 's1', keyId: 'k1', email: 'joana@simple.biz', givenBy: 'carla@simple.biz', givenAt: '2026-10-09T12:00:00Z', removedBy: null, removedAt: null }],
+  people: [{ email: 'joana@simple.biz', name: 'Joana' }],
+};
+const GRANTS: RoleGrant[] = [{ email: 'claire@simple.biz', role: 'admin', grantedBy: 'migration', grantedAt: '2026-10-08T12:00:00Z' }];
+
+test('Keys round-trip WITHOUT the viewer, and paint only for a role that may see Keys now', () => {
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedKeys(KEYS);
+  const raw = scoreboardTabCache.get<Record<string, unknown>>(SCOREBOARD_CACHE_KEYS.keys);
+  assert.ok(raw && !('viewer' in raw), 'the viewer (a permission) is never cached');
+  assert.deepEqual(readCachedKeys('admin')?.seats, KEYS.seats);
+  assert.equal(readCachedKeys('assistant'), undefined, 'an Assistant never sees Keys, cached or not');
+  assert.equal(readCachedKeys('member'), undefined);
+});
+
+test('Keys: inert until bound, another viewer purges, a refusal forgets, a malformed blob is a miss', () => {
+  writeCachedKeys(KEYS);
+  bindScoreboardCache('carla@simple.biz');
+  assert.equal(readCachedKeys('admin'), undefined, 'a write before binding is dropped');
+  writeCachedKeys(KEYS);
+  bindScoreboardCache('someone.else@simple.biz');
+  assert.equal(readCachedKeys('admin'), undefined, 'binding a different viewer purges first');
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedKeys(KEYS);
+  clearCachedKeys();
+  assert.equal(readCachedKeys('admin'), undefined);
+  scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.keys, { keys: [], seats: 'nope', people: [] });
+  assert.equal(readCachedKeys('admin'), undefined, 'fails closed on a malformed blob');
+});
+
+test('Access grants round-trip, paint only for manage_roles now, and a refusal forgets them', () => {
+  bindScoreboardCache('carla@simple.biz');
+  writeCachedRoleGrants(GRANTS);
+  assert.deepEqual(readCachedRoleGrants('admin'), GRANTS);
+  assert.equal(readCachedRoleGrants('assistant'), undefined);
+  clearCachedRoleGrants();
+  assert.equal(readCachedRoleGrants('admin'), undefined);
+  assert.deepEqual(readCachedRoleGrants('admin') ?? [], [], 'nothing cached is a miss, never an empty list painted as real');
 });

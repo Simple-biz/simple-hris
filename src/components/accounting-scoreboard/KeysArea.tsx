@@ -10,7 +10,8 @@
  * docs/features/accounting-scoreboard-keys.md.
  */
 
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, ChevronDown, KeyRound, Loader2, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -25,7 +26,12 @@ import {
   type KeyGridPerson,
 } from '@/lib/accounting-scoreboard/keys';
 import type { KeySeat, KeysPayload, ScoreboardKey } from '@/lib/accounting-scoreboard/types';
-import { api, handle, ScrollEdgeFade, TINY_CAPS, useScrollEdges } from './shared';
+import type { BoardRole } from '@/lib/accounting-scoreboard/roles';
+import { clearCachedKeys, readCachedKeys, writeCachedKeys, type CachedKeys } from '@/lib/accounting-scoreboard/tab-cache';
+import { api, EASE_SETTLE, handle, LoadingLines, ScrollEdgeFade, TINY_CAPS, useScrollEdges } from './shared';
+
+/** What GET /keys really reads, side by side (server.ts readKeys): shown in turn while nothing is painted yet. */
+const KEYS_LOADING_LINES = ['Fetching the keys', 'Reading who holds which seat', "Gathering the board's people"] as const;
 
 /**
  * The off-the-board row tint. OPAQUE and the same on the row and its sticky name cell: a see-through sticky cell would
@@ -33,14 +39,35 @@ import { api, handle, ScrollEdgeFade, TINY_CAPS, useScrollEdges } from './shared
  */
 const OFF_BOARD_BG = 'bg-amber-50 dark:bg-[color-mix(in_oklab,var(--color-amber-900)_30%,var(--color-zinc-950))]';
 
-/** The name column's edge while the grid is scrolled sideways: the ticks slide under it instead of being cut off. */
-const STUCK_EDGE = 'shadow-[8px_0_10px_-8px_rgb(0_0_0/0.22)] dark:shadow-[8px_0_12px_-8px_rgb(0_0_0/0.8)]';
+/**
+ * Hairline rules (Kane, 2026-10-09, a sketch: a line after the Person column and under the header, "less thick"). One
+ * pixel, drawn as INSET shadows, never borders: the Person column is sticky, and a collapsed table border stays behind
+ * while a sticky cell slides over it. Once the grid is scrolled sideways the column also casts a soft drop shadow, so
+ * the ticks pass under it instead of being cut off. One box-shadow per cell, so each state is one full value.
+ */
+const COL_RULE = 'shadow-[inset_-1px_0_0_var(--color-zinc-200)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-700)]';
+const COL_RULE_STUCK =
+  'shadow-[inset_-1px_0_0_var(--color-zinc-200),8px_0_10px_-8px_rgb(0_0_0/0.22)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-700),8px_0_12px_-8px_rgb(0_0_0/0.8)]';
+const HEAD_RULE = 'shadow-[inset_0_-1px_0_var(--color-zinc-200)] dark:shadow-[inset_0_-1px_0_var(--color-zinc-700)]';
+const CORNER_RULE =
+  'shadow-[inset_-1px_0_0_var(--color-zinc-200),inset_0_-1px_0_var(--color-zinc-200)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-700),inset_0_-1px_0_var(--color-zinc-700)]';
+const CORNER_RULE_STUCK =
+  'shadow-[inset_-1px_0_0_var(--color-zinc-200),inset_0_-1px_0_var(--color-zinc-200),8px_0_10px_-8px_rgb(0_0_0/0.22)] dark:shadow-[inset_-1px_0_0_var(--color-zinc-700),inset_0_-1px_0_var(--color-zinc-700),8px_0_12px_-8px_rgb(0_0_0/0.8)]';
+
+/** Search: rows that drop out fade, and the rest glide into place on the settle curve (never a snap). */
+const ROW_MOTION = { duration: 0.28, ease: EASE_SETTLE } as const;
 
 const DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
 const when = (iso: string | null) => (iso ? DAY.format(new Date(iso)) : '');
 
-export function KeysArea() {
-  const [payload, setPayload] = useState<KeysPayload | null>(null);
+/**
+ * `role` is the viewer's role as the server page resolved it on THIS load: the cached Keys paint only for a role that
+ * may see them now (tab-cache.ts), and are fetched again on every visit regardless.
+ */
+export function KeysArea({ role }: { role: BoardRole }) {
+  const reduce = useReducedMotion() ?? false;
+  // Paint the last answer at once, then fetch anyway (a cached value paints, it never decides).
+  const [payload, setPayload] = useState<CachedKeys | null>(() => readCachedKeys(role) ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [adding, setAdding] = useState(false);
@@ -49,15 +76,27 @@ export function KeysArea() {
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [gridRef, gridEdges] = useScrollEdges<HTMLDivElement>();
+  const painted = useRef(payload);
+  painted.current = payload;
 
   async function load() {
     const res = await api<KeysPayload>('/api/accounting-scoreboard/keys');
     if (!res.ok) {
-      setLoadError(res.error);
+      // Refused: forget the cached copy so it never paints again, and show why instead of the old grid.
+      if (res.status === 401 || res.status === 403) {
+        clearCachedKeys();
+        setPayload(null);
+        setLoadError(res.error);
+        return;
+      }
+      // A painted grid stays on screen through a failed refresh; with nothing painted, the error is the content.
+      if (painted.current) toast.error(`Couldn't refresh the keys: ${res.error}`);
+      else setLoadError(res.error);
       return;
     }
     setLoadError(null);
     setPayload(res.data);
+    writeCachedKeys(res.data);
   }
   useEffect(() => {
     void load();
@@ -65,9 +104,11 @@ export function KeysArea() {
 
   const grid = useMemo(() => (payload ? buildKeyGrid(payload) : null), [payload]);
   const labelOf = useMemo(() => new Map((payload?.keys ?? []).map((k) => [k.id, k.label])), [payload]);
+  // Filtering runs on a deferred copy of the query, so typing never waits for the grid to re-render.
+  const searched = useDeferredValue(query);
   const shown = useMemo(
-    () => (grid?.people ?? []).filter((p) => matchesPerson(p, query) && (!onlyHolders || p.seats.length > 0)),
-    [grid, query, onlyHolders],
+    () => (grid?.people ?? []).filter((p) => matchesPerson(p, searched) && (!onlyHolders || p.seats.length > 0)),
+    [grid, searched, onlyHolders],
   );
   const openSeats = grid?.offBoard.reduce((n, p) => n + p.seats.length, 0) ?? 0;
 
@@ -123,13 +164,7 @@ export function KeysArea() {
       </div>
     );
   }
-  if (!payload || !grid) {
-    return (
-      <p className="flex items-center gap-2 px-1 text-xs text-zinc-500">
-        <Loader2 className="size-3.5 animate-spin" /> Loading the keys…
-      </p>
-    );
-  }
+  if (!payload || !grid) return <LoadingLines label="Loading the keys" lines={KEYS_LOADING_LINES} />;
 
   return (
     <div className="space-y-4">
@@ -225,13 +260,13 @@ export function KeysArea() {
           >
             <table className="table-keep w-full border-collapse text-[13px]">
               <thead>
-                <tr className="border-b border-zinc-200 dark:border-zinc-800">
+                <tr>
                   <th
                     scope="col"
                     className={cn(
                       TINY_CAPS,
                       'sticky left-0 z-10 bg-white px-3 py-2 text-left text-zinc-500 transition-shadow dark:bg-zinc-950',
-                      gridEdges.left && STUCK_EDGE,
+                      gridEdges.left ? CORNER_RULE_STUCK : CORNER_RULE,
                     )}
                   >
                     Person ({shown.length})
@@ -239,7 +274,11 @@ export function KeysArea() {
                   {grid.keys.map((k) => {
                     const seats = grid.seatCount[k.id] ?? 0;
                     return (
-                      <th key={k.id} scope="col" className="px-2 py-2 text-center align-bottom font-semibold whitespace-nowrap text-zinc-800 dark:text-zinc-200">
+                      <th
+                        key={k.id}
+                        scope="col"
+                        className={cn('px-2 py-2 text-center align-bottom font-semibold whitespace-nowrap text-zinc-800 dark:text-zinc-200', HEAD_RULE)}
+                      >
                         <div className="flex h-6 items-center justify-center gap-0.5">
                           <span>{k.label}</span>
                           {canArchiveKey(seats) ? (
@@ -265,104 +304,142 @@ export function KeysArea() {
                 </tr>
               </thead>
               <tbody>
-                {shown.map((p) => {
-                  const isOpen = open === p.email;
-                  return (
-                    <Fragment key={p.email}>
-                      <tr
-                        className={cn(
-                          'border-b border-zinc-100 last:border-0 dark:border-zinc-900',
-                          !p.onBoard && p.seats.length > 0 && OFF_BOARD_BG,
-                        )}
-                      >
-                        <th
-                          scope="row"
+                <AnimatePresence initial={false}>
+                  {shown.map((p) => {
+                    const isOpen = open === p.email;
+                    return (
+                      <Fragment key={p.email}>
+                        <motion.tr
+                          layout={reduce ? false : 'position'}
+                          initial={reduce ? false : { opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.16 } }}
+                          transition={{ layout: ROW_MOTION, opacity: { duration: reduce ? 0 : 0.22, ease: 'linear' } }}
                           className={cn(
-                            'sticky left-0 z-10 px-3 py-1.5 text-left font-normal transition-shadow',
-                            !p.onBoard && p.seats.length > 0 ? OFF_BOARD_BG : 'bg-white dark:bg-zinc-950',
-                            gridEdges.left && STUCK_EDGE,
+                            'border-b border-zinc-100 last:border-0 dark:border-zinc-900',
+                            !p.onBoard && p.seats.length > 0 && OFF_BOARD_BG,
                           )}
                         >
-                          <button
-                            type="button"
-                            aria-expanded={isOpen}
-                            onClick={() => setOpen(isOpen ? null : p.email)}
-                            className="group flex max-w-[10.5rem] items-center gap-1.5 text-left sm:max-w-[16rem]"
+                          <th
+                            scope="row"
+                            className={cn(
+                              'sticky left-0 z-10 px-3 py-1.5 text-left font-normal transition-shadow',
+                              !p.onBoard && p.seats.length > 0 ? OFF_BOARD_BG : 'bg-white dark:bg-zinc-950',
+                              gridEdges.left ? COL_RULE_STUCK : COL_RULE,
+                            )}
                           >
-                            <ChevronDown
-                              className={cn('size-3.5 shrink-0 text-zinc-400 transition-transform', isOpen && 'rotate-180')}
-                              aria-hidden
-                            />
-                            <span className="min-w-0">
-                              <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="truncate font-medium text-zinc-900 group-hover:underline dark:text-zinc-100">{p.name}</span>
-                                {!p.onBoard ? (
-                                  <span className="shrink-0 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[10px] font-semibold whitespace-nowrap text-amber-900 dark:border-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
-                                    Off the board
-                                  </span>
-                                ) : null}
-                              </span>
-                              <span className="block truncate font-mono text-[11px] text-zinc-500">{p.email}</span>
-                            </span>
-                          </button>
-                        </th>
-                        {grid.keys.map((k) => {
-                          const seat = liveSeatOf(p, k.id);
-                          const cell = `${k.id}:${p.email}`;
-                          // Someone off the board can lose a seat here, never gain one (the server refuses it too).
-                          const canGive = p.onBoard;
-                          return (
-                            <td key={k.id} className="px-2 py-1.5 text-center">
-                              {busy === cell ? (
-                                <Loader2 className="mx-auto size-4 animate-spin text-zinc-400" aria-label="Saving" />
-                              ) : (
-                                <input
-                                  type="checkbox"
-                                  className="size-4 accent-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
-                                  checked={!!seat}
-                                  disabled={!seat && !canGive}
-                                  aria-label={`${p.name} holds a seat on ${k.label}`}
-                                  title={
-                                    seat
-                                      ? `Since ${when(seat.givenAt)}, by ${handle(seat.givenBy)}. Untick once the seat is removed on ${k.label}.`
-                                      : canGive
-                                        ? `Give ${p.name} a seat on ${k.label}`
-                                        : 'Off the board: add them under Members to give a seat'
-                                  }
-                                  onChange={(e) => void setHolds(p, k, e.target.checked)}
-                                />
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                      {isOpen ? (
-                        <tr className="border-b border-zinc-100 bg-zinc-50/70 dark:border-zinc-900 dark:bg-zinc-900/40">
-                          <td colSpan={grid.keys.length + 1} className="p-0">
-                            <div className={cn('sticky left-0 box-border w-[100cqw] px-3 py-3', gridEdges.right && 'pr-9')}>
-                              <PersonSeats
-                              person={p}
-                              labelOf={labelOf}
-                              busy={busy}
-                              onRemove={(seat) => {
-                                const key = grid.keys.find((k) => k.id === seat.keyId);
-                                if (key) void setHolds(p, key, false);
-                              }}
+                            <button
+                              type="button"
+                              aria-expanded={isOpen}
+                              onClick={() => setOpen(isOpen ? null : p.email)}
+                              className="group flex max-w-[10.5rem] items-center gap-1.5 text-left sm:max-w-[16rem]"
+                            >
+                              <ChevronDown
+                                className={cn(
+                                  'size-3.5 shrink-0 text-zinc-400 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:text-zinc-600 dark:group-hover:text-zinc-300',
+                                  isOpen && 'rotate-180 text-orange-500 group-hover:text-orange-600',
+                                )}
+                                aria-hidden
                               />
-                            </div>
-                          </td>
-                        </tr>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-                {!shown.length ? (
-                  <tr>
-                    <td colSpan={grid.keys.length + 1} className="px-3 py-6 text-center text-xs text-zinc-500">
-                      {query.trim() ? 'Nobody matches that search.' : 'Nobody holds a seat yet.'}
-                    </td>
-                  </tr>
-                ) : null}
+                              <span className="min-w-0">
+                                <span className="flex min-w-0 items-center gap-1.5">
+                                  <span className="truncate font-medium text-zinc-900 group-hover:underline dark:text-zinc-100">{p.name}</span>
+                                  {!p.onBoard ? (
+                                    <span className="shrink-0 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[10px] font-semibold whitespace-nowrap text-amber-900 dark:border-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                      Off the board
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <span className="block truncate font-mono text-[11px] text-zinc-500">{p.email}</span>
+                              </span>
+                            </button>
+                          </th>
+                          {grid.keys.map((k) => {
+                            const seat = liveSeatOf(p, k.id);
+                            const cell = `${k.id}:${p.email}`;
+                            // Someone off the board can lose a seat here, never gain one (the server refuses it too).
+                            const canGive = p.onBoard;
+                            return (
+                              <td key={k.id} className="px-2 py-1.5 text-center">
+                                {busy === cell ? (
+                                  <Loader2 className="mx-auto size-4 animate-spin text-zinc-400" aria-label="Saving" />
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    className="size-4 accent-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                    checked={!!seat}
+                                    disabled={!seat && !canGive}
+                                    aria-label={`${p.name} holds a seat on ${k.label}`}
+                                    title={
+                                      seat
+                                        ? `Since ${when(seat.givenAt)}, by ${handle(seat.givenBy)}. Untick once the seat is removed on ${k.label}.`
+                                        : canGive
+                                          ? `Give ${p.name} a seat on ${k.label}`
+                                          : 'Off the board: add them under Members to give a seat'
+                                    }
+                                    onChange={(e) => void setHolds(p, k, e.target.checked)}
+                                  />
+                                )}
+                              </td>
+                            );
+                          })}
+                        </motion.tr>
+                        {/* The dropdown grows open and folds shut (height and fade on one settle curve) instead of snapping.
+                            The clip is overflow-y-CLIP, never hidden: hidden would make this wrapper the sticky panel's
+                            scroll box and pin it to the table's left edge again on a phone. */}
+                        <AnimatePresence initial={false}>
+                          {isOpen ? (
+                            <motion.tr
+                              key="seats"
+                              layout={reduce ? false : 'position'}
+                              transition={{ layout: ROW_MOTION }}
+                              className="border-b border-zinc-100 bg-zinc-50/70 dark:border-zinc-900 dark:bg-zinc-900/40"
+                            >
+                              <td colSpan={grid.keys.length + 1} className="p-0">
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{
+                                    height: { duration: reduce ? 0 : 0.32, ease: EASE_SETTLE },
+                                    opacity: { duration: reduce ? 0 : 0.2, ease: 'linear' },
+                                  }}
+                                  className="overflow-y-clip"
+                                >
+                                  <div className={cn('sticky left-0 box-border w-[100cqw] px-3 py-3', gridEdges.right && 'pr-9')}>
+                                    <PersonSeats
+                                      person={p}
+                                      labelOf={labelOf}
+                                      busy={busy}
+                                      reduce={reduce}
+                                      onRemove={(seat) => {
+                                        const key = grid.keys.find((k) => k.id === seat.keyId);
+                                        if (key) void setHolds(p, key, false);
+                                      }}
+                                    />
+                                  </div>
+                                </motion.div>
+                              </td>
+                            </motion.tr>
+                          ) : null}
+                        </AnimatePresence>
+                      </Fragment>
+                    );
+                  })}
+                  {!shown.length ? (
+                    <motion.tr
+                      key="none"
+                      initial={reduce ? false : { opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0, transition: { duration: reduce ? 0 : 0.12 } }}
+                      transition={{ duration: reduce ? 0 : 0.2, delay: reduce ? 0 : 0.12 }}
+                    >
+                      <td colSpan={grid.keys.length + 1} className="px-3 py-6 text-center text-xs text-zinc-500">
+                        {searched.trim() ? 'Nobody matches that search.' : 'Nobody holds a seat yet.'}
+                      </td>
+                    </motion.tr>
+                  ) : null}
+                </AnimatePresence>
               </tbody>
             </table>
           </div>
@@ -379,11 +456,13 @@ function PersonSeats({
   person,
   labelOf,
   busy,
+  reduce,
   onRemove,
 }: {
   person: KeyGridPerson;
   labelOf: Map<string, string>;
   busy: string | null;
+  reduce: boolean;
   onRemove: (seat: KeySeat) => void;
 }) {
   return (
@@ -394,11 +473,17 @@ function PersonSeats({
         </h4>
         {person.seats.length ? (
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:divide-zinc-900 dark:border-zinc-800 dark:bg-zinc-950">
-            {person.seats.map((s) => {
+            {person.seats.map((s, i) => {
               const name = labelOf.get(s.keyId) ?? 'Unknown key';
               const saving = busy === `${s.keyId}:${person.email}`;
               return (
-                <li key={s.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                <motion.li
+                  key={s.id}
+                  initial={reduce ? false : { opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: reduce ? 0 : 0.24, delay: reduce ? 0 : 0.06 + i * 0.04, ease: EASE_SETTLE }}
+                  className="flex flex-wrap items-center gap-2 px-3 py-2"
+                >
                   <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[10px] font-bold text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
                     {name.slice(0, 3).toUpperCase()}
                   </span>
@@ -411,7 +496,7 @@ function PersonSeats({
                   <Button size="xs" variant="outline" disabled={saving} onClick={() => onRemove(s)}>
                     {saving ? <Loader2 className="animate-spin" /> : null} Seat removed
                   </Button>
-                </li>
+                </motion.li>
               );
             })}
           </ul>

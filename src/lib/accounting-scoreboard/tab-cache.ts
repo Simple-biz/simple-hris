@@ -30,6 +30,11 @@
  *   - a view is painted only on the Eastern day it was read: a tick counts for its period, so yesterday's
  *     daily ticks would paint as done today.
  * - `tasks:views`: the views held, newest-written first; only MAX_CACHED_TASK_VIEWS are kept.
+ * - `keys`: Setup → Keys, exactly as GET /keys returned it, **minus `viewer`** (2026-10-09, Kane: *"make sure have
+ *   stored data in cache as well"*). Painted only for a role that may see Keys NOW (`manage_keys`, Admin only); a
+ *   401 / 403 forgets it. Platforms and who holds a seat on them: no bank field, no account number.
+ * - `roles`: Setup → Access's live grants (email, role, who granted, when). Painted only for `manage_roles` NOW. A
+ *   painted grant decides nothing: the server refuses a stale revoke (409, and the table's trigger).
  *
  * Nothing here holds a bank field, a token, a signed URL or presence.
  */
@@ -37,7 +42,7 @@
 import { createTabCache } from '@/lib/dashboard-cache/create-tab-cache';
 import { can, type BoardRole } from './roles';
 import { payloadShowsView as showsView } from './task-load-progress';
-import type { BoardPayload, RosterPerson, TasksPayload } from './types';
+import type { BoardPayload, KeysPayload, RoleGrant, RosterPerson, TasksPayload } from './types';
 
 export const scoreboardTabCache = createTabCache('acct-sb:');
 
@@ -54,6 +59,8 @@ export const SCOREBOARD_CACHE_KEYS = {
   roster: 'roster',
   tasks: (view: string) => `tasks:${view}`,
   taskViews: 'tasks:views',
+  keys: 'keys',
+  roles: 'roles',
 } as const;
 
 /** A Tasks view as cached: everything GET /tasks returned except the viewer (a permission, never cached). */
@@ -130,4 +137,46 @@ export function clearCachedTasks(view: string): void {
   scoreboardTabCache.clear(SCOREBOARD_CACHE_KEYS.tasks(view));
   const held = scoreboardTabCache.get<string[]>(SCOREBOARD_CACHE_KEYS.taskViews);
   if (held) scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.taskViews, held.filter((v) => v !== view));
+}
+
+/** Setup → Keys as cached: everything GET /keys returned except the viewer (a permission, never cached). */
+export type CachedKeys = Omit<KeysPayload, 'viewer'>;
+
+/** The cached Keys to PAINT, or undefined. `role` is the role the server page resolved on THIS load, never a cached one. */
+export function readCachedKeys(role: BoardRole): CachedKeys | undefined {
+  if (!can(role, 'manage_keys')) return undefined;
+  const cached = scoreboardTabCache.get<CachedKeys>(SCOREBOARD_CACHE_KEYS.keys);
+  if (!cached || typeof cached !== 'object') return undefined;
+  if (!Array.isArray(cached.keys) || !Array.isArray(cached.seats) || !Array.isArray(cached.people)) return undefined;
+  return cached;
+}
+
+/** Store the server's answer, without the viewer. */
+export function writeCachedKeys(payload: KeysPayload): void {
+  if (scoreboardTabCache.boundIdentity() === null) return;
+  const { viewer, ...cached } = payload;
+  void viewer; // a permission: dropped here, supplied fresh by the page on every load
+  scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.keys, cached);
+}
+
+/** Forget Keys: the server refused them (401 / 403), so they must never paint again. */
+export function clearCachedKeys(): void {
+  scoreboardTabCache.clear(SCOREBOARD_CACHE_KEYS.keys);
+}
+
+/** The cached Access grants to PAINT, or undefined: only for a role that may manage roles NOW. */
+export function readCachedRoleGrants(role: BoardRole): RoleGrant[] | undefined {
+  if (!can(role, 'manage_roles')) return undefined;
+  const cached = scoreboardTabCache.get<RoleGrant[]>(SCOREBOARD_CACHE_KEYS.roles);
+  return Array.isArray(cached) ? cached : undefined;
+}
+
+export function writeCachedRoleGrants(grants: RoleGrant[]): void {
+  if (scoreboardTabCache.boundIdentity() === null) return;
+  scoreboardTabCache.set(SCOREBOARD_CACHE_KEYS.roles, grants);
+}
+
+/** Forget the grants: the server refused them (401 / 403). */
+export function clearCachedRoleGrants(): void {
+  scoreboardTabCache.clear(SCOREBOARD_CACHE_KEYS.roles);
 }
