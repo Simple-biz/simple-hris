@@ -124,8 +124,10 @@ Admin; not an edit / view / hidden matrix, *"Nah."*). One table decides it: `can
   - Any other page **redirects** to the board, so the bare host lands somewhere useful.
   - Any other API gets **403** `host_scoped`, not 404. HRIS's global pollers (the dispatch paid toast)
     stop on 401/403 and would retry a 404 for as long as the tab is open.
-- **Unlike the bank and gift hosts, this one is signed-in.** `/auth-callback` must pass: the Google
-  sign-in popup returns there, posts `oauth_done` and closes.
+- **Unlike the bank and gift hosts, this one is signed-in.** `/auth-callback` must pass. It was
+  written as the Google popup's return page, but the popup never ran, and since 2026-10-09 sign-in is
+  one full-page redirect back to `/login` (`login-google-sso.md`). An old link can still land on
+  `/auth-callback`, which replaces itself with `/login`, so the host keeps allowing it.
 - **Sign-in needs no auth change.** On Vercel, NextAuth v4 takes its origin from the request's
   `x-forwarded-host` (`node_modules/next-auth/utils/detect-origin.js`, `process.env.VERCEL`), so the
   Google callback and the session cookie land on the scoreboard host. The one outside step is adding

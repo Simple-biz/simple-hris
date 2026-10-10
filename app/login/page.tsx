@@ -105,7 +105,7 @@ function LoginSkeleton() {
 function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { data: session, status, update } = useSession();
+  const { data: session, status } = useSession();
   const [resolvingRole, setResolvingRole] = useState(false);
   // Where to send the user once sign-in resolves. We compute this up front but DON'T navigate
   // immediately -- the actual hand-off is gated on the transition video so it feels like one motion.
@@ -116,7 +116,8 @@ function LoginPageInner() {
   const [muted, setMuted] = useState(false);
   const [soundBlocked, setSoundBlocked] = useState(false);
   // videoActive gates visibility of the full-screen overlay; videoStartedRef prevents the
-  // authenticated-status effect from double-starting the video when popup flow already launched it.
+  // authenticated-status effect from starting the video twice (and the super-admin path sets it
+  // to skip the video altogether).
   const [videoActive, setVideoActive] = useState(false);
   const videoStartedRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -144,8 +145,8 @@ function LoginPageInner() {
   }
 
   // Tear the overlay down and return to the sign-in form. Used when the
-  // transition ends but no session resolved (popup closed/blocked, or the video
-  // errored) — otherwise the full-screen veil strands the user on a blank white
+  // transition ends but the session is gone (it lapsed or was signed out while the
+  // video ran) — otherwise the full-screen veil strands the user on a blank white
   // screen with a Skip button that has nowhere to go. Resets the refs so a later
   // successful sign-in can re-arm the video.
   function resetTransition() {
@@ -235,62 +236,29 @@ function LoginPageInner() {
     }
   }
 
-  // Open Google OAuth in a popup so the parent page stays alive with an active user gesture.
-  // We call v.play() right after window.open() returns (still within the gesture window) so sound
-  // is allowed without any extra tap. Falls back to a full redirect if the popup is blocked.
-  async function handleGoogleSignIn() {
-    const v = videoRef.current;
-
-    let oauthUrl: string | null = null;
-    try {
-      const result = await signIn('google', {
-        redirect: false,
-        callbackUrl: `${window.location.origin}/auth-callback`,
-      }) as { url?: string | null } | undefined;
-      oauthUrl = result?.url ?? null;
-    } catch {
-      /* fall through to redirect */
-    }
-
-    if (!oauthUrl) {
-      void signIn('google', { callbackUrl: '/login' });
-      return;
-    }
-
-    const sw = window.screen.width;
-    const sh = window.screen.height;
-    const pw = 520;
-    const ph = 620;
-    const popup = window.open(
-      oauthUrl,
-      'google-oauth',
-      `width=${pw},height=${ph},left=${Math.round((sw - pw) / 2)},top=${Math.round((sh - ph) / 2)},resizable=yes,scrollbars=yes`,
-    );
-
-    if (!popup) {
-      // Popup blocked — fall back to the regular redirect flow.
-      void signIn('google', { callbackUrl: '/login' });
-      return;
-    }
-
-    // Popup opened. User gesture is still within its ~1s activation window.
-    // Start the video with sound right now.
-    videoStartedRef.current = true;
-    if (v) {
-      v.muted = false;
-      v.volume = 1;
-      void v.play()
-        .then(() => setVideoReady(true))
-        .catch(() => {
-          v.muted = true;
-          setMuted(true);
-          setSoundBlocked(true);
-          void v.play().then(() => setVideoReady(true)).catch(() => setVideoReady(true));
-        });
-    }
-    setVideoActive(true);
-    window.setTimeout(finishTransition, 9000);
+  // Google SSO is ONE full-page redirect: Google → /api/auth/callback/google → /login, where the
+  // authenticated-status effect below plays the intro and hands off. next-auth v4's signIn()
+  // ALWAYS navigates for an OAuth provider (it ignores `redirect: false` and returns undefined),
+  // so it is called exactly once per page. The old popup flow read that undefined as "no URL"
+  // and fired a second signIn while the first navigation was in flight; Safari/WebKit cancels
+  // the second call's fetches, and next-auth answers that by sending the tab to /api/auth/error
+  // instead of Google (login-google-sso.md § The click). The ref also swallows a double-click.
+  const googleSignInStartedRef = useRef(false);
+  function handleGoogleSignIn() {
+    if (googleSignInStartedRef.current) return;
+    googleSignInStartedRef.current = true;
+    void signIn('google', { callbackUrl: '/login' });
   }
+
+  // Back from Google's page restores this one from the back/forward cache with the ref still
+  // set — re-arm it, or the button would do nothing.
+  useEffect(() => {
+    function onPageShow(e: PageTransitionEvent) {
+      if (e.persisted) googleSignInStartedRef.current = false;
+    }
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
 
   // Super-admin impersonation sign-in. Validates email + shared password via the
   // NextAuth `super-admin` credentials provider, then — on success — resolves the
@@ -371,20 +339,8 @@ function LoginPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundBlocked]);
 
-  // When the popup OAuth flow completes, /auth-callback posts this message. Force a session
-  // refresh so useSession() picks up the new cookie without waiting for the next focus poll.
-  useEffect(() => {
-    function onMessage(e: MessageEvent) {
-      if (e.origin !== window.location.origin) return;
-      if ((e.data as { type?: string })?.type !== 'oauth_done') return;
-      void update?.();
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [update]);
-
-  // Drive the transition video once authenticated. Skipped when the popup flow already started
-  // it; used as the fallback path for already-logged-in users and the redirect-fallback case.
+  // Drive the transition video once authenticated: the return from Google, or an
+  // already-signed-in user opening /login. Skipped for the super-admin fast-path.
   useEffect(() => {
     if (status !== 'authenticated') return;
     if (videoStartedRef.current) return;
@@ -441,7 +397,7 @@ function LoginPageInner() {
       return;
     }
     if (status !== 'loading') {
-      // Not signed in (popup closed/blocked, or the video errored before auth).
+      // No longer signed in (the session lapsed or was signed out mid-video).
       // Tear the veil down and show the sign-in form again instead of trapping
       // them on a blank screen.
       resetTransition();
@@ -559,7 +515,7 @@ function LoginPageInner() {
                 type="button"
                 size="lg"
                 className="h-14 w-full gap-3 rounded-2xl border border-white/90 bg-white/88 text-zinc-900 shadow-[0_12px_30px_rgba(15,23,42,0.08)] ring-0 backdrop-blur-xl transition hover:bg-white"
-                onClick={() => void handleGoogleSignIn()}
+                onClick={handleGoogleSignIn}
               >
                 <GoogleMark />
                 <span className="font-medium">Continue with Google</span>
