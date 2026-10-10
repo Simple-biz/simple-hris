@@ -2868,3 +2868,52 @@ morning (`49006919..c7659cea`) join pass 44 as 5 rows / 30 SP, all Done in Sprin
 The last four close on his V1 word. **Final shape: 53 rows / 236 SP, all Done: 23 created, 30 corrected,
 plus the HSL Backlog move.** `selfcheck` PASS. The session cron was replaced to match, and it ends with
 `export-board-csv.mts --board`, the board-true V1 CSV (see `hris-v1-closeout.md`).
+
+### Pass 45 — 2026-10-10 — the Sprint 30 → 31 rollover (STAGED, budget dead until 00:00 UTC)
+
+Kane: *"lets all unfinished SP or uncommitted this 12 Midnight lets transfer them to Sprint 31"*. Session
+`bbf7862e`. The probe (one `boardGroups` call) read `DAILY_LIMIT_EXCEEDED` at 07:04:40Z, `retry_in_seconds`
+60919 → 00:00 UTC 10-11 (20:00 EDT 10-10, 08:00 PHT 10-11). So nothing was read from or written to the
+board, and **whether Sprint 31 exists on the board is UNREAD**. Midnight PHT (16:00Z) is still inside the
+dead window. **Pass 44 is still unwritten:** its session closed at 14:26Z on 10-09, so cron `d33adeb7`
+never fired, and `proposal.json` still dates from 10-08.
+
+**What rolls: 2 rows / 7 SP**, the only Sprint 30 plan rows with `done: false` once pass 44 lands. Both
+were re-measured read-only at about 07:10Z:
+
+| Row | SP | Board id | Measured |
+|---|---|---|---|
+| Tickets board notifies the requester on every update | 5 | 12881288126 | `webhooks.config` (saved 10-05 18:21Z): `ticket_replied` and `ticket_moved` are `active=false` with an EMPTY url. `N8N_TICKETS_*` is not in `.env.local`. Its fourth sprint (S27 → S28 → S29 → S30 → S31) |
+| Legacy rates-sheet cell can route null-preferred → hurupay | 2 | 12620645283 | Not started. The only commit since S30 opened that names it is the 10-05 triage doc `53a0dec5` |
+
+`scripts/tmp-move-s30-open.mts` writes the Sprint label, the group and an evidence update for each row.
+It never touches Status, Actual SP or Completed Date. It refuses (exit 2) until Sprint 31 is mirrored in
+all four maps and the two plan rows say `S31`. It also refuses any row that is not open, unscored,
+undated, physically in the S30 group, and at the board id recorded by the 09-29 rollover.
+
+**What does NOT roll, and why:**
+- **Pass 44's 53 rows / 236 SP** are Done in S30, because they finished there (pass 32's rule).
+- **The 10-09 commits with no row** belong to S30 by their commit dates, so they need S30 rows in a
+  status pass, never an S31 filing. That covers 432 (`946d180d`), 436 (`6be64331`), 437 (`19672c89`),
+  447 (`390c380b`) and 448 (`7593cf37`), plus the docs commits around them. All of them are pushed: the
+  `origin/main` reflog shows `7593cf37` pushed 10-10 03:44Z, so the "NOT pushed" in Open items rows 447
+  and 448 is now stale.
+- **Backlog rows** are unscheduled, so they do not roll: HSL scheduling (V2, item 427) and the bare `hsl`
+  overrides (item 342).
+
+**Velocity:** S30 filed 121 rows / 529 SP. A 7 SP carry-over means Sprint 31's scope has to come from new
+work, not the backlog.
+
+**Order at the reset.** Pass 44's hash covers `PLAN_TASKS`, so pass 44 must apply before the plan is
+edited:
+1. Probe. If Sprint 31's group and label are absent, hard stop: Kane adds them by hand.
+2. Run pass 44: `review.mts` must show 23 created / 30 corrections / all Done / 0 epics, with HSL
+   scheduling as the only re-filed row. Then `apply.mts --apply --only-new --approve <hash>`, then
+   `tmp-move-hsl-scheduling-bl.mts --apply`, then the read-back.
+3. Mirror S31 into all four maps, using the window from the live group title. That re-bounds S30's
+   attribution to cover the gap days from 10-10. Flip the two rows to `S31`.
+4. `tmp-move-s30-open.mts`, a dry run, then `--apply`.
+5. `verify-one.mts` on both ids.
+6. `export-board-csv.mts --board`.
+
+Session cron `6a2295bc` fires at 20:06 EDT (08:06 PHT), but only if this session is still open.
