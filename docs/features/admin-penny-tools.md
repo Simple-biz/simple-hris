@@ -1,6 +1,6 @@
 # What Admin Penny can be asked
 
-The capability reference for the Admin dashboard's Penny AI: the **26 tools** it
+The capability reference for the Admin dashboard's Penny AI: the **27 tools** it
 can call, what each one really answers, and — the more useful half — **what it
 will refuse to tell you and why**.
 
@@ -35,7 +35,7 @@ Mark" costs an extra step — "what happened to markm@simple.biz" does not.
 
 | Tool | Ask it |
 |---|---|
-| `find_employee` | Resolve a name or partial email to the exact `work_email` every other tool needs. Returns 0, 1 or several matches — **active AND off-boarded people** (since 2026-09-15). Every match carries `status`; an off-boarded match also carries when they left, the recorded reason, who recorded it, and every department their master rows held. Active matches rank first. |
+| `find_employee` | Resolve a name or partial email to the exact `work_email` every other tool needs. Returns 0, 1 or several matches — **active AND off-boarded people**: leavers from the master-list stamps (since 2026-09-15) **and from the Offboarded ledger** (since 2026-10-09, back to 2024). Every match carries `status`; an off-boarded match also carries when they left, the recorded reason, who recorded it, every department their rows held, and `recorded_in` (`master_list` / `offboarded_ledger`). A ledger-only leaver has **no master-list row**, so profile, rate, access and ID-card tools have nothing for them, and Penny is told that is expected. `work_email_now_held_by` = their old work email was re-issued to that active person; `now_active_as` = this is an earlier stint of someone active again under a new address. Active matches rank first. See §6b. |
 | `get_employee_profile` | A balanced read on a person: identity, department, employee id, start date, current regular + OT rate, self-entered skill sets, **recognition** (commendations) **and concerns** (manager "flag for review" notes). Deliberately returns both sides so an assessment is never praise alone. |
 | `get_employee_access` | What someone is *allowed* to do: active roles, which dashboards they can open, the per-tab hidden/view/edit overlay, departments they manage, and the admin / elevated / pay-rate-visible flags. **Access rights, not pay.** A failed tab-grant read is reported as unknown, never as "no grants" (2026-09-23). |
 | `get_access_map` | *(2026-09-23)* The **reverse** direction — **who holds access over whom**. `work_email` → the department managers whose grants cover them (matched by the routes' own `departmentMatchesManagedAssignments`) plus every role that reaches all employees; `department` → its managers; `role` → its holders; `dashboard` → who can open it and who holds each tab; nothing → the org-wide map. Flags grants held by addresses not on the active roster and dormant tab grants. Rules and tests: `src/lib/penny/access-graph.ts`; see `ceo-assistant.md` § get_access_map. |
@@ -61,7 +61,8 @@ did.
 | `get_rate_history` | Every rate change with **who set it**: the `employee_rate_history` rows, the Payment Catalog structure (the current source of truth) with who created/updated it, and the matching audit events. For the current *effective* rate use `get_employee_profile`. |
 | `get_transfer_history` | Department transfers — from, to, when, who requested and approved. Omit the email for recent transfers company-wide. |
 | `get_onboarding_info` | Start date, department, employee id, plus the HR onboarding submission: who invited them, when paperwork was submitted, status, and onboarding-pipeline audit events. Takes a work **or** personal email. |
-| `get_offboarding_info` | *(2026-09-15)* Whether and how someone **left**: every master-list row's off-board stamp (date, reason, note, **who recorded it**, deletion schedule), the HR off-boarding queue request (who asked, who processed, when decided), the Offboarded-sheet ledger row, and the `hr.employee.*` / `offboarding.*` / `manager.suspended` audit events — plus whether they are on the active roster right now. `status` is `offboarded`, `active`, `mixed` (a stamped row beside a live one: re-hire, temporary pause or duplicate) or `not_on_master_list`. Takes a work **or** personal email. |
+| `get_offboarding_info` | *(2026-09-15)* Whether and how someone **left**: every master-list row's off-board stamp (date, reason, note, **who recorded it**, deletion schedule), the HR off-boarding queue request (who asked, who processed, when decided), the Offboarded-sheet ledger row, and the `hr.employee.*` / `offboarding.*` / `manager.suspended` audit events — plus whether they are on the active roster right now. `status` is `offboarded`, `active`, `mixed` (a stamped row beside a live one: re-hire, temporary pause or duplicate), **`offboarded_ledger_only`** (no master-list row, but the ledger records the departure — normal for anyone who left before 2026-04-21; until 2026-10-09 these read `not_on_master_list` with the ledger row in hand) or `not_on_master_list` (nothing anywhere). Each ledger row carries the **name** it was recorded under and, when the address is active, `same_person_as_active_holder` — `false` means a **previous holder** of a re-issued address, and the summary says so. Takes a work **or** personal email. |
+| `list_offboarded` | *(2026-10-09)* **Leavers as a group** — the Offboarded ledger as a list, the same rows as HR → Offboarding → Offboarded. "Who was off-boarded this week", "how many left Lead Gen in September", "offboards by reason", "who recorded the most". Filters `since` / `until` (UTC date, inclusive), `department` (exact), `reason` (the Offboarded dataset's categories, or `not_recorded`), `origin` (`hris` / `google_sheet`), `search`. Returns the **total** and counts by reason, department, month, origin and recorder over **every** match, plus up to 50 rows newest first, each saying whether the person is `back_on_active_roster` or their address was re-issued. Temporary pauses and cleanup markers are counted apart, never as departures. A bad filter is an error, never ignored. Rules + tests: `src/lib/penny/offboarded-list.ts`. |
 | `get_bank_change_history` | Who changed someone's payout details. Returns the non-clearable `bank_update_history` trail (fields written, **masked** before→after, processor, channel, IP) plus admin-side audit events. |
 
 ## 4. The files on record *(new — 2026-09-12)*
@@ -155,10 +156,21 @@ a gap waiting to be filled.
   event, a date, a rate or a status.
 - **An off-boarded person is never "not in the system".** `find_employee`
   returns leavers with `status: offboarded` and the date; only zero matches
-  across active *and* off-boarded rows means the name is unknown. Until
-  2026-09-15 the search covered the active roster only, so someone off-boarded
-  the day before a question (adrianm@simple.biz, 2026-09-14) was reported as
-  absent while his pay records were sitting one tool away.
+  across active *and* off-boarded records — with no `lookup_errors` — means the
+  name is unknown. A failed leaver read says the search was incomplete instead.
+  Until 2026-09-15 the search covered the active roster only, so someone
+  off-boarded the day before a question (adrianm@simple.biz, 2026-09-14) was
+  reported as absent while his pay records were sitting one tool away. Until
+  2026-10-09 it covered the master-list stamps only, which reach **1,621 of the
+  4,447** addressed departures on the Offboarded ledger; it now reaches all of
+  them (§6b).
+- **A recorded departure is not today's status.** Work emails are re-issued
+  and people come back, so a ledger row is history. `find_employee` and
+  `list_offboarded` say when a leaver's address now belongs to someone else
+  (`work_email_now_held_by`) or when the same person is active again
+  (`now_active_as` / `back_on_active_roster`), and Penny is told never to
+  attribute records on a re-issued address to the leaver without checking the
+  name on each.
 - **It cannot recover what a KPI score used to be.** The HSL KPI Calculator and
   the Payment Catalog calculators save without an audit row (a deliberate
   decision — autosave volume, see `audit-log.md`), so `get_bonus_breakdown`
@@ -245,6 +257,70 @@ The pure rules live in `src/lib/penny/roster-match.ts` and
 against production and fails loudly).
 
 ---
+
+## 6b. The Offboarded ledger (2026-10-09)
+
+Kane: *"Admin - Penny AI - Does not know about the Offboarded data"*. His one
+Penny query that day ran `find_employee` twice and stopped.
+
+**Measured that day (read-only, production):** `offboarded_sheet` held 4,462
+rows. `find_employee` read the active roster and the 1,742 stamped master-list
+rows, which reached **1,621** of the 4,447 departures that carry an address.
+The rest were invisible, including HRIS offboards dated 2026-10-05.
+`get_offboarding_info` answered `not_on_master_list` for every one of them with
+their ledger row already in its own result, and **no tool could list leavers at
+all**, so "who was off-boarded this week" had no answer.
+
+The ledger is the departures superset: `/api/hr/offboard` writes it on every
+offboard, and the sheet era reaches back to 2024 (`external-api-offboarded.md`).
+The master list starts 2026-04-21. What changed:
+
+- **`find_employee` merges the ledger into the leavers** (`mergeLedgerLeavers`,
+  `src/lib/penny/roster-match.ts`). All three reads run in parallel (from a dev
+  machine, roster 5–13 s and ledger 7–9 s, which stacked when run one after
+  the other). The rules:
+  - A departure of someone already listed **joins their record**: the same work
+    email and the same person, or no name to tell them apart, or the same
+    personal inbox when there is no company work email. The latest departure
+    wins and the departments union.
+  - **Identity is the name or the personal inbox, never the work email**
+    (`samePerson` reuses the paystub guard's `sameName`, Kane's 432 ruling).
+    Two names on one address are two people.
+  - **The active roster stays the authority.** A ledger row for someone
+    active on that same address is dropped, because the active match answers
+    for it. So is one on an active address with no name to tell the two apart.
+  - A **re-hire under a new address** keeps the earlier stint, labelled
+    `now_active_as`. The first build dropped these, which left 26 old
+    addresses unreachable. The live check caught it.
+  - A **previous holder** of a re-issued address is their own leaver, with
+    `work_email_now_held_by`.
+  - **Not-a-departure rows are skipped**: temporary pause, "Active", and the
+    cleanup markers. This reuses the Offboarded dataset's `NOT_DEPARTURE`.
+  - A personal inbox stored in the work-email column is treated as the
+    personal address. It is never handed out as a work email.
+- **`get_offboarding_info`** gained `offboarded_ledger_only`, plus the recorded
+  name on every ledger row and `same_person_as_active_holder`. The ledger name
+  used to be selected and then dropped, so a previous holder's departure on
+  `krisd@` could not be told apart from the current holder's record.
+- **`list_offboarded`** is new (§3). It reads the same rows as the per-person
+  tools, so a count and a lookup can never disagree about who is on the list.
+
+**Proof:** 23 + 9 pure tests (`roster-match.test.ts`, `offboarded-list.test.ts`).
+The live check is `scripts/verify-penny-offboarded-ledger.mts`, read-only. It
+runs the real tool runners and passed all 28 checks on 2026-10-09:
+
+- every addressed departure is reachable (1,621 before, 4,447 after);
+- a ledger-only leaver is found by email and by name, and reads
+  `offboarded_ledger_only`;
+- `krisd@` reads active, with the previous holder flagged;
+- September's `list_offboarded` total equals a direct count (282), and every
+  breakdown adds back to it.
+
+**Not changed, on purpose:** the master-list half of the search. A stamped row
+whose work email is active is still dropped. A stamped `duplicate_cleanup` or
+`temporary_pause` row on an address nobody holds still shows as a leaver,
+because the stamp path never read the reason. That is an Open item, not this
+change. `getEmployeeMasterRecord` and every pay tool are untouched.
 
 ## 7. The console itself
 

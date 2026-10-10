@@ -2790,8 +2790,8 @@ none of them writes to the database.
 
 | Route | Gate | Model | Tools |
 |---|---|---|---|
-| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-opus-5-5` *(since 2026-09-23; was `claude-sonnet-4-6`)* | `CEO_TOOLS` + `CEO_ADMIN_TOOLS` (24) — every Admin tool except `list_employee_attachments` and `get_employee_id_card` (both need the admin-gated opener below) |
-| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (26) |
+| `POST /api/ceo/chat` | signed in **and** `ceo` or `admin` | `claude-opus-5-5` *(since 2026-09-23; was `claude-sonnet-4-6`)* | `CEO_TOOLS` + `CEO_ADMIN_TOOLS` (25, measured 2026-10-09) — every Admin tool except `list_employee_attachments` and `get_employee_id_card` (both need the admin-gated opener below) |
+| `POST /api/admin/penny-chat` | `requireAdminSession()` — elevated **and** `admin` | `claude-opus-5` | `CEO_TOOLS` + `ADMIN_TOOLS` (27, measured 2026-10-09) |
 | `POST /api/employee/penny-chat` | `authorizeEmailAccess(email)` | `claude-haiku-4-5` | employee set, **no identity argument** |
 
 ### `POST /api/ceo/chat`

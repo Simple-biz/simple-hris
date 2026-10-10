@@ -42,6 +42,14 @@ The master list starts 2026-04-21, but the ledger reaches back to **2024-01-13**
 are served. The catalog's old note that the dataset "silently starts in April" applied to the
 stamps and no longer applies.
 
+**A second reader, inside the HRIS (2026-10-09).** Admin and CEO Penny read the same ledger
+(`readOffboardedLedgerForPenny` in `ceo-tools.ts`). They reuse this module's `NOT_DEPARTURE`,
+`categorizeReason`, `servedWorkEmail` and `servedName`, so `find_employee`, `get_offboarding_info` and
+`list_offboarded` agree with this dataset on what counts as a departure and what counts as a company
+address. **Changing those rules here changes Penny too.** Penny does not apply this dataset's redaction:
+admins see the stored reason label, the personal email and the recorder. See
+`admin-penny-tools.md` §6b.
+
 ## A row is history, not status
 
 One row per ledger record. A re-hire who left twice has two rows, and a **recycled work email** can

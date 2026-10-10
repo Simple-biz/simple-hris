@@ -33,6 +33,16 @@ import {
   type SnapshotIn,
   type WizardControlsIn,
 } from '@/lib/penny/bonus-breakdown';
+import {
+  LEDGER_ORIGINS,
+  LIST_DEFAULT_LIMIT,
+  LIST_MAX_LIMIT,
+  listOffboardedLedger,
+  parseOffboardedListInput,
+} from '@/lib/penny/offboarded-list';
+import { ledgerAddresses, samePerson } from '@/lib/penny/roster-match';
+import { REASON_CATEGORIES, categorizeReason, servedName } from '@/lib/external-api/offboarded';
+import { readOffboardedLedgerForPenny } from './ceo-tools';
 import { buildPaymentsLive } from '@/lib/ceo/payments-live';
 import { getPeopleBankHistory, type BankChangeEntry } from '@/lib/supabase/bank-update-history';
 import { getProfilePhotoUrlForEmail } from '@/lib/supabase/employee-profile-photo';
@@ -210,7 +220,7 @@ export const ADMIN_TOOLS: Anthropic.Tool[] = [
   {
     name: 'get_offboarding_info',
     description:
-      'Whether and how a person was OFF-BOARDED. Use for "was X off-boarded", "when did X leave", "who off-boarded X", "why was X removed", "is X still with us", and whenever find_employee returns status offboarded. Reads every place an off-board is recorded and returns them side by side: the master-list stamps (date, reason, note, who recorded it, any deletion schedule — one per master row, because a person can have several rows), the HR off-boarding queue requests (who requested, who processed, the decision date), the Offboarded-sheet ledger row, and the audit events (hr.employee.offboarded / reonboarded / scheduled_deletion, offboarding.*, manager.suspended / reactivated). Also says whether the person is on the ACTIVE roster right now, so a re-hire or a temporary pause reads correctly. Takes a work or personal email.',
+      'Whether and how a person was OFF-BOARDED. Use for "was X off-boarded", "when did X leave", "who off-boarded X", "why was X removed", "is X still with us", and whenever find_employee returns status offboarded. Reads every place an off-board is recorded and returns them side by side: the master-list stamps (date, reason, note, who recorded it, any deletion schedule — one per master row, because a person can have several rows), the HR off-boarding queue requests (who requested, who processed, the decision date), the Offboarded ledger rows (with the NAME each was recorded under — a re-issued work email can carry a PREVIOUS holder\'s departure), and the audit events (hr.employee.offboarded / reonboarded / scheduled_deletion, offboarding.*, manager.suspended / reactivated). Also says whether the person is on the ACTIVE roster right now, so a re-hire or a temporary pause reads correctly. A leaver from before the master list began (2026-04-21) is status offboarded_ledger_only: the ledger is their only record. Takes a work or personal email.',
     input_schema: {
       type: 'object',
       properties: {
@@ -220,6 +230,28 @@ export const ADMIN_TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ['email'],
+    },
+  },
+  {
+    name: 'list_offboarded',
+    description:
+      'The OFFBOARDED LEDGER as a list — every recorded departure, the same list as HR → Offboarding → Offboarded and People → Offboarded, back to 2024. Use for any question about leavers as a GROUP: "who was off-boarded this week / today / in September", "how many people left Lead Gen last month", "offboards by reason", "how many no-shows in orientation", "who recorded the most offboards", "list the NCNS leavers since 10-01", "offboarding trend by month". Filters: since/until (YYYY-MM-DD, inclusive, on the UTC date of the departure), department (exact), reason (a category), origin (hris = recorded through HR → Offboard; google_sheet = the old Offboarded sheet), search (name or email substring). Returns the total and counts by reason, department, month, origin and recorder over EVERYTHING matched, plus up to `limit` rows newest first — each with name, work email, department, start date, departure date, reason category + the stored label, who recorded it, and whether that person is back on the active roster or their work email now belongs to someone else. Temporary pauses are not departures: they are counted separately. For ONE named person use find_employee + get_offboarding_info instead.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        since: { type: 'string', description: 'First departure date to include, YYYY-MM-DD (inclusive).' },
+        until: { type: 'string', description: 'Last departure date to include, YYYY-MM-DD (inclusive).' },
+        department: { type: 'string', description: 'Exact department name, e.g. "Lead Gen" (case-insensitive).' },
+        reason: {
+          type: 'string',
+          enum: [...REASON_CATEGORIES, 'not_recorded'],
+          description: 'Reason category. not_recorded = the departure has no reason on file.',
+        },
+        origin: { type: 'string', enum: [...LEDGER_ORIGINS], description: 'Where the departure was recorded.' },
+        search: { type: 'string', description: 'Substring of a name, work email or personal email (2+ characters).' },
+        limit: { type: 'integer', description: `How many rows to return (1–${LIST_MAX_LIMIT}), newest first. Default ${LIST_DEFAULT_LIMIT}. The counts always cover every match.` },
+      },
+      required: [],
     },
   },
   {
@@ -406,6 +438,8 @@ export async function runAdminTool(
         return await getOnboardingInfo(str(input.email));
       case 'get_offboarding_info':
         return await getOffboardingInfo(str(input.email));
+      case 'list_offboarded':
+        return await listOffboarded(input);
       case 'get_bonus_breakdown':
         return await getBonusBreakdown(input);
       case 'get_bank_change_history':
@@ -1098,10 +1132,10 @@ async function getOffboardingInfo(emailRaw: string): Promise<ToolResult> {
     supabase
       .from('offboarded_sheet')
       .select(
-        'name, department, work_email, personal_email, start_date, off_boarded_at, off_boarded_reason, off_boarded_note, off_boarded_by, synced_at, origin',
+        'id, name, department, work_email, personal_email, start_date, off_boarded_at, off_boarded_reason, off_boarded_note, off_boarded_by, synced_at, origin',
       )
       .or(aliasOr(aliases, ['work_email', 'personal_email']))
-      .order('off_boarded_at', { ascending: false })
+      .order('off_boarded_at', { ascending: false, nullsFirst: false })
       .limit(10),
     fetchPersonAuditEvents(aliases, OFFBOARD_ACTION_OR, { deepLimit: 2000 }),
   ]);
@@ -1136,9 +1170,45 @@ async function getOffboardingInfo(emailRaw: string): Promise<ToolResult> {
 
   const stampedRows = masterRows.filter((r) => r.off_boarded_at);
   const activeRows = masterRows.filter((r) => r.on_active_roster === true);
-  const status: 'active' | 'offboarded' | 'not_on_master_list' | 'mixed' =
+
+  // The ledger rows, with the NAME each departure was recorded under. A work
+  // email is re-issued (krisd@, jamesc@), so a ledger row on this address can be
+  // a PREVIOUS holder's departure — until 2026-10-09 the name was selected and
+  // then dropped, so the two could not be told apart.
+  const ledgerRows = ((sheetRes.data ?? []) as Array<Record<string, unknown>>).map((r) => {
+    const { work, personal } = ledgerAddresses({ work_email: str(r.work_email) || null, personal_email: str(r.personal_email) || null });
+    const name = servedName(str(r.name) || null);
+    const outcome = categorizeReason(str(r.off_boarded_reason) || null);
+    return {
+      name,
+      work_email: work,
+      personal_email: personal,
+      start_date: str(r.start_date) || null,
+      off_boarded_at: r.off_boarded_at,
+      reason: r.off_boarded_reason,
+      note: r.off_boarded_note,
+      recorded_by: r.off_boarded_by,
+      department: r.department,
+      origin: r.origin,
+      synced_at: r.synced_at,
+      ...(outcome.kind === 'excluded' ? { not_a_departure: true } : {}),
+      ...(activeRows.length
+        ? {
+            same_person_as_active_holder: activeRows.some((a) =>
+              samePerson({ name, personal_email: personal }, { name: a.name, personal_email: a.personal_email }),
+            ),
+          }
+        : {}),
+    };
+  });
+  const ledgerDepartures = ledgerRows.filter((r) => !r.not_a_departure);
+  const previousHolders = ledgerDepartures.filter((r) => r.same_person_as_active_holder === false);
+
+  const status: 'active' | 'offboarded' | 'offboarded_ledger_only' | 'not_on_master_list' | 'mixed' =
     masterRows.length === 0
-      ? 'not_on_master_list'
+      ? ledgerDepartures.length > 0
+        ? 'offboarded_ledger_only'
+        : 'not_on_master_list'
       : stampedRows.length === masterRows.length && activeRows.length === 0
         ? 'offboarded'
         : stampedRows.length === 0 && activeRows.length > 0
@@ -1159,13 +1229,33 @@ async function getOffboardingInfo(emailRaw: string): Promise<ToolResult> {
         ? `ACTIVE — on the current roster, no off-board stamp on any of their ${masterRows.length} master row${masterRows.length === 1 ? '' : 's'}.`
         : status === 'mixed'
           ? `MIXED — ${stampedRows.length} of ${masterRows.length} master rows carry an off-board stamp while ${activeRows.length} row${activeRows.length === 1 ? ' is' : 's are'} on the active roster. Read the rows: this is either a re-hire, a temporary pause, or a stamped duplicate beside a live row.`
-          : 'No global_master_list row matches this email. If the person exists, they are keyed under another address — try their personal email.';
+          : status === 'offboarded_ledger_only'
+            ? (() => {
+                const r = ledgerDepartures[0]!;
+                const day = isoDay(str(r.off_boarded_at));
+                const where = r.origin === 'google_sheet' ? ' (the old Offboarded sheet)' : r.origin === 'hris' ? ' (recorded in the HRIS)' : '';
+                return `OFF-BOARDED${day ? ` on ${day}` : ' (departure date not recorded)'} per the Offboarded ledger${where}${r.reason ? ` — reason "${str(r.reason)}"` : ''}${r.recorded_by ? `, recorded by ${str(r.recorded_by)}` : ''}. There is NO master-list row: the master list starts 2026-04-21, so earlier leavers (and HRIS offboards whose master row is gone) exist only on this ledger. That is expected — it does not mean the person is unknown.`;
+              })()
+            : 'No global_master_list row and no Offboarded ledger row matches this email. If the person exists, they are keyed under another address — try their personal email.';
+
+  // Distinct people among the ledger departures on this address, by name.
+  const ledgerPeople: string[] = [];
+  for (const r of ledgerDepartures) {
+    if (r.name && !ledgerPeople.some((n) => samePerson({ name: n, personal_email: null }, { name: r.name, personal_email: null }))) {
+      ledgerPeople.push(r.name);
+    }
+  }
+  const reissueNote = previousHolders.length
+    ? ` ${previousHolders.length} Offboarded-ledger record${previousHolders.length === 1 ? '' : 's'} on this address belong${previousHolders.length === 1 ? 's' : ''} to a PREVIOUS holder (${[...new Set(previousHolders.map((r) => r.name ?? 'unnamed'))].join(' / ')}) — not this person's departure; the address was re-issued.`
+    : ledgerPeople.length > 1
+      ? ` CAUTION: ${ledgerPeople.length} different names hold departures on this address (${ledgerPeople.join(' / ')}) — a re-issued address; each is a different person. Report each by name.`
+      : '';
 
   return {
     email_checked: email,
     aliases_searched: [...aliases],
     status,
-    summary,
+    summary: summary + reissueNote,
     lookup_errors: lookupErrors.length ? lookupErrors : undefined,
     master_rows: masterRows,
     offboarding_requests: ((queueRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
@@ -1181,19 +1271,46 @@ async function getOffboardingInfo(emailRaw: string): Promise<ToolResult> {
       processed_note: r.processed_note,
       decided_at: r.decided_at,
     })),
-    offboarded_sheet: ((sheetRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
-      off_boarded_at: r.off_boarded_at,
-      reason: r.off_boarded_reason,
-      note: r.off_boarded_note,
-      recorded_by: r.off_boarded_by,
-      department: r.department,
-      origin: r.origin,
-      synced_at: r.synced_at,
-    })),
+    offboarded_sheet: ledgerRows,
     audit_events: auditScan.rows.slice(0, 25).map(compactAuditRow),
     audit_scan_note: scanNote(auditScan.deepCutoff),
     field_notes:
-      'status: offboarded = every master row is stamped and none is on the active roster; active = no stamp; mixed = some rows stamped while a row is still active (re-hire, temporary pause, or a stamped duplicate) — read master_rows before concluding; not_on_master_list = nothing matched. master_rows.off_boarded_by is WHO recorded the departure (the HR user, or a batch), off_boarded_reason is the category, off_boarded_note the free text. offboarding_requests is the HR queue (requested_by asked, processed_by decided). A manager.suspended audit event is a TEMPORARY PAUSE, not a departure. Times are UTC.',
+      'status: offboarded = every master row is stamped and none is on the active roster; active = no stamp; mixed = some rows stamped while a row is still active (re-hire, temporary pause, or a stamped duplicate) — read master_rows before concluding; offboarded_ledger_only = no master-list row, but the Offboarded ledger records the departure (normal for anyone who left before the master list began on 2026-04-21); not_on_master_list = nothing matched anywhere. master_rows.off_boarded_by is WHO recorded the departure (the HR user, or a batch), off_boarded_reason is the category, off_boarded_note the free text. offboarded_sheet is the Offboarded ledger, newest first: each row carries the NAME it was recorded under — a work email can be re-issued, so same_person_as_active_holder=false means that departure belongs to a PREVIOUS holder of the address, not the current one; not_a_departure=true is a temporary pause or a cleanup marker. work_email is null when the ledger held a personal inbox in that column. offboarding_requests is the HR queue (requested_by asked, processed_by decided). A manager.suspended audit event is a TEMPORARY PAUSE, not a departure. Times are UTC.',
+  };
+}
+
+/**
+ * The Offboarded ledger as a LIST (2026-10-09). Rules: `src/lib/penny/offboarded-list.ts`.
+ * The ledger read and the roster read must BOTH succeed: a failed roster read
+ * would silently drop every "back on the roster" / "address re-issued" label,
+ * and those labels are what stop a recorded departure reading as today's status.
+ */
+async function listOffboarded(input: Record<string, unknown>): Promise<ToolResult> {
+  const parsed = parseOffboardedListInput(input);
+  if (!parsed.ok) return { error: `Invalid filter — ${parsed.errors.join('; ')}. Nothing was searched.` };
+
+  const [ledger, roster] = await Promise.all([readOffboardedLedgerForPenny(), getEmployeesForAuthorizedServerRoute()]);
+  if (ledger.error) return { error: `Offboarded ledger lookup failed: ${ledger.error}` };
+  if (roster.error) return { error: `Active roster lookup failed: ${roster.error} — cannot tell which leavers are back on the roster, so no list was produced.` };
+
+  const result = listOffboardedLedger(
+    ledger.rows,
+    parsed.query,
+    roster.employees.map((e) => ({ name: e.name ?? null, work_email: e.work_email ?? null, personal_email: e.personal_email ?? null })),
+  );
+  const firstDay = ledger.rows
+    .map((r) => /^(\d{4}-\d{2}-\d{2})/.exec(r.off_boarded_at ?? '')?.[1])
+    .filter((d): d is string => !!d)
+    .sort()[0];
+  const undatedAll = ledger.rows.filter((r) => !/^\d{4}-\d{2}-\d{2}/.test(r.off_boarded_at ?? '')).length;
+
+  return {
+    filters: parsed.query,
+    ledger_rows_read: ledger.rows.length,
+    ...result,
+    coverage_note: `Read all ${ledger.rows.length} Offboarded-ledger rows; the earliest dated departure is ${firstDay ?? 'unknown'}. ${undatedAll} rows have no departure date and never match since/until${result.undated_outside_date_filter ? ` (${result.undated_outside_date_filter} of them matched the other filters)` : ''}. HR → Restore DELETES a person's ledger rows, so a re-onboarded person is no longer on this list.`,
+    field_notes:
+      'One row = one RECORDED DEPARTURE, never today\'s status: back_on_active_roster=true means that same person is on the active roster now (re-hired or returned); work_email_now_held_by means their work email was re-issued to that active person — anything keyed on the address now describes them. total and every by_* count cover ALL matches; rows is only the newest `limit`. reason is the category (performance, no_show, ncns, resigned, policy_violation, attendance, declined_offer, rescheduled, time_manipulation, end_of_contract, other; not_recorded = blank); reason_label is the label as stored. origin: hris = recorded through HR → Offboard (recorded_by is the HR user); google_sheet = imported from the old Offboarded sheet (recorded_by is usually blank). not_departures_excluded counts temporary pauses and cleanup markers that matched the other filters — they are NOT departures. Dates are the UTC calendar date of the departure.',
   };
 }
 

@@ -10,11 +10,13 @@ import { selectAllPaged } from '@/lib/supabase/select-all-paged';
 import {
   collapseOffboardedRows,
   matchesRosterQuery,
+  mergeLedgerLeavers,
   rankRosterMatches,
   rosterMatchNote,
   type OffboardedMasterRow,
   type RosterCandidate,
 } from '@/lib/penny/roster-match';
+import type { PennyLedgerRow } from '@/lib/penny/offboarded-list';
 import {
   applyDispatchedTotals,
   buildReconciledPayWeeks,
@@ -84,13 +86,13 @@ export const CEO_TOOLS: Anthropic.Tool[] = [
   {
     name: 'find_employee',
     description:
-      "Resolve a person's name or email to their employee record(s). ALWAYS call this first whenever the user names a person (e.g. \"Kane\", \"kane@simple.biz\") — you need the exact work_email it returns before you can look up their pay. Searches ACTIVE and OFF-BOARDED people: every match carries status, and an off-boarded match also carries when they left, the recorded reason and who recorded it. An off-boarded person is still a real record — their pay, history and audit trail remain searchable with the other tools — so never describe one as 'not in the system'; say they were off-boarded on that date. Returns 0, 1, or several matches (active first). If several match, ask the user which one (by department or work email) before continuing; never guess.",
+      "Resolve a person's name or email to their employee record(s). ALWAYS call this first whenever the user names a person (e.g. \"Kane\", \"kane@simple.biz\") — you need the exact work_email it returns before you can look up their pay. Searches ACTIVE and OFF-BOARDED people — off-boarded from BOTH the master list and the Offboarded ledger, which reaches back to 2024 (recorded_in says which; a ledger-only leaver has no master-list row, so profile/rate/access tools have nothing for them). Every match carries status, and an off-boarded match also carries when they left, the recorded reason and who recorded it; work_email_now_held_by means their old work email was re-issued to that active person; now_active_as means the match is an EARLIER STINT of someone active again under that address (a re-hire, not a leaver). An off-boarded person is still a real record — their pay, history and audit trail remain searchable with the other tools — so never describe one as 'not in the system'; say they were off-boarded on that date. Returns 0, 1, or several matches (active first). If several match, ask the user which one (by department or work email) before continuing; never guess.",
     input_schema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'A name, partial name, or email address. Matches active employees AND off-boarded people (labelled).',
+          description: 'A name, partial name, or email address (work or personal). Matches active employees AND off-boarded people (labelled).',
         },
       },
       required: ['query'],
@@ -370,11 +372,57 @@ async function listOffboardedMasterRows(): Promise<{ rows: OffboardedMasterRow[]
   };
 }
 
+/**
+ * The whole `offboarded_sheet` ledger — one row per recorded departure, the
+ * superset HR → Offboarding → Offboarded lists (external-api-offboarded.md).
+ * Until 2026-10-09 Penny never read it as a list: the master-list stamps reached
+ * 1,520 of its 4,462 rows, so every leaver from before the master list began
+ * (2026-04-21) was "not in the system". Paged — it is past the 1,000-row cap.
+ * Shared with `list_offboarded` (admin-tools.ts) so both read the same rows.
+ */
+export async function readOffboardedLedgerForPenny(): Promise<{ rows: PennyLedgerRow[]; error: string | null }> {
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { rows: [], error: 'Service-role client unavailable — the Offboarded ledger was not read.' };
+  const { rows, error } = await selectAllPaged<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('offboarded_sheet')
+      .select(
+        'id, name, work_email, personal_email, department, start_date, off_boarded_at, off_boarded_reason, off_boarded_by, origin',
+      )
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { rows: [], error };
+  const s = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+  return {
+    rows: rows.map((r) => ({
+      id: Number(r['id']),
+      name: s(r['name']),
+      work_email: s(r['work_email']),
+      personal_email: s(r['personal_email']),
+      department: s(r['department']),
+      start_date: s(r['start_date']),
+      off_boarded_at: s(r['off_boarded_at']),
+      off_boarded_reason: s(r['off_boarded_reason']),
+      off_boarded_by: s(r['off_boarded_by']),
+      origin: s(r['origin']),
+    })),
+    error: null,
+  };
+}
+
 async function findEmployee(query: string): Promise<ToolResult> {
   const q = query.trim();
   if (!q) return { error: 'Empty search query.' };
 
-  const { employees, error } = await getEmployeesForAuthorizedServerRoute();
+  // All three reads at once: the ledger (4,462 rows, five pages) must not queue
+  // behind the roster — measured 2026-10-09 from a dev machine, roster 5–13 s
+  // and ledger 7–9 s, so in sequence they stacked.
+  const [{ employees, error }, stamped, ledger] = await Promise.all([
+    getEmployeesForAuthorizedServerRoute(),
+    listOffboardedMasterRows(),
+    readOffboardedLedgerForPenny(),
+  ]);
   if (error) return { error };
 
   const activeCandidates: RosterCandidate[] = employees.map((e) => ({
@@ -394,10 +442,15 @@ async function findEmployee(query: string): Promise<ToolResult> {
   );
 
   // Leavers too (Carla, 2026-09-15: a person off-boarded the day before was
-  // reported as "not in the system"). The active roster stays the authority:
-  // a stamped duplicate beside an active row never demotes anyone.
-  const stamped = await listOffboardedMasterRows();
-  const offboardedCandidates = collapseOffboardedRows(stamped.rows, activeWorkEmails);
+  // reported as "not in the system"), from BOTH records of a departure: the
+  // master-list stamps and, since 2026-10-09, the Offboarded ledger. The active
+  // roster stays the authority: a stamped duplicate or a re-hire's old ledger
+  // row never demotes anyone (`mergeLedgerLeavers`).
+  const offboardedCandidates = mergeLedgerLeavers(
+    ledger.rows,
+    collapseOffboardedRows(stamped.rows, activeWorkEmails),
+    employees.map((e) => ({ name: e.name ?? null, work_email: e.work_email ?? null, personal_email: e.personal_email ?? null })),
+  );
 
   const matches = rankRosterMatches(
     [...activeCandidates, ...offboardedCandidates].filter((c) => matchesRosterQuery(c, q)),
@@ -411,13 +464,25 @@ async function findEmployee(query: string): Promise<ToolResult> {
     status: m.status,
     ...(m.status === 'offboarded'
       ? {
+          // A leaver with no company work email is reachable only by this.
+          ...(m.work_email ? {} : { personal_email: m.personal_email }),
           off_boarded_at: m.off_boarded_at,
           off_boarded_reason: m.off_boarded_reason,
           off_boarded_by: m.off_boarded_by,
           departments: m.departments,
+          recorded_in: m.recorded_in,
+          ...(m.now_active_as?.length ? { now_active_as: m.now_active_as } : {}),
+          ...(m.work_email_now_held_by?.length ? { work_email_now_held_by: m.work_email_now_held_by } : {}),
         }
       : {}),
   }));
+
+  const lookupErrors = [
+    ...(stamped.error ? [`off-boarded master-list rows lookup failed: ${stamped.error}`] : []),
+    ...(ledger.error
+      ? [`Offboarded ledger lookup failed: ${ledger.error} — leavers recorded only on the ledger (most departures before 2026-04-21) were NOT searched`]
+      : []),
+  ];
 
   return {
     match_count: matches.length,
@@ -425,10 +490,12 @@ async function findEmployee(query: string): Promise<ToolResult> {
     offboarded_matches: matches.filter((m) => m.status === 'offboarded').length,
     matches: shown,
     truncated: matches.length > shown.length,
-    lookup_errors: stamped.error
-      ? [`off-boarded people lookup failed: ${stamped.error} — these results cover ACTIVE people only`]
-      : undefined,
-    note: rosterMatchNote(matches),
+    lookup_errors: lookupErrors.length ? lookupErrors : undefined,
+    // A failed leaver read must never let "no match" read as "not in the system".
+    note:
+      lookupErrors.length && matches.every((m) => m.status === 'active')
+        ? `${matches.length ? 'Only ACTIVE people matched' : 'No ACTIVE employee matched'}, but the off-boarded search did not run completely (see lookup_errors). Do NOT say this person is not in the system or never left — say the leaver search failed and the answer is incomplete.`
+        : rosterMatchNote(matches),
   };
 }
 
